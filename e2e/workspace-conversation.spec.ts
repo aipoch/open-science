@@ -150,6 +150,59 @@ const createProject = async (page: Page): Promise<void> => {
   await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
 }
 
+test('returns from Library to the originating conversation and New Conversation draft', async ({
+  app
+}, testInfo) => {
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
+  await page.setViewportSize({ width: 1280, height: 900 })
+  await createProject(page)
+  const composer = page.getByRole('textbox', { name: 'Ask anything' })
+  const earlierPrompt = 'Review the evidence for our literature study.'
+  const laterPrompt = 'Outline a separate research question.'
+  for (const prompt of [earlierPrompt, laterPrompt]) {
+    await composer.fill(prompt)
+    await page.getByRole('button', { name: 'Send message' }).click()
+    await expect(page.getByText(AGENT_REPLY, { exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Send message' })).toBeVisible()
+    if (prompt === earlierPrompt)
+      await page.getByRole('button', { name: 'New', exact: true }).click()
+  }
+  const earlier = page
+    .locator('[data-slot="session-open-button"]')
+    .filter({ hasText: earlierPrompt })
+  await earlier.click()
+  const draft = 'Compare these findings with the references in our library.'
+  await composer.fill(draft)
+  await page.getByRole('button', { name: 'Library', exact: true }).click()
+  const back = page.getByRole('button', { name: 'Back to Project', exact: true })
+  await expect(back).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Back to Home', exact: true })).toHaveCount(0)
+  await page.screenshot({ path: testInfo.outputPath('library-return-project.png') })
+  await back.focus()
+  await page.keyboard.press('Enter')
+  await expect(earlier).toHaveAttribute('aria-current', 'page')
+  await expect(
+    page.getByRole('region', { name: 'Conversation' }).getByText(earlierPrompt, { exact: true })
+  ).toBeVisible()
+  await expect(composer).toHaveText(draft)
+  await composer.focus()
+  await expect(composer).toBeFocused()
+  await page.screenshot({ path: testInfo.outputPath('library-return-conversation.png') })
+
+  await page.getByRole('button', { name: 'New', exact: true }).click()
+  await composer.fill('Unsent new conversation draft')
+  await page.getByRole('button', { name: 'Library', exact: true }).click()
+  await back.click()
+  await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
+  await expect(composer).toHaveText('Unsent new conversation draft')
+
+  await page.getByRole('button', { name: 'All projects', exact: true }).click()
+  await page.getByRole('button', { name: 'Library', exact: true }).click()
+  await page.getByRole('button', { name: 'Back to Home', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'New project', exact: true })).toBeVisible()
+})
+
 const allowCitationPreviewDomain = async (page: Page): Promise<void> => {
   await page.evaluate(async () => {
     await window.api.settings.setNotebookNetwork({

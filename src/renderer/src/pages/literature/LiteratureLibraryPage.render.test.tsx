@@ -17,6 +17,7 @@ import type {
 } from '../../../../shared/literature'
 import type { Project } from '../../../../shared/projects'
 import { useNavigationStore } from '@/stores/navigation-store'
+import { createInitialSessionState, useSessionStore } from '@/stores/session-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
@@ -207,6 +208,7 @@ describe('LiteratureLibraryPage', () => {
 
   beforeEach(() => {
     useAttachmentOperations.setState({ operations: [] })
+    useSessionStore.setState(createInitialSessionState())
     // Failed assertions must not leak unused one-shot IPC replies into another scenario.
     search.mockReset()
     get.mockReset()
@@ -452,6 +454,64 @@ describe('LiteratureLibraryPage', () => {
     vi.clearAllMocks()
     transact.mockReset().mockResolvedValue({ kind: 'item', id: 'item-1', state: 'present' })
     vi.unstubAllGlobals()
+  })
+
+  it.each([false, true])(
+    'returns to the selected conversation with collapsed sidebar %s',
+    async (collapsed) => {
+      useSessionStore.getState().hydrateSessions([
+        {
+          id: 'older',
+          projectId: 'project-1',
+          title: 'Earlier work',
+          cwd: '/workspace',
+          status: 'idle',
+          messages: [],
+          createdAt: 1,
+          updatedAt: 1
+        },
+        {
+          id: 'newer',
+          projectId: 'project-1',
+          title: 'Later work',
+          cwd: '/workspace',
+          status: 'idle',
+          messages: [],
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ])
+      useNavigationStore.getState().openSession('project-1', 'older', 'user')
+      useNavigationStore.getState().openLibrary('user')
+      render(<LiteratureLibraryPage />)
+      if (collapsed) fireEvent.click(screen.getByRole('button', { name: 'Collapse sidebar panel' }))
+      const back = screen.getByRole('button', { name: 'Back to Project' })
+      if (collapsed) expect(back.getAttribute('title')).toBe('Back to Project')
+      else expect(back.textContent).toBe('Back to Project')
+      fireEvent.click(back)
+      expect(useNavigationStore.getState()).toMatchObject({
+        view: 'workspace',
+        activeProjectId: 'project-1'
+      })
+      expect(useSessionStore.getState().selectedSessionId).toBe('older')
+    }
+  )
+
+  it.each(['home', 'deleted', 'archived'] as const)('returns Home for a %s origin', (kind) => {
+    useNavigationStore.setState({ activeProjectId: kind === 'home' ? undefined : 'project-1' })
+    if (kind === 'deleted') useProjectStore.setState({ projects: [] })
+    if (kind === 'archived')
+      useProjectStore.setState({
+        projects: useProjectStore
+          .getState()
+          .projects.map((project) => ({ ...project, archivedAt: 2 }))
+      })
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'Back to Home' }))
+    expect(useNavigationStore.getState()).toMatchObject({
+      view: 'home',
+      activeProjectId: undefined
+    })
   })
 
   it.each(['Edit metadata', 'New collection'])(
