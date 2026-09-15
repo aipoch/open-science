@@ -392,6 +392,12 @@ describe('notebook local RPC server', () => {
       tick.resolve()
       await pending
       await executionSettled
+      if (end === 'background-turn-ended') {
+        // A background RPC settles at admission; wait for terminal persistence before removing
+        // the test storage root. The executor heartbeat alone does not mean the run has settled.
+        const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+        await Promise.all(state.runs.map((run) => service.waitForBackgroundRun(run.runId)))
+      }
       connection.release?.()
       await server.close()
       await service.dispose()
