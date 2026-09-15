@@ -3351,7 +3351,18 @@ const createApplicationModules = async (
     {
       appVersion: app.getVersion(),
       configRoot,
-      captureTarget: () => settingsService.captureActiveExplicitAgentBackendTarget(),
+      captureTarget: async (selection) => {
+        if (!selection) return settingsService.captureActiveExplicitAgentBackendTarget()
+        const { frameworkId } = await settingsService.captureActiveAgentBackendSelection()
+        return {
+          frameworkId,
+          providerId: selection.providerId,
+          model: selection.model
+            ? { kind: 'required', id: selection.model }
+            : { kind: 'provider-default' },
+          reasoningEffort: selection.reasoningEffort ?? 'default'
+        }
+      },
       resolveTarget: (target, context) =>
         settingsService.resolveExplicitAgentBackend(target, context),
       relay: sideChatRelay,

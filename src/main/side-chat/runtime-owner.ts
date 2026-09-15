@@ -13,10 +13,13 @@ import type { AcpCreateSessionResponse } from '../../shared/acp'
 import { isCurrentInFlight } from '../../shared/in-flight-promise'
 import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
 import type { PersistedSideChat } from '../../shared/session-persistence'
+import { sessionAgentConfigurationSchema } from '../../shared/session-configuration'
+import { materializeSessionAgentConfiguration } from '../acp/session-agent-target'
 import { isCodexSubscriptionProviderId } from '../../shared/settings'
 import {
   SIDE_CHAT_MESSAGE_LIMIT,
   type SideChatEntry,
+  type SideChatModelSelection,
   type SideChatPromptRequest,
   type SideChatRuntimeEvent,
   type SideChatSendMessageRequest,
@@ -27,7 +30,7 @@ import {
   type SideChatStartRequest,
   type SideChatStartResponse
 } from '../../shared/side-chat'
-import type { AgentModelChangeTarget, ResolvedAgentBackend } from '../agent-framework'
+import type { ResolvedAgentBackend } from '../agent-framework'
 import { modelFacingAppMcpToolName } from '../agent-framework/app-mcp-names'
 import type { ExplicitAgentBackendTarget } from '../settings/backend-resolver'
 import type { SessionAuxiliaryTurnUsageRecord } from '../session-persistence/auxiliary-turn-usage'
@@ -84,7 +87,6 @@ type SideChatRuntimePort = Pick<
   | 'deleteSession'
   | 'respondToPermission'
   | 'requestProviderReconnect'
-  | 'applyModelChange'
   | 'applyReasoningEffortChange'
   | 'shutdownForQuit'
 >
@@ -96,7 +98,7 @@ type HostMessageBridge = NonNullable<ResolvedAgentBackend['responsesBridgeLease'
 type SideChatRuntimeOwnerOptions = Readonly<{
   appVersion: string
   configRoot: string
-  captureTarget: () => Promise<ExplicitAgentBackendTarget>
+  captureTarget: (selection?: SideChatModelSelection) => Promise<ExplicitAgentBackendTarget>
   resolveTarget: (
     target: ExplicitAgentBackendTarget,
     context: {
@@ -161,11 +163,33 @@ type ActiveSideChat = {
   providerSessionId?: string
   providerContinuityToken?: string
   model?: string
+  modelSelection?: SideChatModelSelection
+  reasoningEffort?: PersistedSideChat['reasoningEffort']
   createdAt: number
   persistTail: Promise<void>
   queuedPersist?: Promise<void>
   queuedPersistLifecycle?: PersistedSideChat['lifecycle']
   needsReplay?: boolean
+}
+
+const modelSelectionSchema = sessionAgentConfigurationSchema.partial({ reasoningEffort: true })
+
+const savedModelSelection = (
+  chat: Pick<PersistedSideChat, 'providerId' | 'model' | 'backendId' | 'reasoningEffort'>
+): SideChatModelSelection | undefined => {
+  const providerId =
+    chat.providerId ??
+    materializeSessionAgentConfiguration(
+      { agentBackendId: chat.backendId, agentModel: chat.model },
+      'default'
+    )?.providerId
+  return providerId
+    ? {
+        providerId,
+        ...(chat.model ? { model: chat.model } : {}),
+        ...(chat.reasoningEffort ? { reasoningEffort: chat.reasoningEffort } : {})
+      }
+    : undefined
 }
 
 const nextEntrySequence = (entries: readonly SideChatEntry[]): number =>
@@ -398,6 +422,10 @@ class SideChatRuntimeOwner {
       throw new Error('The parent Project is unavailable.')
     }
     const text = requirePromptText(request.text)
+    const selection =
+      request.modelSelection === undefined
+        ? undefined
+        : modelSelectionSchema.parse(request.modelSelection)
     const sideChatId = request.sideSessionId ?? `side-chat-${randomUUID()}`
     if (!/^side-chat-[a-zA-Z0-9_-]+$/.test(sideChatId) || sideChatId.length > 128)
       throw new Error('Invalid Side chat identity.')
@@ -430,7 +458,9 @@ class SideChatRuntimeOwner {
       const profileRoot = join(jobRoot, 'profile')
       await Promise.all([mkdir(cwd, { recursive: true }), mkdir(profileRoot, { recursive: true })])
       const resolveBackend = async (): Promise<ResolvedAgentBackend> => {
-        const target = await this.options.captureTarget()
+        const target = await this.options.captureTarget(
+          activeChat ? (activeChat.modelSelection ?? savedModelSelection(activeChat)) : selection
+        )
         let resolved = await this.options.resolveTarget(target, {
           systemPromptAppends: [SIDE_CHAT_SYSTEM_PROMPT],
           includeSkillAndConnectorContext: false,
@@ -536,6 +566,8 @@ class SideChatRuntimeOwner {
         ...(initialBackend.contextUsageModel || initialBackend.sessionModel
           ? { model: initialBackend.contextUsageModel ?? initialBackend.sessionModel }
           : {}),
+        modelSelection: selection,
+        reasoningEffort: selection?.reasoningEffort,
         createdAt: Date.now(),
         persistTail: Promise.resolve()
       }
@@ -635,23 +667,6 @@ class SideChatRuntimeOwner {
         }
       })
     )
-  }
-
-  async applyModelChange(target: AgentModelChangeTarget): Promise<boolean> {
-    const results = await Promise.all(
-      this.activeChats().map(async (active) => {
-        const applied = await active.runtime.applyModelChange(target)
-        if (applied) {
-          active.frameworkId = target.frameworkId
-          active.providerId = target.providerId ?? active.providerId
-          active.backendId = target.backendId
-          active.model = target.model
-          this.queuePersist(active, 'open')
-        }
-        return applied
-      })
-    )
-    return results.every(Boolean)
   }
 
   async applyReasoningEffortChange(effort: ResolvedReasoningEffort): Promise<boolean> {
@@ -881,7 +896,29 @@ class SideChatRuntimeOwner {
   ): Promise<void> {
     signal.throwIfAborted()
     const text = requirePromptText(request.text)
-    const active = await this.ensureActive(request.sideSessionId)
+    const selection =
+      request.modelSelection === undefined
+        ? undefined
+        : modelSelectionSchema.parse(request.modelSelection)
+    let active = this.findActive(request.sideSessionId)
+    if (active) {
+      this.assertDispatchActive(active)
+      if (active.turn || active.running) throw new Error('A Side chat prompt is already running.')
+      const currentSelection = active.modelSelection ?? savedModelSelection(active)
+      if (
+        selection &&
+        (selection.providerId !== currentSelection?.providerId ||
+          selection.model !== currentSelection?.model ||
+          (selection.reasoningEffort ?? 'default') !==
+            (currentSelection?.reasoningEffort ?? 'default'))
+      ) {
+        // Reuse durable suspension/resume for provider changes. Never delete the old provider
+        // Session or replace its identity before the new runtime has actually resumed.
+        await this.suspendActive(active)
+        signal.throwIfAborted()
+      }
+    }
+    active = await this.ensureActive(request.sideSessionId, selection)
     signal.throwIfAborted()
     this.assertDispatchActive(active)
     if (active.turn || active.running) throw new Error('A Side chat prompt is already running.')
@@ -1003,20 +1040,26 @@ class SideChatRuntimeOwner {
     if (needsReplay) active.needsReplay = false
   }
 
-  private async ensureActive(sideSessionId: string): Promise<ActiveSideChat> {
+  private async ensureActive(
+    sideSessionId: string,
+    selection?: SideChatModelSelection
+  ): Promise<ActiveSideChat> {
     const active = this.findActive(sideSessionId)
     if (active) return active
     const dormant = this.findDormant(sideSessionId)
     if (!dormant) throw new Error('Side chat Session is not active.')
     if (!dormant.activating) {
-      dormant.activating = this.activateDormant(dormant).finally(() => {
+      dormant.activating = this.activateDormant(dormant, selection).finally(() => {
         dormant.activating = undefined
       })
     }
     return dormant.activating
   }
 
-  private async activateDormant(dormant: DormantSideChat): Promise<ActiveSideChat> {
+  private async activateDormant(
+    dormant: DormantSideChat,
+    selection?: SideChatModelSelection
+  ): Promise<ActiveSideChat> {
     if (this.isAdmissionSuspended()) throw new Error('Side chat is shutting down.')
     const sideChat = dormant.sideChat
     const jobRoot = join(this.root, sideChat.id)
@@ -1030,7 +1073,11 @@ class SideChatRuntimeOwner {
     let activeChat: ActiveSideChat | undefined
     try {
       const resolveBackend = async (): Promise<ResolvedAgentBackend> => {
-        const target = await this.options.captureTarget()
+        const target = await this.options.captureTarget(
+          activeChat
+            ? (activeChat.modelSelection ?? savedModelSelection(activeChat))
+            : (selection ?? savedModelSelection(sideChat))
+        )
         let resolved = await this.options.resolveTarget(target, {
           systemPromptAppends: [SIDE_CHAT_SYSTEM_PROMPT],
           includeSkillAndConnectorContext: false,
@@ -1127,6 +1174,8 @@ class SideChatRuntimeOwner {
           ? { providerContinuityToken: sideChat.providerContinuityToken }
           : {}),
         ...(sideChat.model ? { model: sideChat.model } : {}),
+        ...(sideChat.reasoningEffort ? { reasoningEffort: sideChat.reasoningEffort } : {}),
+        modelSelection: selection ?? savedModelSelection(sideChat),
         createdAt: sideChat.createdAt,
         persistTail: Promise.resolve()
       }
@@ -1143,6 +1192,7 @@ class SideChatRuntimeOwner {
         ...(sideChat.backendId ? { previousBackendId: sideChat.backendId } : {})
       })
       this.applyProviderIdentity(activeChat, resumed, initialBackend)
+      activeChat.reasoningEffort = selection ? selection.reasoningEffort : sideChat.reasoningEffort
       this.syncBridgeScopes(activeChat)
       if (resumed.contextReset) activeChat.needsReplay = true
       this.dormantById.delete(dormant.sideChat.id)
@@ -1183,6 +1233,7 @@ class SideChatRuntimeOwner {
               ? { providerContinuityToken: activeChat.providerContinuityToken }
               : {}),
             ...(activeChat.model ? { model: activeChat.model } : {}),
+            reasoningEffort: activeChat.reasoningEffort,
             entries: boundedPersistedEntries(activeChat.entries),
             updatedAt: Math.max(sideChat.updatedAt + 1, Date.now())
           }
@@ -1253,6 +1304,7 @@ class SideChatRuntimeOwner {
         ? { providerContinuityToken: active.providerContinuityToken }
         : {}),
       ...(active.model ? { model: active.model } : {}),
+      ...(active.reasoningEffort ? { reasoningEffort: active.reasoningEffort } : {}),
       historyPreamble: active.historyPreamble ?? '',
       entries: boundedPersistedEntries(active.entries),
       createdAt: active.createdAt,
@@ -1591,6 +1643,7 @@ class SideChatRuntimeOwner {
       parentSessionId: active.parentSessionId,
       projectId: active.projectId,
       sideSessionId: active.sideSessionId,
+      modelSelection: savedModelSelection(active),
       entries: active.entries.map((entry) => ({ ...entry })),
       running: active.running,
       ...(active.error ? { error: active.error } : {}),
@@ -1605,6 +1658,7 @@ class SideChatRuntimeOwner {
       parentSessionId: dormant.parentSessionId,
       projectId: dormant.projectId,
       sideSessionId: dormant.sideChat.id,
+      modelSelection: savedModelSelection(dormant.sideChat),
       entries: dormant.sideChat.entries.map((entry) => ({ ...entry })),
       running: false,
       ...(lifecycle === 'interrupted'
@@ -1698,6 +1752,7 @@ class SideChatRuntimeOwner {
           ? { providerContinuityToken: active.providerContinuityToken }
           : {}),
         ...(active.model ? { model: active.model } : {}),
+        ...(active.reasoningEffort ? { reasoningEffort: active.reasoningEffort } : {}),
         historyPreamble: active.historyPreamble ?? '',
         entries: boundedPersistedEntries(active.entries),
         createdAt: active.createdAt,

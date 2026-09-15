@@ -261,6 +261,26 @@ describe('ComposerModelPicker', () => {
     expect(container.querySelector('[aria-label="No model available — open settings"]')).toBeNull()
   })
 
+  it('keeps the side chat model visible with its shared reasoning effort controls', async () => {
+    useSettingsStore.setState({
+      providers: [provider({ id: 'p1', models: ['only'], reasoningEffortPreset: 'none-high' })]
+    })
+    act(() =>
+      root.render(
+        <ComposerModelPicker
+          configuration={{ providerId: 'p1', model: 'only', reasoningEffort: 'default' }}
+          unavailable={false}
+          alwaysShow
+          onChange={onChange}
+        />
+      )
+    )
+    const trigger = container.querySelector('[aria-label="Select model"]')
+    expect(trigger?.textContent).toContain('only')
+    await openMenu(trigger!)
+    expect(subTriggers().some((item) => item.textContent?.includes('Reasoning effort'))).toBe(true)
+  })
+
   it('keeps a single-model picker visible when the model supports Session effort', async () => {
     useSettingsStore.setState({
       providers: [provider({ id: 'p1', models: ['only'], reasoningEffortPreset: 'none-high' })],
