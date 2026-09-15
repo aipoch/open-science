@@ -80,6 +80,7 @@ function setup(): {
   ui: ReturnType<typeof render>
   transfers: () => ReturnType<typeof useSideChatTransfers>
   start: (text: string) => Promise<boolean>
+  setDraft: (text: string) => void
 } {
   window.api = {
     sideChat: { start: vi.fn(), onEvent: vi.fn(() => () => undefined) }
@@ -140,13 +141,21 @@ function setup(): {
       <Harness />
     </SideChatProvider>
   )
-  return { ui, transfers: () => targets, start: (text) => controller.start(text) }
+  return {
+    ui,
+    transfers: () => targets,
+    start: (text) => controller.start(text),
+    setDraft: (text) => controller.setDraft(text)
+  }
 }
 it('drops into the selected sibling draft without sending, deduplicates, and leaves other drafts alone', () => {
-  const { ui, transfers } = setup()
+  const { ui, transfers, setDraft } = setup()
   let first!: string, second!: string
   act(() => {
     first = transfers().create({ sessionId: 'main', projectId: 'project' })!
+  })
+  act(() => setDraft('Keep this sibling draft'))
+  act(() => {
     second = transfers().create({ sessionId: 'main', projectId: 'project' })!
   })
   const dataTransfer = createDataTransfer()
@@ -156,6 +165,7 @@ it('drops into the selected sibling draft without sending, deduplicates, and lea
   fireEvent.drop(ui.getAllByTestId('side-chat-annotation-drop')[1], { dataTransfer })
   expect(ui.queryByTestId('source')).toBeNull()
   expect(transfers().views.find((view) => view.id === first)?.annotations ?? []).toEqual([])
+  expect(transfers().views.find((view) => view.id === first)?.draft).toBe('Keep this sibling draft')
   expect(transfers().views.find((view) => view.id === second)?.annotations).toEqual([annotation])
   act(() =>
     expect(
