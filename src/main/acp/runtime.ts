@@ -492,7 +492,7 @@ type AcpRuntimeNotebookOptions = {
       provenanceContext: import('../../shared/notebook').NotebookRunProvenanceContext
     }
   ) => void
-  clearArtifactTurnBinding?: (sessionId: string, ownerExecutionId: string) => void
+  clearArtifactTurnBinding?: (sessionId: string, ownerExecutionId: string) => void | Promise<void>
   registerTurnInputs?: (request: {
     projectId: string
     appSessionId: string

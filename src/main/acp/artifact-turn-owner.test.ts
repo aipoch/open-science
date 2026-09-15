@@ -956,7 +956,9 @@ describe('ArtifactTurnOwner', () => {
           contexts.push(binding.provenanceContext)
           throw new Error('Notebook context failed')
         },
-        clearArtifactTurnBinding: () => contexts.push(undefined)
+        clearArtifactTurnBinding: () => {
+          contexts.push(undefined)
+        }
       }
     })
     const currentRunFile = getArtifactCurrentRunFilePath(

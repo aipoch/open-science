@@ -376,6 +376,8 @@ describe('application command composition', () => {
       'settings:set-agent-routing',
       'sessions:load-all',
       'sessions:save-session',
+      'sessions:bind-task-session',
+      'sessions:admit-task-turn',
       'sessions:stage-task-completion',
       'sessions:settle-task-completion',
       'sessions:fail-task-run',

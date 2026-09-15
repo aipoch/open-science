@@ -1,3 +1,4 @@
+import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync, mkdtempSync, realpathSync } from 'node:fs'
@@ -646,6 +647,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
       }
     } catch (error) {
       const fileObservation = await workingFileObservation?.finish(AbortSignal.abort())
+      if (error instanceof NotebookExecutionStopError) throw error
       return {
         ...errorToExecutionResult(error, request, kernelDispatched, helperModulesInitialized),
         ...(cwdBefore !== undefined ? { cwdBefore } : {}),
@@ -810,7 +812,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
     // Wait out any in-flight teardown for this key (a prior hard-timeout/idle/identity-change drop) so
     // we never run two live process trees for the same (kind, env) at once.
     const pending = this.pendingTeardowns.get(key)
-    if (pending) await pending
+    if (pending && !(await pending).reaped) throw new NotebookExecutionStopError()
 
     const spawned = await this.spawnLoop(kind, env, request)
     const child = spawned.child
@@ -1339,9 +1341,17 @@ class NotebookKernelExecutor implements NotebookExecutor {
             this.clearPendingResources(pending)
             proc.pending = undefined
             this.dropProc(proc)
-            this.killChildTracked(proc)
-            this.onTerminated?.(proc.kind, proc.env)
-            pending.reject(new NotebookExecutionCancelledError())
+            void this.killChildTracked(proc).then(
+              (result) => {
+                this.onTerminated?.(proc.kind, proc.env)
+                pending.reject(
+                  result.reaped
+                    ? new NotebookExecutionCancelledError()
+                    : new NotebookExecutionStopError()
+                )
+              },
+              (cause) => pending.reject(new NotebookExecutionStopError(undefined, { cause }))
+            )
             return
           }
 
@@ -1353,9 +1363,17 @@ class NotebookKernelExecutor implements NotebookExecutor {
             this.clearPendingResources(pending)
             proc.pending = undefined
             this.dropProc(proc)
-            this.killChildTracked(proc)
-            this.onTerminated?.(proc.kind, proc.env)
-            pending.reject(new NotebookExecutionCancelledError())
+            void this.killChildTracked(proc).then(
+              (result) => {
+                this.onTerminated?.(proc.kind, proc.env)
+                pending.reject(
+                  result.reaped
+                    ? new NotebookExecutionCancelledError()
+                    : new NotebookExecutionStopError()
+                )
+              },
+              (cause) => pending.reject(new NotebookExecutionStopError(undefined, { cause }))
+            )
           }, this.cancellationGraceMs)
         }
         request.signal.addEventListener('abort', pending.abortListener, { once: true })
@@ -1582,17 +1600,23 @@ class NotebookKernelExecutor implements NotebookExecutor {
   }
 
   // Fire-and-forget tree teardown for a DROPPED proc, tracked by its key so ensureProc can await it
-  // before respawning a replacement for the same (kind, env). Self-clears once the teardown settles.
-  private killChildTracked(proc: ProcState): void {
+  // before respawning a replacement for the same (kind, env). Clears only after confirmed reaping.
+  private killChildTracked(proc: ProcState): Promise<ProcessTreeKillResult> {
     const done = this.teardownProc(proc)
       .then(async (result) => {
         await this.cleanupProc(proc, 'cancel', { processesTerminated: result.reaped })
         return result
       })
-      .finally(() => {
-        if (this.pendingTeardowns.get(proc.key) === done) this.pendingTeardowns.delete(proc.key)
+      .then((result) => {
+        // Keep an unsuccessful teardown as a barrier: neither a replacement kernel nor shutdown
+        // may claim that the old process tree is gone merely because the kill attempt settled.
+        if (result.reaped && this.pendingTeardowns.get(proc.key) === done) {
+          this.pendingTeardowns.delete(proc.key)
+        }
+        return result
       })
     this.pendingTeardowns.set(proc.key, done)
+    return done
   }
 
   private cleanupProc(

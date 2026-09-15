@@ -7,6 +7,7 @@ import { describe, expect, it, vi, type Mock } from 'vitest'
 import type { SpecialistView } from '../../shared/specialist'
 import type { AcpStateSnapshot } from '../../shared/acp'
 import { NotebookLocalRpcServer } from '../notebook/local-rpc-server'
+import { fetchLocalRpc } from '../local-rpc-transport'
 import { NotebookRunRepository } from '../notebook/repository'
 import {
   NotebookControlCompletionCapturedError,
@@ -40,6 +41,9 @@ import {
 } from './completion-gate'
 
 type ExecuteControlHarness = {
+  server: NotebookLocalRpcServer
+  service: NotebookRuntimeService
+  root: string
   calls: string[]
   continuations: CapturedHandoff[]
   deliverToCurrentPrompt: ReturnType<typeof vi.fn>
@@ -110,6 +114,9 @@ const createExecuteControlHarness = async (
   )
 
   return {
+    server,
+    service,
+    root,
     calls: gate.calls,
     continuations: gate.continuations,
     deliverToCurrentPrompt: gate.deliverToOldPrompt,
@@ -324,6 +331,125 @@ const createProductionExecuteControlHarness = async (
 }
 
 describe('completion gate through the real host.agents SDK and executeControl seam', () => {
+  it('notifies duplicate control callers when execution ends before handoff completes', async () => {
+    const connectorStarted = deferred()
+    const finishConnector = deferred<unknown>()
+    const finishHandoff = deferred()
+    const firstSettled = vi.fn()
+    const retrySettled = vi.fn()
+    const harness = await createExecuteControlHarness({
+      connectorCall: async () => {
+        connectorStarted.resolve()
+        return finishConnector.promise
+      },
+      runtime: {
+        stopOldPrompt: async () => undefined,
+        waitForOwnershipRelease: async () => finishHandoff.promise,
+        reconfigure: async () => undefined,
+        continueAsApproved: async () => undefined,
+        reportHandoffFailure: async () => undefined
+      }
+    })
+    const request = {
+      projectId: 'default-project',
+      sessionId: 'trusted-session',
+      workspaceCwd: harness.root,
+      executionInvocationId: 'same-control-submission',
+      code: "await host.agents.switch('Approved Specialist'); return host.mcp('test', 'wait')"
+    }
+    const first = harness.service.executeControl(request, undefined, firstSettled)
+    const firstResult = first.catch((error) => error)
+    let retryResult: Promise<unknown> | undefined
+    try {
+      await connectorStarted.promise
+      const retry = harness.service.executeControl(request, undefined, retrySettled)
+      retryResult = retry.catch((error) => error)
+      expect(firstSettled).not.toHaveBeenCalled()
+      expect(retrySettled).not.toHaveBeenCalled()
+      finishConnector.resolve({ done: true })
+      await vi.waitFor(() => {
+        expect(firstSettled).toHaveBeenCalledOnce()
+        expect(retrySettled).toHaveBeenCalledOnce()
+      })
+      expect(harness.deliverToCurrentPrompt).not.toHaveBeenCalled()
+      finishHandoff.resolve()
+      expect(await firstResult).toBeInstanceOf(NotebookControlCompletionCapturedError)
+      expect(await retryResult).toBeInstanceOf(NotebookControlCompletionCapturedError)
+    } finally {
+      finishConnector.resolve({ done: true })
+      finishHandoff.resolve()
+      await firstResult
+      await retryResult
+      await harness.close()
+    }
+  })
+
+  it('releases a foreground RPC turn before continuing an approved specialist handoff', async () => {
+    const cleanup = deferred()
+    const stopping = deferred()
+    const continued = vi.fn(async () => undefined)
+    let release: Promise<void> | undefined
+    const harness = await createExecuteControlHarness({
+      runtime: {
+        stopOldPrompt: async () => {
+          release = harness.server.clearArtifactTurnBinding('trusted-session', 'turn-1')
+          stopping.resolve()
+        },
+        // The old prompt's disposal owns turn-binding release. The cleanup race only prevents a
+        // failing regression from retaining the server forever; it is released only in finally.
+        waitForOwnershipRelease: async () => Promise.race([release!, cleanup.promise]),
+        reconfigure: async () => undefined,
+        continueAsApproved: continued,
+        reportHandoffFailure: async () => undefined
+      }
+    })
+    const connection = await harness.server.issueSessionConnection(
+      'trusted-session',
+      'default-project',
+      'root-frame-trusted-session'
+    )
+    harness.server.setArtifactTurnBinding('trusted-session', {
+      ownerExecutionId: 'turn-1',
+      projectId: 'default-project',
+      provenanceContext: {
+        rootFrameId: 'root-frame-trusted-session',
+        agentFrameId: 'root-frame-trusted-session',
+        messageBranchId: 'branch-1',
+        runtimeSegmentId: 'runtime-1',
+        promptMessageId: 'prompt-1'
+      }
+    })
+    const execution = fetchLocalRpc(
+      connection,
+      {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          method: 'executeControl',
+          params: {
+            sessionId: 'trusted-session',
+            workspaceCwd: harness.root,
+            code: "return await host.agents.switch('Approved Specialist')"
+          }
+        })
+      },
+      'completion handoff regression'
+    ).catch(() => undefined)
+    try {
+      await stopping.promise
+      await vi.waitFor(() => expect(continued).toHaveBeenCalledOnce(), { timeout: 2_000 })
+      expect(harness.deliverToCurrentPrompt).not.toHaveBeenCalled()
+    } finally {
+      cleanup.resolve()
+      await execution
+      await release
+      await harness.close()
+    }
+  })
+
   it.each(
     (['codex', 'opencode', 'claude-code'] as const).flatMap((framework) =>
       certificationOutcomes.map((outcome) => [framework, outcome] as const)

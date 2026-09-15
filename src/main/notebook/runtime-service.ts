@@ -1512,7 +1512,8 @@ class NotebookRuntimeService {
   // terminalization, and completion interception belong to NotebookExecutionOwner.
   async executeControl(
     request: ExecuteNotebookControlRequest,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    onExecutionSettled?: (error?: unknown) => void
   ): Promise<NotebookControlResult> {
     if (request.background) {
       throw new NotebookBackgroundRunError(
@@ -1531,7 +1532,9 @@ class NotebookRuntimeService {
       return this.executionOwner.executeControl(
         session,
         request,
-        signal ? AbortSignal.any([signal, deletionSignal]) : deletionSignal
+        signal ? AbortSignal.any([signal, deletionSignal]) : deletionSignal,
+        undefined,
+        onExecutionSettled
       )
     })
   }

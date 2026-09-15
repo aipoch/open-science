@@ -14,6 +14,8 @@ import {
   type SaveSessionManifestRequest,
   type FailTaskSessionRunRequest,
   type SettleTaskSessionCompletionRequest,
+  type BindTaskSessionRequest,
+  type AdmitTaskSessionTurnRequest,
   type StageTaskSessionCompletionRequest,
   type UpdateSessionArchiveRequest,
   type SessionRuntimeContext,
@@ -621,6 +623,18 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
   ): Promise<SessionRuntimeContext> {
     return this.operationScheduler.runSession(command.projectId, command.sessionId, () =>
       this.stateOwner.patchRuntimeContext(command)
+    )
+  }
+
+  bindTaskSession(command: BindTaskSessionRequest): Promise<PersistedChatSession> {
+    return this.operationScheduler.runSession(command.session.projectId, command.session.id, () =>
+      this.stateOwner.bindTaskSession(command)
+    )
+  }
+
+  admitTaskTurn(command: AdmitTaskSessionTurnRequest): Promise<PersistedChatSession> {
+    return this.operationScheduler.runSession(command.session.projectId, command.session.id, () =>
+      this.stateOwner.admitTaskTurn(command)
     )
   }
 

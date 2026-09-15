@@ -9,6 +9,7 @@ import type { PrismaClient } from '@prisma/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ABOUT_YOU_MEMORY_CATEGORY_ID } from '../../shared/memory'
+import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
 import {
   NotebookBackgroundRunError,
   type NotebookRunInputFile,
@@ -152,6 +153,235 @@ describe('notebook local RPC server', () => {
     } finally {
       await acceptMissingDataRoot()
       await response.catch(() => undefined)
+      connection.release?.()
+      await server.close()
+      await service.dispose()
+    }
+  })
+
+  it.each([
+    'http-disconnect',
+    'turn-ended',
+    'background-turn-ended',
+    'other-turn-ended',
+    'delegated-turn-ended'
+  ] as const)('scopes heartbeat cancellation after %s', async (end) => {
+    const root = await createStorageRoot()
+    const started = createDeferred<AbortSignal>()
+    const tick = createDeferred()
+    const finished = createDeferred()
+    const heartbeat = join(root, 'cancellation-heartbeat.txt')
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: async (request) => {
+          if (!request.signal) throw new Error('Expected execution cancellation signal')
+          await writeFile(heartbeat, '')
+          started.resolve(request.signal)
+          // Model the next heartbeat with a barrier, avoiding wall-clock races.
+          await tick.promise
+          if (!request.signal.aborted) {
+            await writeFile(heartbeat, '1\n')
+            await writeFile(join(root, 'finished.txt'), 'finished\n')
+          }
+          finished.resolve()
+          return {
+            status: request.signal.aborted ? 'cancelled' : 'completed',
+            stdout: '',
+            stderr: '',
+            traceback: '',
+            cwdAfter: request.cwd,
+            outputs: [],
+            workingFiles: []
+          }
+        },
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+    const execute = service.execute.bind(service)
+    let executionSettled: Promise<unknown> | undefined
+    vi.spyOn(service, 'execute').mockImplementation((...args) => {
+      const result = execute(...args)
+      executionSettled = result.catch(() => undefined)
+      return result
+    })
+    const server = new NotebookLocalRpcServer(service, { transport: 'tcp' })
+    const connection =
+      end === 'delegated-turn-ended'
+        ? await server.issueDelegatedNotebookConnection({
+            projectId: 'default-project',
+            sessionId: 'session-1',
+            rootFrameId: 'root-frame-session-1',
+            agentFrameId: 'child-frame',
+            attemptId: 'child-attempt',
+            messageBranchId: 'child-branch',
+            runtimeSegmentId: 'child-runtime',
+            promptMessageId: 'child-prompt',
+            workspaceCwd: root,
+            isAttemptWritable: () => true
+          })
+        : await server.issueSessionConnection(
+            'session-1',
+            'default-project',
+            'root-frame-session-1'
+          )
+    server.setArtifactTurnBinding('session-1', {
+      ownerExecutionId: 'turn-1',
+      projectId: 'default-project',
+      provenanceContext: {
+        rootFrameId: 'root-frame-session-1',
+        agentFrameId: 'root-frame-session-1',
+        messageBranchId: 'branch-1',
+        runtimeSegmentId: 'runtime-1',
+        promptMessageId: 'prompt-1'
+      }
+    })
+    const disconnect = new AbortController()
+    let pending: Promise<unknown> | undefined
+    try {
+      pending = fetchLocalRpc(
+        connection,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            method: 'execute',
+            params: {
+              sessionId: 'session-1',
+              workspaceCwd: root,
+              code: 'heartbeat()',
+              background: end === 'background-turn-ended'
+            }
+          }),
+          signal: disconnect.signal
+        },
+        'foreground heartbeat'
+      ).then(
+        async (response) => ({ status: response.status, body: await response.json() }),
+        (error) => ({ error })
+      )
+      const signal = await started.promise
+      if (end === 'http-disconnect') {
+        disconnect.abort()
+        await vi.waitFor(() => expect(signal.aborted).toBe(true))
+      } else {
+        const clearing = server.clearArtifactTurnBinding(
+          'session-1',
+          end === 'other-turn-ended' ? 'unrelated-turn' : 'turn-1'
+        )
+        if (end === 'delegated-turn-ended') {
+          let cleared = false
+          void clearing.then(() => {
+            cleared = true
+          })
+          // Child execution belongs to its Attempt, so Main cleanup must finish before
+          // the independently running child's next heartbeat is released.
+          await vi.waitFor(() => expect(cleared).toBe(true))
+          expect(signal.aborted).toBe(false)
+        }
+      }
+      tick.resolve()
+      await finished.promise
+      const survives =
+        end === 'background-turn-ended' ||
+        end === 'other-turn-ended' ||
+        end === 'delegated-turn-ended'
+      expect(await readFile(heartbeat, 'utf8')).toBe(survives ? '1\n' : '')
+      if (survives) expect((await stat(join(root, 'finished.txt'))).isFile()).toBe(true)
+      else await expect(stat(join(root, 'finished.txt'))).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      tick.resolve()
+      await pending
+      await executionSettled
+      connection.release?.()
+      await server.close()
+      await service.dispose()
+    }
+  })
+
+  it.each(
+    (['execute', 'executeControl'] as const).flatMap((method) =>
+      (['before-clear', 'during-clear'] as const).map((timing) => ({ method, timing }))
+    )
+  )('retains a $method stop failure $timing for turn cleanup', async ({ method, timing }) => {
+    const root = await createStorageRoot()
+    const started = createDeferred()
+    const failStop = createDeferred()
+    const stopError = new NotebookExecutionStopError()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: async () => {
+          started.resolve()
+          await failStop.promise
+          // The Kernel boundary separately verifies failed OS teardown. This fixture checks
+          // preservation of that typed failure through the real runtime and RPC drain.
+          throw stopError
+        },
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+    const server = new NotebookLocalRpcServer(service, { transport: 'tcp' })
+    const connection = await server.issueSessionConnection(
+      'session-1',
+      'default-project',
+      'root-frame-session-1'
+    )
+    server.setArtifactTurnBinding('session-1', {
+      ownerExecutionId: 'turn-1',
+      projectId: 'default-project',
+      provenanceContext: {
+        rootFrameId: 'root-frame-session-1',
+        agentFrameId: 'root-frame-session-1',
+        messageBranchId: 'branch-1',
+        runtimeSegmentId: 'runtime-1',
+        promptMessageId: 'prompt-1'
+      }
+    })
+    const pending = fetchLocalRpc(
+      connection,
+      {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          method,
+          params: { sessionId: 'session-1', workspaceCwd: root, code: 'work()' }
+        })
+      },
+      'failed execution stop propagation'
+    ).then(async (response) => ({ status: response.status, body: await response.json() }))
+    try {
+      await started.promise
+      if (timing === 'before-clear') {
+        failStop.resolve()
+        await expect(pending).resolves.toEqual({
+          status: 500,
+          body: { error: stopError.message }
+        })
+      }
+      const clearing = server.clearArtifactTurnBinding('session-1', 'turn-1')
+      const rejected = expect(clearing).rejects.toBe(stopError)
+      failStop.resolve()
+      await rejected
+      await expect(pending).resolves.toEqual({
+        status: 500,
+        body: { error: stopError.message }
+      })
+    } finally {
+      failStop.resolve()
+      await pending
       connection.release?.()
       await server.close()
       await service.dispose()

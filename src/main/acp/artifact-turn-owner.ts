@@ -146,7 +146,7 @@ type ArtifactTurnOwnerOptions = {
         }
       }
     ) => void
-    clearArtifactTurnBinding?: (sessionId: string, ownerExecutionId: string) => void
+    clearArtifactTurnBinding?: (sessionId: string, ownerExecutionId: string) => void | Promise<void>
   }
 }
 
@@ -287,7 +287,10 @@ class ArtifactTurnOwner {
           }
           if (turn.updatesSessionNotebookContext) {
             try {
-              this.options.notebook?.clearArtifactTurnBinding?.(turn.appSessionId, turn.executionId)
+              await this.options.notebook?.clearArtifactTurnBinding?.(
+                turn.appSessionId,
+                turn.executionId
+              )
             } catch {
               // The original activation failure remains the caller-visible error.
             }
@@ -660,7 +663,10 @@ class ArtifactTurnOwner {
       }
       try {
         if (turn.updatesSessionNotebookContext) {
-          this.options.notebook?.clearArtifactTurnBinding?.(turn.appSessionId, turn.executionId)
+          await this.options.notebook?.clearArtifactTurnBinding?.(
+            turn.appSessionId,
+            turn.executionId
+          )
         }
       } catch (error) {
         cleanupErrors.push(error)
