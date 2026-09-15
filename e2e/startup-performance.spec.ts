@@ -52,9 +52,7 @@ for (const locale of ['en', 'zh-Hans'] as const) {
       expect(
         new Set(compositionTrace.flatMap((event) => (event.phase ? [event.phase] : []))).size
       ).toBeGreaterThan(2)
-      expect(
-        compositionTrace.some((event) => event.event === 'completed')
-      ).toBe(true)
+      expect(compositionTrace.some((event) => event.event === 'completed')).toBe(true)
     }
   })
 }
