@@ -5,6 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createInitialTagState, useTagStore } from '@/stores/tag-store'
 import { ResourceTagMenu, ResourceTagSummary } from './ResourceTagControls'
+import type { TagSnapshot } from '../../../../shared/tags'
+
+const storeSetAssignment = useTagStore.getState().setAssignment
 
 const reference = { resourceType: 'literature.item' as const, resourceId: 'paper-a' }
 const create = vi.fn()
@@ -23,6 +26,7 @@ const key = (value: string): void => {
 }
 
 beforeEach(() => {
+  vi.stubGlobal('api', { tags: { setAssignment: vi.fn(), snapshot: vi.fn() } })
   create.mockReset().mockResolvedValue('created')
   setAssignment.mockReset().mockResolvedValue(undefined)
   useTagStore.setState({
@@ -40,31 +44,89 @@ beforeEach(() => {
     setAssignment
   })
 })
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.restoreAllMocks()
+  vi.unstubAllGlobals()
+})
 
 describe('ResourceTagMenu', () => {
-  it('keeps the pointer cursor and inline spinner while an assignment is pending', async () => {
-    let resolve: () => void = () => undefined
-    setAssignment.mockImplementationOnce(
-      () =>
-        new Promise<void>((resolvePromise) => {
-          resolve = resolvePromise
-        })
+  it('shows immediate checkmarks and accepts selection and removal while saves are pending', async () => {
+    const finish: Array<(snapshot: TagSnapshot) => void> = []
+    const write = vi.fn<Window['api']['tags']['setAssignment']>(
+      () => new Promise<TagSnapshot>((resolve) => finish.push(resolve))
     )
+    vi.spyOn(window.api.tags, 'setAssignment').mockImplementation(write)
+    useTagStore.setState({ setAssignment: storeSetAssignment })
+    const tags = useTagStore.getState().tags
     render(<ResourceTagMenu reference={reference} />)
     openPicker()
-    const option = screen.getByRole('option', { name: 'ds-v4-flash' })
-    fireEvent.click(option)
-    expect(option.getAttribute('aria-disabled')).toBe('true')
-    expect(option.querySelector('.animate-spin')).not.toBeNull()
-    expect(option.className).toContain('cursor-pointer')
-    expect(option.className).not.toContain('cursor-wait')
-    fireEvent.click(option)
+    const first = screen.getByRole('option', { name: 'ds-v4-flash' })
+    const second = screen.getByRole('option', { name: 'ds-v4-pro' })
+    fireEvent.click(first)
+    expect(first.getAttribute('aria-selected')).toBe('true')
+    expect(first.querySelector('.lucide-check')).not.toBeNull()
+    expect(screen.getByRole('listbox').querySelector('.animate-spin')).toBeNull()
+    expect(first.getAttribute('aria-disabled')).toBe('false')
+    expect(second.getAttribute('aria-disabled')).toBe('false')
+    expect(first.className).toContain('cursor-pointer')
+    fireEvent.click(second)
+    expect(second.getAttribute('aria-selected')).toBe('true')
+    // Enter toggles the first option again before either save has finished.
     key('Enter')
-    expect(setAssignment).toHaveBeenCalledOnce()
-    await act(async () => resolve())
-    expect(option.querySelector('.animate-spin')).toBeNull()
-    expect(option.getAttribute('aria-disabled')).toBe('false')
+    expect(first.getAttribute('aria-selected')).toBe('false')
+    expect(first.querySelector('.lucide-check')).toBeNull()
+    expect(write.mock.calls.map(([request]) => request)).toEqual([
+      { ...reference, tagId: 'tag-0', assigned: true },
+      { ...reference, tagId: 'tag-1', assigned: true },
+      { ...reference, tagId: 'tag-0', assigned: false }
+    ])
+    const assignments = [{ ...reference, tagId: 'tag-1', createdAt: 1 }]
+    await act(async () => finish[2]({ revision: 3, tags, assignments }))
+    await act(async () => finish[1]({ revision: 2, tags, assignments }))
+    await act(async () =>
+      finish[0]({
+        revision: 1,
+        tags,
+        assignments: [{ ...reference, tagId: 'tag-0', createdAt: 1 }]
+      })
+    )
+    expect(first.getAttribute('aria-selected')).toBe('false')
+    expect(second.getAttribute('aria-selected')).toBe('true')
+  })
+
+  it('rolls back a failed optimistic selection without losing another pending selection', async () => {
+    let reject!: (error: Error) => void
+    let finish!: (snapshot: TagSnapshot) => void
+    vi.spyOn(window.api.tags, 'setAssignment')
+      .mockImplementationOnce(
+        () =>
+          new Promise<TagSnapshot>((_, fail) => {
+            reject = fail
+          })
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<TagSnapshot>((resolve) => {
+            finish = resolve
+          })
+      )
+    const tags = useTagStore.getState().tags
+    vi.spyOn(window.api.tags, 'snapshot').mockResolvedValue({ revision: 0, tags, assignments: [] })
+    useTagStore.setState({ setAssignment: storeSetAssignment })
+    render(<ResourceTagMenu reference={reference} />)
+    openPicker()
+    const first = screen.getByRole('option', { name: 'ds-v4-flash' })
+    const second = screen.getByRole('option', { name: 'ds-v4-pro' })
+    fireEvent.click(first)
+    fireEvent.click(second)
+    await act(async () => reject(new Error('offline')))
+    expect(first.getAttribute('aria-selected')).toBe('false')
+    expect(second.getAttribute('aria-selected')).toBe('true')
+    expect(screen.getByRole('alert').textContent).toBe('Could not update Tags.')
+    await act(async () =>
+      finish({ revision: 1, tags, assignments: [{ ...reference, tagId: 'tag-1', createdAt: 1 }] })
+    )
   })
 
   it('focuses search, navigates matches and Create with arrows, and selects with Enter', async () => {
@@ -159,7 +221,7 @@ describe('ResourceTagMenu', () => {
     key('Enter')
     fireEvent.click(screen.getByRole('option'))
     expect(create).toHaveBeenCalledOnce()
-    expect(screen.getByRole('listbox').getAttribute('aria-busy')).toBe('true')
+    expect(screen.getByRole('option').getAttribute('aria-disabled')).toBe('true')
     await act(async () => reject(new Error('offline')))
     expect(screen.getByRole('alert').textContent).toBe('Could not update Tags.')
     expect(input().getAttribute('aria-invalid')).toBe('true')
@@ -167,6 +229,27 @@ describe('ResourceTagMenu', () => {
     key('Enter')
     await waitFor(() => expect(create).toHaveBeenCalledTimes(2))
     expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('keeps existing Tags interactive while creation is pending', async () => {
+    let finish!: (id: string) => void
+    create.mockImplementationOnce(
+      () =>
+        new Promise<string>((resolve) => {
+          finish = resolve
+        })
+    )
+    render(<ResourceTagMenu reference={reference} />)
+    openPicker()
+    search('ds')
+    fireEvent.click(screen.getByRole('option', { name: 'Create “ds”' }))
+    fireEvent.click(screen.getByRole('option', { name: 'Create “ds”' }))
+    const existing = screen.getByRole('option', { name: 'ds-v4-flash' })
+    expect(existing.getAttribute('aria-disabled')).toBe('false')
+    fireEvent.click(existing)
+    expect(setAssignment).toHaveBeenCalledWith({ ...reference, tagId: 'tag-0', assigned: true })
+    expect(create).toHaveBeenCalledOnce()
+    await act(async () => finish('created'))
   })
 
   it('retains a newly created Tag after assignment fails so retry assigns without creating twice', async () => {
@@ -257,6 +340,55 @@ describe('ResourceTagMenu', () => {
     expect(fireEvent.keyDown(input(), { key: 'Tab' })).toBe(true)
     expect(screen.queryByRole('combobox')).toBeNull()
     expect(create).not.toHaveBeenCalled()
+  })
+
+  it.each([true, false])(
+    'keeps concurrent Settings failures visible (success first: %s)',
+    async (successFirst) => {
+      let succeed!: () => void
+      let fail!: (error: Error) => void
+      setAssignment
+        .mockImplementationOnce(
+          () =>
+            new Promise<void>((resolve) => {
+              succeed = resolve
+            })
+        )
+        .mockImplementationOnce(
+          () =>
+            new Promise<void>((_, reject) => {
+              fail = reject
+            })
+        )
+      render(<ResourceTagMenu reference={reference} keepOpenOnSelect={false} />)
+      openPicker()
+      fireEvent.click(screen.getByRole('option', { name: 'ds-v4-flash' }))
+      fireEvent.click(screen.getByRole('option', { name: 'ds-v4-pro' }))
+      if (successFirst) {
+        await act(async () => succeed())
+        expect(input()).not.toBeNull()
+        await act(async () => fail(new Error('offline')))
+      } else {
+        await act(async () => fail(new Error('offline')))
+        await act(async () => succeed())
+      }
+      expect(screen.getByRole('alert').textContent).toBe('Could not update Tags.')
+      fireEvent.click(screen.getByRole('option', { name: 'ds-v4-pro' }))
+      await waitFor(() => expect(screen.queryByRole('combobox')).toBeNull())
+    }
+  )
+
+  it('closes Settings only once all concurrent saves succeed', async () => {
+    const finish: Array<() => void> = []
+    setAssignment.mockImplementation(() => new Promise<void>((resolve) => finish.push(resolve)))
+    render(<ResourceTagMenu reference={reference} keepOpenOnSelect={false} />)
+    openPicker()
+    fireEvent.click(screen.getByRole('option', { name: 'ds-v4-flash' }))
+    fireEvent.click(screen.getByRole('option', { name: 'ds-v4-pro' }))
+    await act(async () => finish[1]())
+    expect(input()).not.toBeNull()
+    await act(async () => finish[0]())
+    expect(screen.queryByRole('combobox')).toBeNull()
   })
 
   it('supports controlled opening and the Settings summary close-on-success policy', async () => {

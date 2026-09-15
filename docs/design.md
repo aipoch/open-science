@@ -921,8 +921,10 @@ Active-dialog menus and other foreground child layers retain their own ordering.
   The active highlight is independent from the checkmark indicating an existing assignment.
 - Escape dismisses the picker and restores its trigger. Tab dismisses without submitting and
   continues keyboard navigation. Keep each owner's existing close-on-select policy: Literature
-  supports repeated selection; Settings summaries close after a successful update. Pending
-  writes cannot be submitted twice. Failures remain visible in the picker with the query retained;
+  supports repeated selection; Settings summaries close after all current saves succeed. Pending
+  creation cannot be submitted twice. Existing Tags update checkmarks optimistically without
+  spinners or disabling other options; users can select or deselect while saves are pending.
+  Failures remain visible in the picker with the query retained;
   newer input and reopened pickers are not overwritten by an older asynchronous completion.
   The full Tags editor remains the place to choose a custom name, icon, and color.
 
