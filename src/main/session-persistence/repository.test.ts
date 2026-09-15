@@ -94,6 +94,66 @@ afterEach(async () => {
 })
 
 describe('session persistence repository (per-session files)', () => {
+  it('binding repair checks the revision before creating a backup', async () => {
+    const root = await createStorageRoot()
+    const repository = new SessionRepository(root)
+    const original = await repository.saveSession(createSession())
+    const current = await repository.saveSession(
+      { ...original, title: 'A newer edit' },
+      original.revision
+    )
+    const filePath = join(root, 'sessions', 'project-a', 'session-1.json')
+    const before = await readFile(filePath, 'utf8')
+
+    await expect(
+      repository.saveSessionWithBindingRepair(original, original.revision!)
+    ).rejects.toMatchObject({
+      name: 'SessionRevisionConflictError'
+    })
+    await expect(readFile(filePath, 'utf8')).resolves.toBe(before)
+    await expect(repository.loadSession('project-a', 'session-1')).resolves.toMatchObject({
+      title: 'A newer edit',
+      revision: current.revision
+    })
+    expect(
+      (await readdir(join(root, 'sessions', 'project-a'))).filter((name) =>
+        name.includes('.pre-artifact-binding-')
+      )
+    ).toEqual([])
+  })
+
+  it('binding repair retains original bytes across a failed replacement and reuses the backup on retry', async () => {
+    const root = await createStorageRoot()
+    const renameFile = vi.fn(rename)
+    const repository = new SessionRepository(root, { renameFile })
+    const original = await repository.saveSession(createSession())
+    const projectDir = join(root, 'sessions', 'project-a')
+    const filePath = join(projectDir, 'session-1.json')
+    const before = await readFile(filePath, 'utf8')
+    renameFile.mockRejectedValueOnce(
+      Object.assign(new Error('repair replacement failed'), { code: 'EIO' })
+    )
+    const repaired = { ...original, title: 'Repaired' }
+
+    await expect(
+      repository.saveSessionWithBindingRepair(repaired, original.revision!)
+    ).rejects.toThrow('repair replacement failed')
+    await expect(readFile(filePath, 'utf8')).resolves.toBe(before)
+    const backups = (await readdir(projectDir)).filter((name) =>
+      name.includes('.pre-artifact-binding-')
+    )
+    expect(backups).toHaveLength(1)
+    await expect(readFile(join(projectDir, backups[0]), 'utf8')).resolves.toBe(before)
+
+    await expect(
+      repository.saveSessionWithBindingRepair(repaired, original.revision!)
+    ).resolves.toMatchObject({ title: 'Repaired' })
+    expect(
+      (await readdir(projectDir)).filter((name) => name.includes('.pre-artifact-binding-'))
+    ).toEqual(backups)
+    await expect(readFile(join(projectDir, backups[0]), 'utf8')).resolves.toBe(before)
+  })
+
   it.each([
     { id: 'import-session-1', projectId: 'project-a' },
     { id: 'session-1', projectId: 'import-project-a' }

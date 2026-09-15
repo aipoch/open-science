@@ -126,6 +126,10 @@ type SessionMutationRepository = {
     session: PersistedChatSession,
     expectedRevision?: number
   ): Promise<PersistedChatSession>
+  saveSessionWithBindingRepair?(
+    session: PersistedChatSession,
+    expectedRevision: number
+  ): Promise<PersistedChatSession>
   saveCommittedProjectSession(session: PersistedChatSession): Promise<void>
   deleteSession(projectId: string, sessionId: string): Promise<void>
   deleteProjectSessions(projectId: string): Promise<void>
@@ -153,6 +157,9 @@ type SessionFileIndex = {
 }
 
 type SessionProvenancePersistence = {
+  recoverLegacySessionGraph?(
+    session: PersistedChatSession
+  ): Promise<PersistedChatSession | undefined>
   validateFinalizedMessageBindings(session: PersistedChatSession): Promise<void>
   captureFinalizedMessages(session: PersistedChatSession): Promise<void>
   reconcileSessionDeletions(activeSessions: PersistedChatSession[]): Promise<void>
