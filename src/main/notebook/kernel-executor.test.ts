@@ -1629,10 +1629,55 @@ gate('NotebookKernelExecutor (fake loop)', () => {
         await expect(executor.execute({ ...baseRequest(cwdDir), code: 'again' })).rejects.toThrow(
           'process tree could not be stopped'
         )
+        await expect(executor.terminate('python', DEFAULT_PY_ENV)).rejects.toThrow(
+          'runtime switch refused'
+        )
         await expect(executor.shutdown()).resolves.toEqual({ reaped: false })
       } finally {
         await executor.shutdown()
         for (const child of unreapedChildren) await terminateProcessTree(child)
+      }
+    },
+    15_000
+  )
+
+  it.runIf(process.platform !== 'win32')(
+    'retains an unreaped barrier when a cancelled kernel exits before the grace timer',
+    async () => {
+      cwdDir = await makeDefaultEnvCwd('os-kernel-cancel-early-exit-', 'linux')
+      const children = new Set<ChildProcess>()
+      const executor = new NotebookKernelExecutor({
+        pythonLoopPath: FIXTURE,
+        platform: 'linux',
+        cancellationGraceMs: 10_000,
+        terminateTree: async (child) => {
+          children.add(child)
+          return { reaped: false }
+        }
+      })
+      try {
+        await executor.execute({ ...baseRequest(cwdDir), code: 'warm' })
+        const child = procFor(executor, 'python')?.child
+        if (!child) throw new Error('Expected a running kernel')
+        const cancellation = new AbortController()
+        const run = executor.execute({
+          ...baseRequest(cwdDir),
+          code: '__IGNORE_SIGINT__',
+          signal: cancellation.signal
+        })
+        await vi.waitFor(() => expect(procFor(executor, 'python')?.pending).toBeDefined())
+        cancellation.abort()
+        // An actual child exit wins before the grace timer; the OS reaping boundary reports that
+        // surviving descendants could not be confirmed stopped.
+        child.kill('SIGKILL')
+        await expect.soft(run).rejects.toThrow('process tree could not be stopped')
+        await expect.soft(executor.shutdown()).resolves.toEqual({ reaped: false })
+        await expect(executor.execute({ ...baseRequest(cwdDir), code: 'again' })).rejects.toThrow(
+          'process tree could not be stopped'
+        )
+      } finally {
+        await executor.shutdown()
+        for (const child of children) await terminateProcessTree(child)
       }
     },
     15_000
@@ -3974,9 +4019,8 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
           sessionId: 'session-1',
           projectId: 'project-1'
         })
-        .then((result) => {
+        .finally(() => {
           completed = true
-          return result
         })
 
       await vi.waitFor(() => expect(registerOwnedProcessGroup).toHaveBeenCalledOnce())
@@ -3988,7 +4032,8 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
       )
       expect(completed).toBe(false)
       sandbox.release()
-      await expect(execution).resolves.toMatchObject({ status: 'failed' })
+      await expect(execution).rejects.toThrow('process tree could not be stopped')
+      await expect(executor.shutdown()).resolves.toEqual({ reaped: false })
     } finally {
       releaseReaping?.()
       sandbox.release()
@@ -4055,9 +4100,8 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
           sessionId: 'session-1',
           projectId: 'project-1'
         })
-        .then((result) => {
+        .finally(() => {
           completed = true
-          return result
         })
 
       await vi.waitFor(() =>
@@ -4067,7 +4111,11 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
       )
       expect(completed).toBe(false)
       sandbox.release()
-      await expect(execution).resolves.toMatchObject({ status: 'failed' })
+      if (process.platform === 'win32') {
+        await expect(execution).rejects.toThrow('process tree could not be stopped')
+      } else {
+        await expect(execution).resolves.toMatchObject({ status: 'failed' })
+      }
       expect(sandbox.cleanup).toHaveBeenCalledOnce()
     } finally {
       sandbox.release()
