@@ -963,6 +963,21 @@ describe('App startup routing', () => {
     expect(mocks.settings.openSettings).toHaveBeenCalledOnce()
   })
 
+  it('loads the update owner on first activation and retains it for its close lifecycle', async () => {
+    mocks.settings.isLoaded = true
+    await render()
+    expect(document.querySelector('[data-testid="update-dialog"]')).toBeNull()
+
+    mocks.update.isDialogOpen = true
+    await act(async () => root.render(<App />))
+    await vi.waitFor(() => expect(mocks.presentationProps.update?.active).toBe(true))
+
+    mocks.update.isDialogOpen = false
+    await act(async () => root.render(<App />))
+    expect(mocks.presentationProps.update?.active).toBe(false)
+    expect(document.querySelector('[data-testid="update-dialog"]')).not.toBeNull()
+  })
+
   it('closes the update dialog before underlying surfaces', async () => {
     mocks.settings.isLoaded = true
     mocks.settings.isSettingsOpen = true

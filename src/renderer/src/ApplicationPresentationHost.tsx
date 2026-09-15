@@ -1,5 +1,5 @@
 import { WorkspaceComposerDraftsProvider } from './pages/workspace/workspace-composer-drafts'
-import { lazy, memo, Suspense, useCallback, useRef } from 'react'
+import { lazy, memo, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { CloseConfirmModal } from '@/components/CloseConfirmModal'
@@ -7,7 +7,6 @@ import { ActionToast, ActionToastStack } from '@/components/ActionToast'
 import { ConnectorAuthToast } from '@/components/ConnectorAuthToast'
 import { DataRootMissingDialog } from '@/components/DataRootMissingDialog'
 import { ErrorNotice } from '@/components/error-notice'
-import { GlobalSearchDialog } from '@/components/global-search/GlobalSearchDialog'
 import { LegacyDataMoveDialog } from '@/components/LegacyDataMoveDialog'
 import { LifecycleToast } from '@/components/LifecycleToast'
 import { LanguageSaveToast } from '@/components/LanguageControls'
@@ -17,7 +16,6 @@ import { PermissionUndoSnackbar } from '@/components/PermissionUndoSnackbar'
 import { SessionCatalogRecoveryAlert } from '@/components/SessionCatalogRecoveryAlert'
 import { SessionPersistenceAlert } from '@/components/SessionPersistenceAlert'
 import { StorageCleanupToast } from '@/components/StorageCleanupToast'
-import { UpdateDialog } from '@/components/UpdateDialog'
 import { WebEventRecoveryDialog } from '@/components/WebEventRecoveryDialog'
 import { useApplicationEventBindings } from '@/hooks/useApplicationEventBindings'
 import { useApplicationStartup } from '@/hooks/useApplicationStartup'
@@ -72,6 +70,36 @@ const SkillImportApprovalDialog = lazy(() =>
     default: SkillImportApprovalDialog
   }))
 )
+const GlobalSearchDialog = lazy(() =>
+  import('@/components/global-search/GlobalSearchDialog').then(({ GlobalSearchDialog }) => ({
+    default: GlobalSearchDialog
+  }))
+)
+const UpdateDialog = lazy(() =>
+  import('@/components/UpdateDialog').then(({ UpdateDialog }) => ({ default: UpdateDialog }))
+)
+
+// Keep the update owner mounted after its first activation so its nested confirmation and close
+// lifecycle stay unchanged. Until then, avoid requesting release-note Markdown on the startup path.
+const DeferredUpdateDialog = ({ active }: { active: boolean }): React.JSX.Element | null => {
+  const [hasActivated, setHasActivated] = useState(active)
+  useEffect(() => {
+    if (!active) return
+    let cancelled = false
+    queueMicrotask(() => {
+      if (!cancelled) setHasActivated(true)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [active])
+
+  return hasActivated ? (
+    <Suspense fallback={null}>
+      <UpdateDialog active={active} />
+    </Suspense>
+  ) : null
+}
 
 const ApplicationPresentationHost = (): React.JSX.Element => {
   const { t } = useTranslation()
@@ -350,17 +378,19 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
           blockedSessionIds={events.blockedApprovalSessionIds}
         />
       </Suspense>
-      <UpdateDialog active={activePresentation === 'update'} />
+      <DeferredUpdateDialog active={activePresentation === 'update'} />
       <CloseConfirmModal
         active={activePresentation === 'closeConfirmation'}
         onOpenChange={events.closeConfirmation.setOpen}
       />
       {activePresentation === 'globalSearch' ? (
-        <GlobalSearchDialog
-          open
-          onOpenChange={events.globalSearch.setOpen}
-          isSessionPersistenceReady={sessions.isReady}
-        />
+        <Suspense fallback={null}>
+          <GlobalSearchDialog
+            open
+            onOpenChange={events.globalSearch.setOpen}
+            isSessionPersistenceReady={sessions.isReady}
+          />
+        </Suspense>
       ) : null}
       <DataRootMissingDialog
         open={activePresentation === 'dataRootRecovery'}
