@@ -1,3 +1,6 @@
+// Stable existing failure message shared by the owner and renderer across IPC/Web.
+export const PDF_CLEANUP_PENDING = 'PDF worker cleanup must finish before more parsing can start.'
+
 import { z } from 'zod'
 import { defineApplicationCommandContract } from './application-command-contract'
 

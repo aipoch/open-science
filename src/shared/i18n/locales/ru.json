@@ -6125,7 +6125,6 @@
     "Removing models keeps your documents and existing parsing results.": "При удалении моделей документы и существующие результаты разбора сохраняются.",
     "Model in use. Removal is available when parsing finishes.": "Модель используется. Её можно будет удалить после завершения анализа.",
     "Candidate table": "Кандидат таблицы",
-    "Check local model installation and try again.": "Проверьте установку локальной модели и повторите попытку.",
     "Clear all PDF parsing results": "Удалить все результаты разбора PDF",
     "Clear all PDF parsing results?": "Удалить все результаты разбора PDF?",
     "Table notes": "Примечания к таблице",
@@ -6138,7 +6137,6 @@
     "PDF extraction is unavailable": "Извлечение из PDF недоступно",
     "PDF extraction progress": "Ход извлечения из PDF",
     "PDF parsing results cleared.": "Результаты разбора PDF удалены.",
-    "Processed {{completed}} / {{total}} pages": "Обработано страниц: {{completed}} / {{total}}",
     "Show in PDF": "Показать в PDF",
     "Some unrecognized files were retained.": "Некоторые неопознанные файлы сохранены.",
     "Structured cells are unavailable for this candidate.": "Структурированные ячейки для этого кандидата недоступны.",
@@ -6294,6 +6292,14 @@
     "The exact bookmark location could not be found.": "Не удалось найти точное расположение закладки.",
     "Skill installation blocked": "Установка навыка заблокирована",
     "Manage local skills": "Управление локальными навыками",
-    "Local conflict": "Локальный конфликт"
+    "Local conflict": "Локальный конфликт",
+    "Attempted {{completed}} / {{total}} pages": "Обработано попыток: {{completed}} / {{total}} страниц",
+    "Extracted {{completed}} / {{total}} pages": "Извлечено: {{completed}} / {{total}} страниц",
+    "PDF analysis is blocked": "Анализ PDF заблокирован",
+    "A previous PDF task could not finish cleanup. Analyze again to retry cleanup. If this persists, restart Open Science and check for updates.": "Предыдущая задача PDF не смогла завершить очистку. Запустите анализ снова, чтобы повторить очистку. Если проблема сохраняется, перезапустите Open Science и проверьте наличие обновлений.",
+    "PDF analysis could not continue. Check the local model installation and try again.": "Не удалось продолжить анализ PDF. Проверьте установку локальной модели и повторите попытку.",
+    "Extraction progress": "Ход извлечения",
+    "Remaining pages": "Оставшиеся страницы",
+    "Pages not yet attempted: {{remaining}}": "Страницы без попытки обработки: {{remaining}}"
   }
 }

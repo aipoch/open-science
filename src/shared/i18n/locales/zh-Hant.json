@@ -5667,7 +5667,6 @@
     "Removing models keeps your documents and existing parsing results.": "移除模型會保留文獻與現有解析結果。",
     "Model in use. Removal is available when parsing finishes.": "模型正在使用中。解析完成後即可移除。",
     "Candidate table": "表格候選結果",
-    "Check local model installation and try again.": "請檢查本機模型安裝後重試。",
     "Clear all PDF parsing results": "清除所有 PDF 解析結果",
     "Clear all PDF parsing results?": "清除所有 PDF 解析結果？",
     "Table notes": "表格註解",
@@ -5680,7 +5679,6 @@
     "PDF extraction is unavailable": "PDF 擷取暫不可用",
     "PDF extraction progress": "PDF 擷取進度",
     "PDF parsing results cleared.": "已清除 PDF 解析結果。",
-    "Processed {{completed}} / {{total}} pages": "已處理 {{completed}} / {{total}} 頁",
     "Show in PDF": "在 PDF 中查看",
     "Some unrecognized files were retained.": "已保留部分無法識別的檔案。",
     "Structured cells are unavailable for this candidate.": "此候選結果暫未提供結構化儲存格。",
@@ -5824,6 +5822,14 @@
     "The exact bookmark location could not be found.": "無法找到書籤的確切位置。",
     "Skill installation blocked": "技能安裝受阻",
     "Manage local skills": "管理本地技能",
-    "Local conflict": "本機衝突"
+    "Local conflict": "本機衝突",
+    "Attempted {{completed}} / {{total}} pages": "已嘗試 {{completed}} / {{total}} 頁",
+    "Extracted {{completed}} / {{total}} pages": "已擷取 {{completed}} / {{total}} 頁",
+    "PDF analysis is blocked": "PDF 分析已受阻",
+    "A previous PDF task could not finish cleanup. Analyze again to retry cleanup. If this persists, restart Open Science and check for updates.": "先前的 PDF 工作未能完成清理。請再次分析以重試清理。如果問題持續發生，請重新啟動 Open Science 並檢查更新。",
+    "PDF analysis could not continue. Check the local model installation and try again.": "PDF 分析無法繼續。請檢查本機模型的安裝情況，然後重試。",
+    "Extraction progress": "擷取進度",
+    "Remaining pages": "剩餘頁面",
+    "Pages not yet attempted: {{remaining}}": "尚未嘗試的頁數：{{remaining}}"
   }
 }

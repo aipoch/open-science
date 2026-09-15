@@ -5989,7 +5989,6 @@
     "Removing models keeps your documents and existing parsing results.": "La suppression des modèles conserve vos documents et les résultats d’analyse existants.",
     "Model in use. Removal is available when parsing finishes.": "Le modèle est en cours d’utilisation. Il pourra être supprimé une fois l’analyse terminée.",
     "Candidate table": "Tableau candidat",
-    "Check local model installation and try again.": "Vérifiez l’installation du modèle local et réessayez.",
     "Clear all PDF parsing results": "Effacer tous les résultats d’analyse PDF",
     "Clear all PDF parsing results?": "Effacer tous les résultats d’analyse PDF ?",
     "Table notes": "Notes du tableau",
@@ -6002,7 +6001,6 @@
     "PDF extraction is unavailable": "Extraction PDF indisponible",
     "PDF extraction progress": "Progression de l’extraction PDF",
     "PDF parsing results cleared.": "Résultats d’analyse PDF effacés.",
-    "Processed {{completed}} / {{total}} pages": "{{completed}} / {{total}} pages traitées",
     "Show in PDF": "Afficher dans le PDF",
     "Some unrecognized files were retained.": "Certains fichiers non reconnus ont été conservés.",
     "Structured cells are unavailable for this candidate.": "Les cellules structurées ne sont pas disponibles pour ce candidat.",
@@ -6154,6 +6152,14 @@
     "The exact bookmark location could not be found.": "Impossible de retrouver l’emplacement exact du signet.",
     "Skill installation blocked": "Installation de la compétence bloquée",
     "Manage local skills": "Gérer les compétences locales",
-    "Local conflict": "Conflit local"
+    "Local conflict": "Conflit local",
+    "Attempted {{completed}} / {{total}} pages": "Pages tentées : {{completed}} / {{total}}",
+    "Extracted {{completed}} / {{total}} pages": "Pages extraites : {{completed}} / {{total}}",
+    "PDF analysis is blocked": "L’analyse du PDF est bloquée",
+    "A previous PDF task could not finish cleanup. Analyze again to retry cleanup. If this persists, restart Open Science and check for updates.": "Une tâche PDF précédente n’a pas pu terminer le nettoyage. Relancez l’analyse pour réessayer le nettoyage. Si le problème persiste, redémarrez Open Science et recherchez des mises à jour.",
+    "PDF analysis could not continue. Check the local model installation and try again.": "L’analyse du PDF n’a pas pu continuer. Vérifiez l’installation du modèle local et réessayez.",
+    "Extraction progress": "Progression de l’extraction",
+    "Remaining pages": "Pages restantes",
+    "Pages not yet attempted: {{remaining}}": "Pages pas encore tentées : {{remaining}}"
   }
 }

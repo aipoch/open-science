@@ -5665,7 +5665,6 @@
     "Removing models keeps your documents and existing parsing results.": "모델을 제거해도 문서와 기존 분석 결과는 유지됩니다.",
     "Model in use. Removal is available when parsing finishes.": "모델을 사용 중입니다. 분석이 완료되면 제거할 수 있습니다.",
     "Candidate table": "표 후보",
-    "Check local model installation and try again.": "로컬 모델 설치를 확인하고 다시 시도하세요.",
     "Clear all PDF parsing results": "모든 PDF 분석 결과 지우기",
     "Clear all PDF parsing results?": "모든 PDF 분석 결과를 지울까요?",
     "Table notes": "표 주석",
@@ -5678,7 +5677,6 @@
     "PDF extraction is unavailable": "PDF 추출을 사용할 수 없음",
     "PDF extraction progress": "PDF 추출 진행률",
     "PDF parsing results cleared.": "PDF 분석 결과를 지웠습니다.",
-    "Processed {{completed}} / {{total}} pages": "{{completed}} / {{total}}페이지 처리됨",
     "Show in PDF": "PDF에서 보기",
     "Some unrecognized files were retained.": "인식할 수 없는 일부 파일을 보존했습니다.",
     "Structured cells are unavailable for this candidate.": "이 후보의 구조화된 셀을 사용할 수 없습니다.",
@@ -5822,6 +5820,14 @@
     "The exact bookmark location could not be found.": "북마크의 정확한 위치를 찾을 수 없습니다.",
     "Skill installation blocked": "스킬 설치가 차단됨",
     "Manage local skills": "로컬 스킬 관리",
-    "Local conflict": "로컬 충돌"
+    "Local conflict": "로컬 충돌",
+    "Attempted {{completed}} / {{total}} pages": "시도한 페이지: {{completed}} / {{total}}",
+    "Extracted {{completed}} / {{total}} pages": "추출한 페이지: {{completed}} / {{total}}",
+    "PDF analysis is blocked": "PDF 분석이 차단되었습니다",
+    "A previous PDF task could not finish cleanup. Analyze again to retry cleanup. If this persists, restart Open Science and check for updates.": "이전 PDF 작업의 정리를 완료하지 못했습니다. 다시 분석하여 정리를 재시도하세요. 문제가 지속되면 Open Science를 다시 시작하고 업데이트를 확인하세요.",
+    "PDF analysis could not continue. Check the local model installation and try again.": "PDF 분석을 계속할 수 없습니다. 로컬 모델 설치 상태를 확인하고 다시 시도하세요.",
+    "Extraction progress": "추출 진행 상황",
+    "Remaining pages": "남은 페이지",
+    "Pages not yet attempted: {{remaining}}": "아직 시도하지 않은 페이지: {{remaining}}"
   }
 }
