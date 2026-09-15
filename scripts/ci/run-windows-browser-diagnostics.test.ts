@@ -279,12 +279,18 @@ it.skipIf(process.platform !== 'win32').each([0, 7])(
 it.skipIf(process.platform !== 'win32')(
   'collects an actual Windows process and TCP sample',
   async () => {
-    vi.mocked(spawn).mockImplementation(actual.spawn)
-    vi.mocked(execFile).mockImplementation(actual.execFile)
+    layout(0)
+    // This smoke checks the native query/schema, not the best-effort sampling deadline.
+    // CIM/NetTCPConnection cold starts can exceed four seconds on shared Windows runners.
+    // Keep the layout alive until the query completes instead of racing a fixed sleep.
+    vi.mocked(execFile).mockImplementation((file, args, options, callback) =>
+      actual.execFile(file, args, { ...options, timeout: 30_000 }, (error, stdout, stderr) => {
+        callback!(error, stdout, stderr)
+        testChild.stdin!.end('finish')
+      })
+    )
     vi.mocked(execFileSync).mockImplementation(actual.execFileSync)
-    const script = join(root, 'native-query.tmp')
-    writeFileSync(script, 'Start-Sleep -Seconds 10')
-    expect(await runWindowsBrowserDiagnostics(script, output)).toBe(0)
+    expect(await runWindowsBrowserDiagnostics('native-query.tmp', output)).toBe(0)
     const sample = records().find((record) => record.status === 'ok')
     expect(sample, JSON.stringify(records())).toMatchObject({
       processes: expect.arrayContaining([
@@ -301,5 +307,5 @@ it.skipIf(process.platform !== 'win32')(
       loopback4178States: expect.any(Array)
     })
   },
-  16_000
+  40_000
 )
