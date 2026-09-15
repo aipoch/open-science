@@ -14,13 +14,13 @@ const PermissionUndoSnackbar = (): React.JSX.Element => (
 )
 
 function SettingsUndoFixture({ open }: { open: boolean }): React.JSX.Element {
-  const portal = useSettingsUndoPortal(
+  const { background, settingsHostRef } = useSettingsUndoPortal(
     <PermissionUndoSnackbarComponent allowsArchiveShortcut={() => true} />
   )
   return (
     <>
-      {portal.background}
-      {open && <div ref={portal.settingsHostRef} />}
+      {background}
+      {open && <div ref={settingsHostRef} />}
     </>
   )
 }
