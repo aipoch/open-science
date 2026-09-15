@@ -118,11 +118,11 @@ function DiffHunk({
             key={index}
             data-diff-kind={removed ? 'removed' : added ? 'added' : 'context'}
             style={{ gridTemplateColumns: `${gutterWidth} minmax(0, 1fr)` }}
-            className={`grid min-w-max border-l-[3px] leading-6 ${removed ? 'border-dashed border-diff-removed-foreground bg-diff-removed-surface' : added ? 'border-diff-added-foreground bg-diff-added-surface' : 'border-transparent'}`}
+            className={`relative grid min-w-max border-l-[3px] leading-6 ${removed ? 'border-transparent bg-diff-removed-surface' : added ? 'border-diff-added-foreground bg-diff-added-surface' : 'border-transparent'}`}
           >
             <span
               aria-hidden="true"
-              className={`select-none border-r border-background/60 pr-3 text-right tabular-nums ${removed ? 'text-diff-removed-foreground' : added ? 'text-diff-added-foreground' : 'text-muted-foreground'}`}
+              className={`select-none border-r border-border/60 pr-3 text-right tabular-nums ${removed ? 'text-diff-removed-foreground' : added ? 'text-diff-added-foreground' : 'text-muted-foreground'}`}
             >
               {removed ? oldNumber : newNumber}
             </span>
@@ -147,6 +147,17 @@ function DiffHunk({
                   ))
                 : line.slice(1) || '\u00a0'}
             </code>
+            {removed ? (
+              <span
+                aria-hidden="true"
+                data-diff-deletion-rail=""
+                className="pointer-events-none absolute inset-y-0 -left-[3px] w-[3px]"
+                style={{
+                  backgroundImage:
+                    'repeating-linear-gradient(45deg, var(--diff-removed-foreground) 0, var(--diff-removed-foreground) 1.5px, transparent 1.5px, transparent 3px)'
+                }}
+              />
+            ) : null}
           </div>
         )
       })}
@@ -166,6 +177,7 @@ export function DiffViewer({
   const parsed = useMemo(() => {
     if (!patch || patch.length > 128 * 1024) return undefined
     try {
+      // parsePatch normalizes zero-length ranges to the next line; do not offset them again.
       const files = parsePatch(patch)
       // A viewer represents exactly one file; never silently discard additional files or bad input.
       return files.length === 1 && files[0].hunks.length ? files[0] : undefined

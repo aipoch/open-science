@@ -48,7 +48,10 @@ describe('DiffViewer', () => {
     const added = container.querySelector('[data-diff-kind="added"]')!
     expect(removed.children[0].textContent).toBe('2')
     expect(added.children[0].textContent).toBe('2')
-    expect(removed.className).toContain('border-dashed')
+    expect(removed.querySelector('[data-diff-deletion-rail]')?.getAttribute('aria-hidden')).toBe(
+      'true'
+    )
+    expect(added.querySelector('[data-diff-deletion-rail]')).toBeNull()
     expect(added.className).toContain('border-diff-added-foreground')
     expect(container.textContent).not.toContain('@@')
     expect(container.querySelector('summary')?.textContent).toContain('+1')
@@ -119,6 +122,21 @@ describe('DiffViewer', () => {
     ).toBe(1)
     await render(patch('', 'new\n'))
     expect(container.querySelector('[data-diff-omitted]')).toBeNull()
+  })
+  it('uses parser-normalized boundaries for zero-length insertion hunks', async () => {
+    await render('--- a\n+++ b\n@@ -0,0 +1,1 @@\n+first\n')
+    expect(container.querySelector('[data-diff-omitted]')).toBeNull()
+    expect(container.querySelector('[data-diff-kind="added"]')?.children[0].textContent).toBe('1')
+
+    await render('--- a\n+++ b\n@@ -3,0 +4,1 @@\n+first\n@@ -8,0 +10,1 @@\n+second\n')
+    expect(
+      [...container.querySelectorAll('[data-diff-omitted]')].map((node) => node.textContent)
+    ).toEqual(['3 unchanged lines omitted', '5 unchanged lines omitted'])
+    expect(
+      [...container.querySelectorAll('[data-diff-kind="added"]')].map(
+        (node) => node.children[0].textContent
+      )
+    ).toEqual(['4', '10'])
   })
   it('escapes content and preserves malformed or multi-file patches without dropping data', async () => {
     await render(patch('', '<img src=x onerror=alert(1)>\n'))

@@ -1197,7 +1197,7 @@ segments. BOM flags and omitted ranges are transient comparison metadata, not pe
 Use `components/diff-viewer.tsx` for a single file's unified patch. Pass `name`, `patch`, and a
 translated `unavailable` explanation; optional `language` overrides the filename extension and
 `defaultOpen` controls initial disclosure. The caller owns requests, loading, errors and mutations.
-The viewer uses a single line-number gutter (old for deletions, new otherwise), a dashed red deletion
+The viewer uses a single line-number gutter (old for deletions, new otherwise), a diagonally hatched red deletion
 rail and solid green addition rail, existing light/dark diff tokens, and
 optional lazy syntax highlighting. Unknown languages and highlighting failures retain source text.
 Malformed or oversized patches fall back to selectable raw text; absent patches show the caller's
