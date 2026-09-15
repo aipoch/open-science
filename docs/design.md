@@ -1191,3 +1191,16 @@ timeout and temporarily unavailable storage offer a direct manual retry through 
 capacity failures explain the limit and return to version preview. Raw internal errors are not displayed.
 Visible CR/LF/CRLF labels and trailing-newline/BOM summaries clarify format changes without changing raw
 segments. BOM flags and omitted ranges are transient comparison metadata, not persisted version fields.
+
+### Shared source diff viewer
+
+Use `components/diff-viewer.tsx` for a single file's unified patch. Pass `name`, `patch`, and a
+translated `unavailable` explanation; optional `language` overrides the filename extension and
+`defaultOpen` controls initial disclosure. The caller owns requests, loading, errors and mutations.
+The viewer uses a single line-number gutter (old for deletions, new otherwise), a dashed red deletion
+rail and solid green addition rail, existing light/dark diff tokens, and
+optional lazy syntax highlighting. Unknown languages and highlighting failures retain source text.
+Malformed or oversized patches fall back to selectable raw text; absent patches show the caller's
+explanation. Muted separators count omitted unchanged lines before and between hunks; they have no expansion
+control because the patch does not contain those lines. Do not infer a trailing omission count. Horizontal scrolling stays inside the viewer. Semantic Markdown version comparison
+continues to use its existing specialized presentation.
