@@ -1776,6 +1776,16 @@ class NotebookLocalRpcServer {
         writeJson(response, 401, { error: 'Invalid notebook RPC token.' })
         return
       }
+      // A session capability can outlive its turn. Snapshot before reading the body so a
+      // slow request cannot acquire a later turn's authority after cleanup has returned.
+      const initialSessionBinding = this.sessionRpcCapabilities.get(bearerToken)
+      const initialSessionId = initialSessionBinding
+        ? (this.sessionAliases.get(initialSessionBinding.sessionId) ??
+          initialSessionBinding.sessionId)
+        : undefined
+      const initialTurn = initialSessionId
+        ? this.activeArtifactTurnBindings.get(initialSessionId)
+        : undefined
       let payload: unknown
       try {
         if (artifactCapability) {
@@ -1825,6 +1835,9 @@ class NotebookLocalRpcServer {
             const sessionId =
               this.sessionAliases.get(sessionBinding.sessionId) ?? sessionBinding.sessionId
             const binding = this.activeArtifactTurnBindings.get(sessionId)
+            if (sessionId !== initialSessionId || binding !== initialTurn) {
+              throw new RpcHttpError(409, 'Notebook execution turn ended before request admission.')
+            }
             if (binding) {
               activeRequest.foregroundTurn = {
                 sessionId,

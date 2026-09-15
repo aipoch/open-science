@@ -159,6 +159,99 @@ describe('notebook local RPC server', () => {
     }
   })
 
+  it.each(
+    (['execute', 'runCell', 'executeControl', 'executeShell'] as const).flatMap((method) =>
+      (['ended', 'replaced', 'active'] as const).map((turn) => ({ method, turn }))
+    )
+  )('scopes a slow $method body to its $turn turn', async ({ method, turn }) => {
+    const root = await createStorageRoot()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project',
+      repository: new NotebookRunRepository(root)
+    })
+    const dispatch = vi.spyOn(service, method).mockImplementation(async () => {
+      throw new Error('Execution from the ended turn reached the runtime.')
+    })
+    const server = new NotebookLocalRpcServer(service, { transport: 'tcp' })
+    const connection = await server.issueSessionConnection(
+      'session-1',
+      'default-project',
+      'root-frame-session-1'
+    )
+    const binding = {
+      ownerExecutionId: 'turn-1',
+      projectId: 'default-project',
+      provenanceContext: {
+        rootFrameId: 'root-frame-session-1',
+        agentFrameId: 'root-frame-session-1',
+        messageBranchId: 'branch-1',
+        runtimeSegmentId: 'runtime-1',
+        promptMessageId: 'prompt-1'
+      }
+    }
+    server.setArtifactTurnBinding('session-1', binding)
+    // Observe Node's existing HTTP request event, as the partial-body shutdown tests do.
+    const underlying = (server as unknown as { server?: Server }).server
+    if (!underlying) throw new Error('Expected the local RPC server to be listening.')
+    const accepted = once(underlying, 'request')
+    const payload = JSON.stringify({
+      method,
+      params: {
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        ...(method === 'executeShell'
+          ? { command: 'echo hi' }
+          : method === 'runCell'
+            ? { cellId: 'cell-1' }
+            : { code: '1' })
+      }
+    })
+    let request!: ClientRequest
+    const outcome = new Promise<number | Error>((resolve) => {
+      request = httpRequest(
+        connection.endpoint,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json',
+            'content-length': Buffer.byteLength(payload)
+          }
+        },
+        (response) => {
+          response.resume()
+          resolve(response.statusCode ?? 500)
+        }
+      )
+      request.once('error', resolve)
+    })
+    try {
+      request.write(payload.slice(0, -1))
+      await accepted
+      if (turn === 'ended') await server.clearArtifactTurnBinding('session-1', 'turn-1')
+      if (turn === 'replaced') {
+        server.setArtifactTurnBinding('session-1', { ...binding, ownerExecutionId: 'turn-2' })
+      }
+      request.end(payload.slice(-1))
+      const status = await outcome
+      if (turn === 'active') {
+        expect(dispatch).toHaveBeenCalledTimes(1)
+        expect(status).toBe(500)
+      } else {
+        expect(dispatch).not.toHaveBeenCalled()
+        expect(status).toBe(409)
+      }
+    } finally {
+      request.destroy()
+      await outcome
+      connection.release?.()
+      await server.close()
+      await service.dispose()
+    }
+  })
+
   it.each([
     'http-disconnect',
     'turn-ended',
@@ -2267,17 +2360,24 @@ describe('notebook local RPC server', () => {
       }
     })
     const connection = await server.issuePlanConnection('session-1', 'project-1')
-    const bindings = (
-      server as unknown as {
-        sessionRpcCapabilities: Map<string, unknown>
-      }
-    ).sessionRpcCapabilities
+    const lifecycle = server as unknown as {
+      sessionRpcCapabilities: Map<string, unknown>
+      serverLifecycle?: { activeRequests: Set<{ bodyComplete: boolean }> }
+    }
+    const bindings = lifecycle.sessionRpcCapabilities
     const getBinding = bindings.get.bind(bindings)
     let request: Promise<Response> | undefined
     let close: Promise<void> | undefined
     vi.spyOn(bindings, 'get').mockImplementation((token) => {
       const binding = getBinding(token)
-      if (token === connection.token && !close) close = server.close()
+      // Exercise admission after a complete body, not the earlier authentication snapshot.
+      if (
+        token === connection.token &&
+        !close &&
+        [...(lifecycle.serverLifecycle?.activeRequests ?? [])].some((active) => active.bodyComplete)
+      ) {
+        close = server.close()
+      }
       return binding
     })
 
