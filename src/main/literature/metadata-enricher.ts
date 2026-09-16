@@ -376,16 +376,16 @@ const mergePubmedMetadata = (
       language: summary.lang?.[0],
       author: summary.authors?.map(({ name, authtype }) => {
         if (authtype === 'CollectiveAuthor') return { name }
-        // ESummary personal names use "surname initials [suffix]", not Crossref's
-        // separate family/given fields. Match from the end to retain surname particles.
-        const match = /^(.*?)\s+([A-Z]+)(?:\s+(Jr|Sr|II|III|IV))?$/u.exec(name.trim())
+        // Without a dedicated suffix field, splitting these names would turn Jr/III
+        // into given-name initials in citations. Retain the original representation.
+        if (/\s+(?:Jr|Sr|II|III|IV)\.?$/iu.test(name.trim())) return { family: name }
+        // ESummary personal names use "surname initials", not Crossref's separate
+        // family/given fields. Keep compound surnames and surname particles intact.
+        const match = /^(.*?)\s+([A-Z]+)$/u.exec(name.trim())
         if (!match) return { family: name }
         return {
           family: match[1],
-          // Keep suffixes with the given-name text, as the existing NBIB adapter does.
-          given:
-            [...match[2]].map((initial) => `${initial}.`).join(' ') +
-            (match[3] ? ` ${match[3]}` : '')
+          given: [...match[2]].map((initial) => `${initial}.`).join(' ')
         }
       }),
       issued: parts ? { 'date-parts': [[...parts]] } : undefined

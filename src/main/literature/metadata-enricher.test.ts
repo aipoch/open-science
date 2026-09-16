@@ -78,8 +78,6 @@ describe('LiteratureMetadataEnricher', () => {
     ['de la Cruz AB', 'de la Cruz', 'A. B.'],
     ["O'Neill JP", "O'Neill", 'J. P.'],
     ['García-López MA', 'García-López', 'M. A.'],
-    ['de Azevedo WF Jr', 'de Azevedo', 'W. F. Jr'],
-    ['Smith AB III', 'Smith', 'A. B. III'],
     ['  Wang X  ', 'Wang', 'X.'],
     ['Cher', 'Cher', ''],
     ['李小明', '李小明', ''],
@@ -95,6 +93,69 @@ describe('LiteratureMetadataEnricher', () => {
       authors: [{ name: 'Study Group ABC', authtype: 'CollectiveAuthor' }]
     })
     expect(toCslItem('test', merged.item).author).toEqual([{ literal: 'Study Group ABC' }])
+  })
+
+  it.each([
+    'de Azevedo WF Jr',
+    'Smith AB Sr',
+    'Smith AB II',
+    'Smith AB III',
+    'Smith AB IV',
+    'Smith AB Jr.',
+    'Smith AB jr',
+    ' Smith AB III '
+  ])('retains existing fields and citation output for suffix names: %s', async (name) => {
+    const merged = mergePubmedMetadata(item, {
+      uid: '12345678',
+      pubdate: '2019',
+      authors: [{ name }]
+    }).item
+    expect(merged.creators).toMatchObject([
+      { familyName: name.trim(), givenName: '', nameMode: 'person' }
+    ])
+    const previous = {
+      ...merged,
+      creators: [
+        {
+          creatorType: 'author',
+          nameMode: 'person' as const,
+          familyName: name.trim(),
+          givenName: ''
+        }
+      ]
+    }
+    const formatter = new LiteratureCitationFormatter()
+    for (const style of ['apa', 'vancouver'] as const) {
+      const [actual] = await formatter.formatReferences(
+        [{ id: 'suffix', item: merged }],
+        style,
+        'en-US'
+      )
+      const [before] = await formatter.formatReferences(
+        [{ id: 'suffix', item: previous }],
+        style,
+        'en-US'
+      )
+      expect(actual).toEqual(before)
+    }
+  })
+
+  it.each([
+    ['Wang X', '(Wang, 2019)', 'Wang, X.'],
+    ['Zhang XY', '(Zhang, 2019)', 'Zhang, X. Y.']
+  ])('formats ordinary initials correctly: %s', async (name, inText, reference) => {
+    const merged = mergePubmedMetadata(item, {
+      uid: '12345678',
+      pubdate: '2019',
+      authors: [{ name }]
+    }).item
+    const [formatted] = await new LiteratureCitationFormatter().formatReferences(
+      [{ id: 'initials', item: merged }],
+      'apa',
+      'en-US'
+    )
+    expect(formatted.inText).toBe(inText)
+    expect(formatted.reference).toContain(reference)
   })
 
   it('keeps existing full author names unless replacement is explicitly selected', () => {
