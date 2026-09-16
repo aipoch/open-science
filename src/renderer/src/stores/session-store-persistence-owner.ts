@@ -1052,7 +1052,13 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
         // receipt must reconcile the conversation too, not just its revision.
         const merged = mergeNewerPersistedSessionByIdentity(current, session)
         projected = projectDurablePlanAuthority(
-          { ...current, messages: merged.messages, conversationGraph: merged.conversationGraph },
+          {
+            ...current,
+            messages: merged.messages,
+            activities: merged.activities?.map(hydrateToolActivity),
+            activityGroups: merged.activityGroups,
+            conversationGraph: merged.conversationGraph
+          },
           session
         )
       } else if (current === source && !preserveLocalBranch) {

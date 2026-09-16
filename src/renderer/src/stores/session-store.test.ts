@@ -5334,6 +5334,64 @@ describe('session store', () => {
     expect(toPersistedSession(session).activityGroups).toEqual(session.activityGroups)
   })
 
+  it.each([false, true])(
+    'projects tool results and groups from a delayed save receipt (echo first: %s)',
+    (echoFirst) => {
+      const store = useSessionStore.getState()
+      store.appendUserMessage({ sessionId: 'transport-session-1', content: 'Query the connector' })
+      store.beginActivityGroup('transport-session-1', 'group-call-1', 'Query references')
+      store.upsertToolActivity({
+        sessionId: 'transport-session-1',
+        toolCallId: 'tool-connector-1',
+        eventId: 'event-start',
+        toolKind: 'read',
+        status: 'in_progress'
+      })
+      const source = useSessionStore.getState().sessions[0]
+      const pending = toPersistedSession(source)
+      store.upsertToolActivity({
+        sessionId: source.id,
+        toolCallId: 'tool-connector-1',
+        eventId: 'event-end',
+        status: 'completed',
+        rawOutput: { references: ['paper-1'] }
+      })
+      store.completeActivityGroup(source.id)
+      const durable = { ...toPersistedSession(useSessionStore.getState().sessions[0]), revision: 5 }
+      store.hydrateSessions([{ ...pending, revision: 4 }])
+      if (echoFirst)
+        store.applyDurableSessionProjection({
+          source: useSessionStore.getState().sessions[0],
+          session: durable,
+          mode: 'archive-authority'
+        })
+      store.applyDurableSessionProjection({ source, session: durable })
+
+      const projected = useSessionStore.getState().sessions[0]
+      expect(projected.activities).toEqual([
+        expect.objectContaining({
+          id: 'tool-connector-1',
+          activityGroupId: 'group-call-1',
+          status: 'completed',
+          eventIds: ['event-start', 'event-end'],
+          rawOutput: { references: ['paper-1'] }
+        })
+      ])
+      expect(projected.activityGroups).toEqual([
+        expect.objectContaining({
+          id: 'group-call-1',
+          activityIds: ['tool-connector-1'],
+          completedAt: durable.activityGroups![0].completedAt
+        })
+      ])
+      const saved = toPersistedSession(projected)
+      expect(saved.conversationGraph?.activities).toEqual(durable.conversationGraph?.activities)
+      expect(saved.conversationGraph?.activityGroups).toEqual(
+        durable.conversationGraph?.activityGroups
+      )
+    }
+  )
+
   it('keeps grouped activities persistable after a newer Task completion without the group', () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',
