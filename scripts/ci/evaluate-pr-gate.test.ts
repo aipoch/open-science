@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { classifyChanges, prGateStage } from './classify-pr-changes.mjs'
+import { classifyChanges } from './classify-pr-changes.mjs'
 import { evaluatePrGate } from './evaluate-pr-gate.mjs'
 
 describe('PR Gate aggregation', () => {
@@ -279,110 +279,44 @@ describe('PR Gate aggregation', () => {
   })
 })
 
-describe('merge queue stage boundaries', () => {
+describe('selected platform checks remain mandatory', () => {
   const plan = classifyChanges([{ path: 'package.json', status: 'modified' }])
-  const deferred = ['linux_runtime', 'windows_core', 'macos_e2e', 'windows_e2e']
-  const conclusions = Object.fromEntries([
-    ['preflight', 'success'],
-    ...plan.bundles.map((bundle) => [bundle, deferred.includes(bundle) ? 'skipped' : 'success'])
-  ])
-
-  it.each([
-    ['pull_request', 'true', 'pr'],
-    ['pull_request', undefined, 'full'],
-    ['pull_request', 'false', 'full'],
-    ['pull_request_target', 'true', 'full'],
-    ['merge_group', 'true', 'full'],
-    ['merge_group', undefined, 'full'],
-    ['workflow_dispatch', 'true', 'full'],
-    ['schedule', 'true', 'full']
-  ])('resolves %s with rollout %s to %s', (event, enabled, expected) => {
-    expect(prGateStage({ EVENT_NAME: event, PR_GATE_MERGE_QUEUE_ENABLED: enabled })).toBe(expected)
-  })
-
-  it('defers only platform bundles while keeping the full impact plan', () => {
-    const result = evaluatePrGate(plan, conclusions, {
-      executionMode: 'bundles',
-      executionStage: 'pr'
-    })
-    expect(result.ok).toBe(true)
-    expect(result.deferredExecutions).toEqual(deferred)
-    expect(result.selectedLanes).toEqual(plan.lanes)
-    expect(evaluatePrGate(plan, conclusions, { executionMode: 'bundles' }).ok).toBe(false)
-  })
-
-  it.each(['skipped', 'cancelled', 'failure', undefined])(
-    'requires PR unit tests: %s',
-    (conclusion) => {
-      expect(
-        evaluatePrGate(
-          plan,
-          { ...conclusions, unit: conclusion },
-          {
-            executionMode: 'bundles',
-            executionStage: 'pr'
-          }
-        ).ok
-      ).toBe(false)
+  it.each(['pull_request', 'merge_group'])(
+    'does not let retired deferral flags bypass %s checks',
+    (event) => {
+      const run = spawnSync(process.execPath, [resolve('scripts/ci/evaluate-pr-gate.mjs')], {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          EVENT_NAME: event,
+          PR_GATE_MERGE_QUEUE_ENABLED: 'true',
+          PR_GATE_STAGE: 'pr',
+          PR_GATE_EXECUTION_MODE: 'bundles',
+          PR_GATE_PLAN: JSON.stringify(plan),
+          PR_GATE_NEEDS: JSON.stringify(
+            Object.fromEntries(
+              ['preflight', ...plan.bundles].map((name) => [
+                name,
+                { result: name === 'macos_e2e' ? 'skipped' : 'success' }
+              ])
+            )
+          ),
+          GITHUB_STEP_SUMMARY: ''
+        }
+      })
+      expect(run.status).toBe(1)
+      expect(run.stdout).toContain('macos_e2e')
     }
   )
-
-  it.each(['cancelled', 'failure', undefined])(
-    'does not hide unexpected deferred results: %s',
-    (conclusion) => {
-      expect(
-        evaluatePrGate(
-          plan,
-          { ...conclusions, macos_e2e: conclusion },
-          {
-            executionMode: 'bundles',
-            executionStage: 'pr'
-          }
-        ).ok
-      ).toBe(false)
-    }
-  )
-
-  it('reports deferred work without claiming native execution on the PR', () => {
-    const run = spawnSync(process.execPath, [resolve('scripts/ci/evaluate-pr-gate.mjs')], {
-      encoding: 'utf8',
-      env: {
-        ...process.env,
-        EVENT_NAME: 'pull_request',
-        PR_GATE_MERGE_QUEUE_ENABLED: 'true',
-        PR_GATE_STAGE: 'pr',
-        PR_GATE_EXECUTION_MODE: 'bundles',
-        PR_GATE_PLAN: JSON.stringify(plan),
-        PR_GATE_NEEDS: JSON.stringify(
-          Object.fromEntries(Object.entries(conclusions).map(([key, result]) => [key, { result }]))
+  it('rejects the retired coverage bundle instead of silently accepting it', () => {
+    expect(
+      evaluatePrGate(
+        { ...plan, bundles: [...plan.bundles, 'coverage_macos'] },
+        Object.fromEntries(
+          ['preflight', ...plan.bundles, 'coverage_macos'].map((name) => [name, 'success'])
         ),
-        GITHUB_STEP_SUMMARY: ''
-      }
-    })
-    expect(run.status, run.stderr).toBe(0)
-    expect(run.stdout).toContain(
-      'Deferred to merge queue: linux_runtime, windows_core, macos_e2e, windows_e2e'
-    )
-    expect(run.stdout).toContain('portable PR feedback')
-  })
-
-  it('rejects PR-only deferral on a queue SHA even with the rollout enabled', () => {
-    const run = spawnSync(process.execPath, [resolve('scripts/ci/evaluate-pr-gate.mjs')], {
-      encoding: 'utf8',
-      env: {
-        ...process.env,
-        EVENT_NAME: 'merge_group',
-        PR_GATE_MERGE_QUEUE_ENABLED: 'true',
-        PR_GATE_STAGE: 'pr',
-        PR_GATE_EXECUTION_MODE: 'bundles',
-        PR_GATE_PLAN: JSON.stringify(plan),
-        PR_GATE_NEEDS: JSON.stringify(
-          Object.fromEntries(Object.entries(conclusions).map(([key, result]) => [key, { result }]))
-        ),
-        GITHUB_STEP_SUMMARY: ''
-      }
-    })
-    expect(run.status).toBe(1)
-    expect(run.stderr).toContain('PR deferral is not enabled for this event')
+        { executionMode: 'bundles' }
+      ).ok
+    ).toBe(false)
   })
 })

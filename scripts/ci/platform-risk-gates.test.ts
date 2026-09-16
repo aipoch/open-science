@@ -194,3 +194,37 @@ it('does not give old PR workflows a smoke lane they cannot execute', () => {
     expect(macosGroupsForPlan(plan)).toHaveLength(policy ? 1 : 4)
   }
 })
+
+it.each([
+  'src/main/locale/main-process-messages.ts',
+  'src/main/connectors/descriptors/genes-ontology.ts'
+])(
+  'keeps known non-native main changes on short Mac while retaining Windows business coverage: %s',
+  (path) => {
+    const { plan } = runModuleImpactAuthorityCli(
+      ['--base', 'a'.repeat(40), '--head', 'b'.repeat(40)],
+      { EVENT_NAME: 'pull_request', PR_GATE_PLATFORM_POLICY: 'risk-v1' },
+      { execute: () => Buffer.from(`M\0${path}\0`), write: () => undefined }
+    )
+    expect(plan.macosProfile).toBe('smoke')
+    expect(plan.bundles).toContain('windows_e2e')
+    expect(macosGroupsForPlan(plan)).toEqual(['journeys'])
+  }
+)
+
+it.each([
+  'src/main/new-native-helper.ts',
+  'src/main/permission-grants/registry.ts',
+  'src/main/storage/data-path.ts',
+  'src/main/acp/runtime.ts',
+  'src/main/menu.ts',
+  'src/main/process-tree.ts',
+  'src/main/net/network-info.ts'
+])('keeps unowned main code and native/security boundaries expanded: %s', (path) => {
+  const { plan } = runModuleImpactAuthorityCli(
+    ['--base', 'a'.repeat(40), '--head', 'b'.repeat(40)],
+    { EVENT_NAME: 'merge_group', PR_GATE_PLATFORM_POLICY: 'risk-v1' },
+    { execute: () => Buffer.from(`M\0${path}\0`), write: () => undefined }
+  )
+  expect(plan.macosProfile).toBe('expanded')
+})

@@ -205,9 +205,29 @@ function escapeHtml(value) {
 export function platformExecutionPlan(plan, changes, event) {
   if (!['pull_request', 'merge_group'].includes(event)) return plan
   const paths = changes.flatMap(({ path, previousPath }) => [path, previousPath].filter(Boolean))
+  const criticalDesktopPaths = defaultManifest.rules.find(
+    ({ id }) => id === 'critical_desktop_runtime'
+  ).paths
+  const nativeMainPaths = [
+    'src/main/*shell*.ts',
+    'src/main/*process*.ts',
+    'src/main/menu*.ts',
+    'src/main/shortcut*.ts',
+    'src/main/native*.ts',
+    'src/main/protocol*.ts',
+    'src/main/file-save*.ts',
+    'src/main/net/**',
+    'src/main/platform/**',
+    'src/main/startup/**',
+    'src/main/app*.ts'
+  ]
   const sensitive =
     paths.some((path) =>
-      /^(src\/(main|preload)\/|src\/shared\/(ipc|notebook|shell|runtime|window|keyboard|shortcut|sandbox|native)|packages\/(notebook-network-sandbox|process-tree-native)\/|patches\/|resources\/|build\/|scripts\/|e2e\/|package(?:-lock)?\.json$|electron|playwright|tsconfig|vitest|vite\.|\.nvmrc$|\.github\/)/.test(
+      [...criticalDesktopPaths, ...nativeMainPaths].some((pattern) => matchesPath(path, pattern))
+    ) ||
+    (plan.mode === 'full' && paths.some((path) => path.startsWith('src/main/'))) ||
+    paths.some((path) =>
+      /^(src\/preload\/|src\/shared\/(ipc|notebook|shell|runtime|window|keyboard|shortcut|sandbox|native)|packages\/(notebook-network-sandbox|process-tree-native)\/|patches\/|resources\/|build\/|scripts\/|e2e\/|package(?:-lock)?\.json$|electron|playwright|tsconfig|vitest|vite\.|\.nvmrc$|\.github\/)/.test(
         path
       )
     ) ||
@@ -262,21 +282,6 @@ export function macosGroupsForPlan(plan) {
   return Object.entries(groups)
     .filter(([, lanes]) => lanes.some((lane) => plan.lanes.includes(lane)))
     .map(([group]) => group)
-}
-
-// Roll out PR deferral only after the repository requires merge queue. Missing/old trusted
-// classifiers retain full execution. Queue and manual events always validate every selected bundle.
-export function prGateStage(environment = {}) {
-  return environment.EVENT_NAME === 'pull_request' &&
-    environment.PR_GATE_MERGE_QUEUE_ENABLED === 'true'
-    ? 'pr'
-    : 'full'
-}
-
-export function deferredPrGateBundles(stage) {
-  if (stage === 'full') return []
-  if (stage !== 'pr') throw new Error(`Unsupported PR Gate stage: ${stage}`)
-  return ['linux_runtime', 'windows_core', 'macos_e2e', 'windows_e2e']
 }
 
 export function toGitHubOutputPlan(plan) {

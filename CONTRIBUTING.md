@@ -330,17 +330,22 @@ ci(review): unify automated AI reviews
 - PR commits retain policy/CI Integrity, CodeQL, AI review, static checks and portable tests.
   Desktop changes run the main Windows business journeys. Ordinary changes run one short macOS
   core group (project creation/relaunch, persisted theme and window presentation), instead of the
-  four-group Mac matrix. Electron main/preload, native dependencies, Notebook runtime, build/CI
-  inputs and unknown/destructive changes retain expanded affected Mac coverage.
+  four-group Mac matrix. The short job installs, builds and tests on one Mac runner without web
+  build or snapshot transfer. Known non-native main-process descriptors and locale changes use
+  this same short path. Critical desktop paths from the impact manifest, preload, windows,
+  shortcuts, processes, native dependencies, Notebook runtime, build/CI inputs and unknown main
+  ownership or destructive changes retain expanded affected Mac coverage.
 - Merge queue keeps concurrency two and validates the combined revision with Linux/portable
   checks and the short Mac core. Ordinary changes do not repeat Windows business E2E in queue;
   platform-sensitive changes retain their selected platform checks. Selected native module
-  coverage remains blocking. The legacy `PR_GATE_MERGE_QUEUE_ENABLED` blanket-deferral switch
-  is not used by new risk-based plans; do not enable it as a rollout step.
+  coverage remains blocking. The obsolete blanket PR-deferral switch, stage output and separate
+  legacy coverage job have been removed; selected bundles must always pass.
 - New plans carry `macosProfile` (`smoke` or `expanded`). Trusted old plans without this field
   retain their existing execution and complete fallback matrix. Workflows opt into the new plan
   with `PR_GATE_PLATFORM_POLICY=risk-v1`; old workflow revisions receive the full legacy plan. Manual focused runs retain their
-  explicitly selected suites. This compatibility is limited to CI metadata, not application data.
+  explicitly selected suites. The `macos-smoke` manual choice exercises the actual short Mac job
+  without unrelated platform suites. Plans requesting the retired `coverage_macos` bundle fail
+  validation; old completed runs need no migration. This compatibility concerns CI metadata only.
 - Nightly packaging, Windows Full Test, supplemental Source Regression, and Runtime Resource Soak
   run daily on `main`, at 01:17, 02:47, 03:37, and 05:23 respectively in Singapore time
   (Asia/Singapore, UTC+8). Unchanged successful revisions are skipped;
