@@ -4181,6 +4181,60 @@ describe('SettingsService: official vendors', () => {
     expect(result.message).toMatch(/no model-list endpoint/i)
   })
 
+  it.each(['opencode', 'claude-code'] as const)(
+    'validates draft and saved OpenCode Go accounts under %s without losing routing headers',
+    async (framework) => {
+      const service = createService()
+      const sessions: string[] = []
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (_input, init) => {
+          const headers = new Headers(init?.headers)
+          const session = headers.get('x-opencode-session')
+          if (!session) {
+            return new Response(
+              JSON.stringify({
+                error: {
+                  message: 'Request is missing x-opencode-session and cannot be routed efficiently.'
+                }
+              }),
+              { status: 400 }
+            )
+          }
+          sessions.push(session)
+          expect(headers.get('user-agent')).toBe('open-science/provider-validation')
+          expect(headers.get('authorization')).toBe('Bearer synthetic-go-key')
+          return new Response('{}')
+        })
+      )
+      await service.setAgentFramework(framework)
+      const draft = {
+        type: 'official' as const,
+        vendorId: 'opencode-go' as const,
+        key: 'synthetic-go-key'
+      }
+      const draftResult = await service.validateProvider({ draft, model: 'kimi-k2.7-code' })
+      expect(draftResult).toMatchObject({ ok: true, category: 'ok' })
+      expect(Boolean(draftResult.frameworkIncompatible)).toBe(framework === 'claude-code')
+
+      const provider = (await service.upsertProvider(draft)).providers.find(
+        (entry) => entry.vendorId === 'opencode-go'
+      )!
+      const result = await service.validateProvider({
+        providerId: provider.id,
+        model: 'kimi-k2.7-code'
+      })
+      expect(result).toMatchObject({ ok: true, category: 'ok', applied: true })
+      const stored = (await repository.getSettings()).providers.find(
+        (entry) => entry.id === provider.id
+      )!
+      expect(stored.lastValidatedAt).toBeGreaterThan(0)
+      expect(stored.lastValidationFailure).toBeUndefined()
+      expect(sessions.length).toBeGreaterThanOrEqual(2)
+      expect(new Set(sessions).size).toBe(sessions.length)
+    }
+  )
+
   it('uses a basic Chat Completions probe outside Codex', async () => {
     const service = createService()
     const fetchMock = vi.fn().mockResolvedValue({ status: 200 })
