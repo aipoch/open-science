@@ -376,3 +376,26 @@ excludes only tests tagged `@capacity`; a three-session body-integrity check rem
 regression suite while forty-session resource profiling runs in Source Regression. Transcript
 scrolling/find correctness stays in the gate. Focused manual Source Regression runs include capacity
 profiling, and callers without an explicit capacity input retain complete coverage.
+
+### CI control-plane approval rollout
+
+CI workflows, local actions, CI scripts, Dependabot configuration and CODEOWNERS itself have
+explicit owners in `.github/CODEOWNERS`. The intended normal path is an approval from one listed
+owner other than the PR author, followed by passing Integrity and PR Gate checks and the merge
+queue. Additional commits invalidate stale approval when the main ruleset enforces that policy.
+Ordinary application files have no CODEOWNERS entry.
+
+Roll this policy out in order:
+
+1. Merge the CI ownership file while retaining the existing protected-control-plane guard.
+2. Enable required code-owner review and stale-approval dismissal in the main ruleset, preserving
+   the required checks, queue and existing bypass configuration. Verify the live ruleset.
+3. Only then replace the unconditional protected-file rejection with native owner authorization;
+   retain Integrity checks for unsafe workflow execution, mutable action references, expanded
+   permissions and spoofed or missing required checks. Verify both PR admission and merge-group
+   validation before considering the migration complete.
+
+Until step 3 lands, editing established protected gate files still requires an explicitly authorized
+maintainer ruleset bypass. GitHub's bypass directly merges the PR; it does not attach an approval to
+carry into a later queue run. Do not enqueue a PR with a known failing required check and expect the
+queue to waive it. Never remove the Integrity `merge_group` trigger while its check is required.
