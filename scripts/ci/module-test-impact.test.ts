@@ -698,3 +698,18 @@ it('uses only declared owner tests to recover colocated implementation ownership
     ).mode
   ).toBe('full')
 })
+
+it.each([
+  [
+    'src/main/connectors/descriptors/genomes-ensembl.ts',
+    'src/main/connectors/descriptors/genomes.test.ts'
+  ],
+  ['src/main/reviewer/correction.ts', 'src/main/reviewer/correction-owner.test.ts']
+])('retains the direct owner/aggregate contract when %s changes', (path, testFile) => {
+  const plan = createAffectedTestPlan([{ path, status: 'modified' }], {
+    status: 'unavailable-manifest-only',
+    testFiles: []
+  })
+  expect(plan.mode).toBe('selective')
+  expect(plan.testFiles).toContain(testFile)
+})

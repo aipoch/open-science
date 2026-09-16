@@ -454,6 +454,7 @@ describe('Reviewer orchestrator architecture', () => {
           'src/main/reviewer/reviewer-fix-loop-owner.test.ts',
           'src/main/reviewer/correction-context.test.ts',
           'src/main/reviewer/correction.test.ts',
+          'src/main/reviewer/correction-owner.test.ts',
           'src/main/reviewer/paged-preview-electron.test.ts',
           'src/main/reviewer/scope.test.ts'
         ],

@@ -273,6 +273,7 @@
           "src/main/reviewer/reviewer-fix-loop-owner.test.ts",
           "src/main/reviewer/correction-context.test.ts",
           "src/main/reviewer/correction.test.ts",
+          "src/main/reviewer/correction-owner.test.ts",
           "src/main/reviewer/paged-preview-electron.test.ts",
           "src/main/reviewer/scope.test.ts"
         ],
@@ -1233,7 +1234,11 @@
       "consumerModules": [],
       "testFiles": {
         "owner": ["src/main/connectors/descriptors/genomes-ensembl.test.ts"],
-        "contract": ["src/main/connectors/registry.test.ts", "src/main/connectors/engine.test.ts"],
+        "contract": [
+          "src/main/connectors/descriptors/genomes.test.ts",
+          "src/main/connectors/registry.test.ts",
+          "src/main/connectors/engine.test.ts"
+        ],
         "consumer": [
           "src/main/connectors/service.test.ts",
           "src/main/connectors/skill-doc.test.ts",
