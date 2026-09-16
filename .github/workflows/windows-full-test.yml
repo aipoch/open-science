@@ -149,6 +149,15 @@ jobs:
           src/main/database/database-null-and-version-bounds.test.ts
           src/main/database/migration-service.test.ts
           src/main/notebook/runtime-service.test.ts
+          src/main/notebook/kernel-executor.test.ts
+          src/main/notebook/windows-repl-termination.integration.test.ts
+          src/main/notebook/kernel-startup-retry.integration.test.ts
+          src/main/agents/completion-gate.execute-control.integration.test.ts
+          scripts/windows-data-reset.test.ts
+          packages/notebook-network-sandbox/src/windows-appcontainer.test.ts
+          src/main/side-chat/runtime-owner.test.ts
+          src/main/skills/registered-helper-catalog.test.ts
+          src/renderer/src/pages/literature/LiteratureLibraryPage.render.test.tsx
           src/main/notebook/shell-process-ownership.test.ts
           src/main/literature/batch-jobs.test.ts
           src/main/notebook/source-file-access-analysis.test.ts

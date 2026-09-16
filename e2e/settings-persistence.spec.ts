@@ -342,6 +342,8 @@ test('persists Russian into the built main-process native quit dialog', async ({
   await testInfo.attach('russian-locale-loaded', { path: screenshot, contentType: 'image/png' })
   page = await app.restart()
   await expect(page.locator('html')).toHaveAttribute('lang', 'ru')
+  const localized = localizedSettingsCases.find((entry) => entry.locale === 'ru')!
+  await expect(page.getByRole('region', { name: localized.projects })).toBeVisible()
   expect(await loadedLocaleChunks(page)).toEqual(['ru'])
   await expect
     .poll(() => app.capturePersistedLocaleNativeQuitDialog())
@@ -370,10 +372,15 @@ test('persists German into the built main-process native quit dialog', async ({ 
 
   page = await app.restart()
   await expect(page.locator('html')).toHaveAttribute('lang', 'de')
+  const localized = localizedSettingsCases.find((entry) => entry.locale === 'de')!
+  await expect(page.getByRole('region', { name: localized.projects })).toBeVisible()
   await expect.poll(() => app.capturePersistedLocaleNativeQuitDialog()).toEqual(expectedDialog)
 })
 
-for (const localized of localizedSettingsCases) {
+// Russian and German restart/renderer checks are combined with their native-dialog journeys above.
+for (const localized of localizedSettingsCases.filter(
+  ({ locale }) => !['ru', 'de'].includes(locale)
+)) {
   test(`persists ${localized.language} after an Electron restart`, async ({ app }) => {
     let page = await app.completeOnboarding()
     await selectLanguage(page, localized.pickerLabel)
