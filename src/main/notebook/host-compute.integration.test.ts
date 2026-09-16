@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -53,6 +53,7 @@ const startStub = async (
     dropAllSubmitResponses?: boolean
     omitSubmitReceipt?: boolean
     rejectSubmit?: boolean
+    jobSnapshots?: Array<Record<string, unknown>>
     structuredSubmitRejection?: boolean
     commandError?: string
   } = {}
@@ -131,6 +132,11 @@ const startStub = async (
         )
         return
       }
+      if (op === 'job_result' && options.jobSnapshots) {
+        const result = options.jobSnapshots.shift()
+        res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ result }))
+        return
+      }
       const result =
         op === 'submit_job'
           ? { job_id: 'job-1', provider_id: 'ssh:x', status: 'submitted' }
@@ -174,6 +180,104 @@ const baseRequest = (
 })
 
 gate('repl kernel host.compute', () => {
+  it('executes shared biomodel submission and saved-result recipes through the real REPL', async () => {
+    const skill = readFileSync(
+      join(__dirname, '../../../resources/skills/remote-compute-ssh/SKILL.md'),
+      'utf8'
+    )
+    const recipe = skill.match(
+      /## API reference \(async jobs\)[\s\S]*?```javascript\n([\s\S]*?)\n```/
+    )?.[1]
+    expect(recipe).toBeDefined()
+    const pending = {
+      job_id: 'job-1',
+      status: 'success',
+      result_final: false,
+      follow_up_delivery: 'pending'
+    }
+    const final = {
+      job_id: 'job-1',
+      status: 'success',
+      result_final: true,
+      follow_up_delivery: 'suppressed',
+      featured_files: ['hpc/job-1/featured/analysis.result']
+    }
+    const stub = await startStub({ jobSnapshots: [pending, final] })
+    const executor = makeExecutor()
+    try {
+      // Fill the documented target/workload placeholders; execute the maintained example itself,
+      // not a second test-owned submission implementation. The RPC endpoint records, never runs, work.
+      const result = await executor.execute(
+        baseRequest({
+          code: recipe!
+            .replaceAll('ssh:<alias>', 'ssh:x')
+            .replace('<one-line intent for the approval card>', 'Analyze a test dataset')
+            .replace('<shell command>', 'python3 analysis.py')
+            .replace('<abs_path>', '/data/reference.dat'),
+          mcpRpcEndpoint: stub.endpoint,
+          mcpRpcToken: 'tok',
+          sessionId: 'session-7',
+          projectId: 'proj-x'
+        })
+      )
+      expect(result.status).toBe('completed')
+      const receipt = result.outputs.find((output) => output.type === 'display')
+      expect(receipt?.type).toBe('display')
+      if (receipt?.type !== 'display') throw new Error('Missing Job receipt')
+      const submitted = JSON.parse(receipt.data['text/plain'] as string)
+      expect(submitted).toMatchObject({
+        job_id: 'job-1',
+        status: 'submitted'
+      })
+      expect(stub.received()).toHaveLength(1)
+      expect(stub.received()[0]?.params).toMatchObject({
+        op: 'submit_job',
+        provider_id: 'ssh:x',
+        command: 'python3 analysis.py',
+        environment: 'protein-gpu',
+        inputs: [{ src: 'in.dat', dst_filename: 'in.dat' }, { remote_path: '/data/reference.dat' }],
+        timeout_seconds: 3600,
+        session_id: 'session-7',
+        project_id: 'proj-x'
+      })
+      const resultRecipe = skill.match(
+        /### Read a saved Job snapshot[\s\S]*?```javascript\n([\s\S]*?)\n```/
+      )?.[1]
+      expect(resultRecipe).toBeDefined()
+      // A remote success is not final until harvest completes. Read the saved receipt in a later
+      // cell using the maintained recipe; never resubmit the scientific workload to retrieve output.
+      for (const expected of [pending, final]) {
+        const snapshot = await executor.execute(
+          baseRequest({
+            code: `const c = host.compute.create('ssh:x'); const savedJobId = ${JSON.stringify(submitted.job_id)};\n${resultRecipe}`,
+            mcpRpcEndpoint: stub.endpoint,
+            mcpRpcToken: 'tok',
+            sessionId: 'session-7',
+            projectId: 'proj-x'
+          })
+        )
+        expect(snapshot.status).toBe('completed')
+        const display = snapshot.outputs.find((output) => output.type === 'display')
+        if (display?.type !== 'display') throw new Error('Missing result snapshot')
+        expect(JSON.parse(display.data['text/plain'] as string)).toEqual(expected)
+      }
+      expect(stub.received().map((request) => request.params?.op)).toEqual([
+        'submit_job',
+        'job_result',
+        'job_result'
+      ])
+      for (const request of stub.received().slice(1)) {
+        expect(request.params).toMatchObject({
+          provider_id: 'ssh:x',
+          job_id: 'job-1'
+        })
+      }
+    } finally {
+      await executor.shutdown()
+      stub.close()
+    }
+  })
+
   it.each(['caught', 'uncaught'])(
     'delivers real callCommand timeout execution uncertainty through %s REPL errors',
     async (mode) => {

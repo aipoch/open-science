@@ -203,6 +203,39 @@ describe('ClaudeCodeSkillMaterializer', () => {
     expect(refreshed).not.toContain('Legacy projection.')
   })
 
+  it('refreshes a cached compute notice without requiring a Skill content or timestamp change', async () => {
+    const configDir = await skillsDir()
+    const skill = {
+      ...(await makeSkill('model-analysis')),
+      category: 'biomodels',
+      compatibility: 'sha256:unchanged',
+      updatedAt: 'v1'
+    }
+    const source = '---\nname: model-analysis\ndescription: Analyze a model.\n---\nRun analysis.'
+    await writeFile(join(skill.sourceDir, 'SKILL.md'), source)
+    const materializer = new ClaudeCodeSkillMaterializer()
+    await materializer.sync(configDir, [skill])
+    const projectedDocument = join(configDir, 'skills', 'os-model-analysis', 'SKILL.md')
+    await chmod(projectedDocument, 0o644)
+    await writeFile(
+      projectedDocument,
+      source.replace(
+        'Run analysis.',
+        '> **Compute environment unavailable in this app.** Stop.\n\nRun analysis.'
+      )
+    )
+
+    await materializer.sync(configDir, [skill])
+
+    const refreshed = await readFile(projectedDocument, 'utf8')
+    expect(refreshed).not.toContain('Compute environment unavailable in this app')
+    expect(refreshed).toContain('remote-compute-ssh')
+    expect(refreshed).toContain('Run analysis.')
+    expect(await readFile(join(skill.sourceDir, 'SKILL.md'), 'utf8')).toBe(source)
+    await materializer.sync(configDir, [skill])
+    expect(await readFile(projectedDocument, 'utf8')).toBe(refreshed)
+  })
+
   it('materializes skill files with no write bits', async () => {
     const configDir = await skillsDir()
     const skill = await makeSkill('delta')
@@ -393,16 +426,24 @@ describe('ClaudeCodeSkillMaterializer', () => {
     }
   }
 
-  it('injects the compute-unavailable notice for a biomodels-category skill, keeping frontmatter first', async () => {
+  it('routes a biomodel Skill to compute discovery, keeping frontmatter first', async () => {
     const configDir = await skillsDir()
     const skill = await makeSkillWithFrontmatter('alphafold2', { category: 'biomodels' })
     await new ClaudeCodeSkillMaterializer().sync(configDir, [skill])
 
     const md = await readFile(join(configDir, 'skills', 'os-alphafold2', 'SKILL.md'), 'utf8')
     expect(md.startsWith('---\n')).toBe(true) // YAML header still first
-    expect(md).toContain('Compute environment unavailable in this app')
+    expect(md).toContain('Compute environment selection')
+    expect(md).toContain(
+      'A verified local CPU/GPU environment is valid unless a remote target is selected or requested'
+    )
+    expect(md).toContain('an empty remote host catalog alone does not block local work')
+    expect(md).toContain('Honor the selected target')
+    expect(md).toContain(
+      'Explaining methods or interpreting existing results does not require this check'
+    )
     // notice sits between the frontmatter and the body heading
-    expect(md.indexOf('Compute environment unavailable')).toBeLessThan(md.indexOf('# Heading'))
+    expect(md.indexOf('Compute environment selection')).toBeLessThan(md.indexOf('# Heading'))
   })
 
   it('injects for a gpu requirement even without a category, and not for a pure skill', async () => {
@@ -416,8 +457,8 @@ describe('ClaudeCodeSkillMaterializer', () => {
       join(configDir, 'skills', 'os-literature-review', 'SKILL.md'),
       'utf8'
     )
-    expect(gpuMd).toContain('Compute environment unavailable in this app')
-    expect(pureMd).not.toContain('Compute environment unavailable in this app')
+    expect(gpuMd).toContain('Compute environment selection')
+    expect(pureMd).not.toContain('Compute environment selection')
   })
 
   it('does not double-inject the notice on a version-bump re-copy', async () => {
@@ -431,7 +472,7 @@ describe('ClaudeCodeSkillMaterializer', () => {
     await materializer.sync(configDir, [{ ...skill, updatedAt: 'v2' }])
 
     const md = await readFile(join(configDir, 'skills', 'os-boltz', 'SKILL.md'), 'utf8')
-    const occurrences = md.split('Compute environment unavailable in this app').length - 1
+    const occurrences = md.split('Compute environment selection').length - 1
     expect(occurrences).toBe(1)
   })
 })

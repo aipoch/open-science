@@ -61,8 +61,10 @@ MAX_JOBS=8 uv pip install --no-deps --no-build-isolation "flash-attn<3"
 # slips ESMC's guard and kills ESMFold2Model import.
 ```
 
-The bundled `esmfold2_gpu` Modal env (remote-compute-modal skill) is the
-canonical, version-pinned recipe.
+Open Science does not bundle an ESMFold2 GPU environment. For remote execution,
+load `remote-compute-ssh` to inspect the selected host. If its environment is missing,
+use `compute-env-setup` to prepare a user- or administrator-run setup plan from the
+recipe above, then validate the environment on the execution target.
 
 **Gotchas:**
 

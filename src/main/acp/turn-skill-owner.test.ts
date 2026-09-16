@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import { codeBuddyFramework, codexFramework, opencodeFramework } from '../agent-framework'
+import { SkillRegistry } from '../skills/registry'
 import { ClaudeCodeSkillMaterializer } from '../skills/materializer'
 import { AcpTurnSkillOwner, followUpPromptText } from './turn-skill-owner'
 
@@ -869,3 +870,67 @@ describe('AcpTurnSkillOwner', () => {
     expect(prepared.skillScopeGuidance).toContain('PUBMED_ROUTE_SENTINEL')
   })
 })
+
+it.each([false, true])(
+  'respects explicit CodeBuddy compute guidance selection (dependencies selected: %s)',
+  async (includeDependencies) => {
+    const root = await mkdtemp(join(tmpdir(), 'biomodel-route-review-'))
+    const materializer = new ClaudeCodeSkillMaterializer()
+    const config = join(root, '.claude')
+    try {
+      const registry = new SkillRegistry(join(process.cwd(), 'resources/skills'))
+      const skills = (await registry.list()).filter((s) =>
+        ['scgpt', 'remote-compute-ssh', 'compute-env-setup'].includes(s.id)
+      )
+      expect(skills).toHaveLength(3)
+      await materializer.sync(config, skills, { directoryLayout: 'agent-facing' })
+      const owner = new AcpTurnSkillOwner({
+        requestSkillsReload: vi.fn(),
+        skills: {
+          needForceLoad: async () => [],
+          namesForIds: async (ids) => ids,
+          catalogForCodeBuddyRoot: async () =>
+            skills.map((s) => ({
+              name: s.name,
+              description: s.description,
+              path: join(config, 'skills', s.name, 'SKILL.md')
+            }))
+        }
+      })
+      const selectedSkillIds = includeDependencies
+        ? ['scgpt', 'remote-compute-ssh', 'compute-env-setup']
+        : ['scgpt']
+      const handle = await owner.authorize({ selectedSkillIds })
+      const prepared = await handle.prepareProvider({
+        frameworkId: 'codebuddy',
+        selectionText: 'Run scGPT embedding',
+        promptText: 'Run scGPT embedding',
+        codebuddy: { root, selectorAvailable: false, selectSkills: async () => [] }
+      })
+      expect(prepared.skillActivityInputs?.map((s) => s.name)).toEqual(selectedSkillIds)
+      expect(prepared.skillScopeGuidance).toContain('load other Skills only when permitted')
+      expect(prepared.skillScopeGuidance).toContain('ask the user to include it or hand off')
+      expect(prepared.skillScopeGuidance).toContain('Do not bypass a disabled loader or allowlist')
+      if (includeDependencies) {
+        expect(prepared.skillScopeGuidance).toContain(
+          '<open_science_loaded_skill name="remote-compute-ssh"'
+        )
+        expect(prepared.skillScopeGuidance).toContain(
+          '<open_science_loaded_skill name="compute-env-setup"'
+        )
+        expect(prepared.skillScopeGuidance).toContain('## API reference (async jobs)')
+        expect(prepared.skillScopeGuidance).toContain('Reuse already-loaded guidance')
+      } else {
+        expect(prepared.skillScopeGuidance).not.toContain(
+          '<open_science_loaded_skill name="remote-compute-ssh"'
+        )
+      }
+      expect(prepared.skillScopeGuidance).toContain('Do not call `mcp__skills__load_skill`')
+      expect(prepared.skillScopeGuidance).toContain('Do not use Notebook `host.skills`')
+      expect(prepared.skillRuntimeAllowlist).toEqual([])
+    } finally {
+      await materializer.sync(config, [], { directoryLayout: 'agent-facing' })
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+)

@@ -138,27 +138,6 @@ describe('Remote Compute Skill document', () => {
     expect(doc).not.toContain('host.files.stageExternalInput')
   })
 
-  it('keeps bundled model-compute examples on the camelCase contract', async () => {
-    const skillsRoot = join(__dirname, '..', '..', '..', 'resources', 'skills')
-    for (const skillId of ['borzoi', 'evo2', 'fair-esm2', 'scgpt']) {
-      const doc = await readFile(join(skillsRoot, skillId, 'SKILL.md'), 'utf8')
-      expect(doc).toContain('submitJob')
-      expect(doc).toContain('dstFilename')
-      expect(doc).toContain('timeoutSeconds')
-      expect(doc).toContain('attachJob')
-      expect(doc).toContain('job_id')
-      expect(doc).toContain('Retain the exact returned `job_id`')
-      expect(doc).toMatch(/\.status\(\)` or `\.result\(\)/u)
-      expect(doc).toContain('non-blocking')
-      expect(doc).toContain('follow-up was `suppressed`')
-      expect(doc).toContain('`committed`')
-      expect(doc).toContain('later analysis turn')
-      expect(doc).not.toMatch(/peek once|query once|result read once|do not poll|never poll/i)
-      expect(doc).not.toContain('wait_for_notification')
-      expect(doc).not.toMatch(/\b(?:submit_job|dst_filename|timeout_seconds|attach_job)\b/)
-    }
-  })
-
   it('keeps the canonical Agent-facing Compute Skill static too', async () => {
     const root = await mkdtemp(join(tmpdir(), 'compute-skill-doc-agent-facing-'))
     roots.push(root)
