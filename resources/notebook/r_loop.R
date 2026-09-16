@@ -890,7 +890,8 @@ capture_environment <- function(execution_context = NULL) {
     description <- suppressWarnings(try(utils::packageDescription(package), silent = TRUE))
     priority <- NULL
     built <- NULL
-    if (!inherits(description, "try-error")) {
+    # packageDescription returns NA (not an error) when metadata is unavailable.
+    if (is.list(description)) {
       if (!is.null(description$Priority)) {
         priority_value <- tolower(description$Priority)
         priority <- if (priority_value %in% c("base", "recommended")) priority_value else "other"
