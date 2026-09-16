@@ -168,6 +168,43 @@ describe('ProviderRuntimeProjectionOwner', () => {
     })
   })
 
+  it.each(['claude-code', 'opencode', 'codex'] as const)(
+    'projects Ark capabilities without changing a saved selection for %s',
+    (frameworkId) => {
+      const owner = new ProviderRuntimeProjectionOwner()
+      const provider: StoredProvider = {
+        id: 'ark',
+        type: 'official',
+        vendorId: 'volcengine',
+        name: 'Ark',
+        model: 'doubao-seed-2-1-pro-260628'
+      }
+      const before = structuredClone(provider)
+      const framework = getAgentFramework(frameworkId)
+      for (const model of [
+        'doubao-seed-2-1-pro-260915',
+        'deepseek-v4-1-flash-260910',
+        'glm-5-3-flash-260828'
+      ]) {
+        const target = owner.resolveRuntimeTarget(provider, { kind: 'required', model }, framework)
+        expect(target).toMatchObject({
+          effectiveModel: model,
+          frameworkCompatible: true,
+          needsChatResponsesBridge: false,
+          needsNativeResponsesCompatibility: frameworkId === 'codex',
+          provider: { supportsImageInput: true, contextWindow: 1_024_000 }
+        })
+      }
+      expect(
+        owner.resolveRuntimeTarget(provider, { kind: 'configured' }, framework).effectiveModel
+      ).toBe('doubao-seed-2-1-pro-260628')
+      expect(provider).toEqual(before)
+      expect(
+        resolveProviderDraft({ type: 'official', vendorId: 'volcengine', key: 'synthetic-key' })
+      ).toMatchObject({ model: 'doubao-seed-2-1-pro-260915' })
+    }
+  )
+
   it.each(['claude-code', 'opencode', 'codex', 'codebuddy'] as const)(
     'projects the SenseNova catalog and preserves a pinned legacy model for %s',
     (frameworkId) => {

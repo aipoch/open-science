@@ -517,7 +517,7 @@ describe('provider registry', () => {
     }
   })
 
-  it('routes Volcengine Ark through all three APIs with a curated Doubao Seed catalog', () => {
+  it('routes Volcengine Ark through all three APIs with a curated chat catalog', () => {
     expect(resolveVendorApiEndpoints('volcengine')).toEqual(['anthropic', 'openai', 'responses'])
     expect(resolveVendorBaseUrl('volcengine')).toBe(
       'https://ark.cn-beijing.volces.com/api/compatible'
@@ -529,9 +529,42 @@ describe('provider registry', () => {
       'https://console.volcengine.com/ark/region:ark+cn-beijing/apikey'
     )
     // Ark's catalog also serves embedding/image/video models the refresh cannot filter out —
-    // so refresh-from-vendor is hidden and the Doubao Seed chat catalog stays curated.
+    // so refresh-from-vendor is hidden and the chat catalog stays curated.
     expect(resolveVendorModelsUrl('volcengine')).toBeUndefined()
-    expect(defaultVendorModel('volcengine')).toBe('doubao-seed-2-1-pro-260628')
+    expect(defaultVendorModel('volcengine')).toBe('doubao-seed-2-1-pro-260915')
+  })
+
+  it.each([
+    ['doubao-seed-2-1-pro-260915', ['minimal', 'low', 'medium', 'high', 'high']],
+    ['deepseek-v4-1-flash-260910', ['none', 'low', 'high', 'max', 'max']],
+    ['glm-5-3-flash-260828', ['low', 'high', 'max', 'max', 'max']]
+  ])('exposes the documented Ark capabilities for %s', (model, slots) => {
+    expect(getOfficialVendorModelIds('volcengine')).toContain(model)
+    expect(resolveModelContextWindow('volcengine', model)).toBe(1_024_000)
+    expect(isVendorModelMultimodal('volcengine', model)).toBe(true)
+    expect(resolveVendorModelApiEndpoints('volcengine', model)).toEqual([
+      'anthropic',
+      'openai',
+      'responses'
+    ])
+    expect(resolveVendorModelReasoningEffort('volcengine', model)).toEqual({
+      supported: true,
+      slots
+    })
+  })
+
+  it('keeps the previous dated Ark models and their context limits', () => {
+    for (const model of [
+      'doubao-seed-2-1-pro-260628',
+      'doubao-seed-2-1-turbo-260628',
+      'doubao-seed-2-0-pro-260215',
+      'doubao-seed-2-0-lite-260215',
+      'doubao-seed-2-0-mini-260215',
+      'doubao-seed-2-0-code-preview-260215'
+    ]) {
+      expect(getOfficialVendorModelIds('volcengine')).toContain(model)
+      expect(resolveModelContextWindow('volcengine', model)).toBe(256_000)
+    }
   })
 
   it('routes Tencent TokenHub through all three APIs with regional keys and curated models', () => {

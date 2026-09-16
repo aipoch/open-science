@@ -646,12 +646,27 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     // and OpenAI Responses at /api/v3/responses (the probe derives it from `openaiBaseUrl`). The same
     // model ids work on all three. No modelsListUrl: Ark's catalog also serves embedding, image
     // (Seedream), and video (Seedance) models alongside the chat ids, and the refresh has no
-    // modality filter — so the Doubao Seed chat catalog stays curated.
+    // modality filter — so the chat catalog stays curated.
     apiEndpoints: ['anthropic', 'openai', 'responses'],
     baseUrl: 'https://ark.cn-beijing.volces.com/api/compatible',
     openaiBaseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
     apiKeyUrl: 'https://console.volcengine.com/ark/region:ark+cn-beijing/apikey',
+    // Official model cards and effort mappings (verified 2026-09-16):
+    // https://console.volcengine.com/ark/region:cn-beijing/model
+    // https://www.volcengine.com/docs/82379/1449737
     models: [
+      { id: 'doubao-seed-2-1-pro-260915', contextWindow: 1_024_000 },
+      {
+        id: 'deepseek-v4-1-flash-260910',
+        contextWindow: 1_024_000,
+        reasoningEffort: 'none-low-high-max'
+      },
+      {
+        id: 'glm-5-3-flash-260828',
+        contextWindow: 1_024_000,
+        reasoningEffort: 'low-high-max'
+      },
+      // Keep dated selections pinned; a catalog update must not replace an existing model.
       { id: 'doubao-seed-2-1-pro-260628', contextWindow: 256_000 },
       { id: 'doubao-seed-2-1-turbo-260628', contextWindow: 256_000 },
       { id: 'doubao-seed-2-0-pro-260215', contextWindow: 256_000 },
@@ -659,9 +674,12 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
       { id: 'doubao-seed-2-0-mini-260215', contextWindow: 256_000 },
       { id: 'doubao-seed-2-0-code-preview-260215', contextWindow: 256_000 }
     ],
-    // The Seed 2.x general models accept image input; the code-preview coding model is text-only.
+    // Explicit image-input support; the older code-preview coding model remains text-only.
     multimodal: {
       multimodalModels: [
+        'doubao-seed-2-1-pro-260915',
+        'deepseek-v4-1-flash-260910',
+        'glm-5-3-flash-260828',
         'doubao-seed-2-1-pro-260628',
         'doubao-seed-2-1-turbo-260628',
         'doubao-seed-2-0-pro-260215',
