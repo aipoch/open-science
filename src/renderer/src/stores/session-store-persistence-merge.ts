@@ -111,7 +111,7 @@ const mergeConversationGraphByIdentity = (
       (currentItem, incomingItem) =>
         preferIncoming(currentItem, incomingItem) ? incomingItem : currentItem
     )
-  return reconcileActivityGroupMembership({
+  const merged = reconcileActivityGroupMembership({
     ...structuredClone(current),
     frames: mergeCollectionByIdentity(
       current.frames,
@@ -146,8 +146,12 @@ const mergeConversationGraphByIdentity = (
       const isCurrentRootBranch =
         left.agentFrameId === current.rootFrameId &&
         left.id === current.frames.find(({ id }) => id === current.rootFrameId)?.activeBranchId
+      // A newer durable Session can replace a Task completion with the renderer's
+      // completion at the same Branch timestamp. Its authority breaks that tie;
+      // descendant heads above and later local Branch edits still win.
       return isCurrentRootBranch
-        ? newerUpdatedAt(left, right)
+        ? newerUpdatedAt(left, right) ||
+            (incomingWinsConflicts && right.updatedAt === left.updatedAt)
         : incomingWinsConflicts || newerUpdatedAt(left, right)
     }),
     messages: merge(
@@ -173,6 +177,17 @@ const mergeConversationGraphByIdentity = (
         (right.endedAt ?? right.startedAt) > (left.endedAt ?? left.startedAt)
     )
   })
+  // Conflicting heads can replace a sibling completion. Keep every Branch path,
+  // but do not carry an unreachable completion into the next local graph edit.
+  const reachableMessageIds = new Set(
+    merged.branches.flatMap((branch) =>
+      resolveMessageBranchPath(merged, branch.id).map(({ id }) => id)
+    )
+  )
+  return {
+    ...merged,
+    messages: merged.messages.filter(({ id }) => reachableMessageIds.has(id))
+  }
 }
 
 const mergeDelegatedWorkByIdentity = (
