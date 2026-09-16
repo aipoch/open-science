@@ -49,6 +49,45 @@ const efoOntology = {
 }
 
 describe('list_ontologies', () => {
+  it.each([401, 403, 429, 503])(
+    'propagates HTTP %s instead of reporting not_found',
+    async (status) => {
+      const fetchImpl = vi.fn(async () => new Response('', { status }))
+      const engine = new ParserEngine({ fetchImpl, retryBackoffMs: 1 })
+      await expect(
+        engine.call(tool('list_ontologies'), { ontology_ids: ['go'] }, {})
+      ).rejects.toThrow(`HTTP ${status}`)
+      expect(fetchImpl).toHaveBeenCalledTimes(status === 429 || status === 503 ? 3 : 1)
+    }
+  )
+
+  it('propagates exhausted network errors', async () => {
+    const failure = new TypeError('network failure')
+    const fetchImpl = vi.fn().mockRejectedValue(failure)
+    const engine = new ParserEngine({ fetchImpl, retryBackoffMs: 1 })
+    await expect(engine.call(tool('list_ontologies'), { ontology_ids: ['go'] }, {})).rejects.toBe(
+      failure
+    )
+    expect(fetchImpl).toHaveBeenCalledTimes(3)
+  })
+
+  it('rejects malformed JSON instead of reporting not_found', async () => {
+    const fetchImpl = vi.fn(async () => new Response('{'))
+    await expect(
+      run('list_ontologies', { ontology_ids: ['go'] }, fetchImpl)
+    ).rejects.toBeInstanceOf(SyntaxError)
+  })
+
+  it('rejects a failed batch instead of returning partial records as a successful result', async () => {
+    const fetchImpl = vi.fn(async (url: string) =>
+      url.endsWith('/efo') ? Response.json(efoOntology) : new Response('', { status: 503 })
+    )
+    await expect(
+      run('list_ontologies', { ontology_ids: ['efo', 'go'] }, fetchImpl)
+    ).rejects.toThrow('HTTP 503')
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
+
   it('fetches metadata for an ID list and reports unknown IDs in not_found', async () => {
     const fetchImpl = vi.fn().mockImplementation((url: string) => {
       if (url.includes('/ontologies/efo')) return Promise.resolve(jsonRes(efoOntology))

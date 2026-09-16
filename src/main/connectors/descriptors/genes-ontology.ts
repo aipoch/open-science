@@ -259,8 +259,9 @@ export const GENES_ONTOLOGY_TOOLS: ToolDescriptor[] = [
               `${OLS_BASE}/ontologies/${encodeURIComponent(id)}`
             )) as OlsOntology
             records.push(leanOntology(o))
-          } catch {
+          } catch (err) {
             // OLS returns 404 for an unknown ontology id — record it rather than failing the call.
+            if (!(err instanceof Error && /^HTTP 404 for /.test(err.message))) throw err
             notFound.push(id)
           }
         }
