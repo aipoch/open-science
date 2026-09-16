@@ -195,9 +195,15 @@ const WorkspaceActivityGroup = ({
                 isSearch || skillLoadDocument || skillLoadWithoutDocument
                   ? undefined
                   : buildToolActivityDetails(activity, t)
-              // All tool rows — notebook cells included — default collapsed (meaningful title
-              // only); clicking the title reveals the code and output. A user toggle still wins.
-              const isRowExpanded = expansionOverrides[activity.id] ?? false
+              // Reveal actionable Inbox receipts, including partial saves. Explicit user toggles win.
+              const hasPendingLiterature =
+                toolDetails?.sections.some(
+                  (section) =>
+                    section.kind === 'literature' &&
+                    section.summary.action === 'save' &&
+                    (section.summary.savedCount ?? 0) > 0
+                ) ?? false
+              const isRowExpanded = expansionOverrides[activity.id] ?? hasPendingLiterature
               const showManagePackagesProgress =
                 isManagePackagesActivity(activity) &&
                 (phase === 'executing' || phase === 'completed' || phase === 'failed')

@@ -1,5 +1,15 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
-import { BookOpenText, FileText, Inbox, Search, TriangleAlert } from 'lucide-react'
+import {
+  ArrowRight,
+  BookOpenText,
+  Clock3,
+  FileText,
+  Inbox,
+  Link2,
+  Search,
+  TriangleAlert
+} from 'lucide-react'
+import { cn } from '@/lib/utils'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -36,20 +46,24 @@ const WorkspaceLiteratureToolCard = ({
         : summary.action === 'format'
           ? t('Format')
           : t('Read')
-  const subtitle = isLibrary
-    ? summary.action === 'format'
-      ? [summary.styleId?.toUpperCase(), summary.locale].filter(Boolean).join(' · ') ||
-        t('Citation')
-      : summary.action === 'save'
-        ? t('Literature library')
-        : summary.libraryScope === 'project'
-          ? t('This project')
-          : summary.libraryScope === 'collection'
-            ? t('Collections')
-            : summary.libraryScope === 'items'
-              ? t('Selected references')
-              : t('All references')
-    : t('Linked PDFs')
+  const subtitle = canOpenInbox
+    ? summary.pdfDownloaded
+      ? t('PDF downloaded to Inbox')
+      : t('Saved to Inbox')
+    : isLibrary
+      ? summary.action === 'format'
+        ? [summary.styleId?.toUpperCase(), summary.locale].filter(Boolean).join(' · ') ||
+          t('Citation')
+        : summary.action === 'save'
+          ? t('Literature library')
+          : summary.libraryScope === 'project'
+            ? t('This project')
+            : summary.libraryScope === 'collection'
+              ? t('Collections')
+              : summary.libraryScope === 'items'
+                ? t('Selected references')
+                : t('All references')
+      : t('Linked PDFs')
   const pageLabel =
     summary.pageStart && summary.pageEnd
       ? summary.pageStart === summary.pageEnd
@@ -81,21 +95,70 @@ const WorkspaceLiteratureToolCard = ({
 
   const content = (
     <>
-      <div className="flex min-w-0 flex-wrap items-center gap-2">
-        <span className="inline-flex size-7 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-          <Icon className="size-3.5" aria-hidden="true" />
+      <div
+        className={cn(
+          'flex min-w-0 flex-wrap items-center gap-2',
+          canOpenInbox && 'gap-x-3 gap-y-4'
+        )}
+      >
+        <span
+          className={cn(
+            'inline-flex size-7 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary',
+            canOpenInbox && 'size-11 rounded-xl'
+          )}
+        >
+          <Icon className={canOpenInbox ? 'size-5' : 'size-3.5'} aria-hidden="true" />
         </span>
         <div className="min-w-0 flex-1 basis-28">
-          <div className="text-[13px] font-medium text-text-000">{title}</div>
-          <div className="truncate text-[11px] text-text-300">{subtitle}</div>
+          <div
+            className={cn(
+              'text-[13px] font-medium text-text-000',
+              canOpenInbox && 'text-sm font-semibold'
+            )}
+          >
+            {title}
+          </div>
+          <div
+            className={cn(
+              'text-[11px] text-text-300',
+              canOpenInbox ? 'mt-0.5 text-xs' : 'truncate'
+            )}
+          >
+            {subtitle}
+          </div>
         </div>
-        <div className="flex max-w-full shrink-0 flex-wrap justify-end gap-1">
+        <div
+          className={cn(
+            'flex max-w-full shrink-0 flex-wrap items-center gap-1',
+            canOpenInbox && 'gap-3'
+          )}
+        >
+          {canOpenInbox ? (
+            <>
+              <span className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1.5 text-xs font-medium tabular-nums text-primary">
+                <Clock3 className="size-3.5 shrink-0" aria-hidden="true" />
+                {t('Pending review: {{total}}', { total: summary.savedCount })}
+              </span>
+              <Button
+                size="default"
+                className="gap-2 px-3.5"
+                title={t('Review in Inbox to add to your library.')}
+                onClick={() => useNavigationStore.getState().openLibrary('user')}
+              >
+                {t('Open Inbox')}
+                <ArrowRight className="size-4" aria-hidden="true" />
+              </Button>
+            </>
+          ) : null}
           {isLibrary && summary.action === 'search' && searchRangeLabel ? (
             <span className="rounded-md bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-primary">
               {searchRangeLabel}
             </span>
           ) : null}
-          {isLibrary && summary.action === 'save' && summary.savedCount !== undefined ? (
+          {isLibrary &&
+          summary.action === 'save' &&
+          !canOpenInbox &&
+          summary.savedCount !== undefined ? (
             <span className="text-[11px] tabular-nums text-text-200">
               {t('Pending review: {{total}}', { total: summary.savedCount })}
             </span>
@@ -239,17 +302,8 @@ const WorkspaceLiteratureToolCard = ({
               }
             />
           ) : null}
-          {canOpenInbox || summary.existingItemIds?.length ? (
+          {summary.existingItemIds?.length ? (
             <div className="flex flex-wrap gap-2">
-              {canOpenInbox ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => useNavigationStore.getState().openLibrary('user')}
-                >
-                  {t('Open Inbox')}
-                </Button>
-              ) : null}
               {summary.existingItemIds?.map((id, index) => (
                 <Button
                   key={id}
@@ -281,7 +335,13 @@ const WorkspaceLiteratureToolCard = ({
       ) : null}
 
       {summary.documentNames.length > 0 ? (
-        <div className="flex min-w-0 items-center gap-2 text-[11px] text-text-300">
+        <div
+          className={cn(
+            'flex min-w-0 items-center gap-2 text-[11px] text-text-300',
+            canOpenInbox && 'border-t border-border-200 pt-3.5 text-xs'
+          )}
+        >
+          {canOpenInbox ? <Link2 className="size-3.5 shrink-0" aria-hidden="true" /> : null}
           <span className="shrink-0">{t('Sources')}</span>
           <span aria-hidden="true">·</span>
           <span className="min-w-0 truncate text-text-100">
@@ -294,7 +354,13 @@ const WorkspaceLiteratureToolCard = ({
           </span>
         </div>
       ) : summary.itemTitles && summary.itemTitles.length > 0 ? (
-        <div className="flex min-w-0 items-center gap-2 text-[11px] text-text-300">
+        <div
+          className={cn(
+            'flex min-w-0 items-center gap-2 text-[11px] text-text-300',
+            canOpenInbox && 'border-t border-border-200 pt-3.5 text-xs'
+          )}
+        >
+          {canOpenInbox ? <Link2 className="size-3.5 shrink-0" aria-hidden="true" /> : null}
           <span className="shrink-0">{t('Sources')}</span>
           <span aria-hidden="true">·</span>
           <span className="min-w-0 truncate text-text-100">{summary.itemTitles.join(' · ')}</span>
@@ -323,8 +389,10 @@ const WorkspaceLiteratureToolCard = ({
     </>
   )
 
-  const className =
-    'flex min-w-0 flex-col gap-2.5 rounded-lg border border-border-200 bg-bg-000 p-3 text-left'
+  const className = cn(
+    'flex min-w-0 flex-col gap-2.5 rounded-lg border border-border-200 bg-bg-000 p-3 text-left',
+    canOpenInbox && 'gap-4 rounded-xl p-4 shadow-sm'
+  )
 
   return (
     <section

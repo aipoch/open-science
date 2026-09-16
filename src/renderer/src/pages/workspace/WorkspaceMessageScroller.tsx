@@ -652,7 +652,7 @@ const WorkspaceMessageScrollerImpl = ({
       sessionId: undefined,
       groupIds: new Set()
     }))
-  // Individual detail rows default collapsed; overrides remember only explicit user toggles.
+  // Detail rows choose their defaults; overrides remember only explicit user toggles.
   const [activityExpansionOverrideState, setActivityExpansionOverrideState] =
     useState<SessionScopedActivityExpansionState>(() => ({
       sessionId: undefined,

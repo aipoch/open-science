@@ -6046,6 +6046,9 @@
     "Conversation approval allows web reading across websites for this conversation and its subagents.": "Die Freigabe für diese Konversation erlaubt das Lesen von Webseiten auf verschiedenen Websites für diese Konversation und ihre Unteragenten.",
     "This conversation": "Diese Konversation",
     "Remembered for this conversation": "Für diese Konversation gespeichert",
-    "This conversation or this call": "Diese Konversation oder dieser Aufruf"
+    "This conversation or this call": "Diese Konversation oder dieser Aufruf",
+    "Saved to Inbox": "Im Posteingang gespeichert",
+    "PDF downloaded to Inbox": "PDF in den Posteingang heruntergeladen",
+    "Review in Inbox to add to your library.": "Im Posteingang prüfen und zur Bibliothek hinzufügen."
   }
 }

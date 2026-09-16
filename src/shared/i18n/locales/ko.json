@@ -5882,6 +5882,9 @@
     "Conversation approval allows web reading across websites for this conversation and its subagents.": "이 대화에 대한 승인은 이 대화와 하위 서브에이전트가 여러 웹사이트의 페이지를 읽을 수 있도록 허용합니다.",
     "This conversation": "이 대화",
     "Remembered for this conversation": "이 대화에서 승인 기억",
-    "This conversation or this call": "이 대화 또는 이번 호출"
+    "This conversation or this call": "이 대화 또는 이번 호출",
+    "Saved to Inbox": "받은 편지함에 저장됨",
+    "PDF downloaded to Inbox": "PDF가 받은 편지함에 다운로드됨",
+    "Review in Inbox to add to your library.": "받은 편지함에서 검토한 후 라이브러리에 추가하세요."
   }
 }

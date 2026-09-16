@@ -5884,6 +5884,9 @@
     "Conversation approval allows web reading across websites for this conversation and its subagents.": "對話授權允許本對話及其子智能體讀取不同網站的網頁。",
     "This conversation": "此對話",
     "Remembered for this conversation": "在此對話中記住授權",
-    "This conversation or this call": "此對話或僅此次呼叫"
+    "This conversation or this call": "此對話或僅此次呼叫",
+    "Saved to Inbox": "已儲存至收件匣",
+    "PDF downloaded to Inbox": "PDF 已下載至收件匣",
+    "Review in Inbox to add to your library.": "請前往收件匣審核，確認後加入文獻庫。"
   }
 }

@@ -6216,6 +6216,9 @@
     "Conversation approval allows web reading across websites for this conversation and its subagents.": "L’autorisation pour cette conversation permet de lire des pages sur différents sites web pour cette conversation et ses sous-agents.",
     "This conversation": "Cette conversation",
     "Remembered for this conversation": "Mémorisé pour cette conversation",
-    "This conversation or this call": "Cette conversation ou cet appel"
+    "This conversation or this call": "Cette conversation ou cet appel",
+    "Saved to Inbox": "Enregistré dans la boîte de réception",
+    "PDF downloaded to Inbox": "PDF téléchargé dans la boîte de réception",
+    "Review in Inbox to add to your library.": "Vérifiez dans la boîte de réception pour ajouter à votre bibliothèque."
   }
 }

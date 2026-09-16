@@ -5884,6 +5884,9 @@
     "Conversation approval allows web reading across websites for this conversation and its subagents.": "この会話への許可により、この会話とそのサブエージェントは複数のウェブサイトのページを読み取れます。",
     "This conversation": "この会話",
     "Remembered for this conversation": "この会話で許可を記憶",
-    "This conversation or this call": "この会話または今回の呼び出し"
+    "This conversation or this call": "この会話または今回の呼び出し",
+    "Saved to Inbox": "受信トレイに保存済み",
+    "PDF downloaded to Inbox": "PDF を受信トレイにダウンロード済み",
+    "Review in Inbox to add to your library.": "受信トレイで確認してライブラリに追加してください。"
   }
 }

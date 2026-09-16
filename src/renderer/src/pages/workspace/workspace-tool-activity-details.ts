@@ -29,6 +29,7 @@ import {
   buildPdfElementToolSummary,
   buildLiteratureToolSummary,
   getLiteratureLibraryToolAction,
+  isLiteratureLibraryAcquirePdfTool,
   isLiteratureReadDocumentTool,
   type LiteratureToolSummary
 } from './literature-tool-presentation'
@@ -414,7 +415,13 @@ const buildGenericDetails = (activity: ToolActivity): ToolActivityDetails | unde
 }
 
 const buildLiteratureDetails = (activity: ToolActivity): ToolActivityDetails | undefined => {
-  const libraryAction = getLiteratureLibraryToolAction(activity.providerToolName, activity.title)
+  const isAcquiringPdf = isLiteratureLibraryAcquirePdfTool(
+    activity.providerToolName,
+    activity.title
+  )
+  const libraryAction = isAcquiringPdf
+    ? 'save'
+    : getLiteratureLibraryToolAction(activity.providerToolName, activity.title)
   const isReading = isLiteratureReadDocumentTool(activity.providerToolName, activity.title)
   const elementAction = pdfElementToolAction(activity.providerToolName, activity.title)
   if (!libraryAction && !isReading && !elementAction) return undefined
@@ -426,6 +433,9 @@ const buildLiteratureDetails = (activity: ToolActivity): ToolActivityDetails | u
     : libraryAction
       ? buildLiteratureLibraryToolSummary(libraryAction, activity.rawInput, output)
       : buildLiteratureToolSummary(activity.rawInput, output)
+  // Only replace acquisition output when a pending receipt provides an actionable destination.
+  // Keep generic diagnostics for not-found, already-reviewed, failures and unknown outcomes.
+  if (isAcquiringPdf && !summary.pdfDownloaded) return undefined
   return {
     displayName: libraryAction ? 'Literature library' : 'Reading',
     subtitle: summary.query ?? summary.itemTitles?.[0] ?? summary.documentNames[0],

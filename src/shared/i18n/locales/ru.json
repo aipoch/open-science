@@ -6357,6 +6357,9 @@
     "Conversation approval allows web reading across websites for this conversation and its subagents.": "Разрешение для этого диалога позволяет читать страницы разных сайтов в этом диалоге и его субагентах.",
     "This conversation": "Этот диалог",
     "Remembered for this conversation": "Запомнить для этого диалога",
-    "This conversation or this call": "Этот диалог или этот вызов"
+    "This conversation or this call": "Этот диалог или этот вызов",
+    "Saved to Inbox": "Сохранено во входящих",
+    "PDF downloaded to Inbox": "PDF загружен во входящие",
+    "Review in Inbox to add to your library.": "Проверьте во входящих, чтобы добавить в библиотеку."
   }
 }

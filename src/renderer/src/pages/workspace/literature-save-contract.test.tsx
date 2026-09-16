@@ -107,3 +107,26 @@ it('does not label dismissed receipts as pending review', () => {
   )
   expect(summary).toMatchObject({ savedCount: 0, otherCount: 1, existingItemIds: [] })
 })
+
+it('opens Inbox from a downloaded PDF receipt delivered through MCP text content', () => {
+  const summary = buildLiteratureLibraryToolSummary(
+    'save',
+    {},
+    {
+      content: [
+        { type: 'text', text: JSON.stringify({ status: 'pending-review', candidateId: 'pdf-1' }) }
+      ]
+    }
+  )
+  const inbox = vi.spyOn(useNavigationStore.getState(), 'openLibrary').mockImplementation(() => {})
+  try {
+    const rendered = render(<WorkspaceLiteratureToolCard summary={summary} />)
+    expect(rendered.getByText('PDF downloaded to Inbox')).toBeDefined()
+    expect(rendered.getByText('Pending review: 1')).toBeDefined()
+    fireEvent.click(rendered.getByRole('button', { name: 'Open Inbox' }))
+    expect(inbox).toHaveBeenCalledWith('user')
+  } finally {
+    cleanup()
+    inbox.mockRestore()
+  }
+})
