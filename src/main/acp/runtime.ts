@@ -1683,14 +1683,25 @@ class AcpRuntime {
   async sendApplicationPrompt(
     request: AcpPromptRequest,
     attribution: MessageAttribution,
-    promptAttemptId?: string
+    options?: {
+      promptAttemptId?: string
+      // Runs under prompt ownership, before prompt events, Artifact opening or provider dispatch.
+      // Throwing rejects this application turn without emitting a user-visible prompt.
+      onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>
+    }
   ): Promise<PromptResponse> {
     return this.withOperationLease(() =>
-      this.runPromptTurn(request, {
-        kind: 'application',
-        attribution,
-        ...(promptAttemptId === undefined ? {} : { promptAttemptId })
-      })
+      this.runPromptTurn(
+        request,
+        {
+          kind: 'application',
+          attribution,
+          ...(options?.promptAttemptId === undefined
+            ? {}
+            : { promptAttemptId: options.promptAttemptId })
+        },
+        options?.onPromptAdmitted
+      )
     )
   }
 
