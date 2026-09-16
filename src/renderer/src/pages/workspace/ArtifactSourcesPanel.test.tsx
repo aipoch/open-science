@@ -150,6 +150,19 @@ describe('ArtifactSourcesPanel', () => {
     expect(document.body.textContent).not.toContain('item-1')
   })
 
+  it('opens package reference metadata without looking up the live Library', async () => {
+    render(<ArtifactSourcesPanel literature={literature} isPackageSession />)
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: `View details: ${literature.references[0]!.item.title}`
+      })
+    )
+    expect(screen.getByRole('dialog').textContent).toContain(
+      'Saved reference metadata from the Session package.'
+    )
+    expect(get).not.toHaveBeenCalled()
+  })
+
   it('opens the matching reference in a modal without leaving the Artifact', async () => {
     render(<ArtifactSourcesPanel literature={literature} />)
 

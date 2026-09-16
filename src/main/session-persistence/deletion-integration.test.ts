@@ -17,6 +17,7 @@ import {
 } from '../../shared/session-persistence'
 import { ProvenanceMessageSnapshotRepository } from '../artifacts/provenance-message-snapshot'
 import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
+import { BookmarkRepository } from '../bookmarks/repository'
 import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { ManagedFileIndexRepository } from '../project-files/repository'
 import { ProjectDeletionCoordinator } from '../projects/deletion-coordinator'
@@ -143,6 +144,107 @@ describe('managed-file deletion integration', () => {
     await expect(readFile(uploadPath, 'utf8')).resolves.toBe('upload bytes')
     await expect(readFile(artifactPath, 'utf8')).resolves.toBe('artifact bytes')
     await expect(readFile(legacyPath)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('deletes Bookmarks only after the authoritative Session deletion commits', async () => {
+    const bookmarks = new BookmarkRepository(() => Promise.resolve(client))
+    await bookmarks.create({
+      id: 'bookmark-1',
+      projectId: PROJECT_ID,
+      sessionId: SESSION_ID,
+      target: {
+        kind: 'text',
+        source: { kind: 'agent-message', sessionId: SESSION_ID, messageId: 'message-agent' },
+        quote: 'saved source'
+      },
+      note: ''
+    })
+    coordinator.setSessionDeletionHandlers({
+      commit: (sessionIds) => bookmarks.deleteSessions(sessionIds),
+      reconcile: async () => undefined
+    })
+
+    await coordinator.deleteSession(PROJECT_ID, SESSION_ID)
+
+    await expect(
+      bookmarks.list({ projectId: PROJECT_ID, sessionId: SESSION_ID })
+    ).resolves.toMatchObject({
+      total: 0
+    })
+  })
+
+  it('preserves Bookmarks when authority deletion does not commit', async () => {
+    const bookmarks = new BookmarkRepository(() => Promise.resolve(client))
+    await bookmarks.create({
+      id: 'bookmark-1',
+      projectId: PROJECT_ID,
+      sessionId: SESSION_ID,
+      target: {
+        kind: 'text',
+        source: { kind: 'agent-message', sessionId: SESSION_ID, messageId: 'message-agent' },
+        quote: 'saved source'
+      },
+      note: ''
+    })
+    coordinator.setSessionDeletionHandlers({
+      commit: (sessionIds) => bookmarks.deleteSessions(sessionIds),
+      reconcile: async () => undefined
+    })
+    vi.spyOn(sessions, 'deleteSession').mockRejectedValueOnce(new Error('disk locked'))
+
+    await expect(coordinator.deleteSession(PROJECT_ID, SESSION_ID)).rejects.toThrow('disk locked')
+
+    await expect(
+      bookmarks.list({ projectId: PROJECT_ID, sessionId: SESSION_ID })
+    ).resolves.toMatchObject({
+      total: 1
+    })
+  })
+
+  it('replays the durable delete intent after committed Bookmark cleanup fails', async () => {
+    const bookmarks = new BookmarkRepository(() => Promise.resolve(client))
+    await bookmarks.create({
+      id: 'bookmark-1',
+      projectId: PROJECT_ID,
+      sessionId: SESSION_ID,
+      target: {
+        kind: 'text',
+        source: { kind: 'agent-message', sessionId: SESSION_ID, messageId: 'message-agent' },
+        quote: 'saved source'
+      },
+      note: ''
+    })
+    const projection = new SessionProjectionRepository(() => Promise.resolve(client))
+    const repository = new SessionRepository(storageRoot, undefined, projection)
+    await repository.ensureSessionProjection(() => sessions.loadAll())
+    await client.$executeRawUnsafe(`CREATE TRIGGER reject_bookmark_cleanup
+      BEFORE DELETE ON bookmarks BEGIN SELECT RAISE(ABORT, 'cleanup blocked'); END`)
+
+    await expect(repository.deleteSession(PROJECT_ID, SESSION_ID)).rejects.toBeInstanceOf(
+      SessionDeletionCommittedError
+    )
+    await expect(
+      bookmarks.list({ projectId: PROJECT_ID, sessionId: SESSION_ID })
+    ).resolves.toMatchObject({
+      total: 1
+    })
+
+    expect(await projection.pending()).toEqual([
+      expect.objectContaining({ projectId: PROJECT_ID, sessionId: SESSION_ID, operation: 'delete' })
+    ])
+    await client.$executeRawUnsafe('DROP TRIGGER reject_bookmark_cleanup')
+    const restarted = new SessionRepository(
+      storageRoot,
+      undefined,
+      new SessionProjectionRepository(() => Promise.resolve(client))
+    )
+    await restarted.reconcilePendingSessionProjection()
+
+    await expect(
+      bookmarks.list({ projectId: PROJECT_ID, sessionId: SESSION_ID })
+    ).resolves.toMatchObject({
+      total: 0
+    })
   })
 
   it('rejects wrong-project deletion without reporting a commit or leaving a retry intent', async () => {

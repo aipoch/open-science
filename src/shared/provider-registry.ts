@@ -874,7 +874,7 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     apiEndpoints: ['openai'],
     baseUrl: 'https://opencode.ai/zen/v1',
     apiKeyUrl: 'https://opencode.ai/zen',
-    // Zen also mixes protocols. Exclude Google-native, temporary free, deprecated, and explicitly
+    // Zen also mixes protocols. Exclude Google-native, deprecated, and explicitly
     // product-excluded models while preserving the existing Kimi default.
     models: [
       { id: 'kimi-k2.7-code', contextWindow: 262_144 },
@@ -1061,7 +1061,11 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
       { id: 'deepseek-v4-pro', contextWindow: 1_000_000 },
       { id: 'minimax-m3', contextWindow: 512_000 },
       { id: 'glm-5.2', contextWindow: 1_000_000, reasoningEffort: 'high-max' },
-      { id: 'glm-5.1', contextWindow: 204_800, reasoningEffort: 'none-high' }
+      { id: 'glm-5.1', contextWindow: 204_800, reasoningEffort: 'none-high' },
+      // Free Chat Completions models documented at https://opencode.ai/docs/zen/.
+      // Context and vision metadata: https://models.dev/api.json (opencode), checked 2026-09-13.
+      { id: 'big-pickle', contextWindow: 200_000, apiEndpoint: 'openai' },
+      { id: 'mimo-v2.5-free', contextWindow: 200_000, apiEndpoint: 'openai' }
     ],
     multimodal: {
       multimodalModels: [
@@ -1097,7 +1101,8 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
         'qwen3.5-plus',
         'kimi-k3',
         'kimi-k2.6',
-        'minimax-m3'
+        'minimax-m3',
+        'mimo-v2.5-free'
       ]
     }
   },
@@ -1222,6 +1227,19 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
         id: 'qwen/qwen3.7-max',
         contextWindow: 1_000_000,
         reasoningEffort: 'none-high'
+      },
+      // Free, tool-capable entries from https://openrouter.ai/api/v1/models (2026-09-13).
+      // Keep exact free IDs: appending :free to an arbitrary paid model does not make it available.
+      // Both also expose /api/v1/messages, so retain the gateway's dual-endpoint compatibility.
+      {
+        id: 'openrouter/free',
+        contextWindow: 200_000,
+        reasoningEffort: 'unsupported'
+      },
+      {
+        id: 'google/gemma-4-31b-it:free',
+        contextWindow: 262_144,
+        reasoningEffort: 'unsupported'
       }
     ],
     // OpenRouter's catalog is curated (no live refresh), and vision support is an unpredictable subset
@@ -1246,7 +1264,9 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
         'google/gemini-3.5-flash',
         'x-ai/grok-4.5',
         'moonshotai/kimi-k3',
-        'qwen/qwen3.7-max'
+        'qwen/qwen3.7-max',
+        'openrouter/free',
+        'google/gemma-4-31b-it:free'
       ]
     }
   }

@@ -346,6 +346,22 @@ const NotificationBellContent = ({
     }
   }, [isMobile, open])
 
+  useEffect(() => {
+    // The mobile drawer owns its source's isolation; desktop panels do not.
+    if (!open || isMobile) return
+    const trigger = triggerRef.current
+    if (!trigger) return
+    const closeWhenInactive = (): void => {
+      if (trigger.closest('[inert], [aria-hidden="true"]')) setOpen(false)
+    }
+    const observer = new MutationObserver(closeWhenInactive)
+    for (let ancestor: HTMLElement | null = trigger; ancestor; ancestor = ancestor.parentElement) {
+      observer.observe(ancestor, { attributes: true, attributeFilter: ['inert', 'aria-hidden'] })
+    }
+    closeWhenInactive()
+    return () => observer.disconnect()
+  }, [isMobile, open])
+
   const restoreFocus = useCallback((): void => {
     const activeElement = document.activeElement
     if (

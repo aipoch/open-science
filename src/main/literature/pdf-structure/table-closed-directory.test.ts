@@ -5,43 +5,53 @@ import { expect, it } from 'vitest'
 const { refineTable } = await import(
   pathToFileURL(resolve('resources/pdf-structure/literature-pdf-table-refine.mjs')).href
 )
-const load = (n: number): ReturnType<typeof JSON.parse> =>
-  readPdfFixture(
-    resolve(`src/main/literature/pdf-structure/fixtures/source-grids/closed-directory-${n}.jsonl`)
-  )
-it.each([1, 2])('recovers complete source-closed directory cells on layout %s', (n) => {
-  const x = load(n),
-    t = refineTable(x.table, x.tokens, x.captions, [], x.rules)
-  expect(t.grid.map((r: string[]) => r[0])).toEqual(
-    n === 1
-      ? [
-          'Country',
-          'Australia',
-          'Belgium',
-          'Bulgaria',
-          'Canada',
-          'India',
-          'Italy',
-          'Japan',
-          'Korea'
-        ]
-      : ['Norway', 'Poland', 'Romania', 'Russia', 'USA']
-  )
-  expect(t.unassigned).toEqual([])
-  const row = t.grid.find((r: string[]) => r[0] === (n === 1 ? 'Canada' : 'Poland'))
-  expect(row[1]).toContain(
-    n === 1 ? 'University Health Network (65' : 'Medical University of Warsaw (1'
-  )
-  expect(row[2]).toContain(n === 1 ? 'Jonathan Deblois' : 'Maciej Sinski')
-  expect(x).toEqual(load(n))
-})
+const load = (name: string): ReturnType<typeof JSON.parse> =>
+  readPdfFixture(resolve(`src/main/literature/pdf-structure/fixtures/source-grids/${name}.jsonl`))
+it.each([
+  {
+    name: 'closed-directory-wrapped-cells',
+    countries: [
+      'Country',
+      'Australia',
+      'Belgium',
+      'Bulgaria',
+      'Canada',
+      'India',
+      'Italy',
+      'Japan',
+      'Korea'
+    ],
+    country: 'Canada',
+    center: 'University Health Network (65',
+    investigator: 'Jonathan Deblois'
+  },
+  {
+    name: 'closed-directory-headerless-continuation',
+    countries: ['Norway', 'Poland', 'Romania', 'Russia', 'USA'],
+    country: 'Poland',
+    center: 'Medical University of Warsaw (1',
+    investigator: 'Maciej Sinski'
+  }
+])(
+  'recovers complete source-closed directory cells in $name',
+  ({ name, countries, country, center, investigator }) => {
+    const x = load(name),
+      t = refineTable(x.table, x.tokens, x.captions, [], x.rules)
+    expect(t.grid.map((r: string[]) => r[0])).toEqual(countries)
+    expect(t.unassigned).toEqual([])
+    const row = t.grid.find((r: string[]) => r[0] === country)
+    expect(row[1]).toContain(center)
+    expect(row[2]).toContain(investigator)
+    expect(x).toEqual(load(name))
+  }
+)
 it.each(['no-rules', 'open-bottom', 'partial-divider', 'numeric-fields', 'wrapped-stub'])(
   'retains the fallback when closed-directory evidence is incomplete: %s',
   async (condition) => {
     const { recoverRuledHeaderGrid } = await import(
       pathToFileURL(resolve('resources/pdf-structure/literature-pdf-ruled-stub-grid.mjs')).href
     )
-    const x = load(2)
+    const x = load('closed-directory-headerless-continuation')
     const grid = recoverRuledHeaderGrid(x.table, x.tokens, x.captions, x.rules)
     expect(grid).toBeDefined()
     if (condition === 'no-rules') x.rules = []

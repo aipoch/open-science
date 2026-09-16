@@ -636,6 +636,7 @@ const windowsLaunch = (
         : {}),
       cwd: request.cwd,
       readOnlyRoots: layout.readOnlyRoots,
+      optionalReadOnlyRoots: layout.optionalReadOnlyRoots ?? [],
       readWriteRoots: layout.readWriteRoots,
       deniedReadRoots: layout.deniedReadRoots,
       deniedWriteRoots: layout.deniedWriteRoots,

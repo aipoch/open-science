@@ -192,14 +192,9 @@ const prefixInterpreter = (
   prefix: string,
   language: NotebookLanguage,
   platform: NodeJS.Platform
-): string =>
-  language === 'python'
-    ? platform === 'win32'
-      ? join(prefix, 'python.exe')
-      : join(prefix, 'bin', 'python')
-    : rBin(prefix, platform)
+): string => (language === 'python' ? pythonBin(prefix, platform) : rBin(prefix, platform))
 
-// A conda-forge Windows R interpreter lives at <prefix>\Lib\R\bin\R[script].exe and depends on
+// A conda-forge Windows R interpreter lives in <prefix>\Lib\R\bin (optionally under x64) and depends on
 // DLLs in <prefix>\Library\bin. Return only that interpreter's own prefix: external CRAN R paths do
 // not match this layout, and an external conda R must never receive the app-managed prefix.
 export const windowsCondaPrefixForR = (
@@ -208,7 +203,7 @@ export const windowsCondaPrefixForR = (
 ): string | undefined => {
   if (platform !== 'win32') return undefined
   const normalized = win32.normalize(interpreterPath)
-  const match = normalized.match(/^(.*)\\Lib\\R\\bin\\R(?:script)?\.exe$/i)
+  const match = normalized.match(/^(.*)\\Lib\\R\\bin\\(?:x64\\)?R(?:script)?\.exe$/i)
   return match?.[1]
 }
 
@@ -349,7 +344,7 @@ export const defaultCandidatePaths =
         const name = logicalEnvNameFromDirectory(directory)
         const prefix = join(appEnvsDir, directory)
         if (prefix !== envPrefix(runtimeRoot, name, platform)) continue
-        const p = language === 'python' ? pythonBin(prefix, platform) : rBin(prefix, platform)
+        const p = prefixInterpreter(prefix, language, platform)
         if (existsSync(p)) found.add(p)
       }
     } catch {

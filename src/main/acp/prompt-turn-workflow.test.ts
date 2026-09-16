@@ -133,6 +133,8 @@ const planProjection = (): ActivePlanProjection => ({
 
 const createHarness = (
   input: {
+    serialization?: AcpPromptTurnWorkflowOptions['serialization']
+    planPause?: Partial<AcpPromptTurnWorkflowOptions['plan']>
     admitPlan?: AcpPromptTurnWorkflowOptions['plan']['admit']
     authorize?: () => TurnSkillHandle | Promise<TurnSkillHandle>
     backend?: AcpBackendGenerationView
@@ -324,7 +326,7 @@ const createHarness = (
     skills: { authorize },
     preparation: { prepare: preparation },
     executor: { execute: executor },
-    serialization: new AcpProviderPromptSerializationOwner(),
+    serialization: input.serialization ?? new AcpProviderPromptSerializationOwner(),
     contextUsage,
     providerReconnectPending: input.providerReconnectPending ?? (() => false),
     environment: {
@@ -346,7 +348,7 @@ const createHarness = (
       ...(input.beforePromptDispatch ? { beforePromptDispatch: input.beforePromptDispatch } : {})
     },
     artifacts,
-    plan: { preflight: preflightPlan, admit: admitPlan, ...planLifecycle },
+    plan: { preflight: preflightPlan, admit: admitPlan, ...planLifecycle, ...input.planPause },
     finalizer: { finalize: finalizer },
     permission,
     finalization,
@@ -395,6 +397,106 @@ const request = (sessionId = 's1'): AcpPromptRequest => ({
   text: 'analyze',
   forcedSkillIds: ['research'],
   provenanceContext: { promptMessageId: 'message-1' }
+})
+
+describe('Provider suspension for Session Plan review', () => {
+  it('holds the logical task until review, resumes once, and accounts for both Provider turns', async () => {
+    const review = deferred<{ content: string; accepted: () => Promise<void> }>()
+    const accepted = vi.fn(async () => undefined)
+    const providerStopped = vi.fn()
+    const serialization = new AcpProviderPromptSerializationOwner()
+    const serializedBackend = {
+      ...backend,
+      framework: { ...backend.framework, serializesProviderPrompts: true }
+    }
+    let paused = false
+    const waiting = vi.fn(async () => {
+      const result = await review.promise
+      paused = false
+      return result
+    })
+    let calls = 0
+    const harness = createHarness({
+      finalize: (handles, outcome) => new AcpPromptOutcomeFinalizer().finalize(handles, outcome),
+      serialization,
+      backend: serializedBackend,
+      planPause: {
+        toolWaitFailed: () => {
+          paused = true
+        },
+        providerStopped,
+        isProviderPaused: () => paused,
+        resumeAfterProviderStop: waiting
+      },
+      execute: async (input) => {
+        calls++
+        await input.onAccepted()
+        if (calls === 1) {
+          input.routeNotification({
+            sessionId: 'provider-1',
+            update: {
+              sessionUpdate: 'tool_call',
+              toolCallId: 'plan-call',
+              title: 'open_science_plan_generate_plan',
+              status: 'in_progress'
+            }
+          })
+          input.routeNotification({
+            sessionId: 'provider-1',
+            update: {
+              sessionUpdate: 'tool_call_update',
+              toolCallId: 'plan-call',
+              status: 'failed'
+            }
+          })
+        }
+        expect(input.captureStop()).toBe(true)
+        return {
+          kind: 'stopped',
+          response: { stopReason: calls === 1 ? 'cancelled' : 'end_turn' },
+          facts: {
+            turnUsage: { inputTokens: 10, outputTokens: 5, cacheTokens: 2 },
+            modelTurnCount: 1
+          }
+        }
+      }
+    })
+    const run = harness.workflow.run({ sessionId: 'app-1', text: 'Analyze.' }, { kind: 'user' })
+    await vi.waitFor(() => expect(waiting).toHaveBeenCalledOnce())
+    expect(calls).toBe(1)
+    expect(providerStopped).toHaveBeenCalledOnce()
+    // Another Session can acquire the actual serialized Provider slot during review.
+    const peer = createHarness({ serialization, backend: serializedBackend })
+    await peer.workflow.run({ sessionId: 'app-1', text: 'Independent work.' }, { kind: 'user' })
+    expect(peer.executor).toHaveBeenCalledOnce()
+    expect(harness.finalization.pushEvent.mock.calls.some(([event]) => event.kind === 'stop')).toBe(
+      false
+    )
+    expect(harness.finalizer).not.toHaveBeenCalled()
+    expect(harness.owner.current('app-1')).toBeDefined()
+    expect(harness.interactions.captureTerminal).not.toHaveBeenCalled()
+    review.resolve({ content: 'The user approved the Plan.', accepted })
+    await run
+    expect(
+      harness.finalization.pushEvent.mock.calls
+        .filter(([event]) => event.kind === 'stop')
+        .map(([event]) => event.text)
+    ).toEqual(['end_turn'])
+    expect(calls).toBe(2)
+    expect(accepted).toHaveBeenCalledOnce()
+    expect(harness.preparation).toHaveBeenCalledOnce()
+    expect(harness.artifacts.open).toHaveBeenCalledOnce()
+    expect(harness.finalizer).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        response: { stopReason: 'end_turn' },
+        facts: {
+          turnUsage: { inputTokens: 20, outputTokens: 10, cacheTokens: 4 },
+          modelTurnCount: 2
+        }
+      })
+    )
+  })
 })
 
 describe('AcpPromptTurnWorkflow', () => {

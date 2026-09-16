@@ -12,6 +12,7 @@ import { createManagedPdfLoadingTask } from '../managed-pdf-document'
 import { PdfPreviewContent, PdfPreviewRenderer } from './PdfPreview'
 import { PdfOutlineSidebar } from './PdfOutlineSidebar'
 import { requestAnnotationReveal } from '../../annotations/annotation-reveal'
+import { useSessionStore } from '@/stores/session-store'
 
 vi.mock('../managed-pdf-document', () => ({ createManagedPdfLoadingTask: vi.fn() }))
 const { cancelTextLayer, renderTextLayer } = vi.hoisted(() => ({
@@ -179,6 +180,7 @@ describe('PdfPreviewContent', () => {
     vi.useRealTimers()
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+    useSessionStore.setState({ sessions: [], selectedSessionId: undefined } as never)
     delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView
   })
 
@@ -635,6 +637,48 @@ describe('PdfPreviewContent', () => {
         source: 'artifact',
         projectId: 'project-1',
         fileId: 'artifact-1',
+        versionId: 'artifact-v2'
+      })
+    )
+  })
+
+  it('resolves an exact bookmark source without a PDF Agent-context binding', async () => {
+    const resolvePdfSource = vi.fn().mockResolvedValue({ ok: false, reason: 'source-unavailable' })
+    window.api = {
+      ...window.api,
+      bookmarks: { resolvePdfSource }
+    } as unknown as Window['api']
+    useSessionStore.setState({
+      selectedSessionId: 'session-owner',
+      sessions: [{ id: 'session-owner', projectId: 'project-1' }]
+    } as never)
+
+    await act(async () => {
+      root.render(
+        <PdfPreviewRenderer
+          item={{
+            id: 'artifact-1',
+            projectId: 'project-1',
+            sessionId: 'source-session',
+            title: 'report.pdf',
+            type: 'file',
+            source: 'artifact',
+            path: 'artifact-version:stale-projection',
+            name: 'report.pdf',
+            format: 'pdf',
+            managedFileId: 'artifact-1',
+            selectedVersionId: 'artifact-v2'
+          }}
+        />
+      )
+    })
+
+    await vi.waitFor(() =>
+      expect(resolvePdfSource).toHaveBeenCalledWith({
+        projectId: 'project-1',
+        sessionId: 'session-owner',
+        sourceKind: 'artifact-version',
+        sourceFileId: 'artifact-1',
         versionId: 'artifact-v2'
       })
     )

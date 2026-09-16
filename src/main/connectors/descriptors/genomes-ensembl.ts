@@ -47,6 +47,7 @@ type Dict = Record<string, unknown>
 function leanTranscriptConsequence(tc: Dict): Dict {
   return {
     transcript_id: tc.transcript_id,
+    variant_allele: tc.variant_allele,
     gene_id: tc.gene_id,
     gene_symbol: tc.gene_symbol,
     consequence_terms: tc.consequence_terms,
@@ -83,14 +84,21 @@ function summarizeVepResult(r: Dict, maxConsequences: number): Dict {
   const sorted = [...tcs].sort((a, b) => impactRank(b.impact) - impactRank(a.impact))
   const kept = sorted.slice(0, maxConsequences)
 
-  // Per-gene worst impact + transcript count across the complete (un-truncated) list.
+  // Count distinct transcript IDs per gene across all alleles in the complete (un-truncated) list.
   const geneMap = new Map<
     string,
-    { gene_id: unknown; gene_symbol: unknown; worstRank: number; worst_impact: unknown; n: number }
+    {
+      gene_id: unknown
+      gene_symbol: unknown
+      worstRank: number
+      worst_impact: unknown
+      transcriptIds: Set<string>
+    }
   >()
   for (const tc of tcs) {
     const gid = String(tc.gene_id ?? '')
     const rank = impactRank(tc.impact)
+    const transcriptId = strArg(tc.transcript_id)
     const existing = geneMap.get(gid)
     if (!existing) {
       geneMap.set(gid, {
@@ -98,10 +106,10 @@ function summarizeVepResult(r: Dict, maxConsequences: number): Dict {
         gene_symbol: tc.gene_symbol,
         worstRank: rank,
         worst_impact: tc.impact,
-        n: 1
+        transcriptIds: new Set(transcriptId ? [transcriptId] : [])
       })
     } else {
-      existing.n += 1
+      if (transcriptId) existing.transcriptIds.add(transcriptId)
       if (rank > existing.worstRank) {
         existing.worstRank = rank
         existing.worst_impact = tc.impact
@@ -114,7 +122,7 @@ function summarizeVepResult(r: Dict, maxConsequences: number): Dict {
       gene_id: g.gene_id,
       gene_symbol: g.gene_symbol,
       worst_impact: g.worst_impact,
-      n_transcripts: g.n
+      n_transcripts: g.transcriptIds.size
     }))
 
   const reg = (r.regulatory_feature_consequences as unknown[] | undefined) ?? []
@@ -245,7 +253,7 @@ export const GENOMES_ENSEMBL_TOOLS: ToolDescriptor[] = [
     id: 'ensembl_vep_variant',
     connector: 'genomes',
     description:
-      'Predict variant consequences with Ensembl VEP — most-severe-first summary of the (often huge) per-transcript consequence list. Pass EITHER variant_id OR region+allele. Args: variant_id (dbSNP rsID rs7412, COSMIC COSV..., or HGMD ID); region (GRCh38 1-based inclusive chrom:start-end, e.g. 7:140753336-140753336; SNV start==end; insertion start=end+1; explicit strand suffix :1/:-1 accepted); allele (variant allele on forward strand for the region route, e.g. T or - for deletion); species (default homo_sapiens); max_consequences (cap on returned per-transcript rows, default 25; full count in n_transcript_consequences, rows kept are most severe HIGH>MODERATE>LOW>MODIFIER; transcript_consequences_truncated flags the cap). Returns {query, n_results, results:[{input, assembly_name, seq_region_name, start, end, strand, allele_string, most_severe_consequence, genes:[{gene_id, gene_symbol, worst_impact, n_transcripts}], n_transcript_consequences, transcript_consequences_truncated, transcript_consequences:[...], n_regulatory_feature_consequences, n_motif_feature_consequences, colocated_variants:[...]}]}. Unknown rsIDs raise with the upstream message.',
+      'Predict variant consequences with Ensembl VEP — most-severe-first summary of the (often huge) per-transcript consequence list. If variant_id is provided, the ID route takes precedence and region/allele are ignored. Otherwise, both region and allele are required. allele does not filter results from the ID route. Args: variant_id (dbSNP rsID rs7412, COSMIC COSV..., or HGMD ID); region (GRCh38 1-based inclusive chrom:start-end, e.g. 7:140753336-140753336; SNV start==end; insertion start=end+1; explicit strand suffix :1/:-1 accepted); allele (variant allele on forward strand for the region route, e.g. T or - for deletion); species (default homo_sapiens); max_consequences (cap on returned per-transcript rows, default 25; full count in n_transcript_consequences, rows kept are most severe HIGH>MODERATE>LOW>MODIFIER; transcript_consequences_truncated flags the cap). Returns {query, n_results, results:[{input, assembly_name, seq_region_name, start, end, strand, allele_string, most_severe_consequence, genes:[{gene_id, gene_symbol, worst_impact, n_transcripts}], n_transcript_consequences, transcript_consequences_truncated, transcript_consequences:[...], n_regulatory_feature_consequences, n_motif_feature_consequences, colocated_variants:[...]}]}. Each transcript consequence retains variant_allele. n_transcripts counts distinct non-empty transcript IDs per gene across the full list; worst_impact spans all returned upstream alleles, while n_transcript_consequences counts rows. Unknown rsIDs raise with the upstream message.',
     input: {
       type: 'object',
       properties: {

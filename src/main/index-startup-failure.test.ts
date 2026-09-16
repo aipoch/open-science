@@ -1,8 +1,15 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
-const ipcEvents = await vi.hoisted(async () => {
+const { ipcEvents, startupWindow } = await vi.hoisted(async () => {
   const { EventEmitter } = await import('node:events')
-  return new EventEmitter()
+  return {
+    ipcEvents: new EventEmitter(),
+    startupWindow: Object.assign(new EventEmitter(), {
+      webContents: new EventEmitter(),
+      isDestroyed: () => false,
+      destroy: vi.fn()
+    })
+  }
 })
 
 const fixture = vi.hoisted(() => {
@@ -10,6 +17,13 @@ const fixture = vi.hoisted(() => {
   return {
     log,
     startupFailure: vi.fn(),
+    disposeLocaleIpc: vi.fn(),
+    disposeDatabaseGuard: vi.fn(),
+    disposeDatabaseIpc: vi.fn(),
+    disposePreviewProtocol: vi.fn(),
+    disposeTrayLocale: vi.fn(),
+    disposeRegistry: vi.fn(),
+    headless: true,
     disposeRuntime: vi.fn(async () => {}),
     disposeWeb: vi.fn(async () => {}),
     shutdownRemote: vi.fn(async () => {}),
@@ -87,7 +101,7 @@ vi.mock('./renderer-diagnostics', () => ({
 }))
 vi.mock('./single-instance', () => ({ acquireSingleInstanceLock: () => true }))
 vi.mock('./web-service/options', () => ({
-  parseWebModeOptions: () => ({ headless: true, enabled: true, port: 44100 })
+  parseWebModeOptions: () => ({ headless: fixture.headless, enabled: true, port: 44100 })
 }))
 vi.mock('./system-lifecycle-adapters', () => ({
   installSystemLifecycleAdapters: () => ({
@@ -98,24 +112,36 @@ vi.mock('./system-lifecycle-adapters', () => ({
 vi.mock('./diagnostics/startup-storage-probe', () => ({ timedStartupStorageProbe: vi.fn() }))
 vi.mock('@electron-toolkit/utils', () => ({ electronApp: { setAppUserModelId: vi.fn() } }))
 vi.mock('./managed-preview-protocol', () => ({
-  createManagedPreviewProtocolBridge: () => ({ registrar: {}, dispose: vi.fn() })
+  createManagedPreviewProtocolBridge: () => ({
+    registrar: {},
+    dispose: fixture.disposePreviewProtocol
+  })
 }))
-vi.mock('./windows', () => ({ configureMainWindow: vi.fn(), createMainWindow: vi.fn() }))
+vi.mock('./windows', () => ({
+  configureMainWindow: vi.fn(),
+  createMainWindow: () => {
+    queueMicrotask(() => startupWindow.emit('ready-to-show'))
+    return startupWindow
+  }
+}))
 vi.mock('./locale/owner', () => ({
   LocalePreferenceOwner: class {
     t = (key: string): string => key
-    subscribe = (): ReturnType<typeof vi.fn> => vi.fn()
+    subscribe = (): ReturnType<typeof vi.fn> => fixture.disposeTrayLocale
   }
 }))
-vi.mock('./locale/ipc', () => ({ registerLocalePreferenceIpc: () => vi.fn() }))
+vi.mock('./locale/ipc', () => ({ registerLocalePreferenceIpc: () => fixture.disposeLocaleIpc }))
 vi.mock('./window-shortcuts', () => ({ installWindowShortcuts: vi.fn() }))
 vi.mock('./network-ipc', () => ({ registerNetworkIpcHandlers: vi.fn() }))
 vi.mock('./database/database-startup-logging', () => ({
   createDatabaseStartupLogging: () => ({ migrationOptions: vi.fn(), reportBlocked: vi.fn() })
 }))
 vi.mock('./database/database-startup-ipc', () => ({
-  registerDatabaseStartupIpc: () => vi.fn(),
-  installDatabaseStartupQuitGuard: () => ({ dispose: vi.fn(), release: vi.fn() })
+  registerDatabaseStartupIpc: () => fixture.disposeDatabaseIpc,
+  installDatabaseStartupQuitGuard: () => ({
+    dispose: fixture.disposeDatabaseGuard,
+    release: vi.fn()
+  })
 }))
 vi.mock('./database/startup-diagnostics', () => ({ buildStartupDiagnostics: vi.fn() }))
 vi.mock('./projects/prisma-client', () => ({ getProjectDbClient: async () => ({}) }))
@@ -164,7 +190,7 @@ vi.mock('./app-lifecycle', () => ({
     }
   }
 }))
-vi.mock('./ipc-handler-registry', () => ({ disposeIpcHandlerRegistry: vi.fn() }))
+vi.mock('./ipc-handler-registry', () => ({ disposeIpcHandlerRegistry: fixture.disposeRegistry }))
 vi.mock('./web-service', () => ({
   createWebServiceController: () => ({
     ensureStarted: async () => {
@@ -225,6 +251,16 @@ beforeEach(() => {
   })
   fixture.shutdownBackends = undefined
   fixture.failAt = 'web'
+  fixture.headless = true
+  fixture.disposeDatabaseGuard.mockReset()
+  fixture.disposeDatabaseIpc.mockReset()
+  fixture.disposePreviewProtocol.mockReset()
+  fixture.disposeTrayLocale.mockReset()
+  fixture.disposeRegistry.mockReset()
+  startupWindow.destroy.mockReset()
+  startupWindow.removeAllListeners()
+  startupWindow.webContents.removeAllListeners()
+  fixture.disposeLocaleIpc.mockReset()
   fixture.disposeWeb.mockReset().mockResolvedValue()
   fixture.disposeRuntime.mockReset().mockResolvedValue()
 })
@@ -247,6 +283,75 @@ it('disposes acquired application surfaces when explicit web startup fails befor
   expect.soft(fixture.disposeRuntime).toHaveBeenCalledOnce()
   expect.soft(fixture.disposeWeb).toHaveBeenCalledOnce()
   expect.soft(fixture.shutdownRemote).toHaveBeenCalledOnce()
+})
+
+it('reports the original startup failure when shell IPC cleanup throws', async () => {
+  const cleanupFailure = new Error('locale IPC cleanup failed')
+  fixture.disposeLocaleIpc.mockImplementation(() => {
+    throw cleanupFailure
+  })
+  await import('./index')
+  await fixture.exited
+
+  expect(fixture.disposeLocaleIpc).toHaveBeenCalledOnce()
+  expect(fixture.electron.app.exit).toHaveBeenCalledWith(1)
+  expect(fixture.startupFailure).toHaveBeenCalledWith(
+    expect.objectContaining({ error: fixture.failure })
+  )
+})
+
+it.each([
+  'locale IPC',
+  'database guard',
+  'preview protocol',
+  'database IPC',
+  'startup window',
+  'none'
+] as const)('continues shell rollback after %s cleanup throws', async (stage) => {
+  fixture.headless = false
+  const cleanupFailure = new Error(`${stage} cleanup failed`)
+  const failingCleanup = {
+    'locale IPC': fixture.disposeLocaleIpc,
+    'database guard': fixture.disposeDatabaseGuard,
+    'preview protocol': fixture.disposePreviewProtocol,
+    'database IPC': fixture.disposeDatabaseIpc,
+    'startup window': startupWindow.destroy,
+    none: undefined
+  }[stage]
+  if (stage === 'preview protocol') failingCleanup?.mockImplementationOnce(() => undefined)
+  failingCleanup?.mockImplementation(() => {
+    throw cleanupFailure
+  })
+  await import('./index')
+  await fixture.exited
+
+  const cleanup = [
+    fixture.disposeLocaleIpc,
+    fixture.disposeDatabaseGuard,
+    fixture.disposeDatabaseIpc,
+    startupWindow.destroy,
+    fixture.electron.app.quit
+  ]
+  for (const dispose of cleanup) expect(dispose).toHaveBeenCalledOnce()
+  expect(fixture.disposePreviewProtocol).toHaveBeenCalledTimes(2)
+  expect(fixture.disposeDatabaseGuard.mock.invocationCallOrder[0]).toBeLessThan(
+    fixture.disposePreviewProtocol.mock.invocationCallOrder[1]
+  )
+  expect(fixture.disposePreviewProtocol.mock.invocationCallOrder[1]).toBeLessThan(
+    fixture.disposeDatabaseIpc.mock.invocationCallOrder[0]
+  )
+  for (let i = 1; i < cleanup.length; i++) {
+    expect
+      .soft(cleanup[i - 1].mock.invocationCallOrder[0])
+      .toBeLessThan(cleanup[i].mock.invocationCallOrder[0])
+  }
+  if (stage !== 'none') {
+    expect(fixture.log.warn).toHaveBeenCalledWith('Startup shell cleanup failed', cleanupFailure)
+  }
+  expect(fixture.electron.app.exit).toHaveBeenCalledWith(1)
+  expect(fixture.startupFailure).toHaveBeenCalledWith(
+    expect.objectContaining({ error: fixture.failure })
+  )
 })
 
 it.each(['icon', 'remote'] as const)(
@@ -362,4 +467,79 @@ it('stops visibility writes before runtime disposal and fails pending probes clo
   expect.soft(retired).toHaveBeenCalledExactlyOnceWith(false)
   expect.soft(fixture.sender.send).not.toHaveBeenCalled()
   expect(fixture.syncViewState).toHaveBeenCalledOnce()
+})
+
+it.each([
+  'tray locale',
+  'locale IPC',
+  'preview protocol',
+  'database IPC',
+  'registry',
+  'none'
+] as const)(
+  'attempts all IPC cleanup on lifecycle shutdown when %s cleanup fails',
+  async (stage) => {
+    fixture.failAt = 'none'
+    await import('./index')
+    await fixture.ready
+    const cleanupFailure = new Error(`${stage} cleanup failed`)
+    const cleanup = {
+      'tray locale': fixture.disposeTrayLocale,
+      'locale IPC': fixture.disposeLocaleIpc,
+      'preview protocol': fixture.disposePreviewProtocol,
+      'database IPC': fixture.disposeDatabaseIpc,
+      registry: fixture.disposeRegistry
+    }
+    if (stage !== 'none') {
+      cleanup[stage].mockImplementation(() => {
+        throw cleanupFailure
+      })
+    }
+
+    const expectedOutcome = stage === 'none' ? 'completed' : 'failed'
+    await expect(fixture.shutdownBackends!()).resolves.toBe(expectedOutcome)
+    await expect(fixture.shutdownBackends!()).resolves.toBe(expectedOutcome)
+
+    const orderedCleanup = [
+      fixture.disposeWeb,
+      fixture.disposeRuntime,
+      fixture.shutdownRemote,
+      ...Object.values(cleanup)
+    ]
+    for (const dispose of orderedCleanup) expect(dispose).toHaveBeenCalledOnce()
+    for (let i = 1; i < orderedCleanup.length; i++) {
+      expect(orderedCleanup[i - 1].mock.invocationCallOrder[0]).toBeLessThan(
+        orderedCleanup[i].mock.invocationCallOrder[0]
+      )
+    }
+    expect(fixture.startupFailure).not.toHaveBeenCalled()
+    if (stage !== 'none') {
+      expect(fixture.log.error).toHaveBeenCalledWith(
+        'application surface shutdown failed',
+        expect.objectContaining({ surface: 'ipc-handlers', result: 'failed' })
+      )
+    }
+  }
+)
+
+it('reports each IPC cleanup failure and still attempts registry disposal on lifecycle shutdown', async () => {
+  fixture.failAt = 'none'
+  await import('./index')
+  await fixture.ready
+  fixture.disposeLocaleIpc.mockImplementation(() => {
+    throw new Error('locale cleanup failed')
+  })
+  fixture.disposePreviewProtocol.mockImplementation(() => {
+    throw new Error('protocol cleanup failed')
+  })
+
+  await expect(fixture.shutdownBackends!()).resolves.toBe('failed')
+
+  expect(fixture.disposeRegistry).toHaveBeenCalledOnce()
+  expect(fixture.disposeDatabaseIpc).toHaveBeenCalledOnce()
+  const errors = fixture.log.error.mock.calls.filter(
+    ([message, fields]) =>
+      message === 'application surface shutdown failed' && fields?.surface === 'ipc-handlers'
+  )
+  expect(errors).toHaveLength(2)
 })

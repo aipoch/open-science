@@ -78,6 +78,9 @@ asarUnpack:
 # The micromamba binary is added per-platform below (mac/win/linux extraResources), not here, so
 # the two extraResources lists don't collide.
 extraResources:
+  # Keep the project license readable outside app.asar on every platform.
+  - from: LICENSE
+    to: LICENSE.txt
   - from: node_modules/.prisma
     to: node_modules/.prisma
   - from: node_modules/@prisma/client
@@ -133,7 +136,8 @@ nsis:
   perMachine: false
   allowElevation: false
   allowToChangeInstallationDirectory: true
-  include: build/installer.nsh
+  license: LICENSE
+  include: build/installer-license.nsh
 mac:
   # Compile the Icon Composer package into the app bundle (Assets.car + an ICNS fallback for
   # pre-Tahoe macOS). This is intentionally separate from dmg.icon below: the mounted installer
@@ -146,8 +150,9 @@ mac:
   minimumSystemVersion: '12.0.0'
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
+    # Electron locates its Helper bundles using this internal name.
     CFBundleName: Open Science
-    CFBundleDisplayName: Open Science
+    CFBundleDisplayName: Open-Science
     NSCameraUsageDescription: Application requests access to the device's camera.
     NSMicrophoneUsageDescription: Application requests access to the device's microphone.
     NSDocumentsFolderUsageDescription: Application requests access to the user's Documents folder.
@@ -160,6 +165,23 @@ mac:
     - from: resources/bin/mac/${arch}/micromamba
       to: micromamba
 dmg:
+  title: Open-Science
+  background: build/dmg-background.png
+  iconSize: 88
+  iconTextSize: 12
+  contents:
+    - x: 130
+      y: 286
+      name: Open-Science.app
+    - x: 530
+      y: 286
+      type: link
+      path: /Applications
+    - x: 530
+      y: 75
+      type: file
+      path: LICENSE
+      name: LICENSE.txt
   # The DMG volume icon does not consume the app's Icon Composer asset catalog. Keep the existing
   # ICNS dedicated to the mounted disk image instead of electron-builder's generated app fallback.
   icon: build/icon.icns
@@ -189,6 +211,8 @@ linux:
 appImage:
   artifactName: aipoch-${name}-${version}-linux-${arch}.${ext}
 deb:
+  fpm:
+    - build/deb-copyright=/usr/share/doc/open-science/copyright
   afterInstall: build/deb-after-install.tpl
   afterRemove: build/deb-after-remove.tpl
   artifactName: aipoch-${name}_${version}_${arch}.${ext}

@@ -1,4 +1,6 @@
-import { readFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
@@ -473,9 +475,90 @@ describe('module test impact commands', () => {
     write.mockRestore()
   })
 
-  it('keeps changed-source coverage separate from authoritative affected test selection', () => {
+  it('pins coverage to the PR diff when checkout contains newer main changes', () => {
+    const cwd = mkdtempSync(resolve(tmpdir(), 'module-coverage-'))
+    const git = (...args: string[]): string =>
+      execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+    try {
+      git('init', '-q')
+      git('config', 'user.email', 'test@example.com')
+      git('config', 'user.name', 'Test')
+      git('commit', '--allow-empty', '-qm', 'base')
+      const base = git('rev-parse', 'HEAD')
+      mkdirSync(resolve(cwd, 'src'), { recursive: true })
+      writeFileSync(resolve(cwd, 'src/main-only.ts'), 'export const mainOnly = true\n')
+      git('add', '.')
+      git('commit', '-qm', 'main change')
+      const main = git('rev-parse', 'HEAD')
+      git('checkout', '--detach', base)
+      mkdirSync(resolve(cwd, 'src/renderer/src/stores'), { recursive: true })
+      const changed = 'src/renderer/src/stores/session-store-persistence-merge.ts'
+      writeFileSync(resolve(cwd, changed), 'export const changed = true\n')
+      git('add', '.')
+      git('commit', '-qm', 'PR change')
+      const head = git('rev-parse', 'HEAD')
+      git('merge', '--no-edit', main)
+      // Vitest coverage.changed compares with checkout HEAD, including this unrelated file.
+      expect(git('diff', '--name-only', `${base}...HEAD`)).toContain('src/main-only.ts')
+      const spawn = vi.fn(() => ({ status: 0 }))
+      runModuleTestCli(['affected', '--base', base, '--head', head, '--coverage-changed', base], {
+        cwd,
+        execute: (command: string, args: string[]) => {
+          if (command === 'codegraph') throw new Error('CodeGraph unavailable in CI')
+          return execFileSync(command, args, { cwd, encoding: 'utf8' })
+        },
+        spawn,
+        environment: { npm_execpath: '/npm/bin/npm-cli.js' }
+      })
+      const args = spawn.mock.calls[0]?.[1]
+      expect(args).toContain(`--coverage.include=${changed}`)
+      expect(args).not.toContain('--coverage.changed')
+      expect(args).not.toContain('--coverage.include=src/main-only.ts')
+    } finally {
+      write.mockRestore()
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
+  it.each([
+    {
+      name: 'deleted sources',
+      diff: 'D\0src/renderer/src/stores/session-store-persistence-merge.ts\0',
+      include: '__no_changed_sources__'
+    },
+    {
+      name: 'renamed sources',
+      diff: 'R100\0src/renderer/src/stores/session-store-persistence-merge.ts\0src/renderer/src/stores/renamed.ts\0',
+      include: 'src/renderer/src/stores/renamed.ts'
+    }
+  ])('scopes coverage for $name', ({ diff, include }) => {
+    const spawn = vi.fn(() => ({ status: 0 }))
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+    try {
+      runModuleTestCli(
+        ['affected', '--base', 'base', '--head', 'head', '--coverage-changed', 'base'],
+        {
+          execute: (command: string, args: string[]) => {
+            if (command === 'git' && args[0] === 'merge-base') return 'base\n'
+            if (command === 'git' && args[0] === 'diff') return Buffer.from(diff)
+            throw new Error('CodeGraph unavailable in CI')
+          },
+          spawn,
+          environment: { npm_execpath: '/npm/bin/npm-cli.js' }
+        }
+      )
+      expect(spawn.mock.calls[0]?.[1]).toContain(`--coverage.include=${include}`)
+      expect(spawn.mock.calls[0]?.[1]).not.toContain('--coverage.changed')
+    } finally {
+      write.mockRestore()
+    }
+  })
+
+  it.each(['same', 'different'])('keeps coverage pinned with a %s baseline', (baseline) => {
     const base = '1'.repeat(40)
     const head = '2'.repeat(40)
+    const coverageBase = baseline === 'same' ? base : '3'.repeat(40)
     const execute = vi.fn((command: string, arguments_: string[]) => {
       if (command === 'git' && arguments_[0] === 'merge-base') return `${base}\n`
       if (command === 'git' && arguments_[0] === 'diff') {
@@ -496,13 +579,16 @@ describe('module test impact commands', () => {
     )
 
     expect(
-      runModuleTestCli(['affected', '--base', base, '--head', head, '--coverage-changed', base], {
-        cwd: '/repo',
-        execute,
-        spawn,
-        environment,
-        nodeExecutable: '/node'
-      })
+      runModuleTestCli(
+        ['affected', '--base', base, '--head', head, '--coverage-changed', coverageBase],
+        {
+          cwd: '/repo',
+          execute,
+          spawn,
+          environment,
+          nodeExecutable: '/node'
+        }
+      )
     ).toBe(0)
     expect(spawn).toHaveBeenCalledWith(
       '/node',
@@ -511,8 +597,7 @@ describe('module test impact commands', () => {
         'test',
         '--',
         '--coverage',
-        '--coverage.changed',
-        base,
+        '--coverage.include=src/main/artifacts/repository.ts',
         ...expectedPlan.testFiles
       ],
       expect.objectContaining({
@@ -523,6 +608,11 @@ describe('module test impact commands', () => {
         },
         stdio: 'inherit'
       })
+    )
+    expect(execute).toHaveBeenCalledWith(
+      'git',
+      ['merge-base', coverageBase, head],
+      expect.objectContaining({ cwd: '/repo' })
     )
     expect(spawn.mock.calls[0]?.[1]).toContain('src/main/reviewer/ipc.test.ts')
     expect(environment).toEqual({ npm_execpath: '/npm/bin/npm-cli.js' })

@@ -155,16 +155,25 @@ const cursorOffset = (cursor: string | undefined, documentId: string): number =>
   try {
     value = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'))
   } catch {
-    throw new Error('Literature read cursor is invalid.')
+    throw new Error(
+      'Literature read cursor is invalid. Restart read_document for the intended documentId without cursor; continue with the returned nextCursor.'
+    )
   }
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new Error('Literature read cursor is invalid.')
+    throw new Error(
+      'Literature read cursor is invalid. Restart read_document for the intended documentId without cursor; continue with the returned nextCursor.'
+    )
   }
   const { documentId: cursorDocumentId, offset } = value as Record<string, unknown>
   if (typeof offset !== 'number' || !Number.isSafeInteger(offset) || offset < 0) {
-    throw new Error('Literature read cursor is invalid.')
+    throw new Error(
+      'Literature read cursor is invalid. Restart read_document for the intended documentId without cursor; continue with the returned nextCursor.'
+    )
   }
-  if (cursorDocumentId !== documentId) throw new Error('Literature read cursor is invalid.')
+  if (cursorDocumentId !== documentId)
+    throw new Error(
+      'Literature read cursor is invalid. Restart read_document for the intended documentId without cursor; continue with the returned nextCursor.'
+    )
   return offset
 }
 
@@ -347,7 +356,10 @@ class LiteratureDocumentReader {
 
   private readBatch(document: ExtractedDocument, cursor: string | undefined): unknown {
     const offset = cursorOffset(cursor, document.context.bindingId)
-    if (offset > document.text.length) throw new Error('Literature read cursor is out of range.')
+    if (offset > document.text.length)
+      throw new Error(
+        'Literature read cursor is out of range. Restart read_document for the intended documentId without cursor; continue with the returned nextCursor.'
+      )
     const end = Math.min(document.text.length, offset + DOCUMENT_BATCH_CHARS)
     const content = document.text.slice(offset, end)
     const pages = pageRangeForOffsets(document.text, offset, end)

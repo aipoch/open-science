@@ -27,7 +27,6 @@ import { SessionReviewerPanel } from '../SessionReviewerPanel'
 import { SubagentPreview } from '../SubagentReleaseSurfaces'
 import { respondToSessionPlan } from '../session-plan/respond-to-session-plan'
 import { PlanPreviewSurface, type RestoredPlanResponder } from '../session-plan/SessionPlanSurfaces'
-import { useIsSideChatOpenForSession } from '../use-side-chat-controller'
 
 const isNotebookPreviewItem = (item: PreviewToolItem): item is NotebookPreviewItem =>
   item.toolKind === 'notebook' && Boolean(item.notebook)
@@ -237,7 +236,6 @@ const PlanPreviewToolContent = ({
   item: PreviewToolItem
   restoredPlanResponder?: RestoredPlanResponder
 }): React.JSX.Element | null => {
-  const isSideChatOpen = useIsSideChatOpenForSession(item.sessionId)
   const planSession = useSessionStore((state) =>
     state.sessions.find((session) => session.id === item.sessionId)
   )
@@ -276,8 +274,7 @@ const PlanPreviewToolContent = ({
   const canRespondToPlan =
     visiblePlanProjection !== undefined &&
     planSession?.status === 'waiting-plan-approval' &&
-    hasPlanResponsePath &&
-    !isSideChatOpen
+    hasPlanResponsePath
 
   if (!visiblePlanProjection || !planSession) return null
   const currentPlanArtifactVersionId =

@@ -12,6 +12,13 @@ type LiteratureToolSummary = Readonly<{
     checkedPages?: number
     imageIncluded?: boolean
     incomplete: boolean
+    limitations?: readonly Readonly<{
+      caption?: string
+      pageStart?: number
+      pageEnd?: number
+      tableStructureConflict: boolean
+      otherLimitations: boolean
+    }>[]
   }>
   query?: string
   documentNames: readonly string[]
@@ -126,6 +133,59 @@ const buildPdfElementToolSummary = (
     .map((item) => asPositiveInteger(item.pageEnd))
     .filter((page): page is number => page !== undefined)
   const coverage = isRecord(output?.coverage) ? output.coverage : undefined
+  // Group reasons per element: repeated element/table issues describe one limitation.
+  // Only explicit omissions interrupt the result. Other extraction limitations remain inspectable.
+  let incomplete = Array.isArray(coverage?.unavailablePages) && coverage.unavailablePages.length > 0
+  const omissionWarnings = new Set([
+    'No cells or image are available; caption alone is not detailed evidence.',
+    'Some checked pages have no usable Structure cache. Open Structure and parse those pages before concluding that they contain no figures or tables.',
+    'The cached image could not be prepared for the model; inspect the source PDF.',
+    'No cached image is available; caption or extracted text cannot replace visual evidence.',
+    'Notes or unassigned text exceed this response budget; inspect the source PDF.',
+    'Leading rows or merged labels exceed the context budget; inspect earlier batches and the source PDF for labels.',
+    'Some source rows exceed the response budget and are listed in omittedRows; do not treat this as complete table evidence.'
+  ])
+  const limitations = (elements ? [output, ...elements] : output ? [output] : []).flatMap(
+    (item) => {
+      if (!Array.isArray(item?.warnings) || item.warnings.length === 0) return []
+      let tableStructureConflict = false
+      let otherLimitations = false
+      for (const warning of item.warnings) {
+        if (
+          action === 'search' &&
+          (warning === 'Caption is truncated; inspect the source PDF for the complete text.' ||
+            warning === 'Table preview is truncated; inspect the source PDF for the complete text.')
+        ) {
+          continue
+        } else if (
+          warning === 'span-conflicts-with-source-rows' ||
+          warning === 'span-conflicts-with-source-columns'
+        ) {
+          tableStructureConflict = true
+        } else if (
+          omissionWarnings.has(warning) ||
+          (action === 'read' &&
+            (warning === 'Caption is truncated; inspect the source PDF for the complete text.' ||
+              warning === 'Part title is truncated; inspect the source PDF for the complete text.'))
+        ) {
+          incomplete = true
+        } else {
+          otherLimitations = true
+        }
+      }
+      if (!tableStructureConflict && !otherLimitations) return []
+      const caption = asString(item.caption)
+      return [
+        {
+          caption: caption && caption.length > 120 ? `${caption.slice(0, 120)}…` : caption,
+          pageStart: asPositiveInteger(item.pageStart),
+          pageEnd: asPositiveInteger(item.pageEnd),
+          tableStructureConflict,
+          otherLimitations
+        }
+      ]
+    }
+  )
   return {
     action,
     documentNames,
@@ -141,9 +201,8 @@ const buildPdfElementToolSummary = (
         ? coverage.checkedPages.length
         : undefined,
       imageIncluded: typeof output?.imageIncluded === 'boolean' ? output.imageIncluded : undefined,
-      incomplete: [output, ...pages].some(
-        (item) => Array.isArray(item?.warnings) && item.warnings.length > 0
-      )
+      incomplete,
+      limitations
     }
   }
 }

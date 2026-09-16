@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act } from 'react'
+import { createTwoFilesPatch } from 'diff'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SkillMarketplace, type SkillMarketplaceView } from './SkillMarketplace'
@@ -1125,6 +1126,179 @@ describe('Skill Marketplace', () => {
     expect(document.querySelector('[role="alertdialog"]')).toBeNull()
     expect(document.activeElement?.textContent).toBe('Browse Marketplace')
   })
+  it('opens conflict details from the browse card without attempting installation', async () => {
+    list.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        ...marketplaceCatalog,
+        entries: [marketplaceEntry],
+        installations: { [marketplaceEntry.id]: { kind: 'conflict' } }
+      }
+    })
+    const onNavigate = vi.fn()
+    await act(async () =>
+      root.render(<SkillMarketplace view={{ kind: 'marketplace' }} onNavigate={onNavigate} />)
+    )
+    const card = container.querySelector('article')!
+    expect(card.textContent).toContain('Local conflict')
+    await click('View details', card)
+    expect(onNavigate).toHaveBeenCalledWith(detailView)
+    expect(install).not.toHaveBeenCalled()
+  })
+
+  it('reports a failed attempt when installation discovers a new conflict', async () => {
+    detail.mockResolvedValueOnce({
+      ok: true,
+      value: { ...marketplaceDetail, installation: { kind: 'not-installed' } }
+    })
+    install.mockResolvedValueOnce({ ok: false, error: 'conflict' })
+    await act(async () =>
+      root.render(
+        <SkillMarketplace view={detailView} onNavigate={vi.fn()} onManageLocal={vi.fn()} />
+      )
+    )
+    await click('Install')
+    expect(install).toHaveBeenCalledOnce()
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'Skill installation failed'
+    )
+    expect(container.textContent).not.toContain('Skill installation blocked')
+    expect(
+      [...container.querySelectorAll('button')].some((button) => button.textContent === 'Install')
+    ).toBe(false)
+  })
+
+  it('does not report an installation failure before any installation attempt', async () => {
+    detail.mockResolvedValueOnce({
+      ok: true,
+      value: { ...marketplaceDetail, installation: { kind: 'conflict' } }
+    })
+    await act(async () =>
+      root.render(
+        <SkillMarketplace view={detailView} onNavigate={vi.fn()} onManageLocal={vi.fn()} />
+      )
+    )
+    expect(install).not.toHaveBeenCalled()
+    expect(container.textContent).toContain('No files were replaced.')
+    expect(container.textContent).not.toContain('Skill installation failed')
+  })
+
+  it('locates the exact conflicting Skill and requires a reviewed token before replacing it', async () => {
+    const blocked = {
+      ...marketplaceDetail,
+      installation: { kind: 'conflict', reason: 'name-taken', localSkillId: 'personal-existing' }
+    }
+    const preview = {
+      token: '11111111-1111-4111-8111-111111111111',
+      localSkillId: 'personal-existing',
+      displayName: 'Existing Skill',
+      source: 'personal',
+      installedVersion: '0.1.0',
+      localChanges: 'unknown',
+      mainEnabled: true,
+      specialists: [{ id: 'research', name: 'Research Specialist' }],
+      added: ['references/new.md'],
+      modified: ['SKILL.md'],
+      removed: ['old.txt'],
+      differences: [
+        {
+          path: 'SKILL.md',
+          patch: createTwoFilesPatch(
+            'SKILL.md',
+            'SKILL.md',
+            'old instructions\n',
+            'new instructions\n'
+          )
+        }
+      ]
+    }
+    detail.mockImplementation(async (request) => ({
+      ok: true,
+      value: request.previewUpdate ? { ...blocked, updatePreview: preview } : blocked
+    }))
+    const onManageLocal = vi.fn()
+    await act(async () =>
+      root.render(
+        <SkillMarketplace view={detailView} onNavigate={vi.fn()} onManageLocal={onManageLocal} />
+      )
+    )
+    await click('View installed Skill')
+    expect(onManageLocal).toHaveBeenCalledExactlyOnceWith('personal-existing')
+    await click('Review Skill update')
+    expect(install).not.toHaveBeenCalled()
+    expect(document.body.textContent).toContain('Research Specialist')
+    expect(document.body.textContent).toContain('Local changes cannot be determined.')
+    expect(document.querySelector('[data-diff-kind=added] code')?.textContent).toContain(
+      'new instructions'
+    )
+    expect(document.querySelector('[data-diff-kind=removed] code')?.textContent).toContain(
+      'old instructions'
+    )
+    await click('Cancel', document)
+    expect(install).not.toHaveBeenCalled()
+    await click('Review Skill update')
+    install.mockResolvedValueOnce({ ok: false, error: 'conflict', reason: 'version-changed' })
+    await click('Update existing Skill', document)
+    expect(install).toHaveBeenCalledExactlyOnceWith({
+      id: marketplaceEntry.id,
+      snapshotId: marketplaceCatalog.snapshotId,
+      expectedVersion: null,
+      updateToken: preview.token
+    })
+    expect(
+      document.querySelector<HTMLButtonElement>('[role="dialog"] button:last-child')?.disabled
+    ).toBe(true)
+    expect(document.body.textContent).toContain('Close this preview')
+    await click('Cancel', document)
+    expect(install).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not offer an install action when the detail reports a local conflict', async () => {
+    detail.mockResolvedValueOnce({
+      ok: true,
+      value: { ...marketplaceDetail, installation: { kind: 'conflict' } }
+    })
+    await act(async () =>
+      root.render(
+        <SkillMarketplace view={detailView} onNavigate={vi.fn()} onManageLocal={vi.fn()} />
+      )
+    )
+    expect(install).not.toHaveBeenCalled()
+    expect(
+      [...container.querySelectorAll('button')].map((button) => button.textContent)
+    ).not.toContain('Install')
+  })
+
+  it('opens local management and refreshes a blocked installation without installing', async () => {
+    detail.mockResolvedValueOnce({
+      ok: true,
+      value: { ...marketplaceDetail, installation: { kind: 'conflict' } }
+    })
+    const onManageLocal = vi.fn()
+    await act(async () =>
+      root.render(
+        <SkillMarketplace view={detailView} onNavigate={vi.fn()} onManageLocal={onManageLocal} />
+      )
+    )
+    expect(container.textContent).toContain('Skill installation blocked')
+    const diagnostics = [...container.querySelectorAll('details')].find(
+      (node) => node.querySelector('summary')?.textContent === 'Details'
+    )!
+    expect(diagnostics.open).toBe(false)
+    await click('Manage local skills')
+    expect(onManageLocal).toHaveBeenCalledOnce()
+    detail.mockResolvedValueOnce({
+      ok: true,
+      value: { ...marketplaceDetail, installation: { kind: 'not-installed' } }
+    })
+    await click('Refresh')
+    expect(container.textContent).not.toContain('Skill installation blocked')
+    expect(
+      [...container.querySelectorAll('button')].some((button) => button.textContent === 'Install')
+    ).toBe(true)
+    expect(install).not.toHaveBeenCalled()
+  })
+
   it('keeps conflicting local installations read-only', async () => {
     detail.mockResolvedValueOnce({
       ok: true,
@@ -1147,7 +1321,7 @@ describe('Skill Marketplace', () => {
     expect(
       [...container.querySelectorAll('button')].find((button) => button.textContent === 'Install')
         ?.disabled
-    ).toBe(true)
+    ).toBeUndefined()
     expect(install).not.toHaveBeenCalled()
   })
   it('shows loading, empty catalogs and retryable integrity failures without falling back to mock data', async () => {

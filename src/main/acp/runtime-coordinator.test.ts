@@ -657,6 +657,97 @@ describe('AcpRuntimeCoordinator', () => {
     expect(created).toHaveLength(3)
   })
 
+  it.each(['create', 'resume'] as const)(
+    'completes pending resumes when another Session %s fails on the shared target',
+    async (failedOperation) => {
+      const adoption = createDeferred<void>()
+      const created: ReturnType<typeof createFakeRuntime>[] = []
+      const coordinator = new AcpRuntimeCoordinator((callbacks, _permissionGrants, target) => {
+        const fake = createFakeRuntime({
+          frameworkId: target?.frameworkId ?? 'claude-code',
+          sessionIds: [],
+          callbacks,
+          beforeResume: () => adoption.promise
+        })
+        fake.createSession.mockRejectedValue(
+          Object.assign(new Error('Internal error'), {
+            name: 'RequestError',
+            code: -32603,
+            data: { details: 'Timed out waiting for MCP servers: skills' }
+          })
+        )
+        created.push(fake)
+        return fake.runtime
+      })
+      const agentTarget = {
+        frameworkId: 'claude-code',
+        providerId: 'provider-a',
+        model: 'model-a',
+        reasoningEffort: 'high'
+      } as const
+
+      const resumed = Promise.allSettled(
+        ['session-a', 'session-b'].map((sessionId) =>
+          coordinator.resumeSession({ sessionId, cwd: '/workspace', agentTarget })
+        )
+      )
+      await vi.waitFor(() => expect(created[1]?.resumeSession).toHaveBeenCalledTimes(2))
+      if (failedOperation === 'create') {
+        await expect(coordinator.createSession({ agentTarget })).rejects.toThrow('Internal error')
+      } else {
+        created[1].resumeSession.mockRejectedValueOnce(new Error('provider resume failed'))
+        await expect(
+          coordinator.resumeSession({ sessionId: 'failed-session', cwd: '/workspace', agentTarget })
+        ).rejects.toThrow('provider resume failed')
+      }
+      adoption.resolve()
+
+      expect(await resumed).toEqual([
+        { status: 'fulfilled', value: expect.objectContaining({ sessionId: 'session-a' }) },
+        { status: 'fulfilled', value: expect.objectContaining({ sessionId: 'session-b' }) }
+      ])
+      expect(created[1].requestRetirement).not.toHaveBeenCalled()
+      await coordinator.sendPrompt({ sessionId: 'session-a', text: 'continue' })
+      expect(created[1].sendPrompt).toHaveBeenCalledOnce()
+    }
+  )
+
+  it('keeps a pending creation usable when another creation fails on the shared target', async () => {
+    const creation = createDeferred<void>()
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks, _permissionGrants, target) => {
+      const fake = createFakeRuntime({
+        frameworkId: target?.frameworkId ?? 'claude-code',
+        sessionIds: ['new-session'],
+        callbacks
+      })
+      if (target) {
+        const createSession =
+          fake.createSession.getMockImplementation() as AcpRuntime['createSession']
+        fake.createSession.mockImplementationOnce(async (request) => {
+          await creation.promise
+          return createSession(request)
+        })
+        fake.createSession.mockRejectedValueOnce(new Error('create failed'))
+      }
+      created.push(fake)
+      return fake.runtime
+    })
+    const agentTarget = {
+      frameworkId: 'claude-code',
+      providerId: 'provider-a',
+      model: 'model-a',
+      reasoningEffort: 'high'
+    } as const
+    const pending = coordinator.createSession({ agentTarget })
+    await vi.waitFor(() => expect(created[1]?.createSession).toHaveBeenCalledOnce())
+    await expect(coordinator.createSession({ agentTarget })).rejects.toThrow('create failed')
+    creation.resolve()
+    await expect(pending).resolves.toMatchObject({ sessionId: 'new-session' })
+    await coordinator.sendPrompt({ sessionId: 'new-session', text: 'continue' })
+    expect(created[1].requestRetirement).not.toHaveBeenCalled()
+  })
+
   it('retires an unused targeted runtime after Session resume fails', async () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
     const coordinator = new AcpRuntimeCoordinator((callbacks, _permissionGrants, target) => {

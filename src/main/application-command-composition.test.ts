@@ -104,6 +104,7 @@ const dependencies = (): ApplicationCommandCompositionDependencies =>
     } as unknown as ApplicationCommandCompositionDependencies['specialist'],
     memory: EMPTY_OWNER,
     literature: EMPTY_OWNER,
+    bookmarks: EMPTY_OWNER,
     dataContent: EMPTY_OWNER,
     host: EMPTY_OWNER
   }) as ApplicationCommandCompositionDependencies
@@ -237,6 +238,11 @@ describe('application command composition', () => {
       'acp:respond-elicitation',
       'acp:respond-permission',
       'acp:respond-plan',
+      'bookmarks:create',
+      'bookmarks:delete',
+      'bookmarks:list',
+      'bookmarks:resolve-pdf-source',
+      'bookmarks:update-note',
       'literature:citation-styles',
       'literature:complete-metadata',
       'literature:export-record',
@@ -370,6 +376,8 @@ describe('application command composition', () => {
       'settings:set-agent-routing',
       'sessions:load-all',
       'sessions:save-session',
+      'sessions:bind-task-session',
+      'sessions:admit-task-turn',
       'sessions:stage-task-completion',
       'sessions:settle-task-completion',
       'sessions:fail-task-run',

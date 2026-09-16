@@ -196,7 +196,7 @@ const cloneJson = (value: unknown, limits: typeof SCHEMA_LIMITS): JsonValue => {
     if (nodes > limits.nodes || depth > limits.depth) {
       throw new StructuredOutputError(
         'structured_output_limit_exceeded',
-        'Structured output exceeds its complexity limit.'
+        `Structured output exceeds its complexity limit (${limits.nodes} nodes, depth ${limits.depth}).`
       )
     }
     if (candidate === null || typeof candidate === 'string' || typeof candidate === 'boolean') {
@@ -215,7 +215,7 @@ const cloneJson = (value: unknown, limits: typeof SCHEMA_LIMITS): JsonValue => {
       if (candidate.length > limits.items || Object.keys(candidate).length !== candidate.length) {
         throw new StructuredOutputError(
           'structured_output_limit_exceeded',
-          'Structured output array exceeds its limit or is sparse.'
+          `Structured output array must be dense and contain at most ${limits.items} items.`
         )
       }
       return candidate.map((item) => walk(item, depth + 1))
@@ -230,7 +230,7 @@ const cloneJson = (value: unknown, limits: typeof SCHEMA_LIMITS): JsonValue => {
     if (keys.length > limits.properties || keys.some((key) => DANGEROUS_KEYS.has(key))) {
       throw new StructuredOutputError(
         'structured_output_limit_exceeded',
-        'Structured output object exceeds its property limit or contains an unsafe key.'
+        `Structured output object must contain at most ${limits.properties} properties and no __proto__, prototype, or constructor keys.`
       )
     }
     const result: { [key: string]: JsonValue } = Object.create(null)
@@ -242,7 +242,7 @@ const cloneJson = (value: unknown, limits: typeof SCHEMA_LIMITS): JsonValue => {
   if (Buffer.byteLength(serialized, 'utf8') > limits.bytes) {
     throw new StructuredOutputError(
       'structured_output_limit_exceeded',
-      'Structured output exceeds its byte limit.'
+      `Structured output exceeds its ${limits.bytes}-byte limit.`
     )
   }
   return cloned
@@ -267,10 +267,18 @@ const inspectSchema = (schema: JsonValue): void => {
   if (schema === null || typeof schema !== 'object') return
   for (const [keyword, value] of Object.entries(schema)) {
     if (!ALLOWED_SCHEMA_KEYWORDS.has(keyword)) {
-      throw new StructuredOutputError('unsupported_schema', 'JSON Schema keyword is unsupported.')
+      throw new StructuredOutputError(
+        'unsupported_schema',
+        'JSON Schema keyword is unsupported.',
+        keyword
+      )
     }
     if (keyword === '$schema' && value !== DIALECT_URI) {
-      throw new StructuredOutputError('unsupported_schema', 'JSON Schema dialect is unsupported.')
+      throw new StructuredOutputError(
+        'unsupported_schema',
+        `JSON Schema dialect must be ${DIALECT_URI}.`,
+        keyword
+      )
     }
     if (
       (keyword === '$ref' || keyword === '$dynamicRef') &&

@@ -142,6 +142,7 @@ const categoryFromTrustedToolName = (value: string | undefined): string | undefi
   value ? TRUSTED_TOOL_CATEGORIES[normalizeTrustedToolName(value)] : undefined
 
 const capabilityFromLegacyCategory = (categoryKey: string): PermissionCapability | undefined => {
+  if (categoryKey === 'builtin:web_fetch') return { kind: 'builtin_tool', key: categoryKey }
   if (categoryKey.startsWith('customize:')) {
     const key = categoryKey
     return isPreRegisteredPermissionIdentity('customize_mutation', key)
@@ -210,8 +211,8 @@ const capabilityFromLegacyCategory = (categoryKey: string): PermissionCapability
     return operation ? { kind: 'file_operation', key: `file:${operation}` } : undefined
   }
 
-  // V1 has no persistable built-in provider tools. Unknown provider-native fallback names remain
-  // Once-only until an explicit cross-framework Broker registration is added.
+  // Unknown provider-native fallback names remain Once-only. Web reading is admitted above only
+  // through the broker's framework-specific native-tool contract.
   return undefined
 }
 

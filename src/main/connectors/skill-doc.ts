@@ -15,7 +15,7 @@ const CONVENTIONS = [
 // A Skill may be loaded outside the bundled-connector baseline (notably for custom MCP servers), so
 // keep the minimum calling and reuse contract local without copying the full shared policy block.
 const SKILL_CONVENTIONS =
-  'Use from `repl_execute` as `const result = await host.mcp(server, method, {...})`. Results are native JavaScript in a persistent REPL; save reusable values on `globalThis` instead of running the call again, and never re-issue the same upstream call. When independent calls are known, run them in the same `repl_execute` (sequentially unless parallel execution is safe) to avoid model round trips. Keep large results on `globalThis`; return only the compact summary needed for reasoning, not full arrays or documents.'
+  'Use from `repl_execute` as `const result = await host.mcp(server, method, {...})`. Results are native JavaScript in a persistent REPL; save reusable values on `globalThis` instead of running the call again, and do not re-issue an upstream call merely to inspect or process its existing result. When independent calls are known, run them in the same `repl_execute` (sequentially unless parallel execution is safe) to avoid model round trips. Keep large results on `globalThis`; return only the compact summary needed for reasoning, not full arrays or documents.'
 
 const CUSTOM_SKILL_CONVENTIONS =
   `${SKILL_CONVENTIONS} Do not bypass \`host.mcp\` with raw HTTP or calls from Python/R: ` +

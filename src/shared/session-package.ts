@@ -39,7 +39,7 @@ export const packageExcludedFileSchema = z
 export type PackageExcludedFile = z.infer<typeof packageExcludedFileSchema>
 export type PackageSelectableFile = PackageExcludedFile & {
   groupId: string
-  source: 'artifact' | 'upload' | 'reproducibility'
+  source: 'artifact' | 'upload' | 'reproducibility' | 'literature'
   versionNumber: number
   requiredForEvidence?: boolean
   dependentFiles: string[]
@@ -160,6 +160,7 @@ export const packageInventoryEntrySchema = z
 export const sessionPackageManifestSchema = z
   .object({
     format: z.literal('open-science-session'),
+    requiredFeatures: z.array(z.literal('literature')).max(1).optional(),
     schemaVersion: z.literal(1),
     createdAt: z.number().int().nonnegative(),
     source: z
@@ -275,7 +276,7 @@ const packageOperationSnapshotSchema: z.ZodType<PackageOperationSnapshot> = z
       .array(
         packageExcludedFileSchema.extend({
           groupId: z.string(),
-          source: z.enum(['artifact', 'upload', 'reproducibility']),
+          source: z.enum(['artifact', 'upload', 'reproducibility', 'literature']),
           versionNumber: z.number().int().positive(),
           requiredForEvidence: z.boolean().optional(),
           dependentFiles: z.array(z.string())

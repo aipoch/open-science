@@ -478,6 +478,83 @@ describe('shared PDF parsing lifecycle', () => {
     })
   })
 
+  it('recovers retained cleanup before parsing another document and joins concurrent retries', async () => {
+    const test = setup()
+    const first = test.owner.acquire(reading, [1])
+    const run = await started(test)
+    run.stop.mockRejectedValue(new Error('Temporary cleanup failure'))
+    run.output.resolve(resultFor(run.request.identity))
+    await expect(first.result).rejects.toThrow()
+    const before = run.stop.mock.calls.length
+    const gate = deferred<void>()
+    run.stop.mockImplementation(() => gate.promise)
+    source = { ...source, sourceFileId: 'attachment-2', sourceVersionId: 'version-2' }
+    const other: PdfStructureSourceRequest = {
+      kind: 'literature',
+      attachmentVersionId: 'version-2'
+    }
+    const next = test.owner.acquire(other, [2])
+    const concurrent = test.owner.acquire(other, [3])
+    await vi.waitFor(() => expect(run.stop).toHaveBeenCalledTimes(before + 1))
+    expect(test.runs).toHaveLength(1)
+    gate.resolve()
+    const second = await started(test, 2)
+    second.output.resolve(resultFor(second.request.identity))
+    const third = await started(test, 3)
+    third.output.resolve(resultFor(third.request.identity))
+    await expect(next.result).resolves.toMatchObject({ requestedPages: [2] })
+    await expect(concurrent.result).resolves.toMatchObject({ requestedPages: [3] })
+    expect(run.stop).toHaveBeenCalledTimes(before + 1)
+  })
+
+  it('keeps other documents blocked when a cleanup retry fails, without starting another worker', async () => {
+    const test = setup()
+    const first = test.owner.acquire(reading, [1])
+    const run = await started(test)
+    run.stop.mockRejectedValue(new Error('Unknown scratch file'))
+    run.output.resolve(resultFor(run.request.identity))
+    try {
+      await expect(first.result).rejects.toThrow('PDF worker cleanup must finish')
+      const before = run.stop.mock.calls.length
+      await expect(test.owner.acquire(reading, [2]).result).rejects.toThrow(
+        'PDF worker cleanup must finish'
+      )
+      expect(run.stop).toHaveBeenCalledTimes(before + 1)
+      expect(test.runs).toHaveLength(1)
+      expect(test.uses()).toBe(1)
+    } finally {
+      run.stop.mockResolvedValue(undefined)
+    }
+  })
+
+  it.each(['cancel', 'close', 'clear'] as const)(
+    'does not start a worker when %s interrupts cleanup recovery',
+    async (action) => {
+      const test = setup()
+      const first = test.owner.acquire(reading, [1])
+      const run = await started(test)
+      run.stop.mockRejectedValue(new Error('Temporary cleanup failure'))
+      run.output.resolve(resultFor(run.request.identity))
+      await expect(first.result).rejects.toThrow('PDF worker cleanup must finish')
+      const before = run.stop.mock.calls.length
+      const gate = deferred<void>()
+      run.stop.mockImplementation(() => gate.promise)
+      const next = test.owner.acquire(reading, [2])
+      let stopping: Promise<unknown> | undefined
+      try {
+        await vi.waitFor(() => expect(run.stop).toHaveBeenCalledTimes(before + 1))
+        if (action === 'cancel') next.release()
+        else stopping = action === 'close' ? test.owner.close() : test.owner.clearCache()
+        await expect(next.result).rejects.toMatchObject({ name: 'AbortError' })
+      } finally {
+        gate.resolve()
+        await stopping
+      }
+      expect(test.runs).toHaveLength(1)
+      expect(run.stop).toHaveBeenCalledTimes(before + 1)
+    }
+  )
+
   it('joins one retained cleanup when clear and close run concurrently', async () => {
     const test = setup()
     const handle = test.owner.acquire(reading, [1])

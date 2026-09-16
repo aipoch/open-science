@@ -1,3 +1,5 @@
+import { fieldErrorClassName } from '@/components/ui/notice-chrome'
+import { InlineNotice } from '@/components/ui/inline-notice'
 import { KeyRound } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -356,11 +358,7 @@ export function ComputeHostAuthenticationDetail({
               }
             />
             {validationError?.field === 'username' ? (
-              <p
-                id="compute-detail-username-error"
-                role="alert"
-                className="text-xs text-destructive"
-              >
+              <p id="compute-detail-username-error" role="alert" className={fieldErrorClassName}>
                 {validationError.text}
               </p>
             ) : null}
@@ -381,7 +379,7 @@ export function ComputeHostAuthenticationDetail({
               }
             />
             {validationError?.field === 'port' ? (
-              <p id="compute-detail-port-error" role="alert" className="text-xs text-destructive">
+              <p id="compute-detail-port-error" role="alert" className={fieldErrorClassName}>
                 {validationError.text}
               </p>
             ) : null}
@@ -407,7 +405,7 @@ export function ComputeHostAuthenticationDetail({
                   <p
                     id="compute-detail-password-error"
                     role="alert"
-                    className="text-xs text-destructive"
+                    className={fieldErrorClassName}
                   >
                     {validationError.text}
                   </p>
@@ -437,12 +435,15 @@ export function ComputeHostAuthenticationDetail({
         </p>
       ) : null}
       {feedback ? (
-        <p
-          role={feedback.kind === 'error' ? 'alert' : 'status'}
-          className={feedback.kind === 'error' ? 'mt-3 text-sm text-destructive' : 'mt-3 text-sm'}
-        >
-          {feedback.text}
-        </p>
+        feedback.kind !== 'error' ? (
+          <p className="mt-3 text-sm" role="status">
+            {feedback.text}
+          </p>
+        ) : (
+          <InlineNotice level="error" role="alert" className="mt-3">
+            {feedback.text}
+          </InlineNotice>
+        )
       ) : null}
     </div>
   )

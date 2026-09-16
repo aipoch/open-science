@@ -1,0 +1,345 @@
+import { spawnSync } from 'node:child_process'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { load } from 'js-yaml'
+import { describe, expect, it } from 'vitest'
+
+import { classifyChanges, macosGroupsForPlan, toGitHubOutputPlan } from './classify-pr-changes.mjs'
+import { evaluatePrGate } from './evaluate-pr-gate.mjs'
+import { createAffectedTestPlan } from './module-test-impact.mjs'
+import { resolveAuthoritativePlan } from './module-impact-shadow.mjs'
+
+type Step = {
+  id?: string
+  name: string
+  run?: string
+  if?: string
+  uses?: string
+  env?: Record<string, string>
+  with?: Record<string, unknown>
+}
+type Job = {
+  if?: string
+  needs?: string
+  'runs-on': string
+  'continue-on-error'?: boolean
+  steps: Step[]
+  strategy?: { matrix: { group?: string; shard?: string } }
+}
+type Workflow = {
+  on: { schedule?: Array<{ cron: string }>; workflow_dispatch?: unknown }
+  permissions: Record<string, string>
+  concurrency: { group: string; 'cancel-in-progress': boolean }
+  jobs: Record<string, Job>
+}
+const scheduled = load(readFileSync('.github/workflows/source-regression.yml', 'utf8')) as Workflow
+const pr = load(readFileSync('.github/workflows/pr-gate.yml', 'utf8')) as Workflow
+const action = load(readFileSync('.github/actions/source-regression/action.yml', 'utf8')) as {
+  runs: { using: string; steps: Step[] }
+}
+const graph = { status: 'unavailable-manifest-only', testFiles: [] }
+const changesFor = (paths: string[]): Array<{ path: string; status: string }> =>
+  paths.map((path) => ({ path, status: 'modified' }))
+const resolvePlan = (paths: string[]): ReturnType<typeof classifyChanges> => {
+  const changes = changesFor(paths)
+  const candidate = classifyChanges(changes)
+  return resolveAuthoritativePlan(candidate, createAffectedTestPlan(changes, graph))
+}
+
+describe('trusted supplemental selection', () => {
+  it('omits idle presentation jobs but retains runtime and delegation coverage for ontology changes', () => {
+    const changes = changesFor([
+      'src/main/connectors/descriptors/genes-ontology.ts',
+      'src/main/connectors/descriptors/genes-ontology.test.ts',
+      'src/main/notebook/host-mcp.integration.test.ts'
+    ])
+    const modules = createAffectedTestPlan(changes, graph)
+    const plan = resolveAuthoritativePlan(classifyChanges(changes), modules)
+    expect(plan.mode).toBe('selective')
+    expect(modules.modules).toEqual(['connector_ontology'])
+    expect(modules.testFiles).toEqual(
+      expect.arrayContaining([
+        'src/main/connectors/registry.test.ts',
+        'src/main/connectors/service.test.ts',
+        'src/main/connectors/skill-doc.test.ts',
+        'src/main/notebook/local-rpc-server.mcpcall.test.ts'
+      ])
+    )
+    expect(toGitHubOutputPlan(plan).macosGroups).toEqual(['journeys', 'regressions', 'delegation'])
+  })
+
+  it('runs the whole browser lane without forcing unrelated Vitest or Electron groups', () => {
+    const plan = resolvePlan(['e2e/browser/settings-undo.spec.ts'])
+    expect(plan.mode).toBe('selective')
+    // Keep real Windows font, clipboard and browser-startup behavior in the existing bundle.
+    expect(plan.bundles).toEqual(['policy', 'static', 'macos_e2e', 'windows_e2e'])
+    expect(plan.lanes).toContain('e2e_browser_windows')
+    expect(plan.lanes).not.toContain('e2e_functional_windows')
+    expect(plan.lanes).not.toContain('e2e_workspace_windows')
+    expect(toGitHubOutputPlan(plan).macosGroups).toEqual(['presentation'])
+    expect(plan.lanes).toContain('e2e_visual_macos')
+    const mixed = resolvePlan([
+      'e2e/browser/settings-undo.spec.ts',
+      'src/main/connectors/descriptors/genes-ontology.ts'
+    ])
+    expect(mixed.mode).toBe('selective')
+    expect(mixed.lanes).toContain('e2e_visual_macos')
+    expect(mixed.bundles).toContain('unit')
+    const native = resolvePlan([
+      'e2e/browser/settings-undo.spec.ts',
+      'src/main/notebook/kernel-executor.ts'
+    ])
+    expect(native.lanes).toEqual(
+      expect.arrayContaining(['e2e_functional_windows', 'e2e_workspace_windows'])
+    )
+  })
+
+  it.skipIf(process.platform === 'win32')(
+    'requires the Windows browser suite on shard one while allowing idle browser steps on native shards',
+    () => {
+      const enforce = pr.jobs.windows_e2e.steps.find(
+        ({ name }) => name === 'Enforce selected Windows E2E checks'
+      )!
+      expect(enforce.env?.E2E_SHARD).toBe('${{ matrix.shard }}')
+      for (const shard of ['1', '2', '3']) {
+        for (const outcome of ['success', 'failure', 'cancelled', 'skipped', '']) {
+          const result = spawnSync('bash', ['-e', '-c', enforce.run!], {
+            encoding: 'utf8',
+            env: {
+              ...process.env,
+              E2E_SHARD: shard,
+              RENDERER_LAYOUT_OUTCOME: outcome,
+              SETUP_OUTCOME: 'success',
+              E2E_ACCESSIBILITY_OUTCOME: 'skipped',
+              E2E_FUNCTIONAL_OUTCOME: 'skipped',
+              E2E_WORKSPACE_OUTCOME: 'skipped'
+            }
+          })
+          const succeeds =
+            outcome === 'success' || (shard !== '1' && ['skipped', ''].includes(outcome))
+          expect(result.status, result.stderr).toBe(succeeds ? 0 : 1)
+        }
+      }
+    }
+  )
+
+  it.each([
+    'src/main/artifacts/ro-crate-export.ts',
+    'src/renderer/src/pages/settings/SettingsPage.tsx',
+    'e2e/fixtures/electron-app.ts',
+    'e2e/new-unknown.spec.ts',
+    'package.json',
+    'playwright.browser.config.ts',
+    '.github/actions/source-regression/action.yml',
+    '.github/workflows/source-regression.yml'
+  ])('keeps full fallback for unknown ownership or global input: %s', (path) => {
+    const plan = resolvePlan([path])
+    expect(plan.mode).toBe('full')
+    expect(macosGroupsForPlan(plan)).toEqual([
+      'journeys',
+      'presentation',
+      'regressions',
+      'delegation'
+    ])
+  })
+
+  it('adds delegation through state and shared consumers while views retain supplemental regressions', () => {
+    for (const path of [
+      'src/renderer/src/stores/session-store.ts',
+      'src/main/acp/runtime.ts',
+      'src/shared/acp.ts'
+    ]) {
+      expect(macosGroupsForPlan(classifyChanges(changesFor([path])))).toContain('delegation')
+    }
+    const view = classifyChanges(changesFor(['src/renderer/src/components/ui/button.tsx']))
+    expect(macosGroupsForPlan(view)).toContain('regressions')
+    expect(macosGroupsForPlan(classifyChanges(changesFor(['README.md'])))).toEqual([])
+  })
+
+  it('rejects omitted, extra, reordered or empty group plans even when jobs report success', () => {
+    const plan = toGitHubOutputPlan(
+      resolvePlan(['src/main/connectors/descriptors/genes-ontology.ts'])
+    )
+    const conclusions = Object.fromEntries(
+      ['preflight', ...plan.bundles].map((job) => [job, 'success'])
+    )
+    for (const groups of [
+      [],
+      ['journeys'],
+      ['delegation', 'journeys', 'regressions'],
+      [...plan.macosGroups, 'presentation']
+    ]) {
+      expect(
+        evaluatePrGate({ ...plan, macosGroups: groups }, conclusions, { executionMode: 'bundles' })
+          .ok
+      ).toBe(false)
+    }
+    expect(evaluatePrGate(plan, conclusions, { executionMode: 'bundles' }).ok).toBe(true)
+    const legacy = { ...plan, macosGroups: undefined }
+    expect(evaluatePrGate(legacy, conclusions, { executionMode: 'bundles' }).ok).toBe(true)
+    expect(pr.jobs.macos_e2e.strategy?.matrix.group).toContain(
+      `|| fromJSON('["journeys","presentation","regressions","delegation"]')`
+    )
+  })
+})
+
+describe('independent source regression', () => {
+  it('batches main on a read-only schedule with one native runner and no package prerequisite', () => {
+    expect(scheduled.on.schedule).toEqual([{ cron: '37 */6 * * *' }])
+    expect(scheduled.on).toHaveProperty('workflow_dispatch')
+    expect(scheduled.on).not.toHaveProperty('push')
+    expect(scheduled.permissions).toEqual({ actions: 'read', contents: 'read' })
+    expect(scheduled.jobs.plan.if).toContain("github.ref == 'refs/heads/main'")
+    expect(scheduled.concurrency).toEqual({
+      group: 'source-regression-${{ github.ref }}',
+      'cancel-in-progress': true
+    })
+    expect(Object.keys(scheduled.jobs)).toEqual(['plan', 'regression'])
+    expect(scheduled.jobs.regression.needs).toBe('plan')
+    expect(scheduled.jobs.regression['runs-on']).toBe(pr.jobs.macos_e2e['runs-on'])
+    expect(scheduled.jobs.regression['continue-on-error']).toBeUndefined()
+    expect(
+      scheduled.jobs.regression.steps.filter((step) => step.run === 'npm run build:e2e')
+    ).toHaveLength(1)
+  })
+
+  it.each(['regressions', 'delegation'])(
+    'shares actual %s execution between PR and main',
+    (group) => {
+      expect(action.runs.using).toBe('composite')
+      const command = action.runs.steps.find((step) => step.name === `Run supplemental ${group}`)!
+      expect(command.run).toBe(
+        `npm run test:e2e:${group} -- --fail-on-flaky-tests --global-timeout=1200000 --output=test-results/${group}_macos`
+      )
+      for (const job of [pr.jobs.macos_e2e, scheduled.jobs.regression]) {
+        expect(job.steps.find((step) => step.with?.group === group)?.uses).toBe(
+          './.github/actions/source-regression'
+        )
+      }
+    }
+  )
+
+  it.skipIf(process.platform === 'win32')(
+    'skips only a passing scheduled SHA, retries failures and always permits manual validation',
+    () => {
+      const dir = mkdtempSync(join(tmpdir(), 'source-regression-plan-'))
+      try {
+        writeFileSync(
+          join(dir, 'gh'),
+          '#!/bin/sh\nprintf "%s" "$*" > "$ARGS"\nprintf "%s" "$PREVIOUS_SHA"\nexit "$API_STATUS"\n',
+          { mode: 0o755 }
+        )
+        const step = scheduled.jobs.plan.steps.find(({ id }) => id === 'decide')!
+        for (const [event, previous, apiStatus, expected] of [
+          ['schedule', 'current', '0', 'false'],
+          ['schedule', 'older-passing', '0', 'true'],
+          ['schedule', '', '0', 'true'],
+          ['schedule', '', '1', 'true'],
+          ['workflow_dispatch', 'current', '0', 'true']
+        ]) {
+          const output = join(dir, 'output')
+          const args = join(dir, 'args')
+          writeFileSync(output, '')
+          writeFileSync(args, '')
+          const result = spawnSync('bash', ['-e', '-c', step.run!], {
+            encoding: 'utf8',
+            env: {
+              ...process.env,
+              PATH: `${dir}:${process.env.PATH}`,
+              GITHUB_EVENT_NAME: event,
+              GITHUB_REPOSITORY: 'aipoch/open-science',
+              GITHUB_SHA: 'current',
+              GITHUB_OUTPUT: output,
+              PREVIOUS_SHA: previous,
+              API_STATUS: apiStatus,
+              ARGS: args
+            }
+          })
+          expect(result.status, result.stderr).toBe(0)
+          expect(readFileSync(output, 'utf8').trim()).toBe(`should_test=${expected}`)
+          if (event === 'schedule')
+            expect(readFileSync(args, 'utf8')).toContain(
+              'branch=main&event=schedule&status=success'
+            )
+          else expect(readFileSync(args, 'utf8')).toBe('')
+        }
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it.skipIf(process.platform === 'win32')(
+    'cannot pass when either scheduled suite fails, cancels or never executes',
+    () => {
+      const enforce = scheduled.jobs.regression.steps.find(
+        ({ name }) => name === 'Enforce both supplemental suites'
+      )!
+      expect(enforce.if).toBe('always()')
+      for (const regressions of ['success', 'failure', 'cancelled', 'skipped', '']) {
+        for (const delegation of ['success', 'failure', 'cancelled', 'skipped', '']) {
+          const result = spawnSync('bash', ['-e', '-c', enforce.run!], {
+            env: { ...process.env, REGRESSIONS: regressions, DELEGATION: delegation }
+          })
+          expect(result.status).toBe(regressions === 'success' && delegation === 'success' ? 0 : 1)
+        }
+      }
+    }
+  )
+
+  it.skipIf(process.platform === 'win32')(
+    'validates action inputs without executing injected shell text',
+    () => {
+      const validate = action.runs.steps.find(({ name }) => name === 'Validate suite')!
+      for (const group of [
+        'regressions',
+        'delegation',
+        'unknown',
+        '$(exit 0)',
+        'regressions; exit 0'
+      ]) {
+        const result = spawnSync('bash', ['-e', '-c', validate.run!], {
+          env: { ...process.env, GROUP: group }
+        })
+        expect(result.status).toBe(['regressions', 'delegation'].includes(group) ? 0 : 1)
+      }
+    }
+  )
+
+  it.skipIf(process.platform === 'win32')(
+    'uses the real PR jobs for the focused supplemental dry-run',
+    () => {
+      const dir = mkdtempSync(join(tmpdir(), 'supplemental-dryrun-'))
+      try {
+        const output = join(dir, 'output')
+        const step = pr.jobs.preflight.steps.find(({ id }) => id === 'classify')!
+        const result = spawnSync('bash', ['-eu', '-c', step.run!], {
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            EVENT_NAME: 'workflow_dispatch',
+            DRY_RUN_MODE: 'source-regressions',
+            GITHUB_OUTPUT: output
+          }
+        })
+        expect(result.status, result.stderr).toBe(0)
+        const line = readFileSync(output, 'utf8')
+          .split('\n')
+          .find((value) => value.startsWith('plan='))!
+        const plan = JSON.parse(line.slice(5))
+        expect(plan.macosGroups).toEqual(['regressions', 'delegation'])
+        expect(plan.bundles).toEqual(['policy', 'macos_e2e'])
+        expect(
+          evaluatePrGate(
+            plan,
+            { preflight: 'success', policy: 'success', macos_e2e: 'success' },
+            { executionMode: 'bundles' }
+          ).ok
+        ).toBe(true)
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    }
+  )
+})

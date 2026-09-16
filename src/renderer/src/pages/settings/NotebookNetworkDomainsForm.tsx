@@ -1,3 +1,4 @@
+import { InlineNotice } from '@/components/ui/inline-notice'
 import { Plus, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -387,12 +388,13 @@ const NotebookNetworkDomainsForm = (): React.JSX.Element => {
       </section>
 
       {message?.kind === 'error' ? (
-        <p
-          className="text-xs text-destructive whitespace-pre-wrap [overflow-wrap:anywhere]"
+        <InlineNotice
+          level="error"
+
           role="alert"
         >
           {message.text}
-        </p>
+        </InlineNotice>
       ) : message ? (
         <p className="text-xs text-muted-foreground" role="status">
           {message.text}

@@ -34,11 +34,13 @@ const NotebookCodeBlock = ({
         disabled={!navigator.clipboard?.writeText}
         onClick={copyCode}
       >
-        {copied ? (
-          <Check className="size-3.5" aria-hidden="true" />
-        ) : (
-          <Copy className="size-3.5" aria-hidden="true" />
-        )}
+        <span key={String(copied)} className="button-feedback">
+          {copied ? (
+            <Check className="size-3.5" aria-hidden="true" />
+          ) : (
+            <Copy className="size-3.5" aria-hidden="true" />
+          )}
+        </span>
       </button>
       <div className="overflow-auto">
         <pre className="m-0 w-max min-w-full p-4 font-mono text-[13px] leading-[1.5]">

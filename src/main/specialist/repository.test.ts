@@ -2,7 +2,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
 import { SpecialistDocumentDegradedError, SpecialistRepository } from './repository'
 import { sanitizeSpecialist } from './repository'
@@ -210,6 +210,51 @@ describe('SpecialistRepository.getAll', () => {
       issues: [{ code: 'record-invalid', recordIndex: 1 }]
     })
     expect(JSON.stringify(snapshot.integrity)).not.toContain('malformed-specialist')
+  })
+})
+
+describe('SpecialistRepository dependent-read lock', () => {
+  it('holds queued writes until the dependent operation finishes and releases after failure', async () => {
+    const repository = new SpecialistRepository(tmpDir)
+    let entered!: () => void
+    let release!: () => void
+    const ready = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const reading = repository.withReadLock(async () => {
+      entered()
+      await gate
+      return repository.getAll()
+    })
+    await ready
+    // A queued writer enters getAllWithIntegrity before its first filesystem await.
+    // Observe entry, since write completion would also be delayed without the lock.
+    const readDocument = vi.spyOn(repository, 'getAllWithIntegrity')
+    let written = false
+    const write = repository
+      .replaceAll({ version: SPECIALISTS_FILE_VERSION, specialists: [] })
+      .then(() => {
+        written = true
+      })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(readDocument).not.toHaveBeenCalled()
+    expect(written).toBe(false)
+    release()
+    await reading
+    await write
+    expect(written).toBe(true)
+    expect(readDocument).toHaveBeenCalledTimes(2)
+    readDocument.mockRestore()
+    await expect(
+      repository.withReadLock(async () => {
+        throw new Error('dependent failure')
+      })
+    ).rejects.toThrow('dependent failure')
+    await expect(repository.getAll()).resolves.toMatchObject({ specialists: [] })
+    await repository.replaceAll({ version: SPECIALISTS_FILE_VERSION, specialists: [] })
   })
 })
 

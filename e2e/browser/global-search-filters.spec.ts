@@ -1,14 +1,14 @@
 import { expect, test } from '@playwright/test'
 
-test('keeps the filter toggle fixed while categories scroll and supports keyboard disclosure', async ({
+test('keeps the advanced filter toggle fixed while categories scroll and supports keyboard disclosure', async ({
   page
 }) => {
   await page.setViewportSize({ width: 600, height: 720 })
   await page.goto('/global-search-filters.html')
-  const toggle = page.getByRole('button', { name: /^Filters/ })
+  const toggle = page.getByRole('button', { name: /^Advanced filters/ })
   const scope = page.getByRole('combobox', { name: 'Search scope' })
   await expect(toggle).toHaveAttribute('aria-expanded', 'false')
-  await expect(scope).toBeHidden()
+  await expect(scope).toHaveCount(0)
   await page.getByRole('dialog').evaluate(async (el) => {
     await Promise.all(el.getAnimations().map((animation) => animation.finished))
   })
@@ -27,11 +27,10 @@ test('keeps the filter toggle fixed while categories scroll and supports keyboar
   await expect(scope).toBeFocused()
   await scope.press('Enter')
   await page.getByRole('option', { name: 'Current project', exact: true }).click()
-  await expect(toggle).toHaveText('Filters1')
+  await expect(toggle).toHaveText('Advanced filters1')
   await toggle.focus()
   await page.keyboard.press('Space')
-  await expect(scope).toBeHidden()
-  await page.keyboard.press('Tab')
+  await expect(scope).toHaveCount(0)
   await expect(page.locator('.search-subfilters :focus')).toHaveCount(0)
   await toggle.click()
   await expect(scope).toContainText('Current project')

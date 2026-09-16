@@ -1,3 +1,4 @@
+import { fieldErrorClassName } from '@/components/ui/notice-chrome'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -125,7 +126,7 @@ export function ComputePasswordResetSection({
             aria-invalid={error !== undefined}
           />
           {error ? (
-            <p id="compute-reset-password-error" role="alert" className="text-xs text-destructive">
+            <p id="compute-reset-password-error" role="alert" className={fieldErrorClassName}>
               {error}
             </p>
           ) : null}

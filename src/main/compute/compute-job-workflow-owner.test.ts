@@ -679,36 +679,52 @@ describe('ComputeJobWorkflowOwner.submitJob', () => {
     )
   })
 
-  it('rejects timeout_seconds > 7 days', async () => {
-    const runner = makeFakeRunner({
-      exitCode: 0,
-      stdout: '',
-      stderr: '',
-      truncated: false,
-      timedOut: false
-    })
-    const { repo: jobRepo } = makeJobRepo()
-    const { repo } = makeRepo()
-    const broker = {
-      request: vi.fn(),
-      requestWithContext: vi.fn(() => Promise.resolve('once' as const)),
-      respond: vi.fn()
-    } as unknown as ComputeApprovalBroker
+  it.each([Infinity, 0, -1, 1.5, 8 * 24 * 3600])(
+    'rejects invalid timeoutSeconds %s before submission and accepts a correction',
+    async (timeoutSeconds) => {
+      const runner = makeFakeRunner({
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+        truncated: false,
+        timedOut: false
+      })
+      const { repo: jobRepo, createCalls } = makeJobRepo()
+      const { repo } = makeRepo()
+      const broker = {
+        request: vi.fn(),
+        requestWithContext: vi.fn(() => Promise.resolve('once' as const)),
+        respond: vi.fn()
+      } as unknown as ComputeApprovalBroker
 
-    const service = makeOwner(runner, repo, broker, jobRepo)
+      const service = makeOwner(runner, repo, broker, jobRepo)
 
-    const err = await service
-      .submitJob(
+      const err = await service
+        .submitJob(
+          'ssh:biowulf',
+          'test',
+          'echo hi',
+          { timeoutSeconds },
+          { sessionId: 's1', projectId: 'p1' }
+        )
+        .catch((e) => e)
+
+      expect(err.computeCallError?.error_code).toBe('timeout')
+      expect(err.computeCallError?.message).toContain('timeoutSeconds')
+      expect(err.computeCallError?.message).toContain('The Compute Job was not submitted.')
+      expect(createCalls).not.toHaveBeenCalled()
+      expect(broker.requestWithContext).not.toHaveBeenCalled()
+      expect(runner.run).not.toHaveBeenCalled()
+      await service.submitJob(
         'ssh:biowulf',
         'test',
         'echo hi',
-        { timeoutSeconds: 8 * 24 * 3600 },
+        { timeoutSeconds: 120 },
         { sessionId: 's1', projectId: 'p1' }
       )
-      .catch((e) => e)
-
-    expect(err.computeCallError?.error_code).toBe('timeout')
-  })
+      expect(createCalls).toHaveBeenCalledTimes(1)
+    }
+  )
 
   it('rejects an unsafe environment name before approval or persistence', async () => {
     const runner = makeFakeRunner({
@@ -1140,7 +1156,7 @@ describe('resolveInputs — dst_filename validation', () => {
         '/workspace',
         undefined
       )
-    ).rejects.toThrow(/dst_filename must be unique/)
+    ).rejects.toThrow(/dstFilename must be unique/)
   })
 })
 

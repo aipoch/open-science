@@ -3710,6 +3710,74 @@ describe('workspace agent message sending', () => {
     ).toBe(false)
   })
 
+  it.each([true, false, undefined])(
+    'preserves initial auto-review %s through pending Session binding and returns the bound identity',
+    async (autoReviewEnabled) => {
+      const created = createDeferred<{ sessionId: string; cwd: string }>()
+      const runtime = {
+        state: createSnapshot([]),
+        createSession: vi.fn(() => created.promise),
+        resumeSession: vi.fn(),
+        resetSessionContext: vi.fn(),
+        sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['review-session']))
+      }
+      const sending = sendWorkspaceMessage(
+        runtime,
+        {
+          text: 'Review this',
+          cwd: '/workspace/project',
+          projectId: 'project-1',
+          autoReviewEnabled
+        },
+        { awaitPendingPreparation: true }
+      )
+      await vi.waitFor(() => expect(runtime.createSession).toHaveBeenCalledOnce())
+      const pending = useSessionStore.getState().sessions[0]
+      expect(pending.isPending).toBe(true)
+      expect(pending.autoReviewEnabled === true).toBe(autoReviewEnabled === true)
+      created.resolve({ sessionId: 'review-session', cwd: '/workspace/project' })
+      const result = await sending
+      expect(result).toEqual({
+        sessionId: 'review-session',
+        messageId: pending.activeRun!.promptMessageId
+      })
+      expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+      const bound = useSessionStore.getState().sessions.find(({ id }) => id === result!.sessionId)!
+      expect(bound.isPending).toBe(false)
+      expect(bound.autoReviewEnabled === true).toBe(autoReviewEnabled === true)
+      expect(toPersistedSession(bound).autoReviewEnabled).toBe(autoReviewEnabled === true)
+    }
+  )
+
+  it('keeps an auto-review change made while a new Session is being prepared', async () => {
+    const created = createDeferred<{ sessionId: string; cwd: string }>()
+    const runtime = {
+      state: createSnapshot([]),
+      createSession: vi.fn(() => created.promise),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['review-session']))
+    }
+    const sending = sendWorkspaceMessage(
+      runtime,
+      {
+        text: 'Review this',
+        cwd: '/workspace/project',
+        projectId: 'project-1',
+        autoReviewEnabled: true
+      },
+      { awaitPendingPreparation: true }
+    )
+    await vi.waitFor(() => expect(runtime.createSession).toHaveBeenCalledOnce())
+    useSessionStore
+      .getState()
+      .setAutoReviewEnabled(useSessionStore.getState().sessions[0].id, false)
+    created.resolve({ sessionId: 'review-session', cwd: '/workspace/project' })
+    const result = await sending
+    expect(result?.sessionId).toBe('review-session')
+    expect(useSessionStore.getState().sessions[0].autoReviewEnabled).toBe(false)
+  })
+
   it.each(['new', 'existing', 'new-partial', 'existing-partial'] as const)(
     'LR-05 blocks an unavailable selected literature version (%s)',
     async (kind) => {
@@ -5360,7 +5428,7 @@ describe('workspace agent message sending', () => {
       { awaitPendingPreparation: true }
     )
 
-    expect(sent).toBeDefined()
+    expect(sent?.sessionId).toBe('branched-runtime-session')
     expect(saveSession).toHaveBeenCalledOnce()
     expect(saveSession.mock.calls[0]?.[0]).toMatchObject({ delegationPolicy: 'allow' })
     expect(setDelegationPolicy).toHaveBeenCalledWith(

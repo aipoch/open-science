@@ -1,3 +1,4 @@
+import { InlineNotice } from '@/components/ui/inline-notice'
 import { useFileCredentialNotice } from './use-file-credential-notice'
 import { BookOpen, Check, KeyRound, Server, Trash2, X } from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
@@ -358,9 +359,9 @@ export function CredentialsPanel({
           </p>
         </div>
         {!encryptionAvailable ? (
-          <p className="text-xs text-danger-000">
+          <InlineNotice level="error" role="note">
             {t('Secure key storage is unavailable. Unlock the system keychain and try again.')}
-          </p>
+          </InlineNotice>
         ) : null}
         {message ? (
           <p role="status" className="text-xs text-muted-foreground">
@@ -604,9 +605,9 @@ export function CredentialsPanel({
             <p className="text-sm text-muted-foreground">{t('No Connector credentials yet.')}</p>
           ) : null}
           {credentialMessage ? (
-            <p className="mt-3 text-sm text-destructive" role="alert">
+            <InlineNotice level="error" className="mt-3" role="alert">
               {credentialMessage}
-            </p>
+            </InlineNotice>
           ) : null}
         </SettingsSection>
       ) : null}
@@ -705,9 +706,9 @@ export function CredentialsPanel({
                 {t('This permanently removes the stored credential from this device.')}
               </AlertDialog.Description>
               {credentialMessage ? (
-                <p className="mt-4 text-sm text-destructive" role="alert">
+                <InlineNotice level="error" className="mt-4" role="alert">
                   {credentialMessage}
-                </p>
+                </InlineNotice>
               ) : null}
             </div>
             <div className={dialogFooterClassName}>

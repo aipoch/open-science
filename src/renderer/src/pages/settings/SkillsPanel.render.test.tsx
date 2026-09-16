@@ -1,3 +1,7 @@
+import {
+  marketplaceCatalog,
+  marketplaceDetail
+} from '../../../../shared/__fixtures__/skill-marketplace'
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -215,6 +219,51 @@ const pasteValue = (label: string, value: string): void => {
   })
   act(() => field?.dispatchEvent(event))
 }
+
+it('navigates to the conflicting Skill detail even when the retained search hides it', async () => {
+  const onNavigate = vi.fn()
+  await act(async () =>
+    root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={onNavigate} />)
+  )
+  const input = container.querySelector<HTMLInputElement>('input')!
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(
+      input,
+      'no-matching-skill'
+    )
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  Object.assign(window.api.settings, {
+    listSkillMarketplace: vi.fn().mockResolvedValue({ ok: true, value: marketplaceCatalog }),
+    getSkillMarketplaceBatch: vi.fn().mockResolvedValue(null),
+    getSkillMarketplaceDetail: vi.fn().mockResolvedValue({
+      ok: true,
+      value: {
+        ...marketplaceDetail,
+        installation: { kind: 'conflict', reason: 'name-taken', localSkillId: 'personal-mine' }
+      }
+    })
+  })
+  await act(async () =>
+    root.render(
+      <SkillsPanel
+        view={{
+          kind: 'marketplace-detail',
+          id: marketplaceDetail.entry.id,
+          displayName: marketplaceDetail.entry.displayName,
+          snapshotId: marketplaceCatalog.snapshotId
+        }}
+        onNavigate={onNavigate}
+      />
+    )
+  )
+  const target = [...container.querySelectorAll('button')].find(
+    (button) => button.textContent === 'View installed Skill'
+  )!
+  expect(target).toBeDefined()
+  await act(async () => target.click())
+  expect(onNavigate).toHaveBeenCalledWith({ kind: 'detail', id: 'personal-mine' })
+})
 
 describe('SkillsPanel (list view)', () => {
   it('renders skills grouped by source with one toggle each and an Add skill control', () => {

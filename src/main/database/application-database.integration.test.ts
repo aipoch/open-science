@@ -224,7 +224,8 @@ describe('application database (integration)', () => {
         '0037_literature_inbox_integrity',
         '0038_literature_search_text',
         '0039_literature_metadata_commit_receipt',
-        '0040_literature_collection_revision'
+        '0040_literature_collection_revision',
+        '0041_bookmarks'
       ]
     })
 
@@ -1294,7 +1295,8 @@ describe('application database (integration)', () => {
         '0037_literature_inbox_integrity',
         '0038_literature_search_text',
         '0039_literature_metadata_commit_receipt',
-        '0040_literature_collection_revision'
+        '0040_literature_collection_revision',
+        '0041_bookmarks'
       ]
     })
 

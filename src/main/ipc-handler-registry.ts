@@ -169,10 +169,13 @@ const createIpcHandlerRegistry = (
   return {
     ipcMainHandle,
     createInstallationScope: () => {
+      const callerLeaseEpoch = callerLeaseEpochForRegistration()
       const before = new Set(registeredChannels)
       let settled = false
       const addedChannels = (): string[] =>
-        [...registeredChannels].filter((channel) => !before.has(channel))
+        callerLeaseEpoch === activeCallerLeaseEpoch
+          ? [...registeredChannels].filter((channel) => !before.has(channel))
+          : []
       return {
         complete: (cleanup) => {
           if (settled) throw new Error('IPC handler installation scope is already settled.')
@@ -186,7 +189,7 @@ const createIpcHandlerRegistry = (
               try {
                 cleanup?.()
               } finally {
-                removeChannels(channels)
+                if (callerLeaseEpoch === activeCallerLeaseEpoch) removeChannels(channels)
               }
             }
           }

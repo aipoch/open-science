@@ -4,6 +4,7 @@ import { dirname, isAbsolute, resolve, sep } from 'node:path'
 type FilesystemLayoutInput = Readonly<{
   privateRoot?: string
   readOnlyRoots: readonly string[]
+  optionalReadOnlyRoots?: readonly string[]
   readWriteRoots: readonly string[]
   deniedReadRoots: readonly string[]
   deniedWriteRoots: readonly string[]
@@ -12,6 +13,7 @@ type FilesystemLayoutInput = Readonly<{
 type FilesystemLayout = Readonly<{
   privateRoot?: string
   readOnlyRoots: readonly string[]
+  optionalReadOnlyRoots?: readonly string[]
   readWriteRoots: readonly string[]
   deniedReadRoots: readonly string[]
   deniedWriteRoots: readonly string[]
@@ -51,6 +53,12 @@ const normalizeFilesystemLayout = (input: FilesystemLayoutInput): FilesystemLayo
   return {
     ...(input.privateRoot ? { privateRoot: absolutePhysicalPath(input.privateRoot) } : {}),
     readOnlyRoots,
+    ...(input.optionalReadOnlyRoots
+      ? {
+          // A parent may fail its optional grant while a child remains independently usable.
+          optionalReadOnlyRoots: [...new Set(input.optionalReadOnlyRoots.map(absolutePhysicalPath))]
+        }
+      : {}),
     readWriteRoots,
     deniedReadRoots,
     deniedWriteRoots

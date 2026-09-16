@@ -499,7 +499,12 @@ export const RNA_TOOLS: ToolDescriptor[] = [
         await abortableDelay(pollIntervalS * 1000, ctx.signal)
       }
       if (!res) {
-        throw new Error(`Rfam sequence search not finished after ${maxWaitS}s (${resultUrl})`)
+        throw new Error(
+          `Rfam sequence search not finished after ${maxWaitS}s (${resultUrl}). ` +
+            `Job ${sub.jobId} was submitted and may still be running. This Connector cannot resume ` +
+            'polling an existing job. Preserve this job ID when reporting the unresolved result. ' +
+            'Calling search_sequence again creates new work and does not stop this job.'
+        )
       }
       const hits = res.hits ?? {}
       const families = Object.keys(hits).sort()

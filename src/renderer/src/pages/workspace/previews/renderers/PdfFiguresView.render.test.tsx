@@ -8,7 +8,7 @@ import { PdfFiguresView } from './PdfFiguresView'
 import { groupPdfFigureSelections } from './pdf-figure-selections'
 import type { PdfStructureResult } from '../../../../../../shared/pdf-structure'
 import type { LocalModelSnapshot } from '../../../../../../shared/local-models'
-import { LOCAL_MODEL_NOT_INSTALLED } from '../../../../../../shared/local-models'
+import { LOCAL_MODEL_NOT_INSTALLED, PDF_MODEL_CHANGED } from '../../../../../../shared/local-models'
 
 const result: PdfStructureResult = {
   schemaVersion: 1,
@@ -1207,7 +1207,7 @@ it('presents an empty successful analysis as complete without an initial analysi
   expect(container.querySelector('[role="status"]')?.textContent).toContain('Analysis complete')
   expect(container.querySelector('h3')?.textContent).toBe('No figures or tables detected')
   expect(container.querySelector('header')?.textContent).toContain('Analysis complete')
-  expect(container.querySelector('header p')?.getAttribute('title')).toBe('Processed 2 / 2 pages')
+  expect(container.querySelector('header p')?.getAttribute('title')).toBe('Extracted 2 / 2 pages')
   expect(container.textContent).not.toContain('Analyze PDF')
   expect(container.textContent).not.toContain('Scanned and rotated pages')
   expect(container.textContent).not.toContain('Download size')
@@ -1380,7 +1380,7 @@ it('estimates remaining time from completed pages and reports work across tab sw
     expect(container.textContent).toContain('Estimating time remaining…')
     now = 20_000
     await act(async () => pending.shift()!({ ...result, elements: [] }))
-    expect(container.textContent).toContain('Processed 2 / 5 pages')
+    expect(container.textContent).toContain('Attempted 2 / 5 pages')
     expect(container.textContent).toContain('About 30 sec remaining')
     await act(async () => render(false))
     expect(onBusyChange).toHaveBeenLastCalledWith(true)
@@ -1397,4 +1397,85 @@ it('estimates remaining time from completed pages and reports work across tab sw
   } finally {
     clock.mockRestore()
   }
+})
+
+it('stops at a shared cleanup failure and offers a retry without claiming unattempted pages failed', async () => {
+  api.pdfStructure.parse.mockRejectedValue(
+    new Error('PDF worker cleanup must finish before more parsing can start.')
+  )
+  await act(async () =>
+    root.render(
+      <PdfFiguresView attachmentVersionId="version-1" pageCount={12} onNavigate={navigate} />
+    )
+  )
+  await click('Analyze PDF')
+  expect(api.pdfStructure.parse).toHaveBeenCalledTimes(1)
+  expect(container.textContent).toContain('PDF analysis is blocked')
+  expect(container.textContent).toContain('Extracted 0 / 12 pages')
+  expect(container.textContent).not.toContain('Could not extract pages:')
+  expect(container.textContent).not.toContain('Scanned and rotated pages')
+  api.pdfStructure.parse.mockResolvedValue({ ...result, pageCount: 12 })
+  await click('Analyze again')
+  expect(api.pdfStructure.parse).toHaveBeenCalledTimes(13)
+  expect(container.textContent).not.toContain('PDF analysis is blocked')
+})
+
+it.each([LOCAL_MODEL_NOT_INSTALLED, PDF_MODEL_CHANGED])(
+  'stops remaining requests for terminal model error %s',
+  async (message) => {
+    // The installed snapshot means this is a terminal failure, not an initial install request.
+    api.pdfStructure.parse.mockRejectedValue(new Error(message))
+    await act(async () =>
+      root.render(
+        <PdfFiguresView attachmentVersionId="version-1" pageCount={12} onNavigate={navigate} />
+      )
+    )
+    await click('Analyze PDF')
+    expect(api.pdfStructure.parse).toHaveBeenCalledTimes(1)
+    expect(api.localModels.install).not.toHaveBeenCalled()
+    expect(container.textContent).toContain('PDF extraction is unavailable')
+    expect(container.textContent).toContain('Extracted 0 / 12 pages')
+    expect(container.textContent).toContain('Pages not yet attempted: 11')
+  }
+)
+
+it('preserves successful results and counts when cleanup blocks a later page', async () => {
+  api.pdfStructure.parse
+    .mockResolvedValueOnce(result)
+    .mockRejectedValue(new Error('PDF worker cleanup must finish before more parsing can start.'))
+  await act(async () =>
+    root.render(
+      <PdfFiguresView attachmentVersionId="version-1" pageCount={12} onNavigate={navigate} />
+    )
+  )
+  await click('Analyze PDF')
+  expect(api.pdfStructure.parse).toHaveBeenCalledTimes(2)
+  expect(container.textContent).toContain('Table 1. Original caption.')
+  expect(container.textContent).toContain('Extracted 1 / 12 pages')
+  expect(container.textContent).toContain('Pages not yet attempted: 10')
+  expect(container.textContent).not.toContain('Could not extract pages:')
+  expect(
+    [...container.querySelectorAll('button')].filter(
+      (button) => button.textContent === 'Analyze again'
+    )
+  ).toHaveLength(1)
+})
+
+it('offers recovery when another document encounters blocked cache restoration', async () => {
+  api.pdfStructure.readCached.mockRejectedValue(
+    new Error('PDF worker cleanup must finish before more parsing can start.')
+  )
+  await act(async () =>
+    root.render(
+      <PdfFiguresView attachmentVersionId="another-version" pageCount={12} onNavigate={navigate} />
+    )
+  )
+  expect(api.pdfStructure.parse).not.toHaveBeenCalled()
+  expect(container.textContent).toContain('PDF analysis is blocked')
+  expect(container.textContent).toContain('Pages not yet attempted: 12')
+  api.pdfStructure.parse.mockResolvedValue({ ...result, elements: [] })
+  await click('Analyze again')
+  expect(api.pdfStructure.parse).toHaveBeenCalledTimes(12)
+  expect(container.textContent).toContain('Analysis complete')
+  expect(container.textContent).not.toContain('PDF analysis is blocked')
 })

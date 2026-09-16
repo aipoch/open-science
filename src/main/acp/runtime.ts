@@ -58,6 +58,7 @@ import {
   type AgentModelChangeTarget,
   type ResolvedAgentBackend
 } from '../agent-framework'
+import { requestPlanReviewProviderStop } from './plan-review-provider-stop'
 import { renderAppMcpToolReferences } from '../agent-framework/app-mcp-names'
 import { createLogger, diagnosticErrorFields, errorLogFields } from '../logger'
 import { redactSensitiveText } from '../diagnostic-redaction'
@@ -218,6 +219,8 @@ export type AcpRuntimeCallbacks = {
 type AcpRuntimeOptions = {
   appVersion: string
   defaultCwd: string
+  // Disposable framework homes must retain the same read protection as app-owned config roots.
+  additionalProtectedReadRoots?: readonly string[]
   callbacks?: AcpRuntimeCallbacks
   auxiliaryUsage?: Readonly<{
     projectIdForSession: (sessionId: string) => Promise<string | undefined>
@@ -475,7 +478,7 @@ type AcpRuntimeNotebookOptions = {
     memoryTools: boolean
   }) => Promise<NotebookRpcConnection>
   registerSessionAlias?: (aliasSessionId: string, sessionId: string) => void
-  releaseSessionCapabilities?: (sessionId: string) => void
+  releaseSessionCapabilities?: (sessionId: string, capabilityTokens: readonly string[]) => void
   registerSessionSpecialist?: (sessionId: string, specialistId: string | undefined) => void
   authorizeExecution?: (authorization: {
     sessionId: string
@@ -492,7 +495,7 @@ type AcpRuntimeNotebookOptions = {
       provenanceContext: import('../../shared/notebook').NotebookRunProvenanceContext
     }
   ) => void
-  clearArtifactTurnBinding?: (sessionId: string, ownerExecutionId: string) => void
+  clearArtifactTurnBinding?: (sessionId: string, ownerExecutionId: string) => void | Promise<void>
   registerTurnInputs?: (request: {
     projectId: string
     appSessionId: string
@@ -512,7 +515,7 @@ type AcpRuntimeSkillImportOptions = {
   isEnabled?: () => Promise<boolean>
   getRpcConnection: (binding: { sessionId: string }) => Promise<SkillImportRpcConnection>
   registerSessionAlias?: (aliasSessionId: string, sessionId: string) => void
-  releaseSessionCapabilities?: (sessionId: string) => void
+  releaseSessionCapabilities?: (sessionId: string, capabilityTokens: readonly string[]) => void
   authorizeReferencedUploads?: (
     projectId: string,
     sessionId: string,
@@ -745,7 +748,37 @@ class AcpRuntime {
     this.reviewerSessions = session.reviewerSessions
     this.sessionUpdateProjector = session.sessionUpdateProjector
     this.sessionPlanWorkflow = composeAcpRuntimePlanWorkflow(options, base, session, {
-      deliveries: this.planDeliveryOwner
+      deliveries: this.planDeliveryOwner,
+      pauseProvider: (sessionId, sequence) => {
+        const connection = this.connection
+        const provider = this.activeSessionFor(sessionId)
+        return requestPlanReviewProviderStop({
+          ...(connection && provider
+            ? {
+                notify: () =>
+                  connection.agent.notify(acp.methods.agent.session.cancel, {
+                    sessionId: provider.sessionId
+                  })
+              }
+            : {}),
+          isCurrent: () => this.sessionInteractions.current(sessionId)?.sequence === sequence,
+          onUnconfirmed: (reason) => {
+            this.pushEvent({
+              kind: 'error',
+              level: 'error',
+              sessionId,
+              title: 'Could not pause the Agent for Plan review',
+              text:
+                reason === 'unavailable'
+                  ? 'The Provider connection is unavailable. The Plan remains pending.'
+                  : reason === 'notification-failed'
+                    ? 'The Provider stop request could not be delivered. The connection will close; the Plan remains pending.'
+                    : 'Provider stop was not confirmed. The connection will close; the Plan remains pending.'
+            })
+            void this.disconnect()
+          }
+        })
+      }
     })
     const prompt = composeAcpRuntimePromptOwners(options, base, session, {
       plan: this.sessionPlanWorkflow.prompt,
@@ -2766,11 +2799,13 @@ class AcpRuntime {
   // App-owned directories the agent's Read tool must never read: framework config dirs hold
   // materialized skills plus provider/auth configuration whose contents must not be surfaced.
   private protectedReadRoots(): string[] {
-    if (!this.artifactOptions) return []
+    const additional = this.options.additionalProtectedReadRoots ?? []
+    if (!this.artifactOptions) return [...additional]
 
     const root = this.artifactOptions.configRoot
 
     return [
+      ...additional,
       getAppClaudeConfigDir(root),
       opencodeStorageDir(root),
       codexStorageDir(root),

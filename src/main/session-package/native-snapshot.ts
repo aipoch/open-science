@@ -1,3 +1,12 @@
+import {
+  packageLiteratureSchema,
+  validatePackageLiterature,
+  type PackageLiterature
+} from './literature'
+import {
+  parseLiteratureAttachmentVersionReference,
+  createLiteratureAttachmentVersionReference
+} from '../../shared/literature'
 import { packageReproducibilitySchema, type PackageReproducibility } from './reproducibility'
 import { Prisma, type PrismaClient } from '@prisma/client'
 import { resolveManagedProjectFileAnnotationIdentity } from '../../shared/annotations'
@@ -55,6 +64,7 @@ export type NativeRow = Record<string, string | number | boolean | null>
 export type PackageRecords = {
   schemaVersion: 1
   tables: Record<NativeTable, NativeRow[]>
+  literature?: PackageLiterature
   history?: PackageHistory
   reproducibility?: PackageReproducibility
 }
@@ -306,6 +316,8 @@ export const parseNativeRecords = (value: unknown): PackageRecords => {
     typeof value.tables !== 'object'
   )
     throw new Error('Unsupported package records.')
+  if ('literature' in value && value.literature !== undefined)
+    packageLiteratureSchema.parse(value.literature)
   const tables = value.tables as Record<string, unknown>
   if ('reproducibility' in value && value.reproducibility !== undefined)
     packageReproducibilitySchema.parse(value.reproducibility)
@@ -335,6 +347,7 @@ export const parseNativeRecords = (value: unknown): PackageRecords => {
         throw new Error('Invalid package record value.')
     }
   }
+  validatePackageLiterature(value as PackageRecords)
   return value as PackageRecords
 }
 
@@ -516,6 +529,9 @@ export const mapPackageReferences = (
   if (typeof value === 'string') {
     if (/(?:Checksum|checksum)$/.test(key)) return checksums[value] ?? value
     if (key === 'path') {
+      const literature = parseLiteratureAttachmentVersionReference(value)
+      if (literature)
+        return createLiteratureAttachmentVersionReference(identities[literature] ?? literature)
       const artifact = parseArtifactVersionLocator(value)
       if (artifact)
         return createArtifactVersionLocator(
@@ -590,6 +606,7 @@ export const prepareNativeImport = async (
     mapPackageReferences(value, ids, '', checksums)
   identities[manifest.source.projectId] = projectId
   identities[manifest.source.sessionId] = sessionId
+  for (const item of records.literature?.items ?? []) identities[item.itemId] ??= randomUUID()
   const context = session?.runtimeContext
   const contextIds = [
     context?.sideChat?.id,

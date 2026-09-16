@@ -1044,6 +1044,65 @@ describe('durable delegated work', () => {
     })
   })
 
+  it('reports pinned Attempts after a partial stop without exposing dependency errors', async () => {
+    const execution = createDeterministicDelegateExecution()
+    const records = createInMemoryDelegatedWorkRecords({
+      session: caller.session,
+      rootFrameId: caller.frameId,
+      originMessageId: caller.originMessageId
+    })
+    let failedFrame = ''
+    const work = createDurableDelegatedWork({
+      execution,
+      records,
+      revokeAttemptWrites: async ({ frameId }) => {
+        if (frameId === failedFrame) throw new Error('private backend secret')
+      }
+    })
+    const dispatched = await work.delegate(
+      caller,
+      [
+        { task: 'First', name: 'First' },
+        { task: 'Second', name: 'Second' }
+      ],
+      { wait: false }
+    )
+    await expect.poll(() => execution.controls()).toHaveLength(2)
+    failedFrame = dispatched.children[1].frameId
+    const error = (await work
+      .stopChildren(
+        caller,
+        dispatched.children.map((child) => child.frameId)
+      )
+      .catch((error: unknown) => error)) as Error
+    expect(error.message).not.toContain('private backend secret')
+    const report = JSON.parse(error.message.slice(error.message.indexOf('{')))
+    expect(report.attempts).toEqual([
+      {
+        frameId: dispatched.children[0].frameId,
+        attemptId: dispatched.children[0].attemptId,
+        stopOutcome: 'cancelled'
+      },
+      {
+        frameId: dispatched.children[1].frameId,
+        attemptId: dispatched.children[1].attemptId,
+        stopOutcome: 'unconfirmed',
+        reason: expect.any(String)
+      }
+    ])
+    const observed = await work.collect(
+      caller,
+      report.attempts.map(({ frameId, attemptId }: { frameId: string; attemptId: string }) => ({
+        frameId,
+        attemptId
+      })),
+      { timeoutSeconds: 0 }
+    )
+    expect(observed.map((child) => child.status)).toEqual(['cancelled', 'running'])
+    failedFrame = ''
+    await work.stopChildren(caller, [dispatched.children[1].frameId])
+  })
+
   it('restores unresolved permission cards when Stop submission fails', async () => {
     const execution = createDeterministicDelegateExecution()
     const records = createInMemoryDelegatedWorkRecords({

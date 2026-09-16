@@ -141,7 +141,9 @@ describe('provider registry', () => {
       'deepseek-v4-pro',
       'minimax-m3',
       'glm-5.2',
-      'glm-5.1'
+      'glm-5.1',
+      'big-pickle',
+      'mimo-v2.5-free'
     ])
     for (const excluded of ['minimax-m2.7', 'minimax-m2.5', 'qwen3.6-plus']) {
       expect(goModels).not.toContain(excluded)
@@ -155,6 +157,29 @@ describe('provider registry', () => {
     expect(resolveVendorModelApiEndpoints('opencode', 'minimax-m3')).toEqual(['openai'])
     expect(isVendorModelMultimodal('opencode-go', 'glm-5.3-flash')).toBe(true)
     expect(isVendorModelMultimodal('opencode', 'gpt-5.3-codex-spark')).toBe(false)
+  })
+
+  it.each([
+    { vendorId: 'openrouter', model: 'openrouter/free', contextWindow: 200_000, vision: true },
+    {
+      vendorId: 'openrouter',
+      model: 'google/gemma-4-31b-it:free',
+      contextWindow: 262_144,
+      vision: true
+    },
+    { vendorId: 'opencode', model: 'big-pickle', contextWindow: 200_000, vision: false },
+    { vendorId: 'opencode', model: 'mimo-v2.5-free', contextWindow: 200_000, vision: true }
+  ] as const)('offers $vendorId/$model with its documented capabilities', (entry) => {
+    expect(getOfficialVendorModelIds(entry.vendorId)).toContain(entry.model)
+    expect(resolveVendorModelApiEndpoints(entry.vendorId, entry.model)).toEqual(
+      entry.vendorId === 'openrouter' ? ['anthropic', 'openai'] : ['openai']
+    )
+    expect(isVendorModelResponsesSupported(entry.vendorId, entry.model)).toBe(false)
+    expect(resolveModelContextWindow(entry.vendorId, entry.model)).toBe(entry.contextWindow)
+    expect(isVendorModelMultimodal(entry.vendorId, entry.model)).toBe(entry.vision)
+    expect(resolveVendorModelReasoningEffort(entry.vendorId, entry.model)).toEqual({
+      supported: false
+    })
   })
 
   it('routes NVIDIA through Chat Completions with a curated agent catalog', () => {

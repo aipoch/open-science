@@ -396,7 +396,6 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
 
   private toPublicRunRecord(run: NotebookRunRecord): NotebookRunRecord {
     const publicRun = { ...run } as Partial<NotebookRunRecord>
-    delete publicRun.kernelDispatched
     delete publicRun.runtimeId
     delete publicRun.helperModules
     delete publicRun.submissionIdentity

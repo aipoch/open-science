@@ -671,7 +671,7 @@ describe('ACP session capability owner', () => {
 
     owner.revokeSession('app-session')
     expect(release).toHaveBeenCalledOnce()
-    expect(releaseSessionCapabilities).toHaveBeenCalledWith('app-session')
+    expect(releaseSessionCapabilities).toHaveBeenCalledWith('app-session', ['notebook'])
   })
 
   it('captures one immutable Shell binding for capability description, RPC and permission context', async () => {
@@ -930,7 +930,7 @@ describe('ACP session capability owner', () => {
       })
     ).rejects.toThrow('Skill import RPC unavailable')
     expect(notebookRelease).toHaveBeenCalledOnce()
-    expect(releaseSessionCapabilities).toHaveBeenCalledWith('session-1')
+    expect(releaseSessionCapabilities).toHaveBeenCalledWith('session-1', ['notebook'])
   })
 
   it('unregisters partial HTTP routes when provision building fails', async () => {
@@ -1172,7 +1172,7 @@ describe('ACP session capability owner', () => {
 
     expect(release).toHaveBeenCalledOnce()
     expect(releaseSessionCapabilities).toHaveBeenCalledOnce()
-    expect(releaseSessionCapabilities).toHaveBeenCalledWith('provider-session')
+    expect(releaseSessionCapabilities).toHaveBeenCalledWith('provider-session', ['notebook'])
     expect(registerSessionAlias).not.toHaveBeenCalled()
     expect(owner.mcpServerNamesFor('app-session')).toEqual([])
   })

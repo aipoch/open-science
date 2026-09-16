@@ -375,21 +375,24 @@ const ConversationExportDialogContent = ({
                 className="min-h-9 min-w-28"
                 disabled={disabled}
                 onClick={submit}
+                aria-busy={Boolean(isExporting)}
               >
-                {isExporting ? (
-                  <>
-                    <LoaderCircle
-                      className="size-4 animate-spin motion-reduce:animate-none"
-                      aria-hidden="true"
-                    />
-                    {t('Exporting…')}
-                  </>
-                ) : (
-                  <>
-                    <Download className="size-4" aria-hidden="true" />
-                    {exportLabel}
-                  </>
-                )}
+                <span key={String(isExporting)} className="button-feedback">
+                  {isExporting ? (
+                    <>
+                      <LoaderCircle
+                        className="size-4 animate-spin motion-reduce:animate-none"
+                        aria-hidden="true"
+                      />
+                      {t('Exporting…')}
+                    </>
+                  ) : (
+                    <>
+                      <Download className="size-4" aria-hidden="true" />
+                      {exportLabel}
+                    </>
+                  )}
+                </span>
               </Button>
             </div>
           </footer>

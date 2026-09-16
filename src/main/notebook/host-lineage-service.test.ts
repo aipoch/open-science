@@ -152,16 +152,16 @@ describe('HostLineageService', () => {
       "host.lineage.graph direction must be 'up' or 'down'."
     )
     await expect(service.graph('artifact-v1', { max_depth: 1.5 }, context)).rejects.toThrow(
-      'host.lineage.graph max_depth must be an integer between 0 and 20.'
+      'host.lineage.graph maxDepth must be an integer between 0 and 20.'
     )
     await expect(service.graph('artifact-v1', { max_depth: 21 }, context)).rejects.toThrow(
-      'host.lineage.graph max_depth must be an integer between 0 and 20.'
+      'host.lineage.graph maxDepth must be an integer between 0 and 20.'
     )
     await expect(service.graph('artifact-v1', { max_nodes: 0 }, context)).rejects.toThrow(
-      'host.lineage.graph max_nodes must be an integer between 1 and 500.'
+      'host.lineage.graph maxNodes must be an integer between 1 and 500.'
     )
     await expect(service.graph('artifact-v1', { max_nodes: 501 }, context)).rejects.toThrow(
-      'host.lineage.graph max_nodes must be an integer between 1 and 500.'
+      'host.lineage.graph maxNodes must be an integer between 1 and 500.'
     )
   })
 

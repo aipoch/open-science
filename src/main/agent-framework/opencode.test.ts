@@ -152,8 +152,15 @@ describe('opencodeFramework.prepareModelConfig', () => {
     for (const tool of ['edit', 'webfetch', 'websearch']) {
       expect(rules[tool]).toBe('ask')
     }
-    for (const tool of ['bash', 'glob', 'grep', 'list', 'external_directory'])
-      expect(rules[tool]).toBe('deny')
+    for (const tool of ['bash', 'glob', 'grep', 'list']) expect(rules[tool]).toBe('deny')
+    expect(Object.entries(rules.external_directory)).toEqual([
+      ['*', 'deny'],
+      [join('/data', 'opencode', 'config', 'opencode', 'skills', '*'), 'allow']
+    ])
+    const writtenConfig = JSON.parse(
+      config.configFiles?.find((file) => file.path.endsWith('opencode.json'))?.content ?? '{}'
+    )
+    expect(writtenConfig.permission).toEqual(rules)
     expect(rules.task).toBe('deny')
     expect(JSON.parse(config.env?.OPENCODE_CONFIG_CONTENT ?? '{}').agent).toEqual({
       general: { disable: true },

@@ -1,3 +1,7 @@
+import {
+  rebaseTaskSessionBinding,
+  rebaseTaskTurnOntoLatestSession
+} from '../session-persistence/task-admission'
 import { describe, expect, it, vi, type MockedFunction } from 'vitest'
 
 import type { AcpRuntimeEvent } from '../../shared/acp'
@@ -105,6 +109,8 @@ const commandsFrom = (
         if (
           !channel.startsWith('sessions:') ||
           ![
+            'sessions:bind-task-session',
+            'sessions:admit-task-turn',
             'sessions:stage-task-completion',
             'sessions:settle-task-completion',
             'sessions:fail-task-run'
@@ -115,6 +121,28 @@ const commandsFrom = (
         }
       }
 
+      if (channel === 'sessions:bind-task-session') {
+        const request = args[0] as Parameters<TaskSessionPort['bindSession']>[0]
+        const current = structuredClone(sessions.get(request.session.id)!)
+        const candidate = rebaseTaskSessionBinding(current, request)
+        const result = await invoke('sessions:save-session', invocation.callerContext, [candidate])
+        const saved = (result ?? candidate) as PersistedChatSession
+        sessions.set(saved.id, structuredClone(saved))
+        return saved
+      }
+      if (channel === 'sessions:admit-task-turn') {
+        const request = args[0] as Parameters<TaskSessionPort['admitTurn']>[0]
+        const current = structuredClone(sessions.get(request.session.id)!)
+        const candidate = rebaseTaskTurnOntoLatestSession(
+          current,
+          request.session,
+          request.contextReset
+        )
+        const result = await invoke('sessions:save-session', invocation.callerContext, [candidate])
+        const saved = (result ?? candidate) as PersistedChatSession
+        sessions.set(saved.id, structuredClone(saved))
+        return saved
+      }
       if (channel === 'sessions:stage-task-completion') {
         const request = args[0] as Parameters<TaskSessionPort['stageCompletion']>[0]
         const current = structuredClone(sessions.get(request.sessionId)!)

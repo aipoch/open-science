@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { ConnectorService } from '../connectors/service'
+import { ParserEngine } from '../connectors/engine'
 import { NotebookKernelExecutor } from './kernel-executor'
 import { NotebookLocalRpcServer } from './local-rpc-server'
 
@@ -73,6 +74,71 @@ const baseRequest = (
 })
 
 gate('repl kernel host.mcp', () => {
+  it.each([503, 404, 200])(
+    'preserves CellGuide error/empty semantics through host.mcp (HTTP %s)',
+    async (status) => {
+      let markerRequests = 0
+      const connectorService = new ConnectorService({
+        getConnectors: () => ({ enabledIds: ['cellguide'], autoAllowIds: ['cellguide'] }),
+        resolveApiKey: () => undefined,
+        engine: new ParserEngine({
+          retryBackoffMs: 1,
+          fetchImpl: async (input) => {
+            const url = String(input)
+            if (url.endsWith('/latest_snapshot_identifier')) return new Response('test-snapshot')
+            if (url.endsWith('/celltype_metadata.json')) {
+              return Response.json({ 'CL:0000622': { name: 'acinar cell' } })
+            }
+            if (url.endsWith('/computational_marker_genes/CL_0000622.json')) {
+              markerRequests += 1
+              return new Response('', { status })
+            }
+            throw new Error(`Unexpected CellGuide request: ${url}`)
+          }
+        })
+      })
+      const rpcServer = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+        connectorService
+      })
+      const connection = await rpcServer.issueControlConnection(
+        'session-42',
+        'project-1',
+        'root-frame-session-42'
+      )
+      const exec = makeExecutor()
+      try {
+        const result = await exec.execute(
+          baseRequest({
+            code: `const result = await host.mcp('cellguide', 'get_marker_genes', {cell_type: 'CL:0000622'}); console.log(JSON.stringify(result))`,
+            mcpRpcEndpoint: connection.endpoint,
+            mcpRpcSocketPath: connection.socketPath,
+            mcpRpcToken: connection.token,
+            sessionId: 'session-42',
+            projectId: 'project-1'
+          })
+        )
+        if (status === 503) {
+          expect(result.status).toBe('failed')
+          expect(result.traceback).toContain('HTTP 503')
+          expect(result.stdout).not.toContain('markerGenes')
+          expect(markerRequests).toBe(3)
+        } else {
+          expect(result.status).toBe('completed')
+          expect(JSON.parse(result.stdout.trim())).toMatchObject({
+            id: 'CL:0000622',
+            returned: 0,
+            markerGenes: []
+          })
+          expect(markerRequests).toBe(1)
+        }
+      } finally {
+        await exec.shutdown()
+        connection.release()
+        await rpcServer.close()
+      }
+    }
+  )
+
   it('keeps the persistent control capability across ACP session cleanup', async () => {
     const rpcServer = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
       connectorService: {

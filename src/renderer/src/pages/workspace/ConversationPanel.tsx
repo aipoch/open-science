@@ -1,5 +1,8 @@
+import { InlineNotice } from '@/components/ui/inline-notice'
 import { PackageOperationIndicator } from '@/components/SessionPackageOperation'
 import { sessionExportLocked, usePackageOperationStore } from '@/stores/package-operation-store'
+import { AnnotationTransferSource } from './annotations/AnnotationTransferSource'
+import { useAnnotationDrop } from './annotations/use-annotation-drop'
 import { UnavailablePlanNotice } from './session-plan/UnavailablePlanNotice'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import type { TFunction } from 'i18next'
@@ -143,13 +146,14 @@ import { workspaceHandoffLifecycleClient } from './handoff-lifecycle-source'
 import { SubagentAvailabilityNotice, SubagentsBar } from './SubagentReleaseSurfaces'
 import { projectSessionSubagents } from './subagent-release-projection'
 import { ResizableBottomPanel } from './ResizableBottomPanel'
-import { SideChatPanel } from './SideChatPanel'
 import { hasMainConversation, type SideChatController } from './use-side-chat-controller'
 import type { WorkspaceComposerController } from './workspace-composer-controller'
 import type { WorkspaceConversationController } from './workspace-conversation-controller'
 import type { WorkspaceSessionController } from './workspace-session-controller'
 import { getAvatarColor } from '../settings/specialist-icons'
 import { localizeImageAnnotationSourceError } from './annotations/image-annotation-source-validation'
+import { BookmarksPopover } from './bookmarks/BookmarksPopover'
+import { useBookmarks } from './bookmarks/bookmark-context'
 
 const localizeVisionRunFailure = (
   error: string | null | undefined,
@@ -442,8 +446,10 @@ const ConversationPanel = ({
   subagents
 }: ConversationPanelProps): React.JSX.Element => {
   const { t } = useTranslation()
+  const { total: bookmarkCount, loadError: bookmarkLoadError } = useBookmarks()
   const { activeSession, composerFocusKey, canEditDraft, actionError, sideChatDisabledReason } =
     view
+  const hasBookmarkEntry = Boolean(activeSession && (bookmarkCount > 0 || bookmarkLoadError))
   const {
     view: {
       doc: draftDoc,
@@ -483,6 +489,14 @@ const ConversationPanel = ({
   } = composer
   // Stable identities across re-renders: the transcript memo compares these callbacks, so an
   // inline closure would re-render every message on each composer state change.
+  const annotationSourceId = `main:${activeSession?.projectId}:${activeSession?.id}:${composerFocusKey ?? 'composer'}`
+  const annotationDrop = useAnnotationDrop({
+    targetId: annotationSourceId,
+    projectId: activeSession?.projectId ?? '',
+    parentSessionId: activeSession?.id ?? '',
+    disabled: !canEditDraft || !activeSession,
+    receive: ({ annotation }) => !onAddAnnotation(annotation)
+  })
   const handleAddTranscriptAnnotation = useCallback(
     (annotation: TextAnnotation): AnnotationValidationError | undefined => {
       const error = onAddAnnotation(annotation)
@@ -535,14 +549,7 @@ const ConversationPanel = ({
     queue: messageQueue,
     optimisticMessage
   } = conversation
-  const {
-    view: sideChat,
-    send: onSendSideChat,
-    retryHydration: onRetrySideChatHydration,
-    setDraft: onSideChatDraftChange,
-    cancel: onCancelSideChat,
-    close: onCloseSideChat
-  } = sideChatController
+  const { retryHydration: onRetrySideChatHydration } = sideChatController
 
   const {
     isPreviewPanelCollapsed,
@@ -882,7 +889,7 @@ const ConversationPanel = ({
   const delegatedQuestion = projectDelegatedQuestionQueue(activeSession)[0]
   const packageOperation = usePackageOperationStore((state) => state.operation)
   const packageLocked = sessionExportLocked(packageOperation, activeSession)
-  const ordinaryComposerBlocked = Boolean(sideChat || blockingInteraction || packageLocked)
+  const ordinaryComposerBlocked = Boolean(blockingInteraction || packageLocked)
   const rootTurnBusy = Boolean(
     blockingInteraction ||
     actionability?.activity === 'running' ||
@@ -1001,11 +1008,16 @@ const ConversationPanel = ({
     hasMainConversation(activeSession) &&
     actionability?.actions.startSideChat.allowed !== false &&
     canEditDraft &&
-    hasSideChatDraft &&
+    (hasSideChatDraft || Boolean(sideChatController.createDraft)) &&
     attachments.length === 0 &&
     attachmentTransfers.length === 0 &&
     !sideChatDisabledReason
   const canRetrySideChatHydration = Boolean(onRetrySideChatHydration)
+  const canOpenSendOptions =
+    canPlanFirst ||
+    canStartSideChat ||
+    canRetrySideChatHydration ||
+    (effectiveCanSend && Boolean(onBranchInNewSession) && canBranchInNewSession)
 
   const handlePlanFirst = (): void => {
     if (!canPlanFirst) return
@@ -1013,13 +1025,10 @@ const ConversationPanel = ({
   }
 
   const handleSideChat = (): void => {
-    if (canStartSideChat) onStartSideChat()
-    else onRetrySideChatHydration?.()
-  }
-
-  const handleCloseSideChat = (): void => {
-    onCloseSideChat()
-    setComposerRestoreFocusRequest((request) => (request ?? 0) + 1)
+    if (canStartSideChat) {
+      if (hasSideChatDraft) onStartSideChat()
+      else sideChatController.createDraft?.()
+    } else onRetrySideChatHydration?.()
   }
 
   // Converts the hidden file input selection into the shared staging callback.
@@ -1127,7 +1136,7 @@ const ConversationPanel = ({
         {activeSession?.contentLoaded === false ? (
           <SessionSwitchSkeleton />
         ) : (
-          <WorkspaceMessageEditStateProvider canEditMessage={canEditMessage && !sideChat}>
+          <WorkspaceMessageEditStateProvider canEditMessage={canEditMessage}>
             <WorkspaceMessageScroller
               activeSession={activeSession}
               credentialPending={pendingCredentialRequest !== undefined}
@@ -1138,13 +1147,14 @@ const ConversationPanel = ({
               onSendEditedMessage={onSendEditedMessage}
               canBranchInNewSession={canBranchInNewSession}
               onBranchInNewSession={onBranchFromAgentMessage}
-              pendingElicitations={sideChat ? [] : sessionPendingElicitations}
+              pendingElicitations={sessionPendingElicitations}
               handoffLifecycleSource={workspaceHandoffLifecycleClient}
               onRetryHandoff={(request) => workspaceHandoffLifecycleClient.retry(request)}
               reportPresentationRevealing
               annotations={annotations}
               onAddAnnotation={handleAddTranscriptAnnotation}
               onUpdateAnnotationNote={handleUpdateTranscriptAnnotation}
+              onRemoveAnnotation={onRemoveAnnotation}
               onAnnotationError={handleTranscriptAnnotationError}
             />
           </WorkspaceMessageEditStateProvider>
@@ -1164,7 +1174,7 @@ const ConversationPanel = ({
             {/* Runtime and session errors stay near the composer so recovery is visible. */}
             <div className={composerContentClassName}>
               <div className="px-1 md:px-3">
-                {!sideChat && conversation.planProjectionRecoveryError && activeSession ? (
+                {conversation.planProjectionRecoveryError && activeSession ? (
                   <UnavailablePlanNotice
                     key={`${activeSession.id}:${String(activeSession.runtimeContext?.revision)}`}
                     session={activeSession}
@@ -1180,7 +1190,7 @@ const ConversationPanel = ({
                 ) : null}
                 {/* Interrupted sessions get a neutral banner with a Resume action instead of the
                     red error box, so the user can re-attach and continue the interrupted turn. */}
-                {!sideChat && activeSession?.interrupted && !hasUnsupportedCodexAcpRunError ? (
+                {activeSession?.interrupted && !hasUnsupportedCodexAcpRunError ? (
                   <SessionInterruptedBanner
                     message={activeSession.error ?? t('This session was interrupted.')}
                     isDisabled={!canResumeSession}
@@ -1267,7 +1277,7 @@ const ConversationPanel = ({
                   />
                 ) : null}
 
-                {!sideChat && activeSession && delegatedQuestion ? (
+                {activeSession && delegatedQuestion ? (
                   <WorkspaceDelegatedQuestionCard
                     key={delegatedQuestion.requestId}
                     projectId={activeSession.projectId}
@@ -1279,7 +1289,7 @@ const ConversationPanel = ({
 
                 {/* Delegated permission cards stay in the transcript; the root card owns the
                     resizable composer surface below. Side chat hides both main interaction lanes. */}
-                {!sideChat && pendingPermissions.some((request) => request.delegated) ? (
+                {pendingPermissions.some((request) => request.delegated) ? (
                   <PermissionApprovalControls
                     requests={pendingPermissions.filter((request) => request.delegated)}
                     onRespond={onRespondToPermission}
@@ -1318,6 +1328,7 @@ const ConversationPanel = ({
                 messageQueue.items.length > 0 ||
                 backgroundTasksVisible ||
                 hasSubagents ||
+                hasBookmarkEntry ||
                 (activeBranchPlan ? isPlanProgressVisible(activeBranchPlan) : false) ? (
                   <div
                     aria-hidden={ordinaryComposerBlocked || undefined}
@@ -1331,7 +1342,7 @@ const ConversationPanel = ({
                     }
                     className={cn(
                       'flex px-2',
-                      notebookReference || messageQueue.items.length > 0
+                      notebookReference || messageQueue.items.length > 0 || hasBookmarkEntry
                         ? 'relative -mb-8 min-h-[68px] items-start rounded-2xl bg-bg-200 pt-1 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-1 motion-safe:duration-200 motion-safe:ease-out'
                         : 'mb-2 min-h-9 items-center rounded-lg border border-border-200 bg-bg-000 shadow-card',
                       ordinaryComposerBlocked && 'invisible pointer-events-none'
@@ -1356,6 +1367,7 @@ const ConversationPanel = ({
                       />
                     ) : null}
                     <SubagentsBar session={activeSession} permissions={pendingPermissions} />
+                    {activeSession ? <BookmarksPopover /> : null}
                     {notebookReference ? (
                       <button
                         type="button"
@@ -1392,7 +1404,6 @@ const ConversationPanel = ({
                     className={cn(
                       'relative -mb-8 rounded-2xl bg-bg-200 pb-8',
                       (packageLocked ||
-                        sideChat ||
                         hasPendingPermission ||
                         pendingElicitation ||
                         specialistUnavailable) &&
@@ -1400,23 +1411,18 @@ const ConversationPanel = ({
                     )}
                   />
 
-                  {!sideChat && activeSession && specialistUnavailable ? (
-                    <div
+                  {activeSession && specialistUnavailable ? (
+                    <InlineNotice
                       role="status"
                       aria-live="polite"
                       data-testid="specialist-unavailable-notice"
-                      className="relative z-10 mb-2 flex flex-wrap items-center gap-2 rounded-xl border border-warning-100/50 bg-warning-100/10 px-3 py-2"
+                      className="relative z-10 mb-2"
                     >
-                      <AlertTriangle
-                        className="mt-0.5 size-3.5 shrink-0 text-warning-900"
-                        strokeWidth={2}
-                        aria-hidden="true"
-                      />
                       <div className="min-w-0 flex-1">
-                        <div className="text-[12px] font-medium leading-5 text-warning-900">
+                        <div className="text-sm font-medium text-foreground">
                           {t('This Specialist is no longer available')}
                         </div>
-                        <div className="text-[11px] leading-4 text-text-100">
+                        <div className="text-sm leading-6 text-muted-foreground">
                           {t('Choose another Specialist before sending a message.')}{' '}
                           {t('Your draft is preserved.')}
                         </div>
@@ -1425,17 +1431,17 @@ const ConversationPanel = ({
                         type="button"
                         variant="outline"
                         size="xs"
-                        className="ml-auto border-warning-100/50 bg-transparent text-warning-900 hover:bg-warning-100/20 hover:text-warning-900"
+                        className="mt-2"
                         onClick={() => setAgentControlsOpenRequest((request) => request + 1)}
                       >
                         {t('Choose Specialist')}
                       </Button>
-                    </div>
+                    </InlineNotice>
                   ) : null}
 
                   {/* Reconfigure failure banner: shown directly above the composer when a pre-send
                       specialist reconfigure failed. Draft is preserved; three recovery actions. */}
-                  {!sideChat && reconfigureError ? (
+                  {reconfigureError ? (
                     <div className="relative z-10 mb-2" data-testid="reconfigure-error-banner">
                       <ErrorNotice
                         role="alert"
@@ -1478,49 +1484,7 @@ const ConversationPanel = ({
                       data-testid="blocking-composer-overlay"
                       className="absolute inset-x-0 bottom-0 z-30"
                     >
-                      {sideChat ? (
-                        <SideChatPanel
-                          view={sideChat}
-                          onSend={onSendSideChat}
-                          onDraftChange={onSideChatDraftChange}
-                          onCancel={onCancelSideChat}
-                          onClose={handleCloseSideChat}
-                          controls={
-                            <ComposerAgentControlsMenu
-                              profile={permissionProfile}
-                              profileState={permissionProfileState}
-                              grants={permissionGrants}
-                              autoReviewEnabled={autoReviewEnabled}
-                              memoryEnabled={memoryEnabled}
-                              delegationEnabled={delegationEnabled}
-                              delegationPending={delegationPending}
-                              delegationHasLiveAttempts={delegationHasLiveAttempts}
-                              delegationReadOnly={!canChangeDelegation}
-                              delegationDisabledReason={delegationDisabledReason}
-                              memoryDisabledReason={memoryDisabledReason}
-                              readOnly
-                              permissionProfileReadOnly
-                              grantActionsReadOnly
-                              autoReviewDisabled
-                              enabledComputeHosts={enabledComputeHosts}
-                              selectedComputeHosts={selectedComputeHosts}
-                              onComputeHostEnabledChange={onComputeHostEnabledChange}
-                              onComputeHostSelectedChange={onComputeHostSelectedChange}
-                              onProfileChange={onPermissionProfileChange}
-                              onAutoReviewChange={onAutoReviewToggle}
-                              onMemoryChange={onMemoryToggle}
-                              onDelegationChange={onDelegationToggle}
-                              onRevokeGrant={onRevokePermissionGrant}
-                              onClearGrants={onClearPermissionGrants}
-                              showSpecialist={activeSession !== undefined}
-                              specialistId={specialistId}
-                              specialistUnavailable={specialistUnavailable}
-                              specialistReadOnly
-                              onSpecialistChange={onSpecialistChange}
-                            />
-                          }
-                        />
-                      ) : hasPendingPermission ? (
+                      {hasPendingPermission ? (
                         <ResizablePermissionComposer key={rootPermissionRequests[0]?.requestId}>
                           <PermissionApprovalControls
                             requests={rootPermissionRequests}
@@ -1679,7 +1643,20 @@ const ConversationPanel = ({
                         data-specialist-color={specialistComposerColor}
                         onSubmit={(event) => event.preventDefault()}
                         {...dropZoneProps}
+                        {...annotationDrop.props}
                       >
+                        {annotationDrop.over ? (
+                          <div className="rounded-md border border-primary px-2 py-1 text-xs text-text-200">
+                            {t('Add to main conversation')}
+                          </div>
+                        ) : null}
+                        {annotationDrop.error ? (
+                          <p role="alert" className="text-xs text-danger-000">
+                            {t(
+                              'Could not move this annotation. It may have changed or the target is full.'
+                            )}
+                          </p>
+                        ) : null}
                         {specialistComposerColor && selectedSpecialist ? (
                           <span
                             key={selectedSpecialist.id}
@@ -1927,27 +1904,41 @@ const ConversationPanel = ({
                             </button>
                           </div>
                         ) : null}
-                        <AnnotationDraftCards
+                        <AnnotationTransferSource
+                          sourceId={annotationSourceId}
+                          projectId={activeSession?.projectId ?? ''}
+                          parentSessionId={activeSession?.id ?? ''}
                           annotations={annotations}
-                          disabled={!canEditDraft}
-                          onReveal={requestAnnotationReveal}
-                          onUpdateNote={(id, note) => {
-                            const error = onUpdateAnnotationNote(id, note)
-                            if (error) onSetComposerError(annotationValidationMessage(error, t))
-                            else onSetComposerError(null)
-                            return error
-                          }}
-                          onRemove={(id) => {
-                            onRemoveAnnotation(id)
-                            const validation = validateAnnotations(
-                              annotations.filter((annotation) => annotation.id !== id),
-                              docToText(draftDoc)
-                            )
-                            onSetComposerError(
-                              validation ? annotationValidationMessage(validation, t) : null
-                            )
-                          }}
-                        />
+                          disabled={
+                            !canEditDraft ||
+                            !activeSession ||
+                            !hasMainConversation(activeSession) ||
+                            Boolean(sideChatDisabledReason)
+                          }
+                          onRemove={onRemoveAnnotation}
+                        >
+                          <AnnotationDraftCards
+                            annotations={annotations}
+                            disabled={!canEditDraft}
+                            onReveal={requestAnnotationReveal}
+                            onUpdateNote={(id, note) => {
+                              const error = onUpdateAnnotationNote(id, note)
+                              if (error) onSetComposerError(annotationValidationMessage(error, t))
+                              else onSetComposerError(null)
+                              return error
+                            }}
+                            onRemove={(id) => {
+                              onRemoveAnnotation(id)
+                              const validation = validateAnnotations(
+                                annotations.filter((annotation) => annotation.id !== id),
+                                docToText(draftDoc)
+                              )
+                              onSetComposerError(
+                                validation ? annotationValidationMessage(validation, t) : null
+                              )
+                            }}
+                          />
+                        </AnnotationTransferSource>
                         <div className="flex flex-col gap-2">
                           {attachments.length > 0 || attachmentTransfers.length > 0 ? (
                             <div className="flex max-h-[92px] flex-wrap gap-2 overflow-y-auto border-b border-border-200 pb-2">
@@ -2612,7 +2603,7 @@ const ConversationPanel = ({
                                       <span>
                                         {canRetrySideChatHydration
                                           ? t('Retry Side chat restore')
-                                          : t('Side chat')}
+                                          : t('New side chat')}
                                         {sideChatDisabledReason ? (
                                           <span className="block text-[11px] text-text-300">
                                             {sideChatDisabledReason}
@@ -2630,7 +2621,7 @@ const ConversationPanel = ({
                                   aria-label={t('Send message options')}
                                   className={cn(
                                     'flex rounded-md bg-primary text-primary-foreground [@media(pointer:coarse)]:mx-3',
-                                    !effectiveCanSend && 'opacity-50'
+                                    !effectiveCanSend && !canOpenSendOptions && 'opacity-50'
                                   )}
                                 >
                                   <Tooltip>
@@ -2641,7 +2632,10 @@ const ConversationPanel = ({
                                         size="icon"
                                         onClick={handleSubmit}
                                         disabled={!effectiveCanSend}
-                                        className={composerSplitSendPrimaryButtonClassName}
+                                        className={cn(
+                                          composerSplitSendPrimaryButtonClassName,
+                                          canOpenSendOptions && 'disabled:opacity-50'
+                                        )}
                                         aria-label={t('Send message')}
                                       >
                                         <ArrowUp
@@ -2670,15 +2664,11 @@ const ConversationPanel = ({
                                             type="button"
                                             variant="ghost"
                                             size="icon"
-                                            disabled={
-                                              !canPlanFirst &&
-                                              !canStartSideChat &&
-                                              !canRetrySideChatHydration &&
-                                              (!effectiveCanSend ||
-                                                !onBranchInNewSession ||
-                                                !canBranchInNewSession)
-                                            }
-                                            className={composerSplitSendMenuButtonClassName}
+                                            disabled={!canOpenSendOptions}
+                                            className={cn(
+                                              composerSplitSendMenuButtonClassName,
+                                              effectiveCanSend && 'disabled:opacity-50'
+                                            )}
                                             aria-label={t('More send options')}
                                             aria-haspopup="menu"
                                             data-testid="branch-send-menu-trigger"
@@ -2722,7 +2712,7 @@ const ConversationPanel = ({
                                         <span>
                                           {canRetrySideChatHydration
                                             ? t('Retry Side chat restore')
-                                            : t('Side chat')}
+                                            : t('New side chat')}
                                           {sideChatDisabledReason ? (
                                             <span className="block text-[11px] text-text-300">
                                               {sideChatDisabledReason}

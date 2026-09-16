@@ -612,6 +612,7 @@
           "src/main/settings/responses-response-adapter.architecture.test.ts",
           "src/main/settings/responses-response-adapter.test.ts",
           "src/main/settings/responses-bridge.test.ts",
+          "src/main/settings/responses-reasoning-replay.test.ts",
           "src/main/settings/responses-bridge.integration.test.ts",
           "src/main/settings/native-responses-compatibility.test.ts",
           "src/main/settings/anthropic-provider-bridge.test.ts",
@@ -1188,6 +1189,28 @@
           "src/renderer/src/components/SessionPackageOperation.test.tsx",
           "src/renderer/src/components/PackageImportSelection.test.tsx",
           "src/renderer/src/components/ProjectPackageDropZone.test.tsx"
+        ]
+      },
+      "capabilityOverlays": [],
+      "fallbackCapability": "main_runtime"
+    },
+    "connector_ontology": {
+      "ownerPaths": ["src/main/connectors/descriptors/genes-ontology.ts"],
+      "interfacePaths": ["src/main/connectors/descriptors/genes-ontology.ts"],
+      "consumerModules": [],
+      "testFiles": {
+        "owner": ["src/main/connectors/descriptors/genes-ontology.test.ts"],
+        "contract": [
+          "src/main/connectors/descriptors/genes.test.ts",
+          "src/main/connectors/registry.test.ts",
+          "src/main/connectors/engine.test.ts"
+        ],
+        "consumer": [
+          "src/main/connectors/service.test.ts",
+          "src/main/connectors/skill-doc.test.ts",
+          "src/main/connectors/provision.test.ts",
+          "src/main/notebook/local-rpc-server.mcpcall.test.ts",
+          "src/main/notebook/host-mcp.integration.test.ts"
         ]
       },
       "capabilityOverlays": [],

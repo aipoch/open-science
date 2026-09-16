@@ -394,6 +394,39 @@ describe('ProviderRuntimeProjectionOwner', () => {
     }
   })
 
+  it.each(['claude-code', 'opencode', 'codex', 'codebuddy'] as const)(
+    'projects free gateway models through their supported protocols for %s',
+    (frameworkId) => {
+      const owner = new ProviderRuntimeProjectionOwner()
+      for (const [vendorId, models] of [
+        ['openrouter', ['openrouter/free', 'google/gemma-4-31b-it:free']],
+        ['opencode', ['big-pickle', 'mimo-v2.5-free']]
+      ] as const) {
+        const provider: StoredProvider = {
+          id: vendorId,
+          type: 'official',
+          vendorId,
+          name: vendorId
+        }
+        const framework = getAgentFramework(frameworkId)
+        const catalog = owner.resolveRuntimeModelCatalog(provider, framework)
+        for (const model of models) {
+          expect(catalog.map(({ effectiveModel }) => effectiveModel)).toContain(model)
+          expect(
+            owner.resolveRuntimeTarget(provider, { kind: 'required', model }, framework)
+          ).toMatchObject({
+            effectiveModel: model,
+            apiEndpoints: vendorId === 'openrouter' ? ['anthropic', 'openai'] : ['openai'],
+            frameworkCompatible: vendorId === 'openrouter' || frameworkId !== 'claude-code',
+            needsChatResponsesBridge: frameworkId === 'codex',
+            needsNativeResponsesCompatibility: false,
+            provider: { model, supportsImageInput: model !== 'big-pickle' }
+          })
+        }
+      }
+    }
+  )
+
   it('routes mixed OpenCode Zen models only through their documented protocol', () => {
     const owner = new ProviderRuntimeProjectionOwner()
     const provider: StoredProvider = {

@@ -1,3 +1,4 @@
+import { isSensitiveDiagnosticKey, redactSensitiveText } from '../diagnostic-redaction'
 import { ParserEngine } from './engine'
 import { ALL_CONNECTOR_IDS, getDescriptor, validateToolArguments } from './registry'
 import {
@@ -500,6 +501,7 @@ export class ConnectorService {
     if (!hasUsableCustomMcpCredentials(custom)) {
       throw new ConnectorGateError('credential_unavailable')
     }
+    this.assertCustomConfigComplete(custom)
     if (!this.isCustomConfigRunnable(custom, customServers)) {
       throw new ConnectorGateError('connector_unavailable')
     }
@@ -593,6 +595,43 @@ export class ConnectorService {
       ) {
         this.recordCustomServerFailure(custom.id, failureEpoch, availability)
       }
+      if (error instanceof McpToolCallError) {
+        // Tool-level text is an intentional server response, unlike arbitrary transport errors.
+        // Remove configured credentials before making the bounded diagnosis visible to the Agent.
+        let diagnostic = error.message
+        const secrets = [
+          ...Object.entries(config.env ?? {})
+            .filter(([key]) => isSensitiveDiagnosticKey(key))
+            .map(([, value]) => value),
+          ...Object.entries(config.headers ?? {})
+            .filter(([key]) => isSensitiveDiagnosticKey(key))
+            .flatMap(([, value]) => [value, value.replace(/^(?:Bearer|Basic)\s+/i, '')]),
+          config.oauth?.clientSecret ?? '',
+          config.oauth?.state?.clientInformation?.client_secret ?? '',
+          config.oauth?.state?.tokens?.access_token ?? '',
+          config.oauth?.state?.tokens?.refresh_token ?? ''
+        ]
+        for (const secret of secrets.filter(Boolean).sort((a, b) => b.length - a.length)) {
+          diagnostic = diagnostic.replaceAll(secret, '[REDACTED]')
+        }
+        diagnostic = redactSensitiveText(diagnostic)
+        if (diagnostic.length > 2000) {
+          diagnostic = `${diagnostic.slice(0, 650)}\n[diagnostic truncated]\n${diagnostic.slice(-1300)}`
+        }
+        if (availability === 'unauthenticated') {
+          const guidance = custom.oauth
+            ? connectorGateGuidance.connector_unauthenticated
+            : 'Follow the authentication instructions and login tool, if listed, in this Connector’s loaded Skill. Retry the original call after authentication completes.'
+          throw new ConnectorGateError(
+            'connector_unauthenticated',
+            `connector_unauthenticated: ${guidance}${custom.oauth ? '' : ` ${diagnostic}`}`
+          )
+        }
+        throw new ConnectorGateError(
+          'connector_tool_error',
+          `connector_tool_error: The Connector returned a tool failure. ${diagnostic}`
+        )
+      }
       throw new ConnectorGateError(customMcpFailureCategory(availability))
     }
   }
@@ -675,6 +714,16 @@ export class ConnectorService {
 
     this.customServerBarriers.delete(custom.id)
     return generation
+  }
+
+  private assertCustomConfigComplete(custom: StoredCustomMcpServer): void {
+    const endpoint = custom.transport === 'stdio' ? custom.command : custom.url
+    if (!endpoint?.trim()) {
+      throw new ConnectorGateError(
+        'connector_configuration_invalid',
+        'Connector configuration is incomplete. Ask the user to set the command or URL for this Connector in Settings > Connectors before retrying.'
+      )
+    }
   }
 
   private isCustomConfigRunnable(
@@ -763,6 +812,7 @@ export class ConnectorService {
       if (!hasUsableCustomMcpCredentials(current)) {
         throw new ConnectorGateError('credential_unavailable')
       }
+      this.assertCustomConfigComplete(current)
       if (!this.isCustomConfigRunnable(current, customServers)) {
         throw new ConnectorGateError('connector_unavailable')
       }

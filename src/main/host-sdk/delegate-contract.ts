@@ -332,7 +332,7 @@ const parseDelegateRpcCall = (params: Readonly<Record<string, unknown>>): Delega
 const parseCollectRpcCall = (params: Readonly<Record<string, unknown>>): CollectRpcCall => {
   if (!Array.isArray(params.selectors) || params.selectors.length === 0) {
     throw new Error(
-      'host.collect selectors must be a non-empty array; pass Frame ids or {frame_id, attempt_id} handles.'
+      'host.collect selectors must be a non-empty array; pass Frame ids or {frameId, attemptId} handles.'
     )
   }
   const selectors = params.selectors.map((selector) => {
@@ -352,7 +352,7 @@ const parseCollectRpcCall = (params: Readonly<Record<string, unknown>>): Collect
       return { frameId: selector.frame_id, attemptId: selector.attempt_id }
     }
     throw new Error(
-      'host.collect selector is invalid; use a non-empty Frame id or {frame_id, attempt_id} strings.'
+      'host.collect selector is invalid; use a non-empty Frame id or {frameId, attemptId} strings.'
     )
   })
   if (params.options !== undefined && !isRecord(params.options)) {
@@ -383,7 +383,7 @@ const parseCollectRpcCall = (params: Readonly<Record<string, unknown>>): Collect
     )
   }
   if (returnWhen !== undefined && returnWhen !== 'all' && returnWhen !== 'any') {
-    throw new Error('host.collect options.return_when must be all or any; omit it to use all.')
+    throw new Error('host.collect options.returnWhen must be all or any; omit it to use all.')
   }
   return {
     selectors,

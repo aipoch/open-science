@@ -6,9 +6,9 @@ import {
 } from './identity-catalog'
 
 describe('permission identity catalog', () => {
-  it('contains the closed 49-identity bootstrap inventory', () => {
-    expect(PRE_REGISTERED_PERMISSION_IDENTITY_COUNT).toBe(49)
-    expect(PRE_REGISTERED_PERMISSION_IDENTITIES.builtin_tool).toEqual([])
+  it('contains the closed 50-identity inventory including native web reading', () => {
+    expect(PRE_REGISTERED_PERMISSION_IDENTITY_COUNT).toBe(50)
+    expect(PRE_REGISTERED_PERMISSION_IDENTITIES.builtin_tool).toEqual(['builtin:web_fetch'])
     expect(PRE_REGISTERED_PERMISSION_IDENTITIES.customize_mutation).toHaveLength(8)
     expect(PRE_REGISTERED_PERMISSION_IDENTITIES.mcp_tool).toHaveLength(32)
     expect(PRE_REGISTERED_PERMISSION_IDENTITIES.mcp_tool).toContain(

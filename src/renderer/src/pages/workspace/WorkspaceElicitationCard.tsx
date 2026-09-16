@@ -369,6 +369,7 @@ const WorkspaceElicitationCard = ({
             activeAnnotations={annotationPort.activeAnnotations}
             onAdd={annotationPort.onAdd}
             onUpdateNote={annotationPort.onUpdateNote}
+            onRemove={annotationPort.onRemove}
             onError={annotationPort.onError}
           >
             <p className="whitespace-pre-wrap break-words text-[13px] font-semibold leading-[18px]">
@@ -672,6 +673,7 @@ const WorkspaceElicitationCard = ({
                 activeAnnotations={annotationPort.activeAnnotations}
                 onAdd={annotationPort.onAdd}
                 onUpdateNote={annotationPort.onUpdateNote}
+                onRemove={annotationPort.onRemove}
                 onError={annotationPort.onError}
               >
                 <h3

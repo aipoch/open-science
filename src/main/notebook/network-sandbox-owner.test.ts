@@ -5,10 +5,10 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { rootCertificates } from 'node:tls'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { DEFAULT_NOTEBOOK_NETWORK_SETTINGS } from '../../shared/notebook-network'
-import type { Logger } from '../logger'
+import { flushLogs, initLogger, type Logger } from '../logger'
 import type { NotebookSandboxCleanupReason, NotebookSandboxProcessOutcome } from './process-sandbox'
 
 const backend = vi.hoisted(() => ({
@@ -66,6 +66,11 @@ import {
 } from '../storage/migration-state'
 
 const fixtureDirectories: string[] = []
+let diagnosticLogRoot: string | undefined
+afterAll(async () => {
+  await flushLogs()
+  if (diagnosticLogRoot) await rm(diagnosticLogRoot, { recursive: true, force: true })
+})
 type Verification = { argv: readonly string[]; env: NodeJS.ProcessEnv }
 const runVerification = async (verification: Verification): Promise<void> => {
   await promisify(execFile)(verification.argv[0]!, [...verification.argv.slice(1)], {
@@ -168,6 +173,51 @@ afterEach(async () => {
 })
 
 describe('NotebookNetworkSandboxOwner', () => {
+  it('keeps inherited PATH access optional only on native Windows while preserving explicit roots', async () => {
+    const pathRoot = await mkdtemp(join(tmpdir(), 'open-science-path-root-'))
+    fixtureDirectories.push(pathRoot)
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: '/resources',
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn(),
+      platform: process.platform
+    })
+    try {
+      for (const required of [false, true]) {
+        const wrapped = await owner.wrap({
+          executable: process.execPath,
+          args: ['-e', 'console.log(1)'],
+          env: { PATH: pathRoot },
+          cwd: tmpdir(),
+          commandText: 'console.log(1)',
+          sessionId: 'path-test',
+          projectId: 'path-test',
+          runtime: 'repl',
+          filesystem: {
+            readOnlyRoots: required ? [pathRoot] : [],
+            readWriteRoots: [],
+            deniedReadRoots: [],
+            deniedWriteRoots: []
+          }
+        })
+        const request = backend.wrap.mock.calls.at(-1)![0]
+        expect(request.env.PATH).toBe(pathRoot)
+        expect(request.filesystem.readOnlyRoots.includes(pathRoot)).toBe(
+          required || process.platform !== 'win32'
+        )
+        if (process.platform === 'win32') {
+          expect(request.filesystem.optionalReadOnlyRoots).toContain(pathRoot)
+        } else {
+          expect(request.filesystem.optionalReadOnlyRoots).toBeUndefined()
+        }
+        await wrapped.cleanup('exit', { processesTerminated: true })
+      }
+    } finally {
+      await owner.dispose()
+    }
+  })
+
   it.each([false, true])(
     'removes the managed R grant before path replacement (cancelled: %s)',
     async (cancelled) => {
@@ -193,6 +243,42 @@ describe('NotebookNetworkSandboxOwner', () => {
         )
       }
       expect(backend.wrap).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each([false, true])(
+    'revokes historical R layout grants even if x64 is missing: %s',
+    async (missing) => {
+      const root = await mkdtemp(join(tmpdir(), 'os-r-revoke-x64-'))
+      fixtureDirectories.push(root)
+      const bin = join(envPrefix(root, DEFAULT_R_ENV, 'win32'), 'Lib', 'R', 'bin', 'x64')
+      await mkdir(bin, { recursive: true })
+      const executable = join(bin, 'Rscript.exe')
+      if (!missing) await writeFile(executable, 'fixture')
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: root,
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        persistAlwaysAllow: vi.fn(),
+        requestDecision: vi.fn(),
+        platform: 'win32'
+      })
+      try {
+        await owner.revokeManagedRAccess(root)
+        expect(backend.setWindowsRuntimeAccess).toHaveBeenCalledWith(executable, false)
+        for (const prefix of [
+          envPrefix(root, DEFAULT_R_ENV, 'win32'),
+          legacyDefaultEnvPrefix(root, DEFAULT_R_ENV)
+        ]) {
+          for (const architecture of ['', 'x64']) {
+            expect(backend.setWindowsRuntimeAccess).toHaveBeenCalledWith(
+              join(prefix, 'Lib', 'R', 'bin', architecture, 'Rscript.exe'),
+              false
+            )
+          }
+        }
+      } finally {
+        await owner.dispose()
+      }
     }
   )
 
@@ -641,6 +727,73 @@ describe('NotebookNetworkSandboxOwner', () => {
     await owner.dispose()
   })
 
+  it.each(['user-decision', 'aborted'] as const)(
+    'preserves the actual denial reason without granting access: %s',
+    async (decisionSource) => {
+      const requestDecision = vi.fn().mockResolvedValue('deny')
+      const persistAlwaysAllow = vi.fn()
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: '/resources',
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        persistAlwaysAllow,
+        requestDecision,
+        platform: 'linux'
+      })
+      const commandText = 'curl data.example.org/a'
+      let wrapped: Awaited<ReturnType<typeof owner.wrap>> | undefined
+      try {
+        wrapped = await owner.wrap({
+          executable: '/usr/bin/bash',
+          args: [],
+          env: {},
+          cwd: '/workspace',
+          commandText,
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          runtime: 'bash',
+          filesystem: {
+            readOnlyRoots: [],
+            readWriteRoots: ['/workspace'],
+            deniedReadRoots: [],
+            deniedWriteRoots: []
+          }
+        })
+        const finishBlockedExecution = wrapped.beginExecution?.()
+        await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(
+          false
+        )
+        finishBlockedExecution?.()
+        const cancellation = new AbortController()
+        if (decisionSource === 'aborted') cancellation.abort()
+        const result = await owner.requestNetworkAccess({
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          hostname: 'data.example.org',
+          reason: 'Download the dataset.',
+          runtime: 'bash',
+          command: commandText,
+          signal: cancellation.signal
+        })
+        expect(result).toMatchObject({
+          hostname: 'data.example.org',
+          status: 'denied',
+          decisionSource,
+          message: expect.any(String)
+        })
+        expect(requestDecision).toHaveBeenCalledTimes(decisionSource === 'user-decision' ? 1 : 0)
+        expect(persistAlwaysAllow).not.toHaveBeenCalled()
+        const end = wrapped.beginExecution?.()
+        await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(
+          false
+        )
+        end?.()
+      } finally {
+        await wrapped?.cleanup('exit', { processesTerminated: true })
+        await owner.dispose()
+      }
+    }
+  )
+
   it('returns unavailable without creating a grant when no approval client is connected', async () => {
     const requestDecision = vi.fn().mockResolvedValue('unavailable')
     const { logger, records } = createCapturingLogger()
@@ -679,7 +832,12 @@ describe('NotebookNetworkSandboxOwner', () => {
         hostname: 'data.example.org',
         reason: 'Download private patient data.'
       })
-    ).resolves.toEqual({ hostname: 'data.example.org', status: 'unavailable' })
+    ).resolves.toEqual({
+      hostname: 'data.example.org',
+      status: 'unavailable',
+      decisionSource: 'approval-surface-unavailable',
+      message: expect.any(String)
+    })
     expect(requestDecision).toHaveBeenCalledOnce()
     await wrapped.cleanup('exit', { processesTerminated: true })
     await owner.dispose()
@@ -1426,7 +1584,12 @@ describe('NotebookNetworkSandboxOwner', () => {
     await vi.waitFor(() => expect(requestDecision).toHaveBeenCalledOnce())
     cancellation.abort(new Error('Notebook tool ended.'))
     expect(decisionSignal?.aborted).toBe(true)
-    await expect(result).resolves.toEqual({ hostname: 'data.example.org', status: 'denied' })
+    await expect(result).resolves.toEqual({
+      hostname: 'data.example.org',
+      status: 'denied',
+      decisionSource: 'aborted',
+      message: expect.any(String)
+    })
     expect(persistAlwaysAllow).not.toHaveBeenCalled()
     await wrapped.cleanup('exit', { processesTerminated: true })
     await owner.dispose()
@@ -1737,6 +1900,164 @@ it('does not repeat a cancelled UAC prompt and reports cancellation before cell 
 })
 
 describe('R startup authorization admission', () => {
+  it('keeps the original verification failure and cleanup when diagnostic logging throws', async () => {
+    backend.wrap.mockResolvedValueOnce({
+      argv: [process.execPath, '-e', 'process.exit(77)'],
+      env: process.env,
+      annotateStderr: (value: string) => value,
+      resetNetworkConnections: backend.resetNetworkConnections,
+      setExecutionActive: backend.setExecutionActive,
+      confirmProcessTreeTermination: async () => true,
+      cleanup: (_reason: NotebookSandboxCleanupReason, outcome: NotebookSandboxProcessOutcome) =>
+        backend.cleanup(outcome)
+    })
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: tmpdir(),
+      platform: 'win32',
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn(),
+      logger: {
+        info: vi.fn(),
+        debug: vi.fn(),
+        error: vi.fn(),
+        warn: () => {
+          throw new Error('sink failed')
+        }
+      }
+    })
+    try {
+      await expect(owner.setWindowsRuntimeAccess(process.execPath, true)).rejects.toMatchObject({
+        code: 77
+      })
+      expect(backend.cleanup).toHaveBeenCalledOnce()
+    } finally {
+      await owner.dispose()
+    }
+  })
+
+  it('retains host child diagnostics when the protocol probe converts a process failure to false', async () => {
+    backend.getWindowsRuntimeAccess.mockResolvedValue({ authorized: false, registered: false })
+    backend.rKernelProtocolProbe.mockImplementationOnce(
+      (await vi.importActual<typeof import('./r-command')>('./r-command')).rKernelProtocolProbe
+    )
+    const { logger, records } = createCapturingLogger()
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: tmpdir(),
+      platform: 'win32',
+      logger,
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn()
+    })
+    try {
+      // The contained fixture returns77; the real host Node process rejects R's --vanilla flag.
+      await expect(
+        owner.ensureRuntimeAccess({
+          runtime: 'r',
+          executable: process.execPath,
+          sessionId: 'host-probe-log'
+        })
+      ).rejects.toThrow('protocol dependencies failed')
+      expect(records).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            message: 'R runtime verification host process failed',
+            data: expect.objectContaining({
+              phase: 'host-probe',
+              code: 9,
+              stderr: expect.objectContaining({ text: expect.stringContaining('--vanilla') })
+            })
+          })
+        ])
+      )
+    } finally {
+      await owner.dispose()
+    }
+  })
+
+  it('persists bounded R verification stderr and its failure stage in main.log', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'os-r-access-log-'))
+    diagnosticLogRoot = root
+    initLogger({ logDir: root, mirrorToConsole: false })
+    const stderr = `token=private-token\n${'x'.repeat(12_000)}\nnormalizePath: library/compiler access denied`
+    backend.wrap.mockImplementationOnce(async () => ({
+      argv: [
+        process.execPath,
+        '-e',
+        `process.stderr.write(${JSON.stringify(stderr)}); process.exit(77)`
+      ],
+      env: process.env,
+      annotateStderr: (value: string) => value,
+      resetNetworkConnections: backend.resetNetworkConnections,
+      setExecutionActive: backend.setExecutionActive,
+      confirmProcessTreeTermination: async () => true,
+      cleanup: (_reason: NotebookSandboxCleanupReason, outcome: NotebookSandboxProcessOutcome) =>
+        backend.cleanup(outcome)
+    }))
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: tmpdir(),
+      platform: 'win32',
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn()
+    })
+    try {
+      await expect(owner.setWindowsRuntimeAccess(process.execPath, true)).rejects.toMatchObject({
+        code: 77
+      })
+      await flushLogs()
+      const serialized = await readFile(join(root, 'main.log'), 'utf8')
+      const records = serialized
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line))
+      const failure = records.find((record) => record.msg === 'R runtime verification probe failed')
+      expect(failure).toMatchObject({
+        data: {
+          phase: 'authorize',
+          code: 77,
+          stderr: {
+            truncated: true,
+            text: expect.stringContaining('normalizePath: library/compiler access denied')
+          }
+        }
+      })
+      expect(failure.data.stderr.text.length).toBeLessThan(8_000)
+      expect(records).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            msg: 'operation failed',
+            data: expect.objectContaining({
+              operation: 'r-runtime-verification',
+              operationId: failure.data.operationId,
+              failurePhase: 'authorize'
+            })
+          }),
+          expect.objectContaining({
+            msg: 'operation failed',
+            data: expect.objectContaining({
+              operation: 'r-runtime-access',
+              operationId: failure.data.parentOperationId
+            })
+          })
+        ])
+      )
+      expect(serialized).not.toContain('private-token')
+      expect(records).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            msg: 'operation failed',
+            data: expect.objectContaining({ operation: 'r-runtime-access' })
+          })
+        ])
+      )
+    } finally {
+      await owner.dispose()
+      await flushLogs()
+    }
+  })
+
   it('reproduces R verification refusal before authorization when protection is not ready', async () => {
     backend.status.mockResolvedValue({
       kind: 'setupRequired',

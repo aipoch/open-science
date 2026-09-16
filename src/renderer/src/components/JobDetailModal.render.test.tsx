@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // Tests for JobDetailModal — tab switching, Back navigation, and session jobs list.
-import { act } from 'react'
+import { act, Profiler } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -123,7 +123,69 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount())
   container.remove()
+  vi.useRealTimers()
   vi.restoreAllMocks()
+})
+
+it.each(['list', 'row', 'detail'] as const)(
+  'stops elapsed updates for terminal or cancelled jobs in the %s surface and resumes live work',
+  async (surface) => {
+    const { JobDetailModal } = await import('./JobDetailModal')
+    const { RemoteJobRow } = await import('./RemoteJobRow')
+    vi.useFakeTimers()
+    const onRender = vi.fn()
+    const startedAt = Date.now() - 5_000
+    const show = (job: ReturnType<typeof makeJob>): void => {
+      useSessionJobStore.getState().applyUpdate(job)
+      root.render(
+        <Profiler id="elapsed" onRender={onRender}>
+          {surface === 'row' ? (
+            <RemoteJobRow job={job} onOpen={vi.fn()} />
+          ) : (
+            <JobDetailModal
+              open
+              sessionId="sess-1"
+              initialJob={surface === 'detail' ? job : undefined}
+              onClose={vi.fn()}
+            />
+          )}
+        </Profiler>
+      )
+    }
+    act(() => show(makeJob({ status: 'success' })))
+    expect(vi.getTimerCount()).toBe(0)
+    onRender.mockClear()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000)
+    })
+    expect(onRender).not.toHaveBeenCalled()
+
+    act(() => show(makeJob({ job_id: 'job-live', status: 'running', started_at: startedAt })))
+    expect(vi.getTimerCount()).toBeGreaterThan(0)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000)
+    })
+    expect(container.textContent).toContain('1m 6s')
+
+    act(() =>
+      show(makeJob({ job_id: 'job-live', status: 'running', cancellation_status: 'cancelled' }))
+    )
+    expect(vi.getTimerCount()).toBe(0)
+    onRender.mockClear()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000)
+    })
+    expect(onRender).not.toHaveBeenCalled()
+  }
+)
+
+it('does not tick an empty Session list or one with only another Session running', async () => {
+  const { JobDetailModal } = await import('./JobDetailModal')
+  vi.useFakeTimers()
+  act(() => root.render(<JobDetailModal open sessionId="sess-1" onClose={vi.fn()} />))
+  expect(vi.getTimerCount()).toBe(0)
+  act(() => useSessionJobStore.getState().applyUpdate(makeJob({ session_id: 'other' })))
+  expect(vi.getTimerCount()).toBe(0)
 })
 
 describe('JobDetailModal — detail view', () => {

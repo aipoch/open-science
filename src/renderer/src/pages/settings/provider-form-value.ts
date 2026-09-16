@@ -18,6 +18,7 @@ import {
   type OfficialVendorId
 } from '../../../../shared/provider-registry'
 import {
+  customProviderRequiresKey,
   getCustomProviderBaseUrlError,
   type CustomProviderBaseUrlError
 } from '../../../../shared/provider-base-url'
@@ -83,6 +84,48 @@ type ProviderFormTokenLimits = Pick<
   ProviderDraft,
   'contextWindow' | 'maxInputTokens' | 'maxOutputTokens'
 >
+
+// Quick-fill presets for local model servers. Every one serves OpenAI Chat Completions on a
+// well-known loopback port and requires no API key, so applying a preset seeds the base URL and
+// the Chat Completions API format. The model stays for the user to fill: local model ids depend
+// on what they have pulled, so guessing one would be noise. Selecting a preset never blocks
+// editing anything afterwards.
+export type LocalModelPreset = Readonly<{
+  id: string
+  label: string
+  baseUrl: string
+}>
+
+export const LOCAL_MODEL_PRESETS: readonly LocalModelPreset[] = [
+  { id: 'ollama', label: 'Ollama', baseUrl: 'http://localhost:11434' },
+  { id: 'lmstudio', label: 'LM Studio', baseUrl: 'http://localhost:1234' },
+  { id: 'llamacpp', label: 'llama.cpp', baseUrl: 'http://localhost:8080' },
+  { id: 'vllm', label: 'vLLM', baseUrl: 'http://localhost:8000' }
+]
+
+// The form patch a preset applies — or, when the preset is already active, reverts. Tapping the
+// active preset clears exactly what it filled: the base URL, the format it selected (back to the
+// framework's default), and the name it seeded. Fields the user typed themselves — the model
+// above all — are never touched in either direction.
+export const localModelPresetPatch = (
+  preset: LocalModelPreset,
+  value: ProviderFormValue,
+  defaultApiEndpoint: ProviderFormValue['apiEndpoint']
+): Partial<ProviderFormValue> => {
+  if (value.baseUrl.trim() === preset.baseUrl) {
+    return {
+      baseUrl: '',
+      apiEndpoint: defaultApiEndpoint,
+      ...(value.name.trim() === preset.label ? { name: '' } : {})
+    }
+  }
+
+  return {
+    baseUrl: preset.baseUrl,
+    apiEndpoint: 'openai',
+    ...(value.name.trim() ? {} : { name: preset.label })
+  }
+}
 
 // Both Settings and onboarding persist this shared form. Keep optional-number conversion here so a
 // blank custom value explicitly clears a saved override while non-custom requests omit the fields.
@@ -221,7 +264,11 @@ export const getProviderFormErrors = (
     if (positiveWholeNumberError(value.maxOutputTokens)) {
       errors.maxOutputTokens = 'Maximum output tokens must be a positive whole number of tokens.'
     }
-    if (!value.key.trim() && !options.hasStoredKey) errors.key = 'API key is required.'
+    // Local loopback gateways (Ollama, LM Studio, llama.cpp, vLLM) serve without a key; only a
+    // remote gateway requires one.
+    if (!value.key.trim() && !options.hasStoredKey && customProviderRequiresKey(value.baseUrl)) {
+      errors.key = 'API key is required.'
+    }
   } else if (value.type === 'official') {
     // No model is chosen at add time: the vendor catalog + the global model selection cover that.
     if (!value.key.trim() && !options.hasStoredKey) errors.key = 'API key is required.'

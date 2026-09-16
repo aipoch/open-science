@@ -926,7 +926,10 @@ describe('production delegated-work composition', () => {
         if (finalSave !== 'no-quit') {
           if (finalSave !== 'conflict-without-work') {
             await prompt(harness.caller.originMessageId)
-            await expect.poll(() => harness.execution.controls()).toHaveLength(1)
+            // Launch prepares a real workspace; fake timers do not accelerate filesystem I/O.
+            await expect
+              .poll(() => harness.execution.controls(), { timeout: 10_000 })
+              .toHaveLength(1)
             harness.execution.control(receipts[0].attemptId).accept()
           }
           const app = Object.assign(new EventEmitter(), { exit: vi.fn() })
@@ -990,10 +993,13 @@ describe('production delegated-work composition', () => {
         }
         await prompt(nextPromptId)
         await expect
-          .poll(async () => {
-            await vi.advanceTimersByTimeAsync(50)
-            return harness.execution.controls()
-          })
+          .poll(
+            async () => {
+              await vi.advanceTimersByTimeAsync(50)
+              return harness.execution.controls()
+            },
+            { timeout: 10_000 }
+          )
           .toHaveLength(receipts.length)
         const child = receipts.at(-1)!
         harness.execution.control(child.attemptId).accept()
@@ -2453,6 +2459,9 @@ describe('production delegated-work composition', () => {
       awaiting: true,
       requestId: 'provider-permission-1',
       title: 'Read evidence',
+      providerToolName: 'WebFetch',
+      isMcp: false,
+      toolKind: 'fetch',
       options: [
         { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once', scope: 'once' },
         { optionId: 'allow', name: 'This session', kind: 'allow_always', scope: 'session' },
@@ -2463,6 +2472,9 @@ describe('production delegated-work composition', () => {
     const projected = harness.composition.root.pendingPermissions()[0]
     expect(projected).toMatchObject({
       sessionId: harness.session.id,
+      providerToolName: 'WebFetch',
+      isMcp: false,
+      toolKind: 'fetch',
       delegated: {
         frameId: receipt.children[0].frameId,
         attemptId: receipt.children[0].attemptId,

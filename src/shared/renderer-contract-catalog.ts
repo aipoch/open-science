@@ -310,6 +310,17 @@ import type {
   UpdateTagRequest
 } from './tags'
 import type {
+  Bookmark,
+  BookmarkListResult,
+  BookmarkPdfSourceResult,
+  ResolvePdfBookmarkSourceRequest,
+  CreateBookmarkRequest,
+  DeleteBookmarkRequest,
+  DeleteBookmarkResult,
+  ListBookmarksRequest,
+  UpdateBookmarkNoteRequest
+} from './bookmarks'
+import type {
   LiteratureCatalogCommand,
   LiteratureCatalogReceipt,
   LiteratureCatalogSearchPage,
@@ -2604,6 +2615,25 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'storage.validateDataRoot': callable<(parent: string) => Promise<DataRootValidationResult>>()(
     'storage',
     ['storage:validate-data-root', LOCAL, STORAGE_PARENT]
+  ),
+  'bookmarks.resolvePdfSource': callable<
+    (request: ResolvePdfBookmarkSourceRequest) => Promise<BookmarkPdfSourceResult>
+  >()('bookmarks', ['bookmarks:resolve-pdf-source', WEB, undefined, undefined, RUNTIME_VALIDATED]),
+  'bookmarks.list': callable<(request: ListBookmarksRequest) => Promise<BookmarkListResult>>()(
+    'bookmarks',
+    ['bookmarks:list', WEB, undefined, undefined, RUNTIME_VALIDATED]
+  ),
+  'bookmarks.create': callable<(request: CreateBookmarkRequest) => Promise<Bookmark>>()(
+    'bookmarks',
+    ['bookmarks:create', WEB, undefined, undefined, RUNTIME_VALIDATED]
+  ),
+  'bookmarks.updateNote': callable<(request: UpdateBookmarkNoteRequest) => Promise<Bookmark>>()(
+    'bookmarks',
+    ['bookmarks:update-note', WEB, undefined, undefined, RUNTIME_VALIDATED]
+  ),
+  'bookmarks.delete': callable<(request: DeleteBookmarkRequest) => Promise<DeleteBookmarkResult>>()(
+    'bookmarks',
+    ['bookmarks:delete', WEB, undefined, undefined, RUNTIME_VALIDATED]
   ),
   'tags.create': callable<(request: CreateTagRequest) => Promise<TagSnapshot>>()('tags', [
     'tags:create',

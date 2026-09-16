@@ -181,7 +181,11 @@ export const prepareVisibleStartupRuntime = async <Shell, Modules, Runtime>(
     const [modules] = await Promise.all([applicationModules, databaseVerification])
     return await deps.composeRuntime(shell, modules)
   } catch (error) {
-    await deps.rollbackShell?.(shell, error)
+    try {
+      await deps.rollbackShell?.(shell, error)
+    } catch {
+      // Keep the original startup failure authoritative even when shell rollback also fails.
+    }
     throw error
   }
 }

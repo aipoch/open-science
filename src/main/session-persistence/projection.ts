@@ -787,6 +787,12 @@ export class SessionProjectionRepository {
       if (existing && existing.projectId !== projectId) {
         throw new Error('Cannot delete a Session owned by another Project.')
       }
+      // Only a durable explicit delete intent authorizes private-data cleanup. Projection
+      // repair can also call commitDelete for absent JSON after a pending save.
+      const pending = await tx.pendingSessionReconciliation.findUnique({ where: { sessionId } })
+      if (pending?.projectId === projectId && pending.operation === 'delete') {
+        await tx.bookmark.deleteMany({ where: { projectId, sessionId } })
+      }
       if (!existing) {
         await tx.pendingSessionReconciliation.deleteMany({ where: { projectId, sessionId } })
         return

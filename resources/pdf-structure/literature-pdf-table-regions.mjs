@@ -5,7 +5,59 @@ import { inside } from './literature-pdf-table-geometry.mjs'
 
 // Near-identical detector boxes can compete for the same caption. Collapse them
 // only when they enclose exactly the same native tokens, including edge text.
-export function deduplicateTableRegions(tables, items) {
+export function deduplicateTableRegions(tables, items, captions = []) {
+  const titles = captions.filter((c) => captionKind(c.lines[0]) === 'table')
+  if (titles.length === 1) {
+    const caption = titles[0]
+    tables = tables.filter(
+      (table) =>
+        !tables.some((other) => {
+          if (other === table) return false
+          const a = table.cropRect,
+            b = other.cropRect
+          if (
+            Math.abs(a[0] - b[0]) > 4 ||
+            Math.abs(a[1] - b[1]) > 4 ||
+            Math.abs(a[3] - b[3]) > 4 ||
+            b[2] - b[0] < (a[2] - a[0]) * 1.5 ||
+            caption.rect[3] > a[1] + 12 ||
+            a[1] - caption.rect[3] > 36
+          )
+            return false
+          const cols = other.structure.objects.filter((o) => o.label === 'table column')
+          if (
+            cols.length <
+            table.structure.objects.filter((o) => o.label === 'table column').length + 2
+          )
+            return false
+          const extra = items.filter(
+            (i) =>
+              i.horizontal &&
+              i.rect[0] > a[2] &&
+              i.rect[2] < b[2] &&
+              i.rect[1] > b[1] &&
+              i.rect[3] < b[3] &&
+              /^[<>−+-]?(?:\d|\.\d)/.test(i.text)
+          )
+          const baselines = new Set(
+            extra
+              .filter((i) =>
+                extra.some(
+                  (j) =>
+                    j !== i &&
+                    j.rect[0] - i.rect[2] > i.height &&
+                    Math.abs(i.baseline - j.baseline) < i.height * 0.2
+                )
+              )
+              .map((i) => Math.round(i.baseline))
+          )
+          return (
+            baselines.size >= 4 &&
+            items.filter((i) => intersect(i.rect, a) > 0).every((i) => intersect(i.rect, b) > 0)
+          )
+        })
+    )
+  }
   const kept = []
   for (const table of [...tables].sort(
     (a, b) => (b.detection?.score ?? 0) - (a.detection?.score ?? 0)

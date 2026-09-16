@@ -1066,7 +1066,7 @@ describe('ProviderAccountsModule', () => {
     expect(xaiOAuth.cancelLogin).toHaveBeenCalledOnce()
   })
 
-  it('returns bounded failures for missing model catalogs and incompatible drafts', async () => {
+  it('returns bounded failures for missing model catalogs', async () => {
     await expect(module.refreshProviderModels({ providerId: 'missing-provider' })).resolves.toEqual(
       {
         ok: false,
@@ -1089,18 +1089,177 @@ describe('ProviderAccountsModule', () => {
       category: 'unknown',
       message: 'This provider has no model-list endpoint.'
     })
+  })
 
-    await expect(
-      module.validateProvider({
-        draft: {
-          type: 'custom',
-          baseUrl: 'https://lab.example/v1',
-          model: 'lab-model',
-          key: 'secret-key',
-          apiEndpoints: ['openai']
-        }
+  it('probes a custom gateway over its own route under a foreign framework and persists health only', async () => {
+    // An incompatible pairing no longer short-circuits the probe. The endpoint is still tested over
+    // its own declared route (framework-agnostic), the framework mismatch rides along as a flag,
+    // and the outcome persists as endpoint health — never as an 'incompatible' failure that would
+    // go stale the moment the framework changes.
+    const probedUrls: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request) => {
+        probedUrls.push(String(input))
+        return new Response(JSON.stringify({ choices: [{ message: { role: 'assistant' } }] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' }
+        })
       })
-    ).resolves.toMatchObject({ ok: false, category: 'incompatible' })
+    )
+    await module.upsertProvider({
+      type: 'custom',
+      name: 'Lab gateway',
+      baseUrl: 'https://lab.example/v1',
+      model: 'lab-model',
+      key: 'secret-key',
+      apiEndpoints: ['openai']
+    })
+    const storedProvider = (await repository.getSettings()).providers[0]
+    const result = await module.validateProvider({ providerId: storedProvider.id })
+    expect(result).toMatchObject({
+      ok: true,
+      category: 'ok',
+      applied: true,
+      frameworkIncompatible: true
+    })
+    // The default framework (Claude Code) speaks /v1/messages only; the probe must exercise the
+    // provider's own /v1/chat/completions route, not the framework's. A verified endpoint pairs
+    // its success with the specific route mismatch.
+    expect(probedUrls).toEqual(['https://lab.example/v1/chat/completions'])
+    expect(result.message).toContain('/v1/chat/completions')
+
+    const saved = (await repository.getSettings()).providers[0]
+    expect(saved.lastValidatedAt).toBeGreaterThan(0)
+    expect(saved.lastValidatedTarget).toEqual({ model: 'lab-model', endpoint: 'openai' })
+    expect(saved.lastValidationFailure).toBeUndefined()
+    vi.unstubAllGlobals()
+  })
+
+  it('probes an official vendor over its own route under a foreign framework and persists health only', async () => {
+    // OpenCode Zen speaks only /v1/chat/completions; Claude Code cannot drive it. The vendor's own
+    // route is still probed, the pairing rides along as a flag, and the vendor's default model is
+    // the persisted target.
+    const probedUrls: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request) => {
+        probedUrls.push(String(input))
+        return new Response(JSON.stringify({ choices: [{ message: { role: 'assistant' } }] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' }
+        })
+      })
+    )
+    await module.upsertProvider({
+      type: 'official',
+      vendorId: 'opencode',
+      name: 'Zen',
+      key: 'synthetic-key'
+    })
+    const providerId = (await repository.getSettings()).providers[0].id
+
+    const result = await module.validateProvider({ providerId })
+
+    expect(result).toMatchObject({ ok: true, category: 'ok', frameworkIncompatible: true })
+    expect(probedUrls).toEqual(['https://opencode.ai/zen/v1/chat/completions'])
+    const stored = (await repository.getSettings()).providers[0]
+    expect(stored.lastValidatedAt).toBeGreaterThan(0)
+    expect(stored.lastValidatedTarget).toEqual({ model: 'kimi-k2.7-code', endpoint: 'openai' })
+    expect(stored.lastValidationFailure).toBeUndefined()
+    vi.unstubAllGlobals()
+  })
+
+  it('keeps the actionable probe failure when an incompatible pairing also fails its probe', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: { message: 'invalid api key' } }), { status: 401 })
+      )
+    )
+    await module.upsertProvider({
+      type: 'custom',
+      name: 'Local',
+      baseUrl: 'http://localhost:11434',
+      model: 'qwen3:14b',
+      apiEndpoints: ['openai']
+    })
+    const providerId = (await repository.getSettings()).providers[0].id
+
+    const result = await module.validateProvider({ providerId })
+
+    expect(result).toMatchObject({ ok: false, category: 'auth', frameworkIncompatible: true })
+    // A failed probe keeps its own category copy; the pairing message must not replace it.
+    expect(result.message).toBeUndefined()
+    vi.unstubAllGlobals()
+  })
+
+  it('moves a custom gateway between loopback and remote with matching key requirements', async () => {
+    // A keyless loopback gateway saves; retargeting it at a remote host then requires a key again.
+    await module.upsertProvider({
+      type: 'custom',
+      name: 'Gateway',
+      baseUrl: 'http://localhost:11434',
+      model: 'qwen3:14b',
+      apiEndpoints: ['openai']
+    })
+    const providerId = (await repository.getSettings()).providers[0].id
+    await expect(
+      module.upsertProvider({
+        id: providerId,
+        requireExisting: true,
+        type: 'custom',
+        name: 'Gateway',
+        baseUrl: 'https://gateway.example/v1',
+        model: 'qwen3:14b',
+        apiEndpoints: ['openai']
+      })
+    ).rejects.toThrow('API key is required for a custom provider.')
+
+    // Relaxing a keyed remote gateway down to a loopback base keeps its stored key.
+    await module.upsertProvider({
+      id: providerId,
+      requireExisting: true,
+      type: 'custom',
+      name: 'Gateway',
+      baseUrl: 'https://gateway.example/v1',
+      model: 'qwen3:14b',
+      apiEndpoints: ['openai'],
+      key: 'sk-secret'
+    })
+    await module.upsertProvider({
+      id: providerId,
+      requireExisting: true,
+      type: 'custom',
+      name: 'Gateway',
+      baseUrl: 'http://localhost:11434',
+      model: 'qwen3:14b',
+      apiEndpoints: ['openai']
+    })
+    const stored = (await repository.getSettings()).providers[0]
+    expect(stored.baseUrl).toBe('http://localhost:11434')
+    expect(stored.keyMask).toBeTruthy()
+  })
+
+  it('validates a Claude shared profile by its OAuth state under a foreign framework instead of probing', async () => {
+    // claude-shared is framework-bound by credential, not endpoint. Under a foreign framework its
+    // auth-status check owns the verdict; no pairing flag, no probe against a base URL it lacks,
+    // and no stored failure that would hide the profile from selectors.
+    await repository.setAgentFramework('opencode')
+    await module.upsertProvider({ type: 'claude-shared' })
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const providerId = (await repository.getSettings()).providers[0].id
+
+    const result = await module.validateProvider({ providerId })
+
+    expect(result.frameworkIncompatible).toBeUndefined()
+    expect(result.category).not.toBe('bad-url')
+    expect(fetchMock).not.toHaveBeenCalled()
+    const stored = (await repository.getSettings()).providers[0]
+    expect(stored.lastValidationFailure).toBeUndefined()
+    vi.unstubAllGlobals()
   })
 
   it('persists SenseNova regions through the existing settings field without rewriting legacy records', async () => {

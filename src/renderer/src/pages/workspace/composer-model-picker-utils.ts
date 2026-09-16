@@ -5,6 +5,7 @@ import {
   type ConfiguredModelCatalogEntry
 } from '../../../../shared/configured-model-catalog'
 import {
+  ENDPOINT_PATHS,
   providerEndpoints,
   type ChatApiEndpoint,
   type ProviderType,
@@ -13,14 +14,8 @@ import {
 
 // Human-readable route for an endpoint, so a reason reads as a route rather than a vendor name. The
 // routes are literal API paths, identical in every locale; only the joining word is translated.
-const ENDPOINT_ROUTE: Record<ChatApiEndpoint, string> = {
-  anthropic: '/v1/messages',
-  openai: '/v1/chat/completions',
-  responses: '/v1/responses'
-}
-
 const routeList = (endpoints: readonly ChatApiEndpoint[], t: TFunction): string =>
-  endpoints.map((endpoint) => ENDPOINT_ROUTE[endpoint]).join(t(' or '))
+  endpoints.map((endpoint) => ENDPOINT_PATHS[endpoint]).join(t(' or '))
 
 export const modelUnavailableReason = (
   option: Pick<ConfiguredModelCatalogEntry, 'label' | 'model' | 'unavailableReason'>,

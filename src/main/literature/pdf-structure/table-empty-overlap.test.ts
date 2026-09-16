@@ -121,3 +121,62 @@ it.each(['rule', 'unassigned-token', 'wide-band', 'outside-baseline', 'vertical-
     expect(x).toEqual(before)
   }
 )
+
+it('removes empty model bands between native threshold records without losing unit exponents', () => {
+  const x = readPdfFixture(
+    resolve(
+      'src/main/literature/pdf-structure/fixtures/source-grids/moderator-statistic-rows.jsonl'
+    )
+  )
+  const t = refineTable(x.table, x.tokens, x.captions, [], x.rules)
+  expect(t.grid).toHaveLength(35)
+  expect(t.grid.every((row: string[]) => row.some(Boolean))).toBe(true)
+  expect(t.repairs.filter((r: string) => r === 'empty-overlapping-row-removed')).toHaveLength(2)
+  const unit = t.cells.find((c: { text: string }) => c.text === '≤25 kg/m2')
+  expect(unit.textRuns).toContainEqual(
+    expect.objectContaining({ text: '2', position: 'superscript' })
+  )
+  expect(t.cells.flatMap((c: { sourceRects: number[][] }) => c.sourceRects)).toHaveLength(223)
+})
+
+function thresholdRows(): ReturnType<typeof overlappingRows> {
+  const x = overlappingRows()
+  x.cells[0].text = '≤25 kg/m2'
+  x.cells[6].text = '>25–≤30'
+  const anchor = x.items[0]
+  Object.assign(anchor, { text: '≤25 kg/m', baseline: 11, height: 10, horizontal: true })
+  const exponent = { text: '2', rect: [51, 0, 55, 7], baseline: 7, height: 7, horizontal: true }
+  x.items.push(exponent)
+  x.cells[0].sourceRects.push(exponent.rect)
+  return x
+}
+
+it('retains a uniquely attached unit exponent while removing a redundant threshold band', () => {
+  const x = thresholdRows(),
+    rects = structuredClone(x.cells.flatMap((c) => c.sourceRects))
+  removeEmptyOverlappingRows(x)
+  expect(x.rows).toHaveLength(2)
+  expect(x.cells.flatMap((c) => c.sourceRects)).toEqual(rects)
+})
+
+it.each(['detached-exponent', 'ambiguous-anchor', 'unassigned-token', 'rule', 'non-numeric-label'])(
+  'keeps a threshold band with %s',
+  (variant) => {
+    const x = thresholdRows()
+    if (variant === 'detached-exponent') {
+      x.items.at(-1)!.rect[0] += 20
+      x.items.at(-1)!.rect[2] += 20
+    }
+    if (variant === 'ambiguous-anchor') {
+      const anchor = { ...x.items[0], rect: [20, 1, 49, 11] }
+      x.items.push(anchor)
+      x.cells[0].sourceRects.push(anchor.rect)
+    }
+    if (variant === 'unassigned-token') x.items.push({ text: '*', rect: [20, 12, 25, 16] })
+    if (variant === 'rule') x.rules.push([0, 15, 300, 15])
+    if (variant === 'non-numeric-label') x.cells[0].text = '≤ unknown'
+    const before = structuredClone(x)
+    removeEmptyOverlappingRows(x)
+    expect(x).toEqual(before)
+  }
+)

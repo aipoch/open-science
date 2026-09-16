@@ -29,6 +29,7 @@ const createMockClient = (
   projectDeletionIntent: Record<string, ReturnType<typeof vi.fn>>
   projectPreviewState: { deleteMany: ReturnType<typeof vi.fn> }
   projectLiterature: { deleteMany: ReturnType<typeof vi.fn> }
+  bookmark: { deleteMany: ReturnType<typeof vi.fn> }
   visionEvidence: { deleteMany: ReturnType<typeof vi.fn> }
   memoryEntry: { deleteMany: ReturnType<typeof vi.fn> }
   memorySettings: { update: ReturnType<typeof vi.fn> }
@@ -50,6 +51,7 @@ const createMockClient = (
   const executeRaw = vi.fn().mockResolvedValue(1)
   const projectLiterature = { deleteMany: vi.fn(() => Promise.resolve({ count: 1 })) }
   const projectPreviewState = { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) }
+  const bookmark = { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) }
   const visionEvidence = { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) }
   const memoryEntry = { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) }
   const memorySettings = {
@@ -62,6 +64,7 @@ const createMockClient = (
     project,
     projectDeletionIntent,
     projectPreviewState,
+    bookmark,
     projectLiterature,
     visionEvidence,
     memoryEntry,
@@ -74,6 +77,7 @@ const createMockClient = (
     project,
     projectDeletionIntent,
     projectPreviewState,
+    bookmark,
     projectLiterature,
     visionEvidence,
     memoryEntry,
@@ -327,11 +331,18 @@ describe('project repository', () => {
   })
 
   it('soft-deletes a project while removing active-only derived children', async () => {
-    const { client, project, projectPreviewState, visionEvidence, memoryEntry, memorySettings } =
-      createMockClient({
-        findUnique: () => Promise.resolve(createRow()),
-        updateMany: () => Promise.resolve({ count: 1 })
-      })
+    const {
+      client,
+      project,
+      projectPreviewState,
+      bookmark,
+      visionEvidence,
+      memoryEntry,
+      memorySettings
+    } = createMockClient({
+      findUnique: () => Promise.resolve(createRow()),
+      updateMany: () => Promise.resolve({ count: 1 })
+    })
     const repository = new ProjectRepository(() => Promise.resolve(client))
 
     await expect(repository.delete('project-1')).resolves.toEqual({ memoryRevision: 7 })
@@ -339,6 +350,7 @@ describe('project repository', () => {
     expect(projectPreviewState.deleteMany).toHaveBeenCalledWith({
       where: { projectId: 'project-1' }
     })
+    expect(bookmark.deleteMany).toHaveBeenCalledWith({ where: { projectId: 'project-1' } })
     expect(visionEvidence.deleteMany).toHaveBeenCalledWith({ where: { projectId: 'project-1' } })
     expect(memoryEntry.deleteMany).toHaveBeenCalledWith({ where: { projectId: 'project-1' } })
     expect(memorySettings.update).toHaveBeenCalledWith({

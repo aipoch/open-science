@@ -62,32 +62,50 @@ const useSessionBackgroundTasks = (
     if (!sessionId || !projectId || !identityKey) return
     let active = true
     let requestVersion = 0
+    let loading = false
+    let pending = false
     const load = async (): Promise<void> => {
+      if (!active) return
       const version = ++requestVersion
-      const [state, activity, jobs] = await Promise.all([
-        // Notebook state can initialize runtime resources, so respect the export admission lock.
-        notebook && !exportLocked
-          ? window.api.notebook.state(notebook).catch(() => undefined)
-          : Promise.resolve(undefined),
-        window.api.backgroundResultDelivery?.getSessionActivity
-          ? window.api.backgroundResultDelivery
-              .getSessionActivity({ sessionId })
-              .catch(() => undefined)
-          : Promise.resolve(undefined),
-        window.api.compute?.jobsList({ sessionId }).catch(() => undefined)
-      ])
-      if (!active || version !== requestVersion) return
-      setSnapshot((current) => {
-        const previous = current.identityKey === identityKey ? current : EMPTY_TASK_SNAPSHOT
-        return {
-          identityKey,
-          runs: state
-            ? state.runs.filter((run) => run.executionMode === 'background')
-            : previous.runs,
-          deliveries: activity ? [...activity.awaitingAgent] : previous.deliveries,
-          computeJobs: jobs ?? previous.computeJobs
+      // Coalesce event bursts and repair polls without overlapping snapshot reads. Invalidate the
+      // current read immediately; one trailing read observes everything received while it ran.
+      if (loading) {
+        pending = true
+        return
+      }
+      loading = true
+      try {
+        const [state, activity, jobs] = await Promise.all([
+          // Notebook state can initialize runtime resources, so respect the export admission lock.
+          notebook && !exportLocked
+            ? window.api.notebook.state(notebook).catch(() => undefined)
+            : Promise.resolve(undefined),
+          window.api.backgroundResultDelivery?.getSessionActivity
+            ? window.api.backgroundResultDelivery
+                .getSessionActivity({ sessionId })
+                .catch(() => undefined)
+            : Promise.resolve(undefined),
+          window.api.compute?.jobsList({ sessionId }).catch(() => undefined)
+        ])
+        if (!active || version !== requestVersion) return
+        setSnapshot((current) => {
+          const previous = current.identityKey === identityKey ? current : EMPTY_TASK_SNAPSHOT
+          return {
+            identityKey,
+            runs: state
+              ? state.runs.filter((run) => run.executionMode === 'background')
+              : previous.runs,
+            deliveries: activity ? [...activity.awaitingAgent] : previous.deliveries,
+            computeJobs: jobs ?? previous.computeJobs
+          }
+        })
+      } finally {
+        loading = false
+        if (active && pending) {
+          pending = false
+          void load()
         }
-      })
+      }
     }
     const stopDelivery =
       window.api.backgroundResultDelivery?.onChanged?.((event) => {

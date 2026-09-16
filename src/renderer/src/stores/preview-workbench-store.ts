@@ -1,3 +1,4 @@
+import { previewCloseGuards } from './preview-close-guard'
 import { create } from 'zustand'
 
 import type { NotebookSessionReference } from '../../../shared/notebook'
@@ -42,6 +43,7 @@ export type PreviewFileFormat =
 export type PreviewFileSource = 'artifact' | 'upload' | 'notebook-input' | 'literature' | 'local'
 export const PROJECT_FILES_PREVIEW_ID = 'tool:project:files'
 export const PROJECT_COMPUTE_PREVIEW_ID = 'tool:project:compute'
+export const sideChatTabId = (sessionId: string): string => `tool:side-chat:${sessionId}`
 
 type PreviewItemBase = {
   id: string
@@ -69,7 +71,8 @@ export type PreviewFileItem = PreviewItemBase & {
 // Tool previews share the workbench chrome with files, but keep their own render path.
 export type PreviewToolItem = PreviewItemBase & {
   type: 'tool'
-  toolKind?: 'notebook' | 'files' | 'compute' | 'reviewer' | 'plan' | 'subagents'
+  sideChatId?: string
+  toolKind?: 'notebook' | 'files' | 'compute' | 'reviewer' | 'plan' | 'subagents' | 'side-chat'
   notebook?: NotebookSessionReference
   notebookRunId?: string
   notebookRunFocusRequest?: number
@@ -818,6 +821,7 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
 
   // Removes one preview tab and repairs focus if the active tab disappeared.
   removeItem: (itemId) => {
+    if (!previewCloseGuards.request([itemId], () => get().removeItem(itemId))) return false
     let removed = false
     const remove = (): boolean => {
       set((state) => {
@@ -851,6 +855,15 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
   // composed from removeItem by callers) so expanded-surface and file-dialog teardown rules stay
   // in one place.
   removeOtherItems: (keepItemId) => {
+    if (
+      !previewCloseGuards.request(
+        get()
+          .items.filter((item) => item.id !== keepItemId)
+          .map((item) => item.id),
+        () => get().removeOtherItems(keepItemId)
+      )
+    )
+      return false
     const state = get()
     if (!state.items.some((item) => item.id === keepItemId)) return false
 

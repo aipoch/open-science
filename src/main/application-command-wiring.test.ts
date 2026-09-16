@@ -393,7 +393,7 @@ describe('production application command wiring', () => {
       between(ipcSource, 'const updateStrategy', 'const updateCommandOwner')
     )
     expect(updateGate).toContain(
-      'shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS, { holdSideChatAdmission: true })'
+      'shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS, { holdSideChatAdmission: true, legacyShellRecoveryToken: options?.legacyShellRecoveryToken })'
     )
     expect(updateStrategy).toContain('releaseInstallHandoff: abortUpdateHandoff')
   })

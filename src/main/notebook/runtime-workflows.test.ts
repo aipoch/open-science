@@ -1,7 +1,13 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtemp, realpath, rm } from 'node:fs/promises'
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { mkdtemp, readFile, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { flushLogs, initLogger } from '../logger'
+let diagnosticLogRoot: string | undefined
+afterAll(async () => {
+  await flushLogs()
+  if (diagnosticLogRoot) await rm(diagnosticLogRoot, { recursive: true, force: true })
+})
 
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement } from '../../shared/notebook-runtime'
@@ -204,6 +210,9 @@ describe('runtime workflows', () => {
   })
 
   it('keeps data-root writers draining until an admitted R authorization finishes', async () => {
+    const logRoot = await mkdtemp(join(tmpdir(), 'r-authorization-log-'))
+    diagnosticLogRoot = logRoot
+    initLogger({ logDir: logRoot, mirrorToConsole: false })
     discoveryState.r = [
       {
         language: 'r',
@@ -234,6 +243,10 @@ describe('runtime workflows', () => {
     })
     try {
       await vi.waitFor(() => expect(grant).toHaveBeenCalledOnce())
+      await flushLogs()
+      const pendingLog = await readFile(join(logRoot, 'main.log'), 'utf8')
+      expect(pendingLog).toContain('"phase":"authorize"')
+      expect(pendingLog).not.toContain('"outcome":"completed"')
       let drained = false
       const drain = waitForDataRootWriters().then(() => {
         drained = true
@@ -244,9 +257,12 @@ describe('runtime workflows', () => {
       await authorization
       await drain
       expect(drained).toBe(true)
+      await flushLogs()
+      expect(await readFile(join(logRoot, 'main.log'), 'utf8')).toContain('"outcome":"completed"')
     } finally {
       finish()
       await authorization
+      await flushLogs()
     }
   })
 

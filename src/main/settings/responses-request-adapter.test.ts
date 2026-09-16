@@ -3,6 +3,60 @@ import { describe, expect, it } from 'vitest'
 import { responsesToChatRequest } from './responses-request-adapter'
 
 describe('Responses request protocol adapter', () => {
+  it.each([undefined, 'auto', 'low', 'high', 'original'])(
+    'converts image detail %s in replay without mutating the input',
+    (detail) => {
+      const imageUrl = 'https://example.test/image.png'
+      const input = [
+        {
+          type: 'message',
+          role: 'user',
+          content: [
+            { type: 'input_image', image_url: imageUrl, detail },
+            { type: 'image_url', image_url: { url: imageUrl, detail } }
+          ]
+        },
+        { type: 'message', role: 'assistant', content: 'An image.' },
+        { type: 'message', role: 'user', content: 'Describe it again.' }
+      ]
+      const before = structuredClone(input)
+      const expectedDetail = detail === 'original' ? 'high' : detail
+      const converted = {
+        type: 'image_url',
+        image_url: {
+          url: imageUrl,
+          ...(expectedDetail === undefined ? {} : { detail: expectedDetail })
+        }
+      }
+      expect(responsesToChatRequest({ input }).messages).toEqual([
+        { role: 'user', content: [converted, converted] },
+        { role: 'assistant', content: 'An image.' },
+        { role: 'user', content: 'Describe it again.' }
+      ])
+      expect(input).toEqual(before)
+    }
+  )
+
+  it('rejects conflicting image details before normalization', () => {
+    expect(() =>
+      responsesToChatRequest({
+        input: [
+          {
+            type: 'message',
+            role: 'user',
+            content: [
+              {
+                type: 'input_image',
+                detail: 'original',
+                image_url: { url: 'https://example.test/image.png', detail: 'high' }
+              }
+            ]
+          }
+        ]
+      })
+    ).toThrow('Responses image detail values must not conflict')
+  })
+
   it('converts replayed namespaced tool calls, images, and configured reasoning without session state', () => {
     const request = responsesToChatRequest(
       {
@@ -34,7 +88,9 @@ describe('Responses request protocol adapter', () => {
         stream: false
       },
       'deepseek-v4-pro',
-      new Map([['call-1', 'inspect the notebook first']]),
+      new Map([
+        [JSON.stringify(['function_call', 'call-1']), { text: 'inspect the notebook first' }]
+      ]),
       [
         {
           namespace: 'mcp__open_science_notebook',

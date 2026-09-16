@@ -372,6 +372,17 @@ const createAcpRuntime = ({
         auxiliaryUsage,
         // Packaged macOS apps often start with cwd at "/" or the app bundle; use home instead.
         defaultCwd,
+        ...(delegatedNotebookConnection && fixedBackend?.framework.id === 'opencode'
+          ? {
+              additionalProtectedReadRoots: [
+                fixedBackend.env.XDG_CONFIG_HOME,
+                fixedBackend.env.XDG_DATA_HOME,
+                fixedBackend.env.XDG_CACHE_HOME,
+                fixedBackend.env.XDG_STATE_HOME,
+                fixedBackend.env.OPENCODE_TEST_HOME
+              ].filter((path): path is string => Boolean(path))
+            }
+          : {}),
         resolveBackend: async (context) =>
           fixedBackend ??
           (target
@@ -447,7 +458,8 @@ const createAcpRuntime = ({
                   const sourcePath = await resolveAllowedImportFilePath(
                     filename,
                     [notebookRoot, workspaceCwd],
-                    [notebookDataDir, workspaceCwd, notebookRoot]
+                    [notebookDataDir, workspaceCwd, notebookRoot],
+                    'literature'
                   )
                   if ((await stat(sourcePath)).size > MAX_LITERATURE_CANDIDATE_FILE_BYTES) {
                     throw Object.assign(
@@ -486,7 +498,8 @@ const createAcpRuntime = ({
                   const sourcePath = await resolveAllowedImportFilePath(
                     filename,
                     [notebookRoot, workspaceCwd],
-                    [notebookDataDir, workspaceCwd, notebookRoot]
+                    [notebookDataDir, workspaceCwd, notebookRoot],
+                    'literature'
                   )
                   if (extname(sourcePath).toLowerCase() !== '.docx') {
                     throw new Error('Citation document must be a DOCX file.')
@@ -515,7 +528,8 @@ const createAcpRuntime = ({
                   const sourcePath = await resolveAllowedImportFilePath(
                     filename,
                     [notebookRoot, workspaceCwd],
-                    [notebookDataDir, workspaceCwd, notebookRoot]
+                    [notebookDataDir, workspaceCwd, notebookRoot],
+                    'literature'
                   )
                   if (extname(sourcePath).toLowerCase() !== '.tex') {
                     throw new Error('LaTeX source must be a .tex file.')
@@ -700,8 +714,8 @@ const createAcpRuntime = ({
             : {
                 registerSessionAlias: (aliasSessionId, sessionId) =>
                   notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId),
-                releaseSessionCapabilities: (sessionId) =>
-                  notebookRpcServer.releaseSessionCapabilities(sessionId),
+                releaseSessionCapabilities: (sessionId, capabilityTokens) =>
+                  notebookRpcServer.releaseSessionCapabilitiesIfOwned(sessionId, capabilityTokens),
                 registerSessionSpecialist: (sessionId, specialistId) =>
                   notebookRpcServer.registerSessionSpecialist(sessionId, specialistId),
                 authorizeExecution: (authorization) =>
@@ -725,8 +739,11 @@ const createAcpRuntime = ({
                   notebookRpcServer.issueSkillImportConnection(sessionId),
                 registerSessionAlias: (aliasSessionId: string, sessionId: string) =>
                   notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId),
-                releaseSessionCapabilities: (sessionId: string) =>
-                  notebookRpcServer.releaseSessionCapabilities(sessionId),
+                releaseSessionCapabilities: (
+                  sessionId: string,
+                  capabilityTokens: readonly string[]
+                ) =>
+                  notebookRpcServer.releaseSessionCapabilitiesIfOwned(sessionId, capabilityTokens),
                 authorizeReferencedUploads: authorizeSkillImportReferencedUploads
               }
             }),

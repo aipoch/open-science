@@ -10,6 +10,7 @@ import { LiteratureCatalog } from './catalog'
 import { expect, it, vi, type Mock } from 'vitest'
 import { literatureCandidateInputSchema } from '../../shared/literature'
 import { AgentPdfAcquisition } from './agent-pdf-acquisition'
+import { FullTextRateLimitError } from './full-text-download'
 
 const candidate = literatureCandidateInputSchema.parse({
   item: {
@@ -350,5 +351,40 @@ it('removes newly published unreferenced bytes when cancellation prevents Inbox 
   } finally {
     await client.$disconnect()
     await rm(storageRoot, { recursive: true, force: true })
+  }
+})
+
+it('delivers the source retry time through acquire_pdf without publishing', async () => {
+  const { service, download, publish, stageAcquiredPdf } = setup()
+  download.mockRejectedValueOnce(new FullTextRateLimitError(Date.parse('2026-09-14T10:00:00.000Z')))
+  const server = createLiteratureLibraryMcpServer({
+    searchLibrary: vi.fn(),
+    readAbstract: vi.fn(),
+    readPdf: vi.fn(),
+    saveToInbox: vi.fn(),
+    acquirePdf: (request) => service.acquire({ ...request, origin: candidate.origin })
+  })
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+  const client = new Client({ name: 'acquisition-rate-limit-test', version: '1.0.0' })
+  await Promise.all([server.connect(serverTransport), client.connect(clientTransport)])
+  try {
+    const result = await client.callTool({
+      name: 'acquire_pdf',
+      arguments: { candidate: { item: candidate.item, source: candidate.source } }
+    })
+    expect(result).toMatchObject({
+      isError: true,
+      content: [
+        expect.objectContaining({
+          type: 'text',
+          text: expect.stringMatching(/rate limited.*no earlier than 2026-09-14T10:00:00.000Z/u)
+        })
+      ]
+    })
+    expect(publish).not.toHaveBeenCalled()
+    expect(stageAcquiredPdf).not.toHaveBeenCalled()
+  } finally {
+    await client.close()
+    await server.close()
   }
 })

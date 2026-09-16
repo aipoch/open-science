@@ -65,10 +65,13 @@ export const usePackageOperationStore = create<{
             ]
           : draft,
         selectionPreset:
-          operation?.files?.some((file) => file.sizeBytes > PACKAGE_MAX_FILE_BYTES) &&
-          preset === 'full'
+          preset === 'compact' &&
+          operation?.files?.some((file) => file.source === 'literature' && file.requiredForEvidence)
             ? 'custom'
-            : preset,
+            : operation?.files?.some((file) => file.sizeBytes > PACKAGE_MAX_FILE_BYTES) &&
+                preset === 'full'
+              ? 'custom'
+              : preset,
         threshold: same || retry ? state.threshold : '256',
         open:
           same && state.dismissedId === operation?.id

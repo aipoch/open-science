@@ -1,4 +1,5 @@
 import { literatureCollectionRevisionMigration } from './migrations/0040-literature-collection-revision'
+import { bookmarksMigration } from './migrations/0041-bookmarks'
 import {
   literatureSearchTextMigration,
   backfillLiteratureSearchText
@@ -801,6 +802,17 @@ const MIGRATION_MANIFEST = [
       literatureCollectionRevisionMigration.statements,
       literatureCollectionRevisionMigration.verifiers,
       literatureCollectionRevisionMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...bookmarksMigration,
+    checksum: checksumMigrationPayload(
+      bookmarksMigration.id,
+      bookmarksMigration.statements,
+      bookmarksMigration.verifiers,
+      bookmarksMigration.operations
     ),
     backupOnApply: 'required',
     backupRetention: 'retain'
