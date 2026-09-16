@@ -4062,12 +4062,14 @@ describe('SettingsService: official vendors', () => {
           'deepseek-v4-flash',
           'deepseek-v4-pro',
           'deepseek-v4-pro[1m]',
+          'deepseek-flash',
           'deepseek-v4-flash-vision-exp'
         ],
         modelOverrides: {
           'deepseek-v4-flash': 'deepseek-v4-flash',
           'deepseek-v4-pro': 'deepseek-v4-pro',
           'deepseek-v4-pro[1m]': 'deepseek-v4-pro[1m]',
+          'deepseek-flash': 'deepseek-flash',
           'deepseek-v4-flash-vision-exp': 'deepseek-v4-flash-vision-exp'
         }
       }
@@ -4080,12 +4082,14 @@ describe('SettingsService: official vendors', () => {
         'deepseek-v4-flash',
         'deepseek-v4-pro',
         'deepseek-v4-pro[1m]',
+        'deepseek-flash',
         'deepseek-v4-flash-vision-exp'
       ],
       modelOverrides: {
         'deepseek-v4-flash': 'deepseek-v4-flash',
         'deepseek-v4-pro': 'deepseek-v4-pro',
         'deepseek-v4-pro[1m]': 'deepseek-v4-pro[1m]',
+        'deepseek-flash': 'deepseek-flash',
         'deepseek-v4-flash-vision-exp': 'deepseek-v4-flash-vision-exp'
       }
     })
@@ -4348,12 +4352,14 @@ describe('SettingsService: image-input capability', () => {
       })
     ).providers[0]
 
-    let view = (
-      await service.setActiveProvider(created.id, 'deepseek-v4-flash-vision-exp')
-    ).providers.find((provider) => provider.id === created.id)
-    expect(view?.supportsImageInput).toBe(true)
+    for (const model of ['deepseek-flash', 'deepseek-v4-flash', 'deepseek-v4-flash-vision-exp']) {
+      const snapshot = await service.setActiveProvider(created.id, model)
+      expect(snapshot.activeModel).toBe(model)
+      const view = snapshot.providers.find((provider) => provider.id === created.id)
+      expect(view?.supportsImageInput).toBe(true)
+    }
 
-    view = (await service.setActiveProvider(created.id, 'deepseek-v4-flash')).providers.find(
+    const view = (await service.setActiveProvider(created.id, 'deepseek-v4-pro')).providers.find(
       (provider) => provider.id === created.id
     )
     expect(view?.supportsImageInput).toBe(false)

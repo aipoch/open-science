@@ -273,7 +273,7 @@ describe('ProviderRuntimeProjectionOwner', () => {
     }
   )
 
-  it('enables image input only for DeepSeek vision-exp while keeping native Responses', () => {
+  it('enables image input for DeepSeek V4.1 Flash and aliases while keeping native Responses', () => {
     const owner = new ProviderRuntimeProjectionOwner()
     const provider: StoredProvider = {
       id: 'deepseek',
@@ -282,24 +282,19 @@ describe('ProviderRuntimeProjectionOwner', () => {
       name: 'DeepSeek'
     }
 
-    expect(
-      owner.resolveRuntimeTarget(
-        provider,
-        { kind: 'required', model: 'deepseek-v4-flash-vision-exp' },
-        getAgentFramework('codex')
-      )
-    ).toMatchObject({
-      apiEndpoints: ['anthropic', 'openai', 'responses'],
-      needsNativeResponsesCompatibility: true,
-      provider: { supportsImageInput: true, model: 'deepseek-v4-flash-vision-exp' }
-    })
-    expect(
-      owner.resolveRuntimeTarget(
-        provider,
-        { kind: 'required', model: 'deepseek-v4-flash' },
-        getAgentFramework('codex')
-      ).provider.supportsImageInput
-    ).toBe(false)
+    for (const model of ['deepseek-flash', 'deepseek-v4-flash', 'deepseek-v4-flash-vision-exp']) {
+      expect(
+        owner.resolveRuntimeTarget(
+          provider,
+          { kind: 'required', model },
+          getAgentFramework('codex')
+        )
+      ).toMatchObject({
+        apiEndpoints: ['anthropic', 'openai', 'responses'],
+        needsNativeResponsesCompatibility: true,
+        provider: { supportsImageInput: true, model }
+      })
+    }
     expect(owner.toProviderView(provider).supportsImageInput).toBe(false)
   })
 
