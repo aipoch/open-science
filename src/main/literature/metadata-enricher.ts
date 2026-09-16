@@ -374,9 +374,20 @@ const mergePubmedMetadata = (
       page: summary.pages,
       ISSN: summary.issn ? [summary.issn] : undefined,
       language: summary.lang?.[0],
-      author: summary.authors?.map(({ name, authtype }) =>
-        authtype === 'CollectiveAuthor' ? { name } : { family: name }
-      ),
+      author: summary.authors?.map(({ name, authtype }) => {
+        if (authtype === 'CollectiveAuthor') return { name }
+        // ESummary personal names use "surname initials [suffix]", not Crossref's
+        // separate family/given fields. Match from the end to retain surname particles.
+        const match = /^(.*?)\s+([A-Z]+)(?:\s+(Jr|Sr|II|III|IV))?$/u.exec(name.trim())
+        if (!match) return { family: name }
+        return {
+          family: match[1],
+          // Keep suffixes with the given-name text, as the existing NBIB adapter does.
+          given:
+            [...match[2]].map((initial) => `${initial}.`).join(' ') +
+            (match[3] ? ` ${match[3]}` : '')
+        }
+      }),
       issued: parts ? { 'date-parts': [[...parts]] } : undefined
     },
     overwriteFields,
