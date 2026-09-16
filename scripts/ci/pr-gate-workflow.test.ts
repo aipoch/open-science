@@ -990,6 +990,16 @@ describe('PR Gate workflow', () => {
       expect(runtime?.run).toContain(testFile)
     }
 
+    const wheelEvidence = workflow.jobs.windows_core.steps?.find(
+      ({ name }) => name === 'Test Windows wheel evidence recovery'
+    )
+    expect(wheelEvidence?.if).toContain("'windows_runtime'")
+    expect(wheelEvidence?.env).toMatchObject({ RUN_KERNEL: '1' })
+    expect(wheelEvidence?.run).toContain('OPEN_SCIENCE_TEST_PYTHON')
+    expect(wheelEvidence?.run).toContain('pip-wheel-evidence.test.ts')
+    expect(wheelEvidence?.run).toContain('pip-install-evidence.test.ts')
+    expect(wheelEvidence?.['continue-on-error']).not.toBe(true)
+
     const shell = workflow.jobs.windows_core.steps?.find(
       ({ name }) => name === 'Test Windows notebook shell behavior'
     )
