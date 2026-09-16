@@ -327,16 +327,20 @@ ci(review): unify automated AI reviews
   the queue rollout is enabled. The queue validates the combined revision before **squash merge**;
   its squash subject must retain the PR title's Conventional Commit format. Do not update a branch
   merely because `main` advanced; update it for conflicts or a maintainer request.
-- PR commits retain policy/CI Integrity, CodeQL and AI review, relevant static checks, and portable
-  module tests on Ubuntu. Unknown/global changes retain complete portable tests and coverage.
-  Selected native-platform and Electron E2E checks run before merge in the queue. Selective changed
-  coverage is enforced with the native module run in the queue; portable PR module feedback does
-  not claim native coverage. Focused manual E2E runs remain available during development.
-- Until the repository requires merge queue and `PR_GATE_MERGE_QUEUE_ENABLED=true` is enabled,
-  PR Gate retains all existing selected checks. Enable queue enforcement and verify a real queue
-  group before enabling PR deferral; for rollback, restore full PR checks before removing queue
-  enforcement. CodeQL default setup and AI review continue to run for PR updates independently
-  of PR Gate staging.
+- PR commits retain policy/CI Integrity, CodeQL, AI review, static checks and portable tests.
+  Desktop changes run the main Windows business journeys. Ordinary changes run one short macOS
+  core group (project creation/relaunch, persisted theme and window presentation), instead of the
+  four-group Mac matrix. Electron main/preload, native dependencies, Notebook runtime, build/CI
+  inputs and unknown/destructive changes retain expanded affected Mac coverage.
+- Merge queue keeps concurrency two and validates the combined revision with Linux/portable
+  checks and the short Mac core. Ordinary changes do not repeat Windows business E2E in queue;
+  platform-sensitive changes retain their selected platform checks. Selected native module
+  coverage remains blocking. The legacy `PR_GATE_MERGE_QUEUE_ENABLED` blanket-deferral switch
+  is not used by new risk-based plans; do not enable it as a rollout step.
+- New plans carry `macosProfile` (`smoke` or `expanded`). Trusted old plans without this field
+  retain their existing execution and complete fallback matrix. Workflows opt into the new plan
+  with `PR_GATE_PLATFORM_POLICY=risk-v1`; old workflow revisions receive the full legacy plan. Manual focused runs retain their
+  explicitly selected suites. This compatibility is limited to CI metadata, not application data.
 - Nightly packaging, Windows Full Test, supplemental Source Regression, and Runtime Resource Soak
   run daily on `main`, at 01:17, 02:47, 03:37, and 05:23 respectively in Singapore time
   (Asia/Singapore, UTC+8). Unchanged successful revisions are skipped;
@@ -371,7 +375,8 @@ core journeys and affected portable tests without selecting unrelated supplement
 ownership, global inputs and destructive changes retain full fallback. Session, permission,
 Delegation, storage and native sandbox changes retain their relevant pre-merge checks.
 
-Source Regression runs the complete supplemental suites daily at 03:37 Asia/Singapore. The gate
+Source Regression runs complete Mac functional/workspace journeys, browser/visual/accessibility
+coverage and supplemental suites daily at 03:37 Asia/Singapore. The gate
 excludes only tests tagged `@capacity`; a three-session body-integrity check remains in the selected
 regression suite while forty-session resource profiling runs in Source Regression. Transcript
 scrolling/find correctness stays in the gate. Focused manual Source Regression runs include capacity

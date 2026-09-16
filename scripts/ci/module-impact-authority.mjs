@@ -9,7 +9,7 @@ import {
   classifyChanges,
   formatPlanSummary,
   parseNameStatus,
-  prGateStage,
+  platformExecutionPlan,
   toGitHubOutputPlan
 } from './classify-pr-changes.mjs'
 import {
@@ -65,16 +65,16 @@ export function runModuleImpactAuthorityCli(
     ? createAffectedTestPlan(changes, manifestOnlyGraph)
     : unusedModulePlan
   const report = createModuleImpactShadowReport(candidatePlan, modulePlan)
-  const plan = report.resolved
+  const plan =
+    environment.PR_GATE_PLATFORM_POLICY === 'risk-v1'
+      ? platformExecutionPlan(report.resolved, changes, environment.EVENT_NAME)
+      : report.resolved
   const planJson = JSON.stringify(plan)
   const outputPlanJson = JSON.stringify(toGitHubOutputPlan(plan))
   const lanesJson = JSON.stringify(plan.lanes)
 
   if (environment.GITHUB_OUTPUT) {
-    append(
-      environment.GITHUB_OUTPUT,
-      `plan=${outputPlanJson}\nlanes=${lanesJson}\nstage=${prGateStage(environment)}\n`
-    )
+    append(environment.GITHUB_OUTPUT, `plan=${outputPlanJson}\nlanes=${lanesJson}\nstage=full\n`)
   } else if (write) {
     write(`${planJson}\n`)
   } else {

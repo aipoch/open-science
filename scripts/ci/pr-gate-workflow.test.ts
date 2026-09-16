@@ -505,7 +505,7 @@ describe('PR Gate workflow', () => {
       name: 'Module tests and coverage',
       needs: ['preflight', 'unit_shard'],
       'runs-on':
-        "${{ (needs.unit_shard.result != 'skipped' || needs.preflight.outputs.stage == 'pr') && 'ubuntu-latest' || 'macos-14' }}"
+        "${{ (needs.unit_shard.result != 'skipped' || needs.preflight.outputs.stage == 'pr' || fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke') && 'ubuntu-latest' || 'macos-14' }}"
     })
     expect(unit.if).toContain('always()')
     expect(unit.env?.VITEST_DEFER_COVERAGE_THRESHOLDS).toBeUndefined()
@@ -889,7 +889,7 @@ describe('PR Gate workflow', () => {
 
     expect(native).toMatchObject({
       'continue-on-error': true,
-      if: "${{ matrix.group == 'journeys' && fromJSON(needs.preflight.outputs.plan).mode == 'full' }}"
+      if: "${{ matrix.group == 'journeys' && fromJSON(needs.preflight.outputs.plan).macosProfile != 'smoke' && fromJSON(needs.preflight.outputs.plan).mode == 'full' }}"
     })
     for (const testFile of [
       'packages/notebook-network-sandbox/src/filesystem-enforcement.integration.test.ts',

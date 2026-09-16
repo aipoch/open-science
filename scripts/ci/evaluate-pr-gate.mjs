@@ -30,6 +30,25 @@ export function evaluatePrGate(
   { executionMode = 'lanes', executionStage = 'full' } = {}
 ) {
   const failures = []
+  if (plan.macosProfile !== undefined && !['smoke', 'expanded'].includes(plan.macosProfile)) {
+    failures.push({ lane: 'preflight', conclusion: 'invalid', reason: 'unsupported macOS profile' })
+  }
+  if (
+    plan.macosProfile === 'smoke' &&
+    plan.bundles?.includes('macos_e2e') &&
+    (!plan.lanes.includes('e2e_smoke_macos') ||
+      plan.lanes.some(
+        (lane) =>
+          gateManifest.laneBundles[lane] === 'macos_e2e' &&
+          !['build', 'e2e_smoke_macos'].includes(lane)
+      ))
+  ) {
+    failures.push({
+      lane: 'preflight',
+      conclusion: 'invalid',
+      reason: 'short macOS plan must select only its core lane and build'
+    })
+  }
   // Old trusted plans omit this field and execute the complete legacy matrix. New plans must
   // not be able to omit a selected group while the aggregate matrix job still reports success.
   if (
@@ -193,6 +212,9 @@ export function runPrGateCli(environment = process.env) {
   if (!environment.PR_GATE_NEEDS) throw new Error('PR_GATE_NEEDS is required')
 
   const plan = JSON.parse(environment.PR_GATE_PLAN)
+  if (plan.macosProfile !== undefined && environment.PR_GATE_PLATFORM_POLICY !== 'risk-v1') {
+    throw new Error('Risk-based plan requires a compatible workflow')
+  }
   const needs = JSON.parse(environment.PR_GATE_NEEDS)
   const conclusions = Object.fromEntries(
     Object.entries(needs).map(([lane, value]) => [lane, value?.result ?? 'missing'])

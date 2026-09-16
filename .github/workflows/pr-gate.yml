@@ -124,6 +124,7 @@ jobs:
         env:
           BASE_SHA: ${{ steps.revisions.outputs.base }}
           DRY_RUN_MODE: ${{ inputs.dry_run || 'classified' }}
+          PR_GATE_PLATFORM_POLICY: risk-v1
           PR_GATE_MERGE_QUEUE_ENABLED: ${{ vars.PR_GATE_MERGE_QUEUE_ENABLED }}
           EVENT_NAME: ${{ github.event_name }}
           HEAD_SHA: ${{ steps.revisions.outputs.head }}
@@ -527,7 +528,7 @@ jobs:
     if: ${{ always() && needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}
     # PR feedback runs portable module tests on Ubuntu. Full validation retains affected macOS
     # coverage in the merge queue and manual runs; old trusted plans keep their existing runner.
-    runs-on: ${{ (needs.unit_shard.result != 'skipped' || needs.preflight.outputs.stage == 'pr') && 'ubuntu-latest' || 'macos-14' }}
+    runs-on: ${{ (needs.unit_shard.result != 'skipped' || needs.preflight.outputs.stage == 'pr' || fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke') && 'ubuntu-latest' || 'macos-14' }}
     timeout-minutes: 15
     steps:
       - name: Checkout
@@ -552,7 +553,7 @@ jobs:
         continue-on-error: true
         env:
           EXECUTION_STAGE: ${{ needs.preflight.outputs.stage }}
-          VITEST_PORTABLE_CI: ${{ needs.preflight.outputs.stage == 'pr' && '1' || '0' }}
+          VITEST_PORTABLE_CI: ${{ (needs.preflight.outputs.stage == 'pr' || fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke') && '1' || '0' }}
           BASE_SHA: ${{ needs.preflight.outputs.base }}
           HEAD_SHA: ${{ needs.preflight.outputs.head }}
         # The module graph selects owner, contract, and consumer tests. Coverage remains scoped to
@@ -933,7 +934,7 @@ jobs:
         run: node scripts/ci/e2e-setup-snapshot.mjs restore "$RUNNER_TEMP/e2e-setup"
       - name: Test macOS-native behavior
         id: unit_macos_native
-        if: ${{ matrix.group == 'journeys' && fromJSON(needs.preflight.outputs.plan).mode == 'full' }}
+        if: ${{ matrix.group == 'journeys' && fromJSON(needs.preflight.outputs.plan).macosProfile != 'smoke' && fromJSON(needs.preflight.outputs.plan).mode == 'full' }}
         continue-on-error: true
         run: |
           npx vitest run \
@@ -943,6 +944,19 @@ jobs:
             src/main/notebook/managed-runtime-guard.test.ts
           npx vitest run src/main/notebook/kernel-executor.test.ts \
             -t 'executes the repl loop through the production network sandbox'
+      - name: Test short macOS platform checks
+        id: unit_macos_smoke
+        if: ${{ matrix.group == 'journeys' && fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke' }}
+        continue-on-error: true
+        run: npx vitest run src/main/net/network-info.test.ts src/main/notebook/managed-runtime-guard.test.ts
+      - name: Run short macOS core
+        id: e2e_smoke_macos
+        if: ${{ matrix.group == 'journeys' && steps.setup.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_smoke_macos') }}
+        continue-on-error: true
+        run: >-
+          npx playwright test e2e/electron-foundation.spec.ts e2e/settings-persistence.spec.ts e2e/window-presentation.spec.ts
+          --grep 'creates a project through the desktop stack and reloads it after relaunch|persists the selected theme after closing settings and relaunching|keeps the E2E window hidden across relaunch'
+          --fail-on-flaky-tests --global-timeout=180000
       - name: Run functional journeys
         id: e2e_functional_macos
         if: ${{ matrix.group == 'journeys' && steps.setup.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_functional_macos') }}
@@ -1070,6 +1084,9 @@ jobs:
           E2E_REGRESSIONS_OUTCOME: ${{ steps.e2e_regressions_macos.outcome }}
           E2E_DELEGATION_OUTCOME: ${{ steps.e2e_delegation_macos.outcome }}
           E2E_GROUP: ${{ matrix.group }}
+          UNIT_MACOS_SMOKE_OUTCOME: ${{ steps.unit_macos_smoke.outcome }}
+          E2E_SMOKE_SELECTED: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_smoke_macos') }}
+          E2E_SMOKE_OUTCOME: ${{ steps.e2e_smoke_macos.outcome }}
           UNIT_MACOS_NATIVE_OUTCOME: ${{ steps.unit_macos_native.outcome }}
         run: |
           set -euo pipefail
@@ -1087,6 +1104,9 @@ jobs:
           check e2e_accessibility_macos "$E2E_ACCESSIBILITY_OUTCOME"
           check e2e_visual_macos "$E2E_VISUAL_OUTCOME"
           check unit_macos_native "$UNIT_MACOS_NATIVE_OUTCOME"
+          check unit_macos_smoke "$UNIT_MACOS_SMOKE_OUTCOME"
+          check e2e_smoke_macos "$E2E_SMOKE_OUTCOME"
+          if [[ "${E2E_GROUP:-}" == "journeys" && "${E2E_SMOKE_SELECTED:-}" == "true" && ( "${E2E_SMOKE_OUTCOME:-}" != "success" || "${UNIT_MACOS_SMOKE_OUTCOME:-}" != "success" ) ]]; then failed=1; fi
           # These groups are selected whenever this bundle runs; skipped is not success.
           if [[ "${E2E_GROUP:-}" == "regressions" && "${E2E_REGRESSIONS_OUTCOME:-}" != "success" ]]; then failed=1; fi
           if [[ "${E2E_GROUP:-}" == "delegation" && "${E2E_DELEGATION_OUTCOME:-}" != "success" ]]; then failed=1; fi
@@ -1302,6 +1322,7 @@ jobs:
         # the preflight plan and exceeds Linux ARG_MAX on large diffs before checkout can start.
         env:
           EVENT_NAME: ${{ github.event_name }}
+          PR_GATE_PLATFORM_POLICY: risk-v1
           PR_GATE_MERGE_QUEUE_ENABLED: ${{ vars.PR_GATE_MERGE_QUEUE_ENABLED }}
           PR_GATE_STAGE: ${{ needs.preflight.outputs.stage }}
           PR_GATE_EXECUTION_MODE: bundles

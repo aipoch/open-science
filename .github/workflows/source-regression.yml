@@ -45,7 +45,7 @@ jobs:
     needs: plan
     if: needs.plan.outputs.should_test == 'true'
     runs-on: macos-14
-    timeout-minutes: 55
+    timeout-minutes: 120
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -60,6 +60,34 @@ jobs:
         run: node scripts/ci/npm-ci.mjs
       - name: Build Electron application
         run: npm run build:e2e
+      - name: Build web application
+        run: npm run build:web
+      - name: Install headless Chromium
+        run: npx playwright install chromium --only-shell
+      - name: Run complete Mac functional journeys
+        id: functional
+        continue-on-error: true
+        env:
+          PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/functional
+          PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/functional.json
+        run: npm run test:e2e:journey -- --fail-on-flaky-tests --global-timeout=600000
+      - name: Run complete Mac workspace journeys
+        id: workspace
+        continue-on-error: true
+        env:
+          PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/workspace
+          PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/workspace.json
+        run: npm run test:e2e:workspace -- --fail-on-flaky-tests --global-timeout=900000
+      - name: Run complete Mac browser and visual coverage
+        id: presentation
+        continue-on-error: true
+        run: |
+          npx playwright test --config playwright.browser.config.ts --fail-on-flaky-tests --global-timeout=300000
+          npm run test:e2e:visual -- --fail-on-flaky-tests --global-timeout=300000
+      - name: Run complete Mac accessibility checks
+        id: accessibility
+        continue-on-error: true
+        run: npm run test:e2e:accessibility:signal
       # Collect both outcomes using one build and one macOS slot. Neither failure is advisory.
       - name: Run supplemental regressions
         id: regressions
@@ -85,6 +113,16 @@ jobs:
             test-results/
             playwright-report/
           if-no-files-found: warn
+      - name: Enforce complete Mac core and presentation suites
+        if: always()
+        shell: bash
+        env:
+          FUNCTIONAL: ${{ steps.functional.outcome }}
+          WORKSPACE: ${{ steps.workspace.outcome }}
+          PRESENTATION: ${{ steps.presentation.outcome }}
+          ACCESSIBILITY: ${{ steps.accessibility.outcome }}
+        run: |
+          [[ "$FUNCTIONAL" == "success" && "$WORKSPACE" == "success" && "$PRESENTATION" == "success" && "$ACCESSIBILITY" == "success" ]]
       - name: Enforce both supplemental suites
         if: always()
         shell: bash

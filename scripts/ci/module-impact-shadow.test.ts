@@ -521,7 +521,7 @@ describe('module impact shadow', () => {
   })
 })
 
-it('emits the PR stage only from explicitly enabled event context without trimming impact', () => {
+it('ignores legacy blanket PR deferral when emitting a risk-based plan', () => {
   const execute = vi.fn().mockReturnValue(Buffer.from('M\0package.json\0'))
   const append = vi.fn()
   const { plan } = runModuleImpactAuthorityCli(
@@ -531,5 +531,5 @@ it('emits the PR stage only from explicitly enabled event context without trimmi
   )
   expect(plan.mode).toBe('full')
   expect(plan.bundles).toContain('macos_e2e')
-  expect(append).toHaveBeenCalledWith('/output', expect.stringContaining('stage=pr\n'))
+  expect(append).toHaveBeenCalledWith('/output', expect.stringContaining('stage=full\n'))
 })
