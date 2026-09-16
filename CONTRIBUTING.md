@@ -402,6 +402,17 @@ and owner approval precede normal merge-queue admission. Never remove the Integr
 trigger while its check is required.
 
 Keep required code-owner review and stale-approval dismissal enabled while relying on this policy.
+CI Integrity also checks module ownership for JavaScript/TypeScript files under `src/` and
+`packages/`. Register new source and test files in `scripts/ci/module-impact.json`, including their
+owner, contract and consumer test coverage. New unregistered files and regressions from existing
+coverage block admission; changes to historical unregistered files produce a nonblocking report
+and retain full test fallback. Renamed files must register their new paths. Manifest-only changes
+are checked against all surviving code files, so removing a mapping cannot silently reduce coverage.
+The checker reads candidate manifests as data using trusted base code and compares against the Git
+merge base; no separate historical allowlist is stored. Global CI inputs retain intentional full
+validation. E2E and CI scripts remain governed by their existing routing and integrity checks.
+Registration proves that a test plan exists, not that its dependency coverage is complete.
+
 The migration PR that removes the former unconditional protected-file rejection still encounters
 the old guard from its base revision. Any bootstrap ruleset bypass requires explicit maintainer
 authorization and directly merges the PR; it does not carry approval into a later queue run. Do not

@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { load } from 'js-yaml'
 
 import { parseNameStatus } from './classify-pr-changes.mjs'
+import { moduleOwnershipFromRevisions } from './check-module-ownership.mjs'
 
 function actionReferences(document, workflow) {
   const references = new Set()
@@ -359,6 +360,10 @@ ${inspected}
 ### Violations
 
 ${violations}
+
+### Historical module ownership gaps (nonblocking)
+
+${(result.legacyGaps ?? []).map((path) => `- <code>${escapeHtml(path)}</code>`).join('\n') || '- None'}
 `
 }
 
@@ -366,6 +371,10 @@ export function runCiIntegrityCli(arguments_ = process.argv.slice(2), environmen
   const base = requireCommit(argumentValue(arguments_, '--base') ?? environment.BASE_SHA, '--base')
   const head = requireCommit(argumentValue(arguments_, '--head') ?? environment.HEAD_SHA, '--head')
   const result = checkCiIntegrityChanges(ciIntegrityFilesFromRevisions(base, head))
+  const ownership = moduleOwnershipFromRevisions(base, head)
+  result.violations.push(...ownership.violations)
+  result.legacyGaps = ownership.legacyGaps
+  result.ok = result.ok && ownership.ok
 
   if (environment.GITHUB_STEP_SUMMARY) {
     appendFileSync(environment.GITHUB_STEP_SUMMARY, formatCiIntegritySummary(result))
