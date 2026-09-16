@@ -180,7 +180,7 @@ export const GENOMES_ENSEMBL_TOOLS: ToolDescriptor[] = [
     id: 'ensembl_lookup',
     connector: 'genomes',
     description:
-      'Look up an Ensembl gene/transcript/protein by stable ID or a gene by symbol; returns the core annotation record (location, biotype, canonical transcript, description). Args: query (Ensembl stable ID ENSG.../ENST.../ENSP..., versioned accepted; or a gene symbol/alias like BRAF — true stable IDs [ENS + optional species code + feature letter + >=6-digit block, or LRG_N] route to the ID endpoint; everything else, incl. symbols starting with "ENS" like ENSA, to the symbol endpoint); species (Ensembl species name for symbol lookups, default homo_sapiens; ignored for stable IDs); expand (include the child feature tree — a gene\'s transcripts/exons/translation; default off). Returns {found, query, species, record}; record is null when nothing matches, else the upstream lookup dict — for a gene {id, display_name, description, biotype, object_type, seq_region_name, start, end, strand, assembly_name, canonical_transcript, version, ...} with 1-based inclusive coordinates.',
+      'Look up an Ensembl gene/transcript/protein by stable ID or a gene by symbol; returns the core annotation record (location, biotype, canonical transcript, description). Args: query (Ensembl stable ID ENSG.../ENST.../ENSP..., versioned accepted; or a gene symbol/alias like BRAF — true stable IDs [ENS + optional species code + feature letter + >=6-digit block, or LRG_N] route to the ID endpoint; everything else, incl. symbols starting with "ENS" like ENSA, to the symbol endpoint); species (Ensembl species name for symbol lookups, default homo_sapiens; ignored for stable IDs); expand (include the child feature tree — a gene\'s transcripts/exons/translation; default off). Returns {found, query, species, record}; species comes from the returned record on success and echoes the requested/default species when not found; record is null when nothing matches, else the upstream lookup dict — for a gene {id, display_name, description, biotype, object_type, seq_region_name, start, end, strand, assembly_name, canonical_transcript, version, ...} with 1-based inclusive coordinates.',
     input: {
       type: 'object',
       properties: {
@@ -192,7 +192,7 @@ export const GENOMES_ENSEMBL_TOOLS: ToolDescriptor[] = [
     },
     required: ['query'],
     returns:
-      '{found, query, species, record} — record is the upstream lookup dict (1-based inclusive coords) or null when nothing matches.',
+      '{found, query, species, record} — species is the upstream record species on success, otherwise the requested/default species; record is the upstream lookup dict (1-based inclusive coords) or null when nothing matches.',
     example: 'const result = await host.mcp("genomes", "ensembl_lookup", {"query": "BRAF"})',
     run: async (ctx, a) => {
       const query = String(a.query).trim()
@@ -202,8 +202,13 @@ export const GENOMES_ENSEMBL_TOOLS: ToolDescriptor[] = [
         ? `${ENSEMBL}/lookup/id/${encodeURIComponent(upstreamStableId(query))}?expand=${expand}`
         : `${ENSEMBL}/lookup/symbol/${encodeURIComponent(species)}/${encodeURIComponent(query)}?expand=${expand}`
       try {
-        const record = await ctx.fetchJson(url)
-        return { found: true, query, species, record }
+        const record = (await ctx.fetchJson(url)) as Dict | null
+        const recordSpecies = record?.species
+        if (typeof recordSpecies !== 'string' || !recordSpecies.trim()) {
+          throw new Error('Ensembl lookup returned a record without a valid species')
+        }
+        // Stable IDs select their own species; the requested/default species only routes symbols.
+        return { found: true, query, species: recordSpecies, record }
       } catch (err) {
         if (isNotFound(err)) return { found: false, query, species, record: null }
         throw err

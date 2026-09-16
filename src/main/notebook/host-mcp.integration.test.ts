@@ -1,7 +1,8 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import * as netFetch from '../skills/net-fetch'
 import { ConnectorService } from '../connectors/service'
 import { ParserEngine } from '../connectors/engine'
 import { NotebookKernelExecutor } from './kernel-executor'
@@ -21,6 +22,7 @@ const makeExecutor = (): NotebookKernelExecutor =>
 
 const notebookRoots: string[] = []
 afterEach(() => {
+  vi.restoreAllMocks()
   for (const root of notebookRoots.splice(0)) {
     rmSync(root, { recursive: true, force: true })
   }
@@ -74,6 +76,213 @@ const baseRequest = (
 })
 
 gate('repl kernel host.mcp', () => {
+  it.each([
+    { mode: 'mapped', requestedSpecies: undefined },
+    { mode: 'mapped', requestedSpecies: 'homo_sapiens' },
+    { mode: 'raw', requestedSpecies: undefined },
+    { mode: 'batch-mismatch', requestedSpecies: undefined },
+    { mode: 'single-mismatch', requestedSpecies: undefined }
+  ])(
+    'chains Ensembl into Reactome ($mode, $requestedSpecies)',
+    async ({ mode, requestedSpecies }) => {
+      const record = {
+        id: 'ENSMUSG00000059552',
+        display_name: 'Trp53',
+        species: 'mus_musculus'
+      }
+      const connectorService = new ConnectorService({
+        getConnectors: () => ({
+          enabledIds: ['genomes', 'genes'],
+          autoAllowIds: ['genomes', 'genes']
+        }),
+        resolveApiKey: () => undefined,
+        engine: new ParserEngine({
+          retries: 0,
+          fetchImpl: async (input) => {
+            expect(String(input)).toBe(`https://rest.ensembl.org/lookup/id/${record.id}?expand=0`)
+            return Response.json(record)
+          }
+        })
+      })
+      let submissions = 0
+      // Mock only Reactome's external transport; preserve the real local RPC transport.
+      const reactomeFetch = vi
+        .spyOn(netFetch, 'netFetchStandard')
+        .mockImplementation(async (input, init) => {
+          const url = new URL(String(input))
+          expect(url.origin).toBe('https://reactome.org')
+          if (url.pathname === '/AnalysisService/database/version') return new Response('97')
+          if (url.pathname === '/AnalysisService/token/test-token/notFound')
+            return Response.json([])
+          expect(url.pathname).toBe('/AnalysisService/identifiers/')
+          expect(url.searchParams.get('species')).toBe('Mus musculus')
+          expect(url.searchParams.get('resource')).toBe('TOTAL')
+          expect(init?.method).toBe('POST')
+          expect(new Headers(init?.headers).get('content-type')).toBe('text/plain')
+          expect(init?.body).toBe('Trp53')
+          submissions++
+          const mismatch =
+            (mode === 'batch-mismatch' && submissions === 1) ||
+            (mode === 'single-mismatch' && submissions === 2)
+          return Response.json({
+            summary: { token: 'test-token' },
+            identifiersNotFound: 0,
+            pathwaysFound: 1,
+            pathways: [
+              {
+                stId: mismatch ? 'R-HSA-test' : 'R-MMU-test',
+                name: 'Test pathway',
+                species: { name: mismatch ? 'Homo sapiens' : 'Mus musculus' },
+                llp: true
+              }
+            ]
+          })
+        })
+      const rpcServer = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+        connectorService
+      })
+      const connection = await rpcServer.issueControlConnection(
+        'session-42',
+        'project-1',
+        'root-frame-session-42'
+      )
+      const exec = makeExecutor()
+      try {
+        const args = {
+          query: record.id,
+          ...(requestedSpecies ? { species: requestedSpecies } : {})
+        }
+        const result = await exec.execute(
+          baseRequest({
+            code: `
+          const lookup = await host.mcp('genomes', 'ensembl_lookup', ${JSON.stringify(args)});
+          // This caller explicitly adapts the two tools' documented input formats.
+          const speciesNames = {mus_musculus: 'Mus musculus', homo_sapiens: 'Homo sapiens'};
+          const species = ${mode === 'raw' ? 'lookup.species' : 'speciesNames[lookup.species]'};
+          const pathways = await host.mcp('genes', 'map_reactome_pathways', {
+            identifiers: [lookup.record.display_name], id_type: 'symbol', species
+          });
+          console.log(JSON.stringify({lookup, pathways}));
+        `,
+            mcpRpcEndpoint: connection.endpoint,
+            mcpRpcSocketPath: connection.socketPath,
+            mcpRpcToken: connection.token,
+            sessionId: 'session-42',
+            projectId: 'project-1'
+          })
+        )
+        if (mode === 'raw') {
+          expect(result.status).toBe('failed')
+          expect(result.traceback).toContain('Unsupported Reactome species: "mus_musculus"')
+          expect(reactomeFetch).not.toHaveBeenCalled()
+        } else if (mode.endsWith('mismatch')) {
+          expect(result.status).toBe('failed')
+          expect(result.traceback).toContain('Reactome species mismatch: requested "Mus musculus"')
+          expect(submissions).toBe(mode === 'batch-mismatch' ? 1 : 2)
+          expect(result.stdout.trim()).toBe('')
+        } else {
+          expect(result.status, result.traceback).toBe('completed')
+          const output = JSON.parse(result.stdout.trim())
+          expect(output.lookup.species).toBe('mus_musculus')
+          expect(output.pathways.species).toBe('Mus musculus')
+          expect(output.pathways.genes.Trp53).toEqual({
+            found: true,
+            n_lowlevel_pathways: 1,
+            pathways: [{ stId: 'R-MMU-test', name: 'Test pathway', species: 'Mus musculus' }]
+          })
+          expect(submissions).toBe(2)
+        }
+      } finally {
+        await exec.shutdown()
+        connection.release()
+        await rpcServer.close()
+      }
+    }
+  )
+
+  it.each([undefined, 'homo_sapiens'])(
+    'uses the resolved mouse species for a downstream region request (requested species: %s)',
+    async (species) => {
+      const record = {
+        id: 'ENSMUSG00000059552',
+        species: 'mus_musculus',
+        assembly_name: 'GRCm39',
+        seq_region_name: '11',
+        start: 69469669,
+        end: 69482701
+      }
+      const requests: string[] = []
+      const region = `${record.seq_region_name}:${record.start}-${record.start + 3}`
+      const lookupUrl = `https://rest.ensembl.org/lookup/id/${record.id}?expand=0`
+      const sequenceUrl = `https://rest.ensembl.org/sequence/region/mus_musculus/${region}`
+      const connectorService = new ConnectorService({
+        getConnectors: () => ({ enabledIds: ['genomes'], autoAllowIds: ['genomes'] }),
+        resolveApiKey: () => undefined,
+        engine: new ParserEngine({
+          retries: 0,
+          fetchImpl: async (input) => {
+            const url = String(input)
+            requests.push(url)
+            if (url === lookupUrl) return Response.json(record)
+            if (url === sequenceUrl) {
+              return Response.json({ id: region, molecule: 'dna', seq: 'ACGT' })
+            }
+            throw new Error(`Unexpected Ensembl request: ${url}`)
+          }
+        })
+      })
+      const rpcServer = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+        connectorService
+      })
+      const connection = await rpcServer.issueControlConnection(
+        'session-42',
+        'project-1',
+        'root-frame-session-42'
+      )
+      const exec = makeExecutor()
+      try {
+        const args = { query: record.id, ...(species ? { species } : {}) }
+        const result = await exec.execute(
+          baseRequest({
+            code: `
+              const lookup = await host.mcp('genomes', 'ensembl_lookup', ${JSON.stringify(args)});
+              const record = lookup.record;
+              const region = record.seq_region_name + ':' + record.start + '-' + (record.start + 3);
+              const sequence = await host.mcp('genomes', 'ensembl_sequence', {
+                species: lookup.species, region
+              });
+              console.log(JSON.stringify({lookup, sequence}));
+            `,
+            mcpRpcEndpoint: connection.endpoint,
+            mcpRpcSocketPath: connection.socketPath,
+            mcpRpcToken: connection.token,
+            sessionId: 'session-42',
+            projectId: 'project-1'
+          })
+        )
+        expect(result.status, result.traceback).toBe('completed')
+        const output = JSON.parse(result.stdout.trim())
+        expect(output.lookup).toEqual({
+          found: true,
+          query: record.id,
+          species: 'mus_musculus',
+          record
+        })
+        expect(output.sequence).toMatchObject({
+          found: true,
+          query: region,
+          seq: 'ACGT',
+          length: 4
+        })
+        expect(requests).toEqual([lookupUrl, sequenceUrl])
+      } finally {
+        await exec.shutdown()
+        connection.release()
+        await rpcServer.close()
+      }
+    }
+  )
+
   it.each([404, 429, 503])(
     'preserves OLS errors versus not_found through host.mcp (HTTP %s)',
     async (status) => {
