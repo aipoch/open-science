@@ -252,7 +252,7 @@ it('wraps only the Windows layout shell and preserves its original command', () 
       job: 'windows_e2e',
       id: 'renderer_layout',
       shell: 'node scripts/ci/run-windows-browser-diagnostics.mjs {0}',
-      run: 'npm run test:e2e:browser -- --fail-on-flaky-tests --global-timeout=180000'
+      run: 'npm run test:e2e:browser -- --fail-on-flaky-tests --global-timeout=300000'
     })
   ])
   expect(

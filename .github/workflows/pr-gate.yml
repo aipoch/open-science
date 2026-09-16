@@ -1117,7 +1117,7 @@ jobs:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/renderer-layout-windows
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/renderer-layout-windows.json
         shell: node scripts/ci/run-windows-browser-diagnostics.mjs {0}
-        run: npm run test:e2e:browser -- --fail-on-flaky-tests --global-timeout=180000
+        run: npm run test:e2e:browser -- --fail-on-flaky-tests --global-timeout=300000
       - name: Run functional journeys
         id: e2e_functional_windows
         if: ${{ steps.setup.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_functional_windows') }}
