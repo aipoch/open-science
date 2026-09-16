@@ -107,7 +107,7 @@ describe('trusted supplemental selection', () => {
     const modules = createAffectedTestPlan(changes, graph)
     const plan = resolveAuthoritativePlan(classifyChanges(changes), modules)
     expect(plan.mode).toBe('selective')
-    expect(modules.modules).toEqual(['connector_ontology'])
+    expect(modules.modules).toEqual(['connector_ontology', 'genomes_ensembl_connector'])
     expect(modules.testFiles).toEqual(
       expect.arrayContaining([
         'src/main/connectors/registry.test.ts',

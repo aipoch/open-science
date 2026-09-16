@@ -250,3 +250,53 @@ it.each([
   )
   expect(plan.macosProfile).toBe('expanded')
 })
+
+// Real diffs that previously fell back to all three portable shards.
+it.each(['pull_request', 'merge_group'])('keeps known PR diffs selective for %s', (event) => {
+  for (const fixture of [
+    {
+      number: 2696,
+      paths: [
+        'src/main/connectors/descriptors/genomes-ensembl.test.ts',
+        'src/main/connectors/descriptors/genomes-ensembl.ts',
+        'src/main/notebook/host-mcp.integration.test.ts'
+      ]
+    },
+    {
+      number: 2682,
+      paths: [
+        'src/main/acp/runtime-coordinator.test.ts',
+        'src/main/acp/runtime-coordinator.ts',
+        'src/main/acp/runtime.test.ts',
+        'src/main/acp/runtime.ts',
+        'src/main/reviewer/correction-context.test.ts',
+        'src/main/reviewer/correction-context.ts',
+        'src/main/reviewer/correction.test.ts',
+        'src/main/reviewer/correction.ts',
+        'src/main/reviewer/fix-loop.test.ts',
+        'src/main/reviewer/orchestrator.ts',
+        'src/main/reviewer/reviewer-fix-loop-owner.test.ts',
+        'src/main/reviewer/reviewer-fix-loop-owner.ts',
+        'src/main/reviewer/scope.ts'
+      ]
+    }
+  ]) {
+    const { plan, report } = runModuleImpactAuthorityCli(
+      ['--base', 'a'.repeat(40), '--head', 'b'.repeat(40)],
+      { EVENT_NAME: event, PR_GATE_PLATFORM_POLICY: 'risk-v1' },
+      {
+        execute: () => Buffer.from(fixture.paths.map((path) => `M\0${path}\0`).join('')),
+        write: () => undefined
+      }
+    )
+    expect(plan.mode, `PR ${fixture.number}: ${plan.reasonChains.join('\n')}`).toBe('selective')
+    expect(plan.macosProfile).toBe('expanded')
+    expect(plan.bundles).toContain('unit')
+    expect(report.shadow.testFiles).toEqual(
+      expect.arrayContaining(fixture.paths.filter((path) => path.endsWith('.test.ts')))
+    )
+    expect(report.shadow.modules).toContain(
+      fixture.number === 2696 ? 'genomes_ensembl_connector' : 'acp_runtime'
+    )
+  }
+})
