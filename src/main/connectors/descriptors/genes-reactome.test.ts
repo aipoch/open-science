@@ -25,7 +25,7 @@ const ctx: ToolContext = {
   }
 }
 
-// A fake Response usable for both res.json() (projection/notFound) and res.text() (version).
+// A fake Response usable for both res.json() (analysis/notFound) and res.text() (version).
 const res = (body: unknown, status = 200): Response =>
   ({
     ok: status >= 200 && status < 300,
@@ -34,7 +34,7 @@ const res = (body: unknown, status = 200): Response =>
     text: async () => (typeof body === 'string' ? body : JSON.stringify(body))
   }) as Response
 
-// Per-identifier projection responses (a mix of low-level and non-low-level pathways).
+// Per-identifier analysis responses (a mix of low-level and non-low-level pathways).
 const tp53Resp = {
   identifiersNotFound: 0,
   pathwaysFound: 2,
@@ -91,7 +91,7 @@ const makeFetch = (): ReturnType<typeof vi.fn> =>
     const method = init?.method ?? 'GET'
     if (u.includes('/database/version')) return res('97')
     if (u.includes('/token/') && u.includes('/notFound')) return res([{ id: 'NOSUCH', exp: [] }])
-    if (u.includes('/identifiers/projection') && method === 'POST') {
+    if (new URL(u).pathname === '/AnalysisService/identifiers/' && method === 'POST') {
       const body = String(init?.body ?? '')
       if (body.includes('\n')) return res(batchResp)
       if (body === 'TP53') return res(tp53Resp)
@@ -153,7 +153,7 @@ describe('genes / map_reactome_pathways', () => {
     const [batchUrl, batchInit] = batchCall as [string, RequestInit]
     expect(batchInit.body).toBe('TP53\nEGFR\nNOSUCH')
     expect((batchInit.headers as Record<string, string>)['content-type']).toBe('text/plain')
-    expect(batchUrl).toContain('/identifiers/projection')
+    expect(new URL(batchUrl).pathname).toBe('/AnalysisService/identifiers/')
     expect(batchUrl).toContain('species=Homo%20sapiens')
     expect(batchUrl).toContain('resource=TOTAL')
     expect(batchUrl).toContain('includeDisease=true')
@@ -246,7 +246,7 @@ describe('genes / map_reactome_pathways', () => {
     expect(out.batch_summary.batch_pathways_found).toBe(3)
   })
 
-  it('passes resource=UNIPROT and includeDisease=false through to every projection request', async () => {
+  it('passes resource=UNIPROT and includeDisease=false through to every analysis request', async () => {
     const fetchImpl = makeFetch()
     vi.stubGlobal('fetch', fetchImpl)
 
@@ -266,6 +266,166 @@ describe('genes / map_reactome_pathways', () => {
       expect(u).toContain('includeDisease=false')
     }
   })
+
+  it.each([true, false])(
+    'keeps mouse pathways in compact=%s without human projection',
+    async (compact) => {
+      const mousePathway = {
+        ...tp53Resp.pathways[1],
+        stId: 'R-MMU-6804754',
+        species: { name: 'Mus musculus' }
+      }
+      const postBodies: string[] = []
+      const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
+        const u = new URL(String(url))
+        if (u.pathname.endsWith('/database/version')) return res('97')
+        if (u.pathname.endsWith('/notFound')) return res([])
+        expect(init?.method).toBe('POST')
+        expect(u.pathname).toBe('/AnalysisService/identifiers/')
+        expect(u.searchParams.get('species')).toBe('Mus musculus')
+        expect(u.searchParams.get('resource')).toBe('UNIPROT')
+        expect(u.searchParams.get('includeDisease')).toBe('false')
+        postBodies.push(String(init?.body))
+        return res({
+          summary: { token: 'MOUSETOKEN', projection: false },
+          identifiersNotFound: 0,
+          pathwaysFound: 1,
+          pathways: [mousePathway]
+        })
+      })
+      vi.stubGlobal('fetch', fetchImpl)
+
+      const out = (await tool.run!(ctx, {
+        identifiers: ['P02340', 'Q01279'],
+        id_type: 'uniprot',
+        species: 'Mus musculus',
+        resource: 'UNIPROT',
+        include_disease: false,
+        compact
+      })) as {
+        species: string
+        genes: Record<string, { found: boolean; pathways: Array<Record<string, unknown>> }>
+        batch_summary?: { n_found: number; batch_pathways_found: number }
+      }
+
+      // Both the batch and each identifier must use the requested-species analysis.
+      expect(postBodies).toEqual(['P02340\nQ01279', 'P02340', 'Q01279'])
+      expect(out.species).toBe('Mus musculus')
+      for (const gene of Object.values(out.genes)) {
+        expect(gene.found).toBe(true)
+        expect(gene.pathways).toHaveLength(1)
+        expect(gene.pathways[0]).toMatchObject({
+          stId: 'R-MMU-6804754',
+          species: 'Mus musculus'
+        })
+      }
+      if (!compact) {
+        expect(out.batch_summary).toMatchObject({ n_found: 2, batch_pathways_found: 1 })
+      }
+    }
+  )
+
+  it.each(['NotASpecies', '', '   ', 'mouse', 'Mus musclus'])(
+    'rejects unsupported species %j before networking',
+    async (species) => {
+      const fetchImpl = makeFetch()
+      vi.stubGlobal('fetch', fetchImpl)
+      await expect(
+        tool.run!(ctx, { identifiers: ['P02340'], id_type: 'uniprot', species })
+      ).rejects.toThrow(/Unsupported Reactome species/)
+      expect(fetchImpl).not.toHaveBeenCalled()
+    }
+  )
+
+  it('trims species before querying and reporting it', async () => {
+    const fetchImpl = makeFetch()
+    vi.stubGlobal('fetch', fetchImpl)
+    const out = await tool.run!(ctx, {
+      identifiers: ['TP53'],
+      id_type: 'symbol',
+      species: '  Homo sapiens  '
+    })
+    expect(out).toMatchObject({ species: 'Homo sapiens' })
+    for (const [url, init] of fetchImpl.mock.calls) {
+      if (init?.method === 'POST')
+        expect(new URL(String(url)).searchParams.get('species')).toBe('Homo sapiens')
+    }
+  })
+
+  it.each([
+    ['batch', 'Homo sapiens'],
+    ['single', 'Homo sapiens'],
+    ['batch', undefined],
+    ['single', undefined]
+  ])(
+    'rejects wrong or missing species in %s responses (%s), even outside low-level pathways',
+    async (stage, name) => {
+      let posts = 0
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (url: string, init?: RequestInit) => {
+          if (String(url).endsWith('/database/version')) return res('97')
+          if (String(url).endsWith('/notFound')) return res([])
+          expect(init?.method).toBe('POST')
+          posts++
+          const bad = stage === 'batch' || posts === 2
+          return res({
+            summary: { token: 'TEST' },
+            identifiersNotFound: 0,
+            pathways: [
+              {
+                ...tp53Resp.pathways[0],
+                species:
+                  name === undefined && bad ? undefined : { name: bad ? name : 'Mus musculus' }
+              }
+            ]
+          })
+        })
+      )
+      await expect(
+        tool.run!(ctx, {
+          identifiers: ['P02340'],
+          id_type: 'uniprot',
+          species: 'Mus musculus',
+          compact: true
+        })
+      ).rejects.toThrow(/Reactome species mismatch/)
+      expect(posts).toBe(stage === 'batch' ? 1 : 2)
+    }
+  )
+
+  it.each([true, false])(
+    'preserves identifier recognition when the requested species has no pathways (compact=%s)',
+    async (compact) => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (url: string) => {
+          if (String(url).endsWith('/database/version')) return res('97')
+          if (String(url).endsWith('/notFound')) return res([])
+          return res({
+            summary: { token: 'TEST' },
+            identifiersNotFound: 0,
+            pathwaysFound: 0,
+            pathways: []
+          })
+        })
+      )
+      const out = await tool.run!(ctx, {
+        identifiers: ['P02340'],
+        id_type: 'uniprot',
+        species: 'Homo sapiens',
+        compact
+      })
+      expect(out).toMatchObject({
+        genes: { P02340: { found: true, n_lowlevel_pathways: 0, pathways: [] } }
+      })
+      if (!compact)
+        expect(out).toMatchObject({
+          genes: { P02340: { n_pathways: 0 } },
+          batch_summary: { n_found: 1, n_not_found: 0 }
+        })
+    }
+  )
 
   it('rejects duplicate identifiers without any network call', async () => {
     const fetchImpl = makeFetch()
