@@ -192,6 +192,7 @@ jobs:
           src/main/agent-framework/opencode.test.ts
           src/main/logger.test.ts
           src/main/delegation/production-composition.test.ts
+          src/main/delegation/opencode-runtime-preparation.test.ts
           packages/notebook-network-sandbox/src/gateway.test.ts
           packages/notebook-network-sandbox/src/public-read-lifecycle.test.ts
           --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000

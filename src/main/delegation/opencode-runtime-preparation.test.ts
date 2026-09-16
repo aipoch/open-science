@@ -203,12 +203,20 @@ describe('OpenCode delegated runtime preparation', () => {
 
   it('propagates an unreadable skills projection instead of silently dropping it', async () => {
     const { root, backend } = await fixture()
-    // ENOTDIR is portable, unlike chmod permission tests under privileged test users.
+    // Validate the parent explicitly: Windows reports ENOENT for its child paths.
     await rm(join(backend.env.XDG_CONFIG_HOME, 'opencode'), { recursive: true })
     await writeFile(join(backend.env.XDG_CONFIG_HOME, 'opencode'), 'not a directory')
     await expect(prepareOpenCodeRuntime(backend, join(root, 'attempt'))).rejects.toMatchObject({
       code: 'ENOTDIR'
     })
+  })
+
+  it('allows an absent optional projection directory', async () => {
+    const { root, backend } = await fixture()
+    await rm(join(backend.env.XDG_CONFIG_HOME, 'opencode'), { recursive: true })
+    const runtime = await prepareOpenCodeRuntime(backend, join(root, 'attempt'))
+    prepared.push(runtime)
+    expect(() => assertOpenCodeNativeDelegationDisabled(runtime.modelConfig)).not.toThrow()
   })
 
   it('supports injected backends without files or a usage API and preserves bridge ownership', async () => {
