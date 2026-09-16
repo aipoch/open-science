@@ -1193,6 +1193,28 @@
       },
       "capabilityOverlays": [],
       "fallbackCapability": "main_runtime"
+    },
+    "connector_ontology": {
+      "ownerPaths": ["src/main/connectors/descriptors/genes-ontology.ts"],
+      "interfacePaths": ["src/main/connectors/descriptors/genes-ontology.ts"],
+      "consumerModules": [],
+      "testFiles": {
+        "owner": ["src/main/connectors/descriptors/genes-ontology.test.ts"],
+        "contract": [
+          "src/main/connectors/descriptors/genes.test.ts",
+          "src/main/connectors/registry.test.ts",
+          "src/main/connectors/engine.test.ts"
+        ],
+        "consumer": [
+          "src/main/connectors/service.test.ts",
+          "src/main/connectors/skill-doc.test.ts",
+          "src/main/connectors/provision.test.ts",
+          "src/main/notebook/local-rpc-server.mcpcall.test.ts",
+          "src/main/notebook/host-mcp.integration.test.ts"
+        ]
+      },
+      "capabilityOverlays": [],
+      "fallbackCapability": "main_runtime"
     }
   }
 }
