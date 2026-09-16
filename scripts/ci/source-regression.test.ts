@@ -72,7 +72,11 @@ describe('trusted supplemental selection', () => {
   it('runs the whole browser lane without forcing unrelated Vitest or Electron groups', () => {
     const plan = resolvePlan(['e2e/browser/settings-undo.spec.ts'])
     expect(plan.mode).toBe('selective')
-    expect(plan.bundles).toEqual(['policy', 'static', 'macos_e2e'])
+    // Keep real Windows font, clipboard and browser-startup behavior in the existing bundle.
+    expect(plan.bundles).toEqual(['policy', 'static', 'macos_e2e', 'windows_e2e'])
+    expect(plan.lanes).toEqual(
+      expect.arrayContaining(['e2e_functional_windows', 'e2e_workspace_windows'])
+    )
     expect(toGitHubOutputPlan(plan).macosGroups).toEqual(['presentation'])
     expect(plan.lanes).toContain('e2e_visual_macos')
     const mixed = resolvePlan([

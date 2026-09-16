@@ -439,7 +439,15 @@
     },
     "renderer_browser_e2e": {
       "consumers": [],
-      "lanes": ["format", "lint", "typecheck_node", "typecheck_web", "e2e_visual_macos"]
+      "lanes": [
+        "format",
+        "lint",
+        "typecheck_node",
+        "typecheck_web",
+        "e2e_visual_macos",
+        "e2e_functional_windows",
+        "e2e_workspace_windows"
+      ]
     }
   }
 }
