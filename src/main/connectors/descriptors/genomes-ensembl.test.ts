@@ -241,9 +241,129 @@ describe('ensembl_vep_variant', () => {
       fetchImpl
     )) as { query: string }
     expect(String(fetchImpl.mock.calls[0][0])).toContain(
-      '/vep/homo_sapiens/region/7:140753336-140753336/T'
+      '/vep/homo_sapiens/region/7:140753336-140753336:1/T'
     )
     expect(out.query).toBe('7:140753336-140753336 T')
+  })
+
+  it.each([
+    ['19:44908822-44908822:-1', 'A', '19:44908822-44908822:1', 'T'],
+    ['19:44908822-44908823:-1', 'gt', '19:44908822-44908823:1', 'AC'],
+    ['19:44908823-44908822:-1', 'GT', '19:44908823-44908822:1', 'AC'],
+    ['19:44908822-44908823:-1', '-', '19:44908822-44908823:1', '-']
+  ])(
+    'matches equivalent forward output for %s / %s',
+    async (region, allele, forwardRegion, forwardAllele) => {
+      const fetchImpl = vi.fn().mockImplementation(async (url: string) => {
+        expect(url).toContain(`/region/${forwardRegion}/${forwardAllele}`)
+        return jsonRes([{ ...vepResult, allele_string: `C/${forwardAllele}` }])
+      })
+      const args = { region, allele, allele_orientation: 'region', species: 'mus_musculus' }
+      const negative = (await run('ensembl_vep_variant', args, fetchImpl)) as Record<
+        string,
+        unknown
+      >
+      const positive = (await run(
+        'ensembl_vep_variant',
+        {
+          region: forwardRegion,
+          allele: forwardAllele,
+          species: 'mus_musculus'
+        },
+        fetchImpl
+      )) as Record<string, unknown>
+      expect(negative.results).toEqual(positive.results)
+      expect(negative.query).toBe(`${region} ${allele}`)
+      expect(negative.normalization).toEqual({
+        original: { region, allele, allele_orientation: 'region' },
+        forward: { region: forwardRegion, allele: forwardAllele },
+        reverse_complemented: allele !== '-'
+      })
+      expect(args).toEqual({
+        region,
+        allele,
+        allele_orientation: 'region',
+        species: 'mus_musculus'
+      })
+      expect(String(fetchImpl.mock.calls[0][0])).toContain('/vep/mus_musculus/')
+    }
+  )
+
+  it.each([undefined, 'forward'])(
+    'preserves the existing forward allele contract (%s)',
+    async (orientation) => {
+      const fetchImpl = vi.fn().mockResolvedValue(jsonRes([vepResult]))
+      const out = (await run(
+        'ensembl_vep_variant',
+        {
+          region: '19:44908822-44908822:-1',
+          allele: 'T',
+          allele_orientation: orientation
+        },
+        fetchImpl
+      )) as Record<string, unknown>
+      expect(String(fetchImpl.mock.calls[0][0])).toContain('/region/19:44908822-44908822:1/T')
+      expect(out.normalization).toMatchObject({
+        reverse_complemented: false,
+        original: { allele_orientation: 'forward' }
+      })
+    }
+  )
+
+  it.each(['19:44908822-44908822', '19:44908822-44908822:1', '19:44908822-44908822:+1'])(
+    'does not complement forward region %s in region orientation',
+    async (region) => {
+      const fetchImpl = vi.fn().mockResolvedValue(jsonRes([vepResult]))
+      await run(
+        'ensembl_vep_variant',
+        { region, allele: 't', allele_orientation: 'region' },
+        fetchImpl
+      )
+      expect(String(fetchImpl.mock.calls[0][0])).toContain('/region/19:44908822-44908822:1/T')
+    }
+  )
+
+  it.each(['INS', 'DUP', 'DEL', 'TDUP'])(
+    'preserves symbolic %s in forward orientation',
+    async (allele) => {
+      const fetchImpl = vi.fn().mockResolvedValue(jsonRes([vepResult]))
+      await run('ensembl_vep_variant', { region: '19:10-20:-1', allele }, fetchImpl)
+      expect(String(fetchImpl.mock.calls[0][0])).toContain(`/region/19:10-20:1/${allele}`)
+    }
+  )
+
+  it.each([
+    { region: '19:10-10:-1', allele: 'DUP', allele_orientation: 'region' },
+    { region: '19:10-10:-1', allele: 'N', allele_orientation: 'region' },
+    { region: '19:10-10:-1', allele: 'A/C', allele_orientation: 'region' },
+    { region: '19:10-10:-1', allele: 'A', allele_orientation: 'unknown' },
+    { region: '19:10-10:-2', allele: 'A' },
+    { region: '19:12-10:-1', allele: 'A' },
+    { region: '19:1-0:-1', allele: 'A' },
+    { region: '19:0-10', allele: '-' },
+    { region: '19:9007199254740992-9007199254740992', allele: 'A' },
+    { region: '19:10-10:-1?strand=1', allele: 'A' }
+  ])('rejects ambiguous or invalid region input before fetching: %j', async (args) => {
+    const fetchImpl = vi.fn()
+    await expect(run('ensembl_vep_variant', args, fetchImpl)).rejects.toThrow()
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('keeps ID precedence and the existing ID result shape', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonRes([vepResult]))
+    const out = (await run(
+      'ensembl_vep_variant',
+      {
+        variant_id: 'rs7412',
+        region: 'ignored:-1',
+        allele: 'not a sequence',
+        allele_orientation: 'region'
+      },
+      fetchImpl
+    )) as Record<string, unknown>
+    expect(String(fetchImpl.mock.calls[0][0])).toContain('/id/rs7412')
+    expect(out.query).toBe('rs7412')
+    expect(out).not.toHaveProperty('normalization')
   })
 
   it('throws when neither variant_id nor region+allele is supplied', async () => {

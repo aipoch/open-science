@@ -74,6 +74,84 @@ const baseRequest = (
 })
 
 gate('repl kernel host.mcp', () => {
+  it('preserves VEP strand normalization and validation through host.mcp', async () => {
+    const urls: string[] = []
+    const connectorService = new ConnectorService({
+      getConnectors: () => ({ enabledIds: ['genomes'], autoAllowIds: ['genomes'] }),
+      resolveApiKey: () => undefined,
+      engine: new ParserEngine({
+        fetchImpl: async (input) => {
+          urls.push(String(input))
+          return Response.json([
+            {
+              input: '19 44908822 44908823 CG/AC 1',
+              allele_string: 'CG/AC',
+              strand: 1,
+              assembly_name: 'GRCh38',
+              transcript_consequences: [
+                { transcript_id: 't1', gene_id: 'g1', variant_allele: 'AC', impact: 'MODERATE' }
+              ]
+            }
+          ])
+        }
+      })
+    })
+    const rpcServer = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      connectorService
+    })
+    const connection = await rpcServer.issueControlConnection(
+      'session-42',
+      'project-1',
+      'root-frame-session-42'
+    )
+    const exec = makeExecutor()
+    const request = (args: Record<string, unknown>): ReturnType<typeof baseRequest> =>
+      baseRequest({
+        code: `console.log(JSON.stringify(await host.mcp('genomes', 'ensembl_vep_variant', ${JSON.stringify(args)})))`,
+        mcpRpcEndpoint: connection.endpoint,
+        mcpRpcSocketPath: connection.socketPath,
+        mcpRpcToken: connection.token,
+        sessionId: 'session-42',
+        projectId: 'project-1'
+      })
+    try {
+      const result = await exec.execute(
+        request({ region: '19:44908822-44908823:-1', allele: 'GT', allele_orientation: 'region' })
+      )
+      expect(result.status).toBe('completed')
+      expect(urls).toHaveLength(1)
+      expect(urls[0]).toContain('/region/19:44908822-44908823:1/AC')
+      expect(JSON.parse(result.stdout.trim())).toMatchObject({
+        query: '19:44908822-44908823:-1 GT',
+        normalization: {
+          original: {
+            region: '19:44908822-44908823:-1',
+            allele: 'GT',
+            allele_orientation: 'region'
+          },
+          forward: { region: '19:44908822-44908823:1', allele: 'AC' },
+          reverse_complemented: true
+        },
+        results: [
+          { allele_string: 'CG/AC', strand: 1, transcript_consequences: [{ variant_allele: 'AC' }] }
+        ]
+      })
+      for (const args of [
+        { region: '19:44908822-44908823:-1', allele: 'GT', allele_orientation: 'invalid' },
+        { region: '19:44908822-44908823:-1', allele: 'DUP', allele_orientation: 'region' }
+      ]) {
+        const invalid = await exec.execute(request(args))
+        expect(invalid.status).toBe('failed')
+        expect(invalid.traceback).toContain('allele_orientation')
+        expect(urls).toHaveLength(1)
+      }
+    } finally {
+      await exec.shutdown()
+      connection.release()
+      await rpcServer.close()
+    }
+  })
+
   it.each([404, 429, 503])(
     'preserves OLS errors versus not_found through host.mcp (HTTP %s)',
     async (status) => {

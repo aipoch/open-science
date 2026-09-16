@@ -43,6 +43,63 @@ const impactRank = (impact: unknown): number => IMPACT_RANK[String(impact ?? '')
 
 type Dict = Record<string, unknown>
 
+// GET VEP reads the reference on the region strand, but submits it as strand=1.
+// Always request the forward strand. Existing callers supply forward alleles;
+// interpreting an allele on the region strand requires an explicit opt-in.
+function normalizeVepRegion(
+  region: string,
+  allele: string,
+  orientation: unknown
+): {
+  original: { region: string; allele: string; allele_orientation: string }
+  forward: { region: string; allele: string }
+  reverse_complemented: boolean
+} {
+  const alleleOrientation = orientation ?? 'forward'
+  if (alleleOrientation !== 'forward' && alleleOrientation !== 'region') {
+    throw new Error('allele_orientation must be forward or region')
+  }
+  const match = /^([A-Za-z0-9_.-]+):(\d+)-(\d+)(?::([+-]?1))?$/.exec(region)
+  if (!match) {
+    throw new Error('region must be chrom:start-end with an optional :1 or :-1 strand')
+  }
+  const [, chrom, startText, endText, strand] = match
+  const start = Number(startText)
+  const end = Number(endText)
+  if (
+    !Number.isSafeInteger(start) ||
+    !Number.isSafeInteger(end) ||
+    start < 1 ||
+    end < 1 ||
+    start > end + 1
+  ) {
+    throw new Error('region requires positive 1-based coordinates; insertions use start=end+1')
+  }
+  let forwardAllele = allele.toUpperCase()
+  if (!/^(?:[ACGT]+|-|INS|DUP|DEL|TDUP)$/.test(forwardAllele)) {
+    throw new Error('allele must be an A/C/G/T sequence, -, INS, DUP, DEL, or TDUP')
+  }
+  const reverseComplemented =
+    strand === '-1' && alleleOrientation === 'region' && forwardAllele !== '-'
+  if (reverseComplemented) {
+    if (!/^[ACGT]+$/.test(forwardAllele)) {
+      throw new Error(
+        'Negative-strand region-oriented alleles require an A/C/G/T sequence or -; symbolic alleles require allele_orientation=forward'
+      )
+    }
+    const complement: Record<string, string> = { A: 'T', C: 'G', G: 'C', T: 'A' }
+    forwardAllele = [...forwardAllele]
+      .reverse()
+      .map((base) => complement[base])
+      .join('')
+  }
+  return {
+    original: { region, allele, allele_orientation: alleleOrientation },
+    forward: { region: `${chrom}:${start}-${end}:1`, allele: forwardAllele },
+    reverse_complemented: reverseComplemented
+  }
+}
+
 // One VEP transcript-consequence row, keeping only the fields the summary surfaces.
 function leanTranscriptConsequence(tc: Dict): Dict {
   return {
@@ -253,19 +310,26 @@ export const GENOMES_ENSEMBL_TOOLS: ToolDescriptor[] = [
     id: 'ensembl_vep_variant',
     connector: 'genomes',
     description:
-      'Predict variant consequences with Ensembl VEP — most-severe-first summary of the (often huge) per-transcript consequence list. If variant_id is provided, the ID route takes precedence and region/allele are ignored. Otherwise, both region and allele are required. allele does not filter results from the ID route. Args: variant_id (dbSNP rsID rs7412, COSMIC COSV..., or HGMD ID); region (GRCh38 1-based inclusive chrom:start-end, e.g. 7:140753336-140753336; SNV start==end; insertion start=end+1; explicit strand suffix :1/:-1 accepted); allele (variant allele on forward strand for the region route, e.g. T or - for deletion); species (default homo_sapiens); max_consequences (cap on returned per-transcript rows, default 25; full count in n_transcript_consequences, rows kept are most severe HIGH>MODERATE>LOW>MODIFIER; transcript_consequences_truncated flags the cap). Returns {query, n_results, results:[{input, assembly_name, seq_region_name, start, end, strand, allele_string, most_severe_consequence, genes:[{gene_id, gene_symbol, worst_impact, n_transcripts}], n_transcript_consequences, transcript_consequences_truncated, transcript_consequences:[...], n_regulatory_feature_consequences, n_motif_feature_consequences, colocated_variants:[...]}]}. Each transcript consequence retains variant_allele. n_transcripts counts distinct non-empty transcript IDs per gene across the full list; worst_impact spans all returned upstream alleles, while n_transcript_consequences counts rows. Unknown rsIDs raise with the upstream message.',
+      'Predict variant consequences with Ensembl VEP — most-severe-first summary of the (often huge) per-transcript consequence list. If variant_id is provided, the ID route takes precedence and region/allele/allele_orientation are ignored. Otherwise, both region and allele are required. allele does not filter results from the ID route. Args: variant_id (dbSNP rsID rs7412, COSMIC COSV..., or HGMD ID); region (1-based inclusive chrom:start-end on the current species assembly, GRCh38 for human, e.g. 7:140753336-140753336; SNV start==end; insertion start=end+1; explicit strand suffix :1/:-1 accepted; coordinates always refer to the reference genome, including on the negative strand); allele (A/C/G/T replacement sequence, or - for deletion; upstream symbolic alleles INS/DUP/DEL/TDUP are accepted in forward orientation); allele_orientation (forward by default, preserving existing calls: allele is on the reference forward strand regardless of the region suffix; region opts into interpreting allele on the region strand, so :-1 reverse-complements sequence alleles before querying; symbolic alleles on a negative region require forward orientation). Every region request is sent on the forward strand; returned alleles are forward-oriented. A negative-strand gene does not require negative-strand input; species (default homo_sapiens); max_consequences (cap on returned per-transcript rows, default 25; full count in n_transcript_consequences, rows kept are most severe HIGH>MODERATE>LOW>MODIFIER; transcript_consequences_truncated flags the cap). Returns {query, n_results, results:[{input, assembly_name, seq_region_name, start, end, strand, allele_string, most_severe_consequence, genes:[{gene_id, gene_symbol, worst_impact, n_transcripts}], n_transcript_consequences, transcript_consequences_truncated, transcript_consequences:[...], n_regulatory_feature_consequences, n_motif_feature_consequences, colocated_variants:[...]}]}. Each transcript consequence retains variant_allele. n_transcripts counts distinct non-empty transcript IDs per gene across the full list; worst_impact spans all returned upstream alleles, while n_transcript_consequences counts rows. Unknown rsIDs raise with the upstream message.',
     input: {
       type: 'object',
       properties: {
         variant_id: { type: 'string' },
         region: { type: 'string' },
         allele: { type: 'string' },
+        allele_orientation: {
+          type: 'string',
+          enum: ['forward', 'region'],
+          default: 'forward',
+          description:
+            'Region route only: forward preserves existing allele semantics; region interprets allele on the region strand (:-1 reverse-complements sequence alleles).'
+        },
         species: { type: 'string', default: DEFAULT_SPECIES },
         max_consequences: { type: 'integer', default: 25 }
       }
     },
     returns:
-      '{query, n_results, results[]} — each result the most-severe-first VEP summary (per-transcript rows sorted HIGH>MODERATE>LOW>MODIFIER and capped, plus per-gene worst impact and colocated variants).',
+      '{query, n_results, results[], normalization?} — each result the most-severe-first VEP summary. Region calls add normalization: {original:{region,allele,allele_orientation}, forward:{region,allele}, reverse_complemented}; coordinates are not lifted or reversed. query retains the original input; results use forward-strand alleles. ID calls omit normalization.',
     example:
       'const result = await host.mcp("genomes", "ensembl_vep_variant", {"variant_id": "rs7412", "max_consequences": 25})',
     run: async (ctx, a) => {
@@ -276,18 +340,25 @@ export const GENOMES_ENSEMBL_TOOLS: ToolDescriptor[] = [
       const allele = strArg(a.allele)
       let url: string
       let query: string
+      let normalization: ReturnType<typeof normalizeVepRegion> | undefined
       if (variantId) {
         url = `${ENSEMBL}/vep/${species}/id/${encodeURIComponent(variantId)}`
         query = variantId
       } else if (region && allele) {
-        url = `${ENSEMBL}/vep/${species}/region/${region}/${encodeURIComponent(allele)}`
+        normalization = normalizeVepRegion(region, allele, a.allele_orientation)
+        url = `${ENSEMBL}/vep/${species}/region/${normalization.forward.region}/${encodeURIComponent(normalization.forward.allele)}`
         query = `${region} ${allele}`
       } else {
         throw new Error('ensembl_vep_variant requires either variant_id or both region and allele')
       }
       const raw = ((await ctx.fetchJson(url)) as Dict[] | undefined) ?? []
       const results = raw.map((r) => summarizeVepResult(r, maxConsequences))
-      return { query, n_results: results.length, results }
+      return {
+        query,
+        n_results: results.length,
+        results,
+        ...(normalization ? { normalization } : {})
+      }
     }
   },
   {
