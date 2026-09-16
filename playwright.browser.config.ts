@@ -17,8 +17,7 @@ export default defineConfig({
   outputDir: 'test-results/browser',
   projects: [{ name: 'chromium', use: { browserName: 'chromium' } }],
   fullyParallel: true,
-  // Avoid overlapping browser contexts on Windows runners after ERR_NO_BUFFER_SPACE failures.
-  workers: process.platform === 'win32' ? 1 : 2,
+  workers: 2,
   timeout: 60_000,
   use: {
     ...base.use,
