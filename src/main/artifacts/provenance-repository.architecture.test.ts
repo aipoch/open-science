@@ -493,7 +493,11 @@ describe('Artifact Provenance repository architecture', () => {
         'src/renderer/src/pages/workspace/artifact-publication-preview.integration.test.tsx'
       ].sort()
     )
-    expect(module.capabilityOverlays).toEqual(['windows_sensitive'])
+    expect(module.capabilityOverlays).toEqual([
+      'windows_sensitive',
+      'e2e_regressions',
+      'e2e_delegation'
+    ])
     expect(module.fallbackCapability).toBe('main_runtime')
   })
 })

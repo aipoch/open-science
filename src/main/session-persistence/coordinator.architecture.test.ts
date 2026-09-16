@@ -1146,7 +1146,11 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/session-persistence/artifact-finalization-recovery.integration.test.ts',
       'src/main/session-persistence/deletion-integration.test.ts'
     ])
-    expect(sessionPersistence.capabilityOverlays).toEqual(['windows_sensitive'])
+    expect(sessionPersistence.capabilityOverlays).toEqual([
+      'windows_sensitive',
+      'e2e_regressions',
+      'e2e_delegation'
+    ])
     expect(sessionPersistence.fallbackCapability).toBe('main_runtime')
   })
 })

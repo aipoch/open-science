@@ -482,7 +482,7 @@ describe('Reviewer orchestrator architecture', () => {
           'src/renderer/src/reviewer-paged-preview/main.test.ts'
         ]
       },
-      capabilityOverlays: ['windows_sensitive'],
+      capabilityOverlays: ['windows_sensitive', 'e2e_regressions', 'e2e_delegation'],
       fallbackCapability: 'main_runtime'
     })
   })
