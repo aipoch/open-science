@@ -20,6 +20,44 @@ afterEach(() => {
 })
 
 describe('SettingsPanelLoadingBoundary', () => {
+  it('preserves healthy children and recovers a failed route when resetKey changes', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const Panel = ({ fail }: { fail: boolean }): React.JSX.Element => {
+      if (fail) throw new Error('model route unavailable')
+      return <input aria-label="Model draft" defaultValue="draft" />
+    }
+    const renderRoute = async (resetKey: string, fail = false): Promise<void> => {
+      await act(async () => {
+        root.render(
+          <SettingsPanelLoadingBoundary panelKey="model:tabs" resetKey={resetKey} onClose={vi.fn()}>
+            <Panel fail={fail} />
+          </SettingsPanelLoadingBoundary>
+        )
+      })
+    }
+
+    try {
+      await renderRoute('list')
+      const input = container.querySelector('input')!
+      input.value = 'retained draft'
+      await renderRoute('local-models')
+      expect(container.querySelector('input')).toBe(input)
+      expect(input.value).toBe('retained draft')
+
+      await renderRoute('list', true)
+      expect(container.querySelector('[role="alert"]')).not.toBeNull()
+      await renderRoute('list')
+      expect(container.querySelector('[role="alert"]')).not.toBeNull()
+      await renderRoute('local-models', true)
+      expect(container.querySelector('[role="alert"]')).not.toBeNull()
+      await renderRoute('list')
+      expect(container.querySelector('[role="alert"]')).toBeNull()
+      expect(container.querySelector('input')).not.toBeNull()
+    } finally {
+      errorSpy.mockRestore()
+    }
+  })
+
   it('shows one centered, reduced-motion-safe loading state until a chunk resolves', async () => {
     let finish!: (module: { default: () => React.JSX.Element }) => void
     const Panel = lazy(

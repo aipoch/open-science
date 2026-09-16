@@ -633,7 +633,6 @@ const WorkspacePage = ({
     runtime,
     sideChat: canEditDraft && !sideChatDisabledReason ? { start: sideChat.start } : undefined,
     sideChatOpen: sideChat.view !== undefined,
-    setAutoReviewEnabled,
     resetNewConversationSettings: () => {
       setNewConversationAutoReviewEnabled(false)
       setNewConversationMemoryPreference(undefined)

@@ -399,7 +399,7 @@ Active-dialog menus and other foreground child layers retain their own ordering.
 - Dialog open: `data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95`.
 - Dialog close: `data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95`.
 - Overlay: `fade-in-0 / fade-out-0`; the light scrim is `rgb(0 0 0 / 0.5)`.
-- Transform motion is limited to dialogs, sheets, collapsible content, and subtle button feedback, and must respect `motion-reduce`.
+- Transform motion is limited to dialogs, sheets, collapsible content, subtle button feedback, and the tab selection indicators described below, and must respect `motion-reduce`.
 - Brand loading indicators may use fixed-geometry transform and opacity motion for orbiting or gathering particles; they must become static under `prefers-reduced-motion`, and the full-canvas startup logo is capped at 30 drawn frames per second.
 
 ## Component Guidelines
@@ -526,6 +526,7 @@ Active-dialog menus and other foreground child layers retain their own ordering.
 
 ### Tabs / ToggleGroup
 
+- Model settings and Specialist capability tabs move only the selected underline or background between tabs over 220ms with a non-overshooting ease-out. Keep each list's motion independent and relative to the list inside scrolled dialogs. Labels, hit targets, hover colors, content lifecycle, and Radix keyboard activation stay unchanged; reduced motion selects immediately with no slide.
 - Use `Tabs` for files, views, and viewer top bars.
 - Active tab: `h-8 rounded-md bg-accent px-3 py-1.5 text-sm text-accent-foreground`.
 - Inactive tab: `h-8 rounded-md px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground`.

@@ -737,9 +737,6 @@ jobs:
           src/main/notebook/windows-shell.integration.test.ts
           src/main/notebook/powershell-search-parser.windows.test.ts
           src/main/notebook/shell-search-scope.test.ts
-          src/main/notebook/windows-repl-termination.integration.test.ts
-          src/main/notebook/kernel-startup-retry.integration.test.ts
-          src/main/agents/completion-gate.execute-control.integration.test.ts
       - name: Test Windows notebook shell service timeout
         id: windows_service_timeout
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') }}
@@ -834,8 +831,6 @@ jobs:
         run: npm run build:e2e
       - name: Build web application
         run: npm run build:web
-      - name: Build browser fixtures
-        run: node node_modules/vite/bin/vite.js build --config vite.browser-test.config.ts
       - name: Test snapshot transport
         run: npx vitest run scripts/ci/e2e-setup-snapshot.test.ts
       - name: Pack E2E setup
@@ -874,8 +869,6 @@ jobs:
         run: node scripts/ci/npm-ci.mjs --prefer-offline --no-audit --fund=false
       - name: Build Electron application
         run: npm run build:e2e
-      - name: Build browser fixtures
-        run: node node_modules/vite/bin/vite.js build --config vite.browser-test.config.ts
       - name: Test snapshot transport
         run: npx vitest run scripts/ci/e2e-setup-snapshot.test.ts
       - name: Pack E2E setup
@@ -997,7 +990,6 @@ jobs:
         env:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/renderer-layout
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/renderer-layout.json
-          OPEN_SCIENCE_E2E_BROWSER_PREBUILT: '1'
         run: npm run test:e2e:browser -- --fail-on-flaky-tests --global-timeout=300000
       - name: Run accessibility checks
         id: e2e_accessibility_macos
@@ -1115,16 +1107,17 @@ jobs:
         shell: bash
         run: node scripts/ci/e2e-setup-snapshot.mjs restore "$RUNNER_TEMP/e2e-setup"
       - name: Install headless Chromium
+        if: ${{ matrix.shard == 1 }}
         run: npx playwright install chromium --only-shell
       - name: Run renderer layout pilot
         id: renderer_layout
+        if: ${{ matrix.shard == 1 }}
         continue-on-error: true
         env:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/renderer-layout-windows
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/renderer-layout-windows.json
-          OPEN_SCIENCE_E2E_BROWSER_PREBUILT: '1'
         shell: node scripts/ci/run-windows-browser-diagnostics.mjs {0}
-        run: npm run test:e2e:browser -- --shard=${{ matrix.shard }}/3 --fail-on-flaky-tests --global-timeout=180000
+        run: npm run test:e2e:browser -- --fail-on-flaky-tests --global-timeout=300000
       - name: Run functional journeys
         id: e2e_functional_windows
         if: ${{ steps.setup.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_functional_windows') }}

@@ -475,6 +475,32 @@ const installCustomProviderSnapshot = (): ProviderView => {
 }
 
 describe('SettingsPage layout', () => {
+  it('retains model tab DOM across model routes and navigation Back', async () => {
+    window.api.localModels = {
+      getSnapshot: vi.fn().mockResolvedValue({
+        availability: 'notInstalled',
+        recommendedRevision: 'v1',
+        downloadBytes: 0,
+        installedBytes: 0,
+        transferredBytes: 0,
+        updateAvailable: false,
+        hasFiles: false,
+        inUse: false
+      })
+    } as unknown as typeof window.api.localModels
+    useSettingsStore.getState().openSettingsToPanel('model')
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    const list = document.querySelector('[role="tablist"][aria-label="Models"]')!
+    expect(list).not.toBeNull()
+    const tabs = list.querySelectorAll<HTMLButtonElement>('[role="tab"]')
+    await act(async () => fireEvent.keyDown(tabs[1], { key: 'Enter' }))
+    expect(tabs[1].isConnected).toBe(true)
+    expect(tabs[1].getAttribute('aria-selected')).toBe('true')
+    await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="Back"]')!.click())
+    expect(tabs[0].isConnected).toBe(true)
+    expect(tabs[0].getAttribute('aria-selected')).toBe('true')
+  })
+
   it('gives Memory a definite-height owner so its note list scrolls internally', async () => {
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
     await act(async () => navButton('Memory')?.click())

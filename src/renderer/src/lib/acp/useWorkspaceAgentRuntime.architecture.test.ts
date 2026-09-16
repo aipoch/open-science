@@ -526,6 +526,7 @@ const sendIntentKeys = [
   'selectedComputeHosts',
   'agentConfiguration',
   'memoryEnabled',
+  'autoReviewEnabled',
   'delegationPolicy',
   'preserveSelection',
   'setupSessionToken'

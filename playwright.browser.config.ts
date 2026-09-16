@@ -14,12 +14,8 @@ export default defineConfig({
   use: { ...base.use, baseURL: 'http://127.0.0.1:4178', headless: true },
   webServer: {
     // Bundled fixtures avoid hundreds of dev-module requests and React-refresh startup failures.
-    // CI restores fixtures built at this revision in the existing setup snapshot.
     command:
-      (process.env.OPEN_SCIENCE_E2E_BROWSER_PREBUILT === '1'
-        ? ''
-        : 'node node_modules/vite/bin/vite.js build --config vite.browser-test.config.ts && ') +
-      'node node_modules/vite/bin/vite.js preview --config vite.browser-test.config.ts',
+      'node node_modules/vite/bin/vite.js build --config vite.browser-test.config.ts && node node_modules/vite/bin/vite.js preview --config vite.browser-test.config.ts',
     url: 'http://127.0.0.1:4178',
     reuseExistingServer: false,
     timeout: 120_000

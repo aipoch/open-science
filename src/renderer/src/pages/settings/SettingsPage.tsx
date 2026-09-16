@@ -32,6 +32,7 @@ import {
 } from 'lucide-react'
 import { ActionToastStack } from '@/components/ActionToast'
 import * as Dialog from '@/components/ui/dialog'
+import { motion } from 'motion/react'
 import { FocusScope } from '@radix-ui/react-focus-scope'
 import {
   forwardRef,
@@ -1223,7 +1224,8 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
             setIsMobileNavOpen(false)
           }}
         >
-          <div
+          <motion.div
+            layoutRoot
             data-slot="settings-surface"
             data-state={open ? 'open' : 'closed'}
             className={cn(
@@ -1526,7 +1528,8 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                 ) : null}
               </TooltipProvider>
 
-              <div
+              <motion.div
+                layoutScroll
                 data-slot="settings-content-scroll"
                 data-settings-active-panel={activePanel}
                 className="min-h-0 flex-1 overflow-y-auto"
@@ -1549,17 +1552,23 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                   )}
                 >
                   <SettingsPanelLoadingBoundary
+                    resetKey={
+                      activePanel === 'model' ? `${historyIndex}:${modelView.kind}` : undefined
+                    }
                     panelKey={
-                      activePanel === 'skills' &&
-                      (skillsView.kind === 'marketplace' ||
-                        skillsView.kind === 'marketplace-detail' ||
-                        skillsView.kind === 'marketplace-batch')
-                        ? 'skills:marketplace'
-                        : activePanel === 'connectors' &&
-                            (connectorsView.kind === 'add' || connectorsView.kind === 'edit') &&
-                            connectorsView.credentialView === 'create'
-                          ? `${activePanel}:${Math.max(0, historyIndex - 1)}`
-                          : `${activePanel}:${historyIndex}`
+                      activePanel === 'model' &&
+                      (modelView.kind === 'list' || modelView.kind === 'local-models')
+                        ? 'model:tabs'
+                        : activePanel === 'skills' &&
+                            (skillsView.kind === 'marketplace' ||
+                              skillsView.kind === 'marketplace-detail' ||
+                              skillsView.kind === 'marketplace-batch')
+                          ? 'skills:marketplace'
+                          : activePanel === 'connectors' &&
+                              (connectorsView.kind === 'add' || connectorsView.kind === 'edit') &&
+                              connectorsView.credentialView === 'create'
+                            ? `${activePanel}:${Math.max(0, historyIndex - 1)}`
+                            : `${activePanel}:${historyIndex}`
                     }
                     onClose={onClose}
                   >
@@ -2026,9 +2035,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                     )}
                   </SettingsPanelLoadingBoundary>
                 </div>
-              </div>
+              </motion.div>
             </div>
-          </div>
+          </motion.div>
           <div
             hidden={isMobile && isMobileNavOpen}
             inert={isMobile && isMobileNavOpen}

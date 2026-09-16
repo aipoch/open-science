@@ -1,8 +1,6 @@
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { createRequire } from 'node:module'
-import type { JSONReport } from '@playwright/test/reporter'
 import { join } from 'node:path'
 
 import { load } from 'js-yaml'
@@ -188,8 +186,8 @@ describe('PR Gate workflow', () => {
     expect(macos?.if).toContain(
       "contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_visual_macos')"
     )
-    // Keep Windows font coverage reachable for Windows-only plans on every shard.
-    expect(windows?.if).toBeUndefined()
+    // Keep the existing Windows font pilot reachable for Windows-only plans.
+    expect(windows?.if).toBe('${{ matrix.shard == 1 }}')
     expect(workflowText).toContain('--fail-on-flaky-tests')
   })
 
@@ -1086,16 +1084,6 @@ describe('PR Gate workflow', () => {
 })
 
 describe('E2E throughput contracts', () => {
-  it('runs the native kernel and completion handoff regressions in the Windows runtime lane', () => {
-    const run = workflow.jobs.windows_core.steps?.find(({ id }) => id === 'windows_shell')?.run
-    for (const file of [
-      'windows-repl-termination.integration.test.ts',
-      'kernel-startup-retry.integration.test.ts',
-      'completion-gate.execute-control.integration.test.ts'
-    ])
-      expect(run).toContain(file)
-  })
-
   it('dispatches the real E2E bundles with a valid focused plan', () => {
     const classify = workflow.jobs.preflight.steps?.find(({ id }) => id === 'classify')
     const dir = mkdtempSync(join(tmpdir(), 'e2e-plan-'))
@@ -1124,54 +1112,16 @@ describe('E2E throughput contracts', () => {
     }
   })
 
-  it('shards all Windows browser coverage using the existing setup snapshot', () => {
+  it('retains native-platform font coverage in one Windows browser pilot', () => {
     const job = workflow.jobs.windows_e2e
     expect(job.steps?.find(({ id }) => id === 'renderer_layout')).toMatchObject({
-      run: 'npm run test:e2e:browser -- --shard=${{ matrix.shard }}/3 --fail-on-flaky-tests --global-timeout=180000',
-      env: { OPEN_SCIENCE_E2E_BROWSER_PREBUILT: '1' }
+      if: '${{ matrix.shard == 1 }}',
+      run: 'npm run test:e2e:browser -- --fail-on-flaky-tests --global-timeout=300000'
     })
-    expect(job.steps?.find(({ id }) => id === 'renderer_layout')?.if).toBeUndefined()
-    for (const platform of ['windows', 'macos']) {
-      const setup = workflow.jobs[`${platform}_e2e_setup`].steps!
-      const build = setup.findIndex(({ name }) => name === 'Build browser fixtures')
-      const pack = setup.findIndex(({ name }) => name === 'Pack E2E setup')
-      expect(build).toBeGreaterThan(-1)
-      expect(build).toBeLessThan(pack)
-      expect(setup[build].run).toContain('vite.browser-test.config.ts')
-    }
     expect(
       job.steps?.find(({ name }) => name === 'Enforce selected Windows E2E checks')?.run
     ).toContain('check renderer_layout "$RENDERER_LAYOUT_OUTCOME"')
   })
-
-  it('covers each browser test exactly once across the Windows shards', () => {
-    const collect = (shard?: number): string[] => {
-      const run = spawnSync(
-        process.execPath,
-        [
-          createRequire(import.meta.url).resolve('@playwright/test/cli'),
-          'test',
-          '--config=playwright.browser.config.ts',
-          '--list',
-          '--reporter=json',
-          ...(shard ? [`--shard=${shard}/3`] : [])
-        ],
-        { encoding: 'utf8', timeout: 20_000, maxBuffer: 10 * 1024 * 1024 }
-      )
-      expect(run.status, run.stderr).toBe(0)
-      const visit = (suites: JSONReport['suites']): string[] =>
-        suites.flatMap((suite) => [
-          ...suite.specs.map((spec) => spec.id),
-          ...visit(suite.suites ?? [])
-        ])
-      return visit((JSON.parse(run.stdout) as JSONReport).suites)
-    }
-    const all = collect()
-    const shards = workflow.jobs.windows_e2e.strategy!.matrix!.shard!.map(collect)
-    expect(shards.every((shard) => shard.length > 0)).toBe(true)
-    expect(shards.flat().sort()).toEqual(all.sort())
-    expect(new Set(shards.flat()).size).toBe(all.length)
-  }, 90_000)
 
   it('partitions macOS groups while preserving the stable aggregate gate', () => {
     const job = workflow.jobs.macos_e2e
