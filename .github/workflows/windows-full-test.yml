@@ -136,7 +136,9 @@ jobs:
         # SQLite-heavy integration suites contend heavily for Windows disk I/O when Vitest uses
         # every available core, and hosted-runner disk latency occasionally exceeds the default
         # per-test/hook budgets. Keep files serial and use bounded 60-second budgets; individual
-        # tests still fail at that bound. Five shards keep a still-progressing serial suite inside
+        # tests still fail at that bound. The Windows sequencer balances five shards by measured
+        # file duration (scripts/ci/windows-test-durations.json), retaining complete discovery.
+        # Five shards keep a still-progressing serial suite inside
         # the 60-minute job timeout after checkout and npm ci. GitHub annotations keep the failing
         # test visible if the job is later cancelled.
         run: npm test -- --shard=${{ matrix.shard }}/5 --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000 --reporter=default --reporter=github-actions
@@ -151,6 +153,7 @@ jobs:
         run: >-
           npm test --
           vitest.config.test.ts
+          scripts/ci/windows-test-sequencer.test.ts
           scripts/ci/release-workflows.test.ts
           scripts/windows-release-workflows.test.ts
           src/main/database/database-null-and-version-bounds.test.ts
