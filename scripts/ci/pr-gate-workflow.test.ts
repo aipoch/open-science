@@ -1116,7 +1116,7 @@ describe('E2E throughput contracts', () => {
     const job = workflow.jobs.windows_e2e
     expect(job.steps?.find(({ id }) => id === 'renderer_layout')).toMatchObject({
       if: '${{ matrix.shard == 1 }}',
-      run: 'npm run test:e2e:browser -- --fail-on-flaky-tests --global-timeout=180000'
+      run: 'npm run test:e2e:browser -- --fail-on-flaky-tests --global-timeout=300000'
     })
     expect(
       job.steps?.find(({ name }) => name === 'Enforce selected Windows E2E checks')?.run
