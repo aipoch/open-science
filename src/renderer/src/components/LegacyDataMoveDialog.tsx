@@ -23,7 +23,7 @@ type LegacyDataMoveDialogProps = {
   // The hidden config root where a legacy install's data currently lives (e.g. ~/.open-science).
   currentDataRoot: string
   // The parent the "Move to Open-Science" action relocates into; its derived data root (resolved via
-  // inspectDataRoot below) is the visible <parent>/OpenScience folder.
+  // inspectDataRoot below) defaults to the visible <parent>/Open-Science folder.
   defaultParent: string
   // Called after the user declines and the "don't ask again" flag has been persisted.
   onDismiss: () => void
@@ -48,7 +48,7 @@ const LegacyDataMoveDialog = ({
     path: string
     recoveryStatus?: DataRootRecoveryStatus
   } | null>(null)
-  // The exact <home>/OpenScience path "Move to Open-Science" would create. Resolved server-side via
+  // The exact target "Move to Open-Science" would use, normally <home>/Open-Science. Resolved via
   // inspectDataRoot(defaultParent) rather than getInfo's dataRoot, which for a legacy install is the
   // hidden config root itself.
   const [defaultInspectionState, setDefaultInspectionState] = useState<
