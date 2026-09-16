@@ -5885,6 +5885,8 @@
     "This conversation or this call": "이 대화 또는 이번 호출",
     "Saved to Inbox": "받은 편지함에 저장됨",
     "PDF downloaded to Inbox": "PDF가 받은 편지함에 다운로드됨",
-    "Review in Inbox to add to your library.": "받은 편지함에서 검토한 후 라이브러리에 추가하세요."
+    "Review in Inbox to add to your library.": "받은 편지함에서 검토한 후 라이브러리에 추가하세요.",
+    "Already in library": "이미 라이브러리에 있음",
+    "Open reference": "문헌 열기"
   }
 }

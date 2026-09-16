@@ -65,6 +65,7 @@ type ToolDetailSection =
   ToolCodeSection | ToolDiffSection | ToolLiteratureSection | ToolSummarySection
 
 type ToolActivityDetails = {
+  defaultExpanded?: boolean
   displayName: string
   subtitle?: string
   metaLabel?: string
@@ -435,8 +436,12 @@ const buildLiteratureDetails = (activity: ToolActivity): ToolActivityDetails | u
       : buildLiteratureToolSummary(activity.rawInput, output)
   // Only replace acquisition output when a pending receipt provides an actionable destination.
   // Keep generic diagnostics for not-found, already-reviewed, failures and unknown outcomes.
-  if (isAcquiringPdf && !summary.pdfDownloaded) return undefined
+  if (isAcquiringPdf && !summary.pdfDownloaded) {
+    const details = buildGenericDetails(activity)
+    return details ? { ...details, defaultExpanded: true } : undefined
+  }
   return {
+    defaultExpanded: true,
     displayName: libraryAction ? 'Literature library' : 'Reading',
     subtitle: summary.query ?? summary.itemTitles?.[0] ?? summary.documentNames[0],
     sections: [{ kind: 'literature', summary }]

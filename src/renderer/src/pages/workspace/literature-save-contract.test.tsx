@@ -36,7 +36,7 @@ it('does not describe an existing library receipt as an Inbox save', () => {
     const card = rendered.getByTestId('literature-tool-card')
     expect(card.textContent).not.toContain('Inbox')
     expect(card.textContent).toContain('Already in library: 1')
-    fireEvent.click(rendered.getByRole('button', { name: 'Open existing reference 1' }))
+    fireEvent.click(rendered.getByRole('button', { name: 'Open reference' }))
     expect(navigate).toHaveBeenCalledWith('existing', 'user')
   } finally {
     cleanup()

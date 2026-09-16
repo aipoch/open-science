@@ -6219,6 +6219,8 @@
     "This conversation or this call": "Cette conversation ou cet appel",
     "Saved to Inbox": "Enregistré dans la boîte de réception",
     "PDF downloaded to Inbox": "PDF téléchargé dans la boîte de réception",
-    "Review in Inbox to add to your library.": "Vérifiez dans la boîte de réception pour ajouter à votre bibliothèque."
+    "Review in Inbox to add to your library.": "Vérifiez dans la boîte de réception pour ajouter à votre bibliothèque.",
+    "Already in library": "Déjà dans la bibliothèque",
+    "Open reference": "Ouvrir la référence"
   }
 }

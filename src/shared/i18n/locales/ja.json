@@ -5887,6 +5887,8 @@
     "This conversation or this call": "この会話または今回の呼び出し",
     "Saved to Inbox": "受信トレイに保存済み",
     "PDF downloaded to Inbox": "PDF を受信トレイにダウンロード済み",
-    "Review in Inbox to add to your library.": "受信トレイで確認してライブラリに追加してください。"
+    "Review in Inbox to add to your library.": "受信トレイで確認してライブラリに追加してください。",
+    "Already in library": "ライブラリに登録済み",
+    "Open reference": "文献を開く"
   }
 }

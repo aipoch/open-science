@@ -5887,6 +5887,8 @@
     "This conversation or this call": "此对话或仅此调用",
     "Saved to Inbox": "已保存到收件箱",
     "PDF downloaded to Inbox": "PDF 已下载到收件箱",
-    "Review in Inbox to add to your library.": "请前往收件箱审核，确认后加入文献库。"
+    "Review in Inbox to add to your library.": "请前往收件箱审核，确认后加入文献库。",
+    "Already in library": "已在文献库中",
+    "Open reference": "打开文献"
   }
 }

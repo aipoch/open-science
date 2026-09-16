@@ -6360,6 +6360,8 @@
     "This conversation or this call": "Этот диалог или этот вызов",
     "Saved to Inbox": "Сохранено во входящих",
     "PDF downloaded to Inbox": "PDF загружен во входящие",
-    "Review in Inbox to add to your library.": "Проверьте во входящих, чтобы добавить в библиотеку."
+    "Review in Inbox to add to your library.": "Проверьте во входящих, чтобы добавить в библиотеку.",
+    "Already in library": "Уже в библиотеке",
+    "Open reference": "Открыть публикацию"
   }
 }

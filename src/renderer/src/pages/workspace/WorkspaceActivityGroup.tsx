@@ -195,15 +195,9 @@ const WorkspaceActivityGroup = ({
                 isSearch || skillLoadDocument || skillLoadWithoutDocument
                   ? undefined
                   : buildToolActivityDetails(activity, t)
-              // Reveal actionable Inbox receipts, including partial saves. Explicit user toggles win.
-              const hasPendingLiterature =
-                toolDetails?.sections.some(
-                  (section) =>
-                    section.kind === 'literature' &&
-                    section.summary.action === 'save' &&
-                    (section.summary.savedCount ?? 0) > 0
-                ) ?? false
-              const isRowExpanded = expansionOverrides[activity.id] ?? hasPendingLiterature
+              // Detail presenters own their defaults; explicit user toggles always win.
+              const isRowExpanded =
+                expansionOverrides[activity.id] ?? toolDetails?.defaultExpanded ?? false
               const showManagePackagesProgress =
                 isManagePackagesActivity(activity) &&
                 (phase === 'executing' || phase === 'completed' || phase === 'failed')
