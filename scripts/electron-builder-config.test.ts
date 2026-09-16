@@ -121,7 +121,7 @@ describe('electron-builder Windows targets', () => {
     expect(config).toContain('from: build/windows-runtime-cache-uninstall.ps1')
     expect(config).toContain('include: build/installer-license.nsh')
     expect(readFileSync(join(process.cwd(), 'build', 'installer-license.nsh'), 'utf8')).toContain(
-      '!include "${BUILD_RESOURCES_DIR}/installer.nsh"'
+      '!include "${BUILD_RESOURCES_DIR}\\installer.nsh"'
     )
     expect(include).toContain('windows-runtime-cache-uninstall.ps1')
     const customUninstall = include.match(/!macro customUnInstall\n([\s\S]*?)!macroend/)?.[1]
