@@ -50,6 +50,82 @@ describe.skipIf(process.platform === 'win32')('Debian CLI launcher', () => {
   })
 })
 
+// Run the real rendered post-install script with OS commands captured at the boundary.
+// This is portable and never changes the host's alternatives, MIME database or sandbox mode.
+it.skipIf(process.platform === 'win32')(
+  'registers its CLI without cleaning old-brand alternatives',
+  async () => {
+    const { readFile } = await import('node:fs/promises')
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'deb-coexist-')))
+    roots.push(root)
+    const bin = join(root, 'bin')
+    await mkdir(bin)
+    const calls = join(root, 'calls')
+    const command = join(root, 'usr/bin/open-science')
+    const current = join(root, 'opt/Open-Science')
+    const oldTargets = ['Open Science', 'OpenScience'].flatMap((name) => [
+      `${root}/opt/${name}/open-science`,
+      `${root}/opt/${name}/resources/open-science-cli`
+    ])
+    const state = join(root, 'state')
+    await writeFile(
+      state,
+      [
+        `Link: ${command}`,
+        ...[`${current}/open-science`, ...oldTargets].map((target) => `Alternative: ${target}`)
+      ].join('\n') + '\n'
+    )
+    await writeFile(
+      join(bin, 'update-alternatives'),
+      `#!/bin/sh
+if [ "$1" = '--query' ]; then cat "$FIXTURE_STATE"; else printf '%s\\n' "$@" >> "$FIXTURE_CALLS"; fi
+`,
+      { mode: 0o755 }
+    )
+    for (const name of [
+      'chmod',
+      'unshare',
+      'update-mime-database',
+      'update-desktop-database',
+      'apparmor_status'
+    ]) {
+      await writeFile(join(bin, name), `#!/bin/sh\nexit ${name === 'apparmor_status' ? 1 : 0}\n`, {
+        mode: 0o755
+      })
+    }
+    const hook = join(root, 'install')
+    await writeFile(
+      hook,
+      (await readFile('build/deb-after-install.tpl', 'utf8'))
+        .replaceAll('${executable}', 'open-science')
+        .replaceAll('${sanitizedProductName}', 'Open-Science')
+        .replaceAll('/usr/bin/', `${root}/usr/bin/`)
+        .replaceAll('/etc/alternatives/', `${root}/etc/alternatives/`)
+        .replaceAll('/opt/', `${root}/opt/`)
+    )
+    const result = spawnSync('/bin/bash', [hook, 'configure'], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PATH: `${bin}:/usr/bin:/bin`,
+        FIXTURE_STATE: state,
+        FIXTURE_CALLS: calls
+      }
+    })
+    expect(result.status, result.stderr).toBe(0)
+    expect((await readFile(calls, 'utf8')).trim().split('\n')).toEqual([
+      '--install',
+      command,
+      'open-science',
+      `${current}/resources/open-science-cli`,
+      '100',
+      '--remove',
+      'open-science',
+      `${current}/open-science`
+    ])
+  }
+)
+
 // Preserve electron-builder's platform setup while replacing only command registration.
 describe('Debian packaging contract', () => {
   it('keeps the upstream sandbox, MIME and AppArmor setup and installs a separate CLI entry', async () => {

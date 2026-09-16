@@ -13,7 +13,6 @@ import {
   type MacInstallationAssistantResult
 } from '../shared/mac-installation'
 import { createLogger, diagnosticErrorFields } from './logger'
-import { BRAND_APP_ID } from './brand-upgrade/system-paths'
 
 export type InstallationLocation = 'writable' | 'read-only' | 'unknown'
 
@@ -69,35 +68,6 @@ const performMacInstallation = async (
   if (!bundleName.endsWith('.app')) throw new Error('The running application bundle is invalid.')
 
   const destination = join(applicationsDirectory, bundleName)
-  let previousLocation = destination
-  if (bundleName === 'Open-Science.app') {
-    const legacy = [] as string[]
-    for (const name of ['Open Science.app', 'OpenScience.app']) {
-      const candidate = join(applicationsDirectory, name)
-      if (await pathExists(candidate)) legacy.push(candidate)
-    }
-    if (legacy.length > 1 || (legacy.length && (await pathExists(destination)))) {
-      throw new Error(
-        'Multiple application bundles exist. Resolve the installations before retrying.'
-      )
-    }
-    if (legacy.length) {
-      const candidate = legacy[0]
-      const entry = await lstat(candidate)
-      if (!entry.isDirectory() || entry.isSymbolicLink()) {
-        throw new Error(`The existing application is not a physical bundle: ${candidate}`)
-      }
-      const { stdout } = await runFile('/usr/libexec/PlistBuddy', [
-        '-c',
-        'Print :CFBundleIdentifier',
-        join(candidate, 'Contents', 'Info.plist')
-      ])
-      if (stdout.trim() !== BRAND_APP_ID) {
-        throw new Error(`The existing application has a different bundle identity: ${candidate}`)
-      }
-      previousLocation = candidate
-    }
-  }
   const stagingRoot = await mkdtemp(join(applicationsDirectory, '.open-science-install-'))
   const stagedBundle = join(stagingRoot, bundleName)
   const previousBundle = join(stagingRoot, 'previous.app')
@@ -109,8 +79,8 @@ const performMacInstallation = async (
     // archive stays intact and macOS bundle metadata and relative framework symlinks survive.
     await runFile('/usr/bin/ditto', [sourceBundle, stagedBundle])
 
-    if (await pathExists(previousLocation)) {
-      await rename(previousLocation, previousBundle)
+    if (await pathExists(destination)) {
+      await rename(destination, previousBundle)
       previousMoved = true
     }
 
@@ -119,7 +89,7 @@ const performMacInstallation = async (
     } catch (error) {
       if (previousMoved) {
         try {
-          await rename(previousBundle, previousLocation)
+          await rename(previousBundle, destination)
         } catch (restoreError) {
           preserveStaging = true
           log.error('previous application restore failed', diagnosticErrorFields(restoreError))

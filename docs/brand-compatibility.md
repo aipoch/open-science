@@ -1,7 +1,9 @@
 # Brand and location compatibility
 
 The product displays **Open-Science** (or **open-science** where lowercase is appropriate).
-Display names are separate from persistent identities and filesystem locations.
+Display names are separate from persistent identities and filesystem locations. New versions use the
+new brand; old installation names and launchers may remain. Installing or launching a new version
+does not proactively rename, remove, or take over an old application.
 
 Only this project's product name uses the hyphenated spelling. Third-party official names remain
 **Open Science Framework** and **Center for Open Science**, including search results, quotations,
@@ -77,8 +79,8 @@ STORAGE_ROOT, then the development/production default. Blank values are ignored 
 are normalized. All such paths must be absolute. The Windows Notebook sandbox and micromamba tool
 writer use that same override parser and receive the actual application mode. Without an override,
 development ownership and tools stay under the development configuration root, independent of the
-research data disk. Production keeps its existing platform-local ownership and tool receipts. System-entry repair is disabled for
-explicitly isolated test instances, which must never rewrite the user's real Dock or shortcuts.
+research data disk. Production keeps its existing platform-local ownership and tool receipts. Test instances must never
+modify the user's real Dock, shortcuts, application installations, or credentials.
 
 Existing Windows tool receipts and owned working caches remain readable at their original paths.
 New installations never create `OpenScience` tool or `OpenScienceTmp` cache directories. Old and new
@@ -98,46 +100,78 @@ startup error with the settings file, failure reason and recovery steps before r
 logging initialization. Restore a verified backup, correct the path/permissions, or use a compatible
 app version; preserve the damaged file and recovery records. Startup never replaces a corrupt primary.
 
-## Installed application and launcher updates
+## Installed applications and launchers
 
-- macOS packaging names the bundle, executable, menu, and display metadata `Open-Science`. Squirrel's
-  normal update rename is supplemented by verified in-place renaming of recognized old `.app` names.
-  An occupied destination or duplicate bundle blocks repair with a clear recovery message. The app
-  registers the new bundle, repairs its exact existing Dock references, and relaunches the new physical
-  executable before initializing updater and CLI owners. User-named bundles are not renamed.
-  Failures report the failed step and actual bundle path through a native dialog. Before a rename,
-  the original bundle remains in place. After a rename, startup stops without using old launch
-  references or rolling back already repaired registrations; reopen the reported new bundle to retry
-  registration and Dock repair. Every retry repeats identity, duplicate-installation and signature
-  checks. Restore a valid signed installation or resolve permissions/duplicates as indicated.
-  The DMG installation assistant replaces a single old-name physical bundle only after verifying
-  its application ID, and restores its original path if installation fails. Coexisting old/new
-  bundles or a different application identity stop installation before any replacement.
-- Windows retains the application ID, executable identity, and `.science` ProgID. Display descriptions,
-  installer, uninstall entry, and shortcuts use the new brand. The installer preserves the matching
-  same-location installation's shortcut choices during manual and updater upgrades. Renames emit shell
-  rename notifications instead of unpinning. Startup repairs owned taskbar and implicit shortcut
-  filenames with sparse updates that preserve arguments and working directories. Windows may cache
-  a pinned tooltip until the next sign-in; this cannot be certified by a file rename alone.
-  The standalone, explicitly confirmed data-reset tool recognizes both brand names for data,
-  Electron profiles and runtime cache parents. An incomplete, damaged or nonstandard profile
-  selection blocks reset before deletion and requires manual review; the selection is preserved.
-- Linux retains package/desktop identifiers. Package metadata and launchers use the new product path;
-  Debian registers the replacement CLI alternative before removing exact historical product targets.
-  Unrelated manual alternatives remain untouched. Owned user desktop-entry copies retain their
-  `Exec` arguments while updating owned `TryExec`, `Path`, display and icon installation references.
-  Custom working directories, unrelated executables and other desktop-entry groups stay intact. AppImages only repair their own entries; they do not redirect a coexisting deb installation.
-- CLI discovery accepts old/new installation directories crossed with old/new executable names.
-  Old managed launcher and Windows PATH-receipt ownership markers remain accepted for repair.
+- macOS packaging names the bundle, executable, menu, and display metadata `Open-Science`.
+  `/Applications/Open Science.app` and `/Applications/Open-Science.app` may coexist. Launching new
+  code from an old-name bundle leaves that physical path intact: startup performs no brand-related
+  rename, LaunchServices repair, Dock edit, or forced restart, and coexistence alone does not block
+  startup. The DMG installation assistant stages the source bundle and replaces only the destination
+  with the same filename. A failed replacement restores that same destination; concurrent requests
+  join one transaction. An old-name sibling is neither inspected for takeover nor replaced.
+- Windows retains the application ID, executable identity, and `.science` ProgID. New installer,
+  uninstall and shortcut display names use the new brand. Normal installer/update/uninstall behavior
+  and file/protocol registration remain; startup does not scan or rewrite old shortcuts, taskbar pins,
+  or implicit shell entries. There is no brand-specific shortcut retention/rename notification hook.
+  The standalone, explicitly confirmed data-reset tool still recognizes both brand names for data,
+  profiles and runtime cache parents, and blocks deletion on incomplete or damaged profile selections.
+- Linux retains package/desktop identifiers. New package metadata and launchers use the new brand.
+  Startup does not rewrite user desktop-entry copies. Debian keeps main's normal CLI registration:
+  install its own wrapper before removing the exact superseded executable alternative at the same
+  product location. It does not additionally remove old-brand alternatives from other installations.
+  Normal sandbox, MIME, desktop database and AppArmor setup remain.
+- CLI discovery is read-only and accepts old/new installation directories crossed with old/new
+  executable names. Explicit selections and the existing development/installed candidate order remain;
+  among installed candidates, new-brand names are preferred. Old managed launcher and Windows PATH
+  receipt ownership markers remain accepted by the explicit CLI installation workflow.
 
-Native shell integration must also be tested on each target OS. Host-independent tests or installer
-compilation do not certify Windows taskbar, Linux desktop, signing, or live updater behavior.
+Normal installation and updater replacement, permission checks, update eligibility and signing
+configuration are retained. Technical app IDs, protocols, signatures, certificate subjects, update
+feeds and credential identities are not mechanically renamed. Normal update behavior may change its
+own managed entries; it does not promise to remove every old application copy, Dock icon or shortcut.
+Users can choose which application and launcher to keep. Windows registered installation IDs and Linux
+package IDs remain shared, so this is not a promise of independently managed installer slots on every OS.
+
+Installation paths do not select research data or encryption identity. Existing valid settings,
+Electron profiles and credentials remain in use. Credential identity selection and
+`verifyCredentialCiphertexts` still run before settings writers; see
+[credential identity](credential-identity.md). Selecting `settings.dataRoot` does not replace either
+profile or credential recovery. No installation rename or data migration is required for compatibility.
+
+Coexistence does **not** authorize concurrent writes. The startup lock is acquired for the resolved
+Electron profile before initialization writes, and arguments from a second launch are retained while
+startup finishes. Packaged builds keep this lock even if the development multi-instance variable is
+set. For parallel development, use separate task configuration/profile/data roots. Different profiles
+pointing at the same research root, older binaries with different locking behavior, and cross-version
+database downgrade compatibility are not made safe by allowing coexisting application files. Close
+one version before opening another against the same data; do not assume a newer database can be read
+by an older release.
+
+## Acceptance and verification boundaries
+
+Behavior regressions exercise the real startup entry with native APIs doubled: old/new macOS bundle
+names can coexist, old-name launches do not mutate system entries or restart, and a second process
+resolving the same profile cannot reach initialization writers. Startup argument forwarding and
+credential validation ordering remain covered. Temporary bundle tests exercise actual macOS `ditto`
+staging, same-name replacement and failure rollback, without touching `/Applications` or the Dock.
+A rendered Debian post-install hook captures OS commands to verify that unrelated old-brand
+alternatives survive. CLI tests cover new, old, mixed-name and coexisting layouts.
+
+Storage/profile regressions must continue to cover authoritative old/custom selections, fresh defaults,
+development/isolation precedence, missing or corrupt settings, missing profiles, ambiguous roots,
+untrusted generic directories/links, and target replacement during migration. These protections are
+independent of the removed system-entry repair. Migration remains a user-confirmed operation.
+
+In-memory/mock tests, temporary bundle copies and installer compilation are not native installation
+or upgrade certification. macOS/Windows/Linux installer, signing, file/protocol launch, shell cache,
+actual Keychain/DPAPI, live updater and full application E2E verification must be reported separately;
+no cross-platform success follows from these local regressions alone.
 
 ## Intentionally retained old spellings
 
 | Spelling or family                                                                                                         | Reason                                                                                                                                              |
 | -------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `OpenScience`, `OpenScience-DEV`, `Open Science (DEV)`, `Open Science.app` in location/upgrade code                        | Read existing data, profiles, applications, and shortcuts without moving research data.                                                             |
+| `OpenScience`, `OpenScience-DEV`, `Open Science (DEV)`, `Open Science.app` in location/installation discovery code         | Recognize existing data, profiles and installations without renaming or moving them.                                                                |
 | `Open Science` / `Open Science (DEV)` in credential selection                                                              | Legacy macOS Keychain identity, selected only after a silent new-name miss; see [credential identity](credential-identity.md) for platform support. |
 | Windows `Open Science Session package`                                                                                     | Persisted `.science` ProgID. Its display description changes; registering a second class would break upgrades.                                      |
 | `OpenScienceTmp`, `.openscience/jobs`, `.openscience/environments`, `openscience-<job-id>`                                 | Existing owned caches, remote records, activation files, and scheduler recovery; new resources use the new spelling.                                |

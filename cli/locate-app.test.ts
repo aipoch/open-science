@@ -61,15 +61,31 @@ describe('locateApp', () => {
   })
 
   it.each([
+    ['darwin', '/Applications/Open-Science.app/Contents/MacOS/Open-Science'],
+    ['darwin', '/Applications/Open Science.app/Contents/MacOS/Open Science'],
     ['darwin', '/Applications/Open Science.app/Contents/MacOS/Open-Science'],
     ['darwin', '/Applications/Open-Science.app/Contents/MacOS/Open Science'],
     ['win32', '/fixture/Programs/Open Science/open-science.exe'],
     ['linux', '/opt/Open Science/open-science']
-  ])('discovers mixed-name upgrade installations on %s: %s', async (platform, command) => {
-    vi.stubGlobal('process', { ...process, platform })
+  ])(
+    'discovers existing new, old or mixed-name installations on %s: %s',
+    async (platform, command) => {
+      vi.stubGlobal('process', { ...process, platform })
+      vi.mocked(fs.access).mockImplementation(async (path) => {
+        if (String(path) !== command) throw new Error('ENOENT')
+      })
+      expect((await locateApp({ env: { LOCALAPPDATA: '/fixture' } })).command).toBe(command)
+    }
+  )
+  it('prefers the new installed bundle while an explicit old bundle remains selectable', async () => {
+    vi.stubGlobal('process', { ...process, platform: 'darwin' })
+    const current = '/Applications/Open-Science.app/Contents/MacOS/Open Science'
+    const legacy = '/Applications/Open Science.app/Contents/MacOS/Open Science'
+    const candidates = new Set([legacy, current])
     vi.mocked(fs.access).mockImplementation(async (path) => {
-      if (String(path) !== command) throw new Error('ENOENT')
+      if (!candidates.has(String(path))) throw new Error('ENOENT')
     })
-    expect((await locateApp({ env: { LOCALAPPDATA: '/fixture' } })).command).toBe(command)
+    expect((await locateApp({ env: {} })).command).toBe(current)
+    expect((await locateApp({ appPath: legacy, env: {} })).command).toBe(legacy)
   })
 })

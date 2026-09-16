@@ -1,38 +1,3 @@
-# Preserve the same registered installation's pin choices on manual brand upgrades as well as
-# updater runs. Both NSIS uninstall passes supply their exact registry root to this hook.
-!macro customKeepShortcuts ROOT_KEY
-  Push $R1
-  Push $R2
-  Push $R3
-  Push $R4
-  !insertmacro readReg $R1 "${ROOT_KEY}" "${INSTALL_REGISTRY_KEY}" ShortcutName
-  ${if} $R1 == "Open Science"
-  ${orIf} $R1 == "OpenScience"
-    !insertmacro readReg $R2 "${ROOT_KEY}" "${INSTALL_REGISTRY_KEY}" InstallLocation
-    !insertmacro readReg $R3 "${ROOT_KEY}" "${INSTALL_REGISTRY_KEY}" KeepShortcuts
-    Push $R2
-    Call normalizeRegisteredInstallPath
-    Pop $R2
-    Push $INSTDIR
-    Call normalizeRegisteredInstallPath
-    Pop $R4
-    ${if} $R2 == $R4
-    ${andIf} $R3 == "true"
-    ${andIf} ${FileExists} "$R2\${APP_EXECUTABLE_FILENAME}"
-      StrCpy $isTryToKeepShortcuts "true"
-    ${endif}
-  ${endif}
-  Pop $R4
-  Pop $R3
-  Pop $R2
-  Pop $R1
-!macroend
-
-!macro customShortcutRenamed OLD NEW
-  # UninstShortcut removes taskbar pins. This is a rename of our registered shortcut, not removal.
-  System::Call 'Shell32::SHChangeNotify(i 1, i 0x3005, w "${OLD}", w "${NEW}")'
-!macroend
-
 !macro customInstallMode
   # Notebook AppContainer profiles are per-user durable resources. A machine-wide installation
   # cannot safely create, identify, and remove one profile for every Windows account, so keep the

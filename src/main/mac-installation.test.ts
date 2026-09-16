@@ -262,7 +262,7 @@ describe('mac installation location', () => {
   })
 })
 
-describe.skipIf(process.platform !== 'darwin')('mac installation brand upgrade', () => {
+describe.skipIf(process.platform !== 'darwin')('mac installation coexistence', () => {
   const roots: string[] = []
   const fixture = async (
     legacyName: string
@@ -293,41 +293,58 @@ describe.skipIf(process.platform !== 'darwin')('mac installation brand upgrade',
   })
 
   it.each(['Open Science.app', 'OpenScience.app'])(
-    'replaces the owned %s without leaving a duplicate',
+    'installs the new name without changing the existing %s',
     async (legacyName) => {
       const f = await fixture(legacyName)
       await expect(installMacApplication(f.source, f.applications)).resolves.toBe(f.destination)
-      expect(await readdir(f.applications)).toEqual(['Open-Science.app'])
+      expect((await readdir(f.applications)).sort()).toEqual(
+        [legacyName, 'Open-Science.app'].sort()
+      )
+      expect(await readFile(join(f.legacy, 'Contents/version'), 'utf8')).toBe('old')
       expect(await readFile(join(f.destination, 'Contents/version'), 'utf8')).toBe('new')
     }
   )
 
-  it.each(['duplicate', 'foreign'])('refuses a %s installation before writing', async (kind) => {
-    const f = await fixture('Open Science.app')
-    if (kind === 'duplicate') await mkdir(f.destination)
-    else {
-      await writeFile(
-        join(f.legacy, 'Contents/Info.plist'),
-        '<plist version="1.0"><dict><key>CFBundleIdentifier</key><string>org.example.other</string></dict></plist>'
-      )
+  it.each(['duplicate', 'foreign'])(
+    'preserves a %s sibling while installing the same-name target',
+    async (kind) => {
+      const f = await fixture('Open Science.app')
+      if (kind === 'duplicate') await mkdir(f.destination)
+      else {
+        await writeFile(
+          join(f.legacy, 'Contents/Info.plist'),
+          '<plist version="1.0"><dict><key>CFBundleIdentifier</key><string>org.example.other</string></dict></plist>'
+        )
+      }
+      const previousInfo = await readFile(join(f.legacy, 'Contents/Info.plist'), 'utf8')
+      await expect(installMacApplication(f.source, f.applications)).resolves.toBe(f.destination)
+      expect((await readdir(f.applications)).sort()).toEqual([
+        'Open Science.app',
+        'Open-Science.app'
+      ])
+      expect(await readFile(join(f.destination, 'Contents/version'), 'utf8')).toBe('new')
+      expect(await readFile(join(f.legacy, 'Contents/Info.plist'), 'utf8')).toBe(previousInfo)
+      expect(await readFile(join(f.legacy, 'Contents/version'), 'utf8')).toBe('old')
     }
-    const before = await readdir(f.applications)
-    await expect(installMacApplication(f.source, f.applications)).rejects.toThrow()
-    expect(await readdir(f.applications)).toEqual(before)
-    expect(await readFile(join(f.legacy, 'Contents/version'), 'utf8')).toBe('old')
-  })
+  )
 
-  it('restores the original legacy path if final installation fails', async () => {
+  it('restores the same-name target after failed replacement and leaves the old-name sibling untouched', async () => {
     const f = await fixture('OpenScience.app')
+    await mkdir(join(f.destination, 'Contents'), { recursive: true })
+    await writeFile(join(f.destination, 'Contents/version'), 'previous new-name version')
     const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
     vi.mocked(rename).mockImplementation(async (from, to) => {
-      if (to === f.destination) throw new Error('fixture final rename failure')
+      if (to === f.destination && String(from).endsWith('/Open-Science.app'))
+        throw new Error('fixture final rename failure')
       return actual.rename(from, to)
     })
     await expect(installMacApplication(f.source, f.applications)).rejects.toThrow(
       'fixture final rename failure'
     )
-    expect(await readdir(f.applications)).toEqual(['OpenScience.app'])
+    expect((await readdir(f.applications)).sort()).toEqual(['Open-Science.app', 'OpenScience.app'])
+    expect(await readFile(join(f.destination, 'Contents/version'), 'utf8')).toBe(
+      'previous new-name version'
+    )
     expect(await readFile(join(f.legacy, 'Contents/version'), 'utf8')).toBe('old')
   })
 })

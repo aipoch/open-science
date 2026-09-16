@@ -20,7 +20,6 @@ vi.mock('./storage/initialize-location', () => ({
   }),
   initializeDataLocation: vi.fn()
 }))
-vi.mock('./brand-upgrade/native-paths', () => ({ upgradeNativeBrandEntries: () => false }))
 import { spawn } from 'node:child_process'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'

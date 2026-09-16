@@ -282,15 +282,3 @@ it('registers .science as a viewable document without changing the per-user inst
   expect(config.linux.fileAssociations[0].name).toBe('Open-Science Session package')
   expect(config.nsis).toMatchObject({ perMachine: false, allowElevation: false })
 })
-
-it('retains registered shortcuts through both manual and updater brand upgrades', () => {
-  const root = join(process.cwd(), 'node_modules/app-builder-lib/templates/nsis')
-  const install = readFileSync(join(root, 'installSection.nsh'), 'utf8')
-  const util = readFileSync(join(root, 'include/installUtil.nsh'), 'utf8')
-  const links = readFileSync(join(root, 'include/installer.nsh'), 'utf8')
-  expect(install).toContain('setIsTryToKeepShortcuts "SHELL_CONTEXT"')
-  expect(util).toContain('setIsTryToKeepShortcuts "$rootKey"')
-  expect(util).toContain('customKeepShortcuts "${ROOT_KEY}"')
-  expect(links).toContain('customShortcutRenamed "$oldStartMenuLink" "$newStartMenuLink"')
-  expect(links).toContain('customShortcutRenamed "$oldDesktopLink" "$newDesktopLink"')
-})

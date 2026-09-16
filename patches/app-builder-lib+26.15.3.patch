@@ -1,35 +1,7 @@
 diff --git a/node_modules/app-builder-lib/templates/nsis/include/installUtil.nsh b/node_modules/app-builder-lib/templates/nsis/include/installUtil.nsh
-index 4736774..dd547b6 100644
 --- a/node_modules/app-builder-lib/templates/nsis/include/installUtil.nsh
 +++ b/node_modules/app-builder-lib/templates/nsis/include/installUtil.nsh
-@@ -83,13 +83,16 @@ FunctionEnd
-
- Var /GLOBAL isTryToKeepShortcuts
-
--!macro setIsTryToKeepShortcuts
-+!macro setIsTryToKeepShortcuts ROOT_KEY
-   StrCpy $isTryToKeepShortcuts "true"
-   !ifdef allowToChangeInstallationDirectory
-     ${ifNot} ${isUpdated}
-       StrCpy $isTryToKeepShortcuts "false"
-     ${endIf}
-   !endif
-+  !ifmacrodef customKeepShortcuts
-+    !insertmacro customKeepShortcuts "${ROOT_KEY}"
-+  !endif
- !macroend
-
- # https://nsis-dev.github.io/NSIS-Forums/html/t-172971.html
-@@ -188,7 +191,7 @@ Function uninstallOldVersion
-     StrCpy $0 "/allusers"
-   ${endif}
-
--  !insertMacro setIsTryToKeepShortcuts
-+  !insertMacro setIsTryToKeepShortcuts "$rootKey"
-
-   ${if} $isTryToKeepShortcuts == "true"
-     !insertmacro readReg $R5 "$rootKey" "${INSTALL_REGISTRY_KEY}" KeepShortcuts
-@@ -209,34 +212,20 @@ Function uninstallOldVersion
+@@ -209,34 +209,20 @@ Function uninstallOldVersion
    StrCpy $uninstallerFileNameTemp "$PLUGINSDIR\old-uninstaller.exe"
    !insertmacro copyFile "$uninstallerFileName" "$uninstallerFileNameTemp"
 
@@ -76,44 +48,3 @@ index 4736774..dd547b6 100644
 
    DoesNotExist:
      SetErrors
-diff --git a/node_modules/app-builder-lib/templates/nsis/include/installer.nsh b/node_modules/app-builder-lib/templates/nsis/include/installer.nsh
-index 300ef3d..48cd863 100644
---- a/node_modules/app-builder-lib/templates/nsis/include/installer.nsh
-+++ b/node_modules/app-builder-lib/templates/nsis/include/installer.nsh
-@@ -205,7 +205,11 @@
-       !insertmacro createMenuDirectory
-
-       Rename $oldStartMenuLink $newStartMenuLink
--      WinShell::UninstShortcut "$oldStartMenuLink"
-+      !ifmacrodef customShortcutRenamed
-+        !insertmacro customShortcutRenamed "$oldStartMenuLink" "$newStartMenuLink"
-+      !else
-+        WinShell::UninstShortcut "$oldStartMenuLink"
-+      !endif
-       WinShell::SetLnkAUMI "$newStartMenuLink" "${APP_ID}"
-
-       !insertmacro cleanupOldMenuDirectory
-@@ -228,7 +232,11 @@
-       ${elseif} $oldDesktopLink != $newDesktopLink
-       ${andIf} ${FileExists} "$oldDesktopLink"
-         Rename $oldDesktopLink $newDesktopLink
-+        !ifmacrodef customShortcutRenamed
-+        !insertmacro customShortcutRenamed "$oldDesktopLink" "$newDesktopLink"
-+      !else
-         WinShell::UninstShortcut "$oldDesktopLink"
-+      !endif
-         WinShell::SetLnkAUMI "$newDesktopLink" "${APP_ID}"
-
-       !ifdef RECREATE_DESKTOP_SHORTCUT
-diff --git a/node_modules/app-builder-lib/templates/nsis/installSection.nsh b/node_modules/app-builder-lib/templates/nsis/installSection.nsh
-index 053772f..4205b3f 100644
---- a/node_modules/app-builder-lib/templates/nsis/installSection.nsh
-+++ b/node_modules/app-builder-lib/templates/nsis/installSection.nsh
-@@ -39,6 +39,6 @@ StrCpy $appExe "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
-
- Var /GLOBAL keepShortcuts
- StrCpy $keepShortcuts "false"
--!insertMacro setIsTryToKeepShortcuts
-+!insertMacro setIsTryToKeepShortcuts "SHELL_CONTEXT"
- ${if} $isTryToKeepShortcuts == "true"
-   ReadRegStr $R1 SHELL_CONTEXT "${INSTALL_REGISTRY_KEY}" KeepShortcuts

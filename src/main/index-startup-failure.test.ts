@@ -23,27 +23,68 @@ vi.mock('./storage/initialize-location', () => ({
   },
   initializeDataLocation: vi.fn()
 }))
-vi.mock('./brand-upgrade/native-paths', () => ({
-  upgradeNativeBrandEntries: () => fixture.upgradeBrand()
-}))
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
-it('shows native recovery when entry repair fails with an unclassified system error', async () => {
-  fixture.failAt = 'none'
-  fixture.headless = false
-  fixture.upgradeBrand.mockImplementationOnce(() => {
-    throw new Error('injected registration EACCES')
-  })
-  await import('./index')
-  await fixture.exited
-  expect(fixture.electron.dialog.showErrorBox).toHaveBeenCalledWith(
-    'Open-Science',
-    expect.stringContaining('injected registration EACCES')
-  )
-  const message = fixture.electron.dialog.showErrorBox.mock.calls[0][1]
-  expect(message).toMatch(/retry|reopen/i)
-  expect(message).toContain(process.execPath)
+// Native integration stays behind filesystem/process doubles, even in packaged/no-override cases.
+// Import the real startup entry; mocking the removed brand helper would conceal a lingering call.
+vi.mock('node:fs', async (original) => {
+  const actual = await original<typeof import('node:fs')>()
+  return {
+    ...actual,
+    existsSync: (path: string) => fixture.bundles.has(path) || actual.existsSync(path),
+    renameSync: (...args: unknown[]) => fixture.renameBundle(...args)
+  }
 })
+vi.mock('node:child_process', async (original) => ({
+  ...(await original<typeof import('node:child_process')>()),
+  execFileSync: (...args: unknown[]) => fixture.systemCommand(...args)
+}))
+
+it.each([
+  ['Open-Science.app', true],
+  ['Open Science.app', true],
+  ['Open Science.app', false],
+  ['OpenScience.app', false]
+] as const)(
+  'starts from %s with old/new coexistence=%s without changing system entries',
+  async (name, coexist) => {
+    fixture.failAt = 'none'
+    fixture.headless = false
+    const bundle = `/virtual/Applications/${name}`
+    fixture.bundles.add(bundle)
+    if (coexist) {
+      fixture.bundles.add('/virtual/Applications/Open Science.app')
+      fixture.bundles.add('/virtual/Applications/Open-Science.app')
+    }
+    const before = [...fixture.bundles]
+    vi.stubGlobal(
+      'process',
+      Object.defineProperties(Object.create(process), {
+        platform: { value: 'darwin' },
+        execPath: { value: `${bundle}/Contents/MacOS/Open-Science` },
+        // Simulate ordinary packaged startup, without invoking any real native integration.
+        env: {
+          value: {
+            ...process.env,
+            OPEN_SCIENCE_CONFIG_ROOT: '',
+            OPEN_SCIENCE_USER_DATA: '',
+            OPEN_SCIENCE_E2E_STORAGE_ROOT: ''
+          }
+        }
+      })
+    )
+    await import('./index')
+    await Promise.race([fixture.ready, fixture.exited])
+    expect.soft(fixture.configureDesktop).toHaveBeenCalledOnce()
+    expect.soft(fixture.electron.app.setName).toHaveBeenLastCalledWith('Open-Science')
+    expect.soft(fixture.electron.dialog.showErrorBox).not.toHaveBeenCalled()
+    expect.soft(fixture.electron.app.relaunch).not.toHaveBeenCalled()
+    expect.soft(fixture.electron.app.exit).not.toHaveBeenCalled()
+    expect.soft(fixture.systemCommand).not.toHaveBeenCalled()
+    expect.soft(fixture.renameBundle).not.toHaveBeenCalled()
+    expect([...fixture.bundles]).toEqual(before)
+  }
+)
 
 const { ipcEvents, startupWindow } = await vi.hoisted(async () => {
   const { EventEmitter } = await import('node:events')
@@ -74,7 +115,14 @@ const fixture = vi.hoisted(() => {
     }),
     validateCredentials: vi.fn(),
     pinLocations: vi.fn(),
-    upgradeBrand: vi.fn(() => false),
+    bundles: new Set<string>(),
+    renameBundle: vi.fn((...args: unknown[]) => {
+      void args
+    }),
+    systemCommand: vi.fn((...args: unknown[]) => {
+      void args
+      return 'com.aipoch.open-science'
+    }),
     prepareLocations: vi.fn(async () => {}),
     initializeDiagnostics: vi.fn(),
     routeSecondInstance: vi.fn(),
@@ -113,6 +161,7 @@ const fixture = vi.hoisted(() => {
         whenReady: async () => {},
         getPreferredSystemLanguages: () => ['en'],
         quit: vi.fn(),
+        relaunch: vi.fn(),
         exit: vi.fn(),
         setBadgeCount: vi.fn(),
         isUnityRunning: () => false
@@ -319,6 +368,11 @@ const monitorListeners = process.listeners('uncaughtExceptionMonitor')
 beforeEach(() => {
   vi.resetModules()
   vi.clearAllMocks()
+  fixture.bundles.clear()
+  fixture.renameBundle.mockReset().mockImplementation((from, to) => {
+    fixture.bundles.delete(String(from))
+    fixture.bundles.add(String(to))
+  })
   ipcEvents.removeAllListeners()
   fixture.exited = new Promise<void>((resolve) => {
     fixture.finishExit = resolve
@@ -351,6 +405,7 @@ beforeEach(() => {
 })
 afterEach(() => {
   vi.unstubAllEnvs()
+  vi.unstubAllGlobals()
   for (const listener of process.listeners('uncaughtExceptionMonitor')) {
     if (!monitorListeners.includes(listener))
       process.removeListener('uncaughtExceptionMonitor', listener)
@@ -630,15 +685,25 @@ it('reports each IPC cleanup failure and still attempts registry disposal on lif
   expect(errors).toHaveLength(2)
 })
 
-it('a losing second instance never pins locations, prepares stores or opens file logs', async () => {
-  fixture.electron.app.requestSingleInstanceLock.mockReturnValue(false)
-  await import('./index')
-  expect(fixture.electron.app.quit).toHaveBeenCalledOnce()
-  expect(fixture.pinLocations).not.toHaveBeenCalled()
-  expect(fixture.prepareLocations).not.toHaveBeenCalled()
-  expect(fixture.electron.app.setAppLogsPath).not.toHaveBeenCalled()
-  expect(fixture.initializeDiagnostics).not.toHaveBeenCalled()
-})
+it.each(['Open Science.app', 'Open-Science.app'])(
+  'a losing second instance launched from %s shares the profile and never initializes writers',
+  async (name) => {
+    vi.stubGlobal(
+      'process',
+      Object.defineProperty(Object.create(process), 'execPath', {
+        value: `/virtual/Applications/${name}/Contents/MacOS/Open-Science`
+      })
+    )
+    fixture.electron.app.requestSingleInstanceLock.mockReturnValue(false)
+    await import('./index')
+    expect(fixture.electron.app.setPath).toHaveBeenCalledWith('userData', '/isolated-test/profile')
+    expect(fixture.electron.app.quit).toHaveBeenCalledOnce()
+    expect(fixture.pinLocations).not.toHaveBeenCalled()
+    expect(fixture.prepareLocations).not.toHaveBeenCalled()
+    expect(fixture.electron.app.setAppLogsPath).not.toHaveBeenCalled()
+    expect(fixture.initializeDiagnostics).not.toHaveBeenCalled()
+  }
+)
 
 it.each([false, true])(
   'allows multiple isolated instances only in development (packaged=%s)',

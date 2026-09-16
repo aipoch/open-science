@@ -1,4 +1,3 @@
-import { NativeBrandUpgradeError } from './brand-upgrade/system-paths'
 import { PackageFileOpenRelay, packagePathsFromArgv } from './session-package/file-open'
 import { configureCredentialStore, getCredentialStore } from './settings/credential-store-mode'
 import {
@@ -56,7 +55,6 @@ const bootstrapLog = createLogger('bootstrap')
 let credentialRecoveryPresented = false
 let electronInitializationStarted = false
 let preparingLocations = false
-let preparingBrandEntries = false
 let startupDiagnostics: DiagnosticOperation | undefined
 let startupFlush: import('./diagnostics/flush').DiagnosticFlush = flushLogs
 
@@ -122,15 +120,8 @@ if (shouldRunArtifactMcpServer) {
     }
     // Location/configuration failures happen before file diagnostics and the renderer. Present
     // recovery before awaiting diagnostics; neither message wording nor a working file sink gates it.
-    if (preparingLocations || preparingBrandEntries || error instanceof NativeBrandUpgradeError) {
-      const recoveryError =
-        preparingBrandEntries && !(error instanceof NativeBrandUpgradeError)
-          ? new NativeBrandUpgradeError('native entry repair', process.execPath, error)
-          : error
-      dialog.showErrorBox(
-        APP_NAME,
-        recoveryError instanceof Error ? recoveryError.message : String(recoveryError)
-      )
+    if (preparingLocations) {
+      dialog.showErrorBox(APP_NAME, error instanceof Error ? error.message : String(error))
     }
     if (!electronInitializationStarted) {
       // Preflight failures must not yield to OSCrypt initialization, even for a configuration error.
@@ -420,12 +411,6 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
             { role: 'help', submenu: [] }
           ])
         )
-      preparingBrandEntries = true
-      const { upgradeNativeBrandEntries } = await import('./brand-upgrade/native-paths')
-      const restartingAfterBrandUpgrade = upgradeNativeBrandEntries()
-      preparingBrandEntries = false
-      if (restartingAfterBrandUpgrade)
-        throw new Error('Application restarting after brand upgrade.')
       installPowerMonitorListeners()
 
       startupDiagnostics?.phase('load-startup-shell-modules')

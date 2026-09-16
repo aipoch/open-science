@@ -35,11 +35,9 @@ fi
 
 update-alternatives --install "$cli_link" '${executable}' "$cli_target" 100 || exit "$?"
 # Register the replacement before removing the exact legacy candidate. Unrelated manual choices stay.
-for previous_target in "$legacy_target" '/opt/Open Science/${executable}' '/opt/Open Science/resources/open-science-cli' '/opt/OpenScience/${executable}' '/opt/OpenScience/resources/open-science-cli'; do
-  if [ "$previous_target" != "$cli_target" ] && printf '%s\n' "$alternative_state" | grep -Fxq "Alternative: $previous_target"; then
-    update-alternatives --remove '${executable}' "$previous_target" || exit "$?"
-  fi
-done
+if printf '%s\n' "$alternative_state" | grep -Fxq "Alternative: $legacy_target"; then
+  update-alternatives --remove '${executable}' "$legacy_target" || exit "$?"
+fi
 
 # Check if user namespaces are supported by the kernel and working with a quick test:
 if ! { [[ -L /proc/self/ns/user ]] && unshare --user true; }; then
