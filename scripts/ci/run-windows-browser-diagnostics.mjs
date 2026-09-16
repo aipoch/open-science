@@ -10,10 +10,10 @@ const query = String.raw`
 $ErrorActionPreference = 'Stop'
 $processes = @(Get-CimInstance Win32_Process -Filter "Name = 'node.exe' OR Name = 'chrome.exe' OR Name = 'headless_shell.exe' OR Name = 'chrome-headless-shell.exe'" |
   Select-Object Name,ProcessId,ParentProcessId,CreationDate,HandleCount,WorkingSetSize,PrivatePageCount)
-$tcp = @(Get-NetTCPConnection)
+$tcp = @([System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpConnections())
 $loopback = @($tcp | Where-Object {
-  ($_.LocalAddress -in @('127.0.0.1', '::1') -and $_.LocalPort -eq 4178) -or
-  ($_.RemoteAddress -in @('127.0.0.1', '::1') -and $_.RemotePort -eq 4178)
+  ($_.LocalEndPoint.Address.ToString() -in @('127.0.0.1', '::1') -and $_.LocalEndPoint.Port -eq 4178) -or
+  ($_.RemoteEndPoint.Address.ToString() -in @('127.0.0.1', '::1') -and $_.RemoteEndPoint.Port -eq 4178)
 })
 @{
   processes = $processes
