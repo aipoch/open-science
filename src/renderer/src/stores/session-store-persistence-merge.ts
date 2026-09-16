@@ -132,16 +132,28 @@ const mergeConversationGraphByIdentity = (
       // A later save can contain an earlier streaming snapshot. Keep the descendant head
       // when both snapshots describe the same chain; timestamps do not measure progress.
       if (left.headMessageId !== right.headMessageId) {
+        const incomingPath = new Set(
+          resolveMessageBranchPath(incoming, right.id).map(({ id }) => id)
+        )
+        // Local-only child Branches must still fork/revise a Message on their parent path.
+        // A sibling completion is replaceable only while nothing depends on the old path.
+        if (
+          current.branches.some(
+            (branch) =>
+              branch.parentBranchId === left.id &&
+              !incoming.branches.some(({ id }) => id === branch.id) &&
+              [branch.forkMessageId, branch.supersededMessageId].some(
+                (id) => id !== undefined && !incomingPath.has(id)
+              )
+          )
+        )
+          return false
         if (
           !right.headMessageId ||
           resolveMessageBranchPath(current, left.id).some(({ id }) => id === right.headMessageId)
         )
           return false
-        if (
-          !left.headMessageId ||
-          resolveMessageBranchPath(incoming, right.id).some(({ id }) => id === left.headMessageId)
-        )
-          return true
+        if (!left.headMessageId || incomingPath.has(left.headMessageId)) return true
       }
       const isCurrentRootBranch =
         left.agentFrameId === current.rootFrameId &&

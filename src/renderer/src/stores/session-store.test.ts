@@ -5334,6 +5334,130 @@ describe('session store', () => {
     expect(toPersistedSession(session).activityGroups).toEqual(session.activityGroups)
   })
 
+  it.each(['root', 'child', 'updated-child'] as const)(
+    'keeps a fork from the old completion valid while %s is selected',
+    (selection) => {
+      const messages: PersistedChatSession['messages'] = [
+        {
+          id: 'prompt',
+          role: 'user',
+          content: 'Inspect',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        },
+        {
+          id: 'old-completion',
+          role: 'agent',
+          content: 'Done',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ]
+      const original = createLinearConversationGraph({
+        sessionId: 'forked',
+        messages,
+        createdAt: 1,
+        updatedAt: 5
+      })
+      const rootBranch = original.branches[0]
+      original.branches.push({
+        id: 'child',
+        agentFrameId: original.rootFrameId,
+        parentBranchId: rootBranch.id,
+        forkMessageId: 'old-completion',
+        headMessageId: 'old-completion',
+        createdAt: 5,
+        updatedAt: 5
+      })
+      original.activities.push({
+        id: 'child-tool',
+        kind: 'tool',
+        title: 'Inspect child',
+        status: 'completed',
+        agentFrameId: original.rootFrameId,
+        messageBranchId: 'child',
+        promptMessageId: 'prompt',
+        runtimeSegmentId: original.runtimeSegments[0].id,
+        activityGroupId: 'child-group',
+        sortIndex: 1,
+        eventIds: [],
+        createdAt: 5,
+        updatedAt: 5
+      })
+      original.activityGroups.push({
+        id: 'child-group',
+        title: 'Child tools',
+        agentFrameId: original.rootFrameId,
+        messageBranchId: 'child',
+        promptMessageId: 'prompt',
+        activityIds: ['child-tool'],
+        sortIndex: 1,
+        createdAt: 5,
+        updatedAt: 5,
+        completedAt: 5
+      })
+      if (selection === 'child') original.frames[0].activeBranchId = 'child'
+      validateConversationGraph(original)
+      const session: PersistedChatSession = {
+        id: 'forked',
+        projectId: 'project-1',
+        title: 'Forked',
+        cwd: '/workspace',
+        status: 'idle',
+        revision: 4,
+        messages,
+        conversationGraph: original,
+        createdAt: 1,
+        updatedAt: 5
+      }
+      useSessionStore.getState().hydrateSessions([session])
+      const replacement = [messages[0], { ...messages[1], id: 'new-completion' }]
+      const incomingGraph = createLinearConversationGraph({
+        sessionId: session.id,
+        messages: replacement,
+        createdAt: 1,
+        updatedAt: 5
+      })
+      if (selection === 'updated-child')
+        incomingGraph.branches.push({
+          ...original.branches[1],
+          forkMessageId: 'new-completion',
+          headMessageId: 'new-completion'
+        })
+      validateConversationGraph(incomingGraph)
+      useSessionStore.getState().upsertPersistedSession({
+        ...session,
+        revision: 5,
+        messages: replacement,
+        conversationGraph: incomingGraph
+      })
+      const projected = useSessionStore.getState().sessions[0]
+      expect(() => validateConversationGraph(projected.conversationGraph!)).not.toThrow()
+      expect(projected.conversationGraph?.activities).toEqual(original.activities)
+      expect(projected.conversationGraph?.activityGroups).toEqual(original.activityGroups)
+      expect(
+        projected.conversationGraph?.branches.find(({ id }) => id === rootBranch.id)?.headMessageId
+      ).toBe(selection === 'updated-child' ? 'new-completion' : 'old-completion')
+      expect(projected.conversationGraph?.frames[0].activeBranchId).toBe(
+        original.frames[0].activeBranchId
+      )
+      expect(() =>
+        useSessionStore
+          .getState()
+          .appendUserMessage({ sessionId: session.id, content: 'Continue this branch' })
+      ).not.toThrow()
+      expect(() =>
+        validateConversationGraph(
+          toPersistedSession(useSessionStore.getState().sessions[0]).conversationGraph!
+        )
+      ).not.toThrow()
+    }
+  )
+
   it.each([false, true])(
     'projects tool results and groups from a delayed save receipt (echo first: %s)',
     (echoFirst) => {
