@@ -67,6 +67,7 @@ jobs:
         uses: ./.github/actions/source-regression
         with:
           group: regressions
+          include-capacity: 'true'
       - name: Run supplemental delegation
         id: delegation
         continue-on-error: true

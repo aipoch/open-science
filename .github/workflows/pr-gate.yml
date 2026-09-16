@@ -991,6 +991,7 @@ jobs:
         uses: ./.github/actions/source-regression
         with:
           group: regressions
+          include-capacity: 'false'
       - name: Run supplemental delegation
         id: e2e_delegation_macos
         if: ${{ matrix.group == 'delegation' && steps.setup.outcome == 'success' }}

@@ -256,7 +256,12 @@ describe('pull request change classification', () => {
     expect(plan.mode).toBe('selective')
     expect(plan.roots).toContain('notebook_runtime')
     expect(plan.roots).not.toContain('main_runtime')
-    expect(plan.lanes).toEqual(['policy', 'typecheck_node'])
+    expect(plan.lanes).toEqual([
+      'policy',
+      'typecheck_node',
+      'e2e_regressions_macos',
+      'e2e_delegation_macos'
+    ])
   })
 
   it('keeps risk overlays additive after a specific owner replaces a fallback', () => {

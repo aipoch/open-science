@@ -4,6 +4,9 @@ inputs:
   group:
     description: Supplemental suite (regressions or delegation)
     required: true
+  include-capacity:
+    description: Include nightly capacity profiling (older callers retain complete coverage)
+    default: 'true'
 runs:
   using: composite
   steps:
@@ -26,9 +29,17 @@ runs:
       if: inputs.group == 'regressions'
       shell: bash
       env:
+        INCLUDE_CAPACITY: ${{ inputs.include-capacity }}
         PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/regressions_macos
         PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/regressions_macos.json
-      run: npm run test:e2e:regressions -- --fail-on-flaky-tests --global-timeout=1200000 --output=test-results/regressions_macos
+      run: |
+        args=()
+        case "$INCLUDE_CAPACITY" in
+          true) ;;
+          false) args+=(--grep-invert '@capacity') ;;
+          *) echo "Invalid capacity selection" >&2; exit 1 ;;
+        esac
+        npm run test:e2e:regressions -- --fail-on-flaky-tests --global-timeout=1200000 --output=test-results/regressions_macos "${args[@]}"
     - name: Run supplemental delegation
       if: inputs.group == 'delegation'
       shell: bash

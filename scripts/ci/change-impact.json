@@ -305,6 +305,38 @@
       "role": "owner",
       "paths": ["e2e/browser/**"],
       "capabilities": ["renderer_browser_e2e"]
+    },
+    {
+      "id": "critical_desktop_runtime",
+      "role": "overlay",
+      "paths": [
+        "src/main/acp/**",
+        "src/main/agent-framework/**",
+        "src/main/delegation/**",
+        "src/main/session*/**",
+        "src/main/permission*/**",
+        "src/main/artifacts/**",
+        "src/main/uploads/**",
+        "src/main/project*/**",
+        "src/main/compute/**",
+        "src/main/notebook/**",
+        "src/main/settings/**",
+        "src/main/skills/**",
+        "src/main/specialist/**",
+        "src/main/reviewer/**",
+        "src/main/side-chat/**",
+        "src/main/storage/**",
+        "src/main/database/**",
+        "src/main/local-fs/**",
+        "src/main/ipc-surfaces/**",
+        "src/main/connectors/*.ts",
+        "src/main/*runtime*.ts",
+        "src/main/*lifecycle*.ts",
+        "src/main/*window*.ts",
+        "src/main/ipc.ts",
+        "src/main/index.ts"
+      ],
+      "capabilities": ["e2e_regressions", "e2e_delegation"]
     }
   ],
   "capabilities": {
@@ -340,7 +372,7 @@
       ]
     },
     "main_runtime": {
-      "consumers": ["renderer_runtime", "i18n_catalog", "e2e_regressions", "e2e_delegation"],
+      "consumers": ["renderer_runtime", "i18n_catalog"],
       "lanes": ["format", "lint", "typecheck_node", "interface_contracts", "unit_macos"]
     },
     "notebook_network_sandbox": {

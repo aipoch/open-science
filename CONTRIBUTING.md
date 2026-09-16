@@ -362,3 +362,17 @@ use `npm-v*` tags and are published through the protected `Publish npm package` 
 
 By contributing, you agree that your contributions will be licensed under the
 [Apache License 2.0](./LICENSE), the same license that covers this project.
+
+### Supplemental desktop coverage
+
+The gate selects supplemental regressions and Delegation through critical desktop paths and
+module-consumer overlays. A known connector descriptor or main-process locale-only change keeps
+core journeys and affected portable tests without selecting unrelated supplemental groups. Unknown
+ownership, global inputs and destructive changes retain full fallback. Session, permission,
+Delegation, storage and native sandbox changes retain their relevant pre-merge checks.
+
+Source Regression runs the complete supplemental suites daily at 03:37 Asia/Singapore. The gate
+excludes only tests tagged `@capacity`; a three-session body-integrity check remains in the selected
+regression suite while forty-session resource profiling runs in Source Regression. Transcript
+scrolling/find correctness stays in the gate. Focused manual Source Regression runs include capacity
+profiling, and callers without an explicit capacity input retain complete coverage.

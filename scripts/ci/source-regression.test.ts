@@ -48,7 +48,57 @@ const resolvePlan = (paths: string[]): ReturnType<typeof classifyChanges> => {
 }
 
 describe('trusted supplemental selection', () => {
-  it('omits idle presentation jobs but retains runtime and delegation coverage for ontology changes', () => {
+  it.each([
+    'src/main/connectors/descriptors/genes-ontology.ts',
+    'src/main/locale/main-process-messages.ts'
+  ])(
+    'keeps portable and core journey coverage without unrelated supplemental groups: %s',
+    (path) => {
+      const plan = resolvePlan([path])
+      expect(plan.mode).toBe('selective')
+      expect(plan.bundles).toContain('unit')
+      expect(macosGroupsForPlan(plan)).toEqual(['journeys'])
+      const mixed = resolvePlan([path, 'src/main/acp/runtime.ts'])
+      expect(macosGroupsForPlan(mixed)).toEqual(
+        expect.arrayContaining(['regressions', 'delegation'])
+      )
+    }
+  )
+
+  it.each([
+    'src/main/delegation/production-composition.ts',
+    'src/main/agent-framework/opencode.ts',
+    'src/main/agent-framework/codex.ts',
+    'src/main/acp/runtime.ts',
+    'src/main/session-persistence/coordinator.ts',
+    'src/main/permission-grants/registry.ts',
+    'src/main/notebook/kernel-executor.ts'
+  ])('retains critical lifecycle and security coverage: %s', (path) => {
+    for (const plan of [classifyChanges(changesFor([path])), resolvePlan([path])]) {
+      expect(macosGroupsForPlan(plan)).toEqual(
+        expect.arrayContaining(['regressions', 'delegation'])
+      )
+    }
+  })
+
+  it('carries supplemental coverage through module consumers as well as changed paths', () => {
+    const modules = createAffectedTestPlan(
+      changesFor(['src/main/settings/provider-accounts.ts']),
+      graph
+    )
+    expect(modules.mode).toBe('selective')
+    expect(modules.modules).toContain('settings_backend_resolution')
+    // Even a candidate with no supplemental lanes must gain its consumers' mandatory coverage.
+    const candidate = classifyChanges(
+      changesFor(['src/main/connectors/descriptors/genes-ontology.ts'])
+    )
+    expect(macosGroupsForPlan(candidate)).toEqual(['journeys'])
+    const plan = resolveAuthoritativePlan(candidate, modules)
+    expect(plan.mode).toBe('selective')
+    expect(macosGroupsForPlan(plan)).toEqual(expect.arrayContaining(['regressions', 'delegation']))
+  })
+
+  it('omits idle presentation jobs but retains runtime and delegation coverage for mixed ontology/Notebook changes', () => {
     const changes = changesFor([
       'src/main/connectors/descriptors/genes-ontology.ts',
       'src/main/connectors/descriptors/genes-ontology.test.ts',
@@ -166,7 +216,7 @@ describe('trusted supplemental selection', () => {
     )
     for (const groups of [
       [],
-      ['journeys'],
+      ['regressions'],
       ['delegation', 'journeys', 'regressions'],
       [...plan.macosGroups, 'presentation']
     ]) {
@@ -185,6 +235,38 @@ describe('trusted supplemental selection', () => {
 })
 
 describe('independent source regression', () => {
+  it.skipIf(process.platform === 'win32')(
+    'selects nightly profiling explicitly and rejects invalid selections',
+    () => {
+      const command = action.runs.steps.find(
+        (step) => step.name === 'Run supplemental regressions'
+      )!
+      expect(
+        pr.jobs.macos_e2e.steps.find((step) => step.with?.group === 'regressions')?.with?.[
+          'include-capacity'
+        ]
+      ).toBe('false')
+      expect(
+        scheduled.jobs.regression.steps.find((step) => step.with?.group === 'regressions')?.with?.[
+          'include-capacity'
+        ]
+      ).toBe('true')
+      for (const selection of ['true', 'false', '', 'invalid']) {
+        const result = spawnSync(
+          'bash',
+          ['-e', '-c', 'npm() { printf "%s\\n" "$@"; };\n' + command.run!],
+          {
+            encoding: 'utf8',
+            env: { ...process.env, INCLUDE_CAPACITY: selection }
+          }
+        )
+        expect(result.status).toBe(['true', 'false'].includes(selection) ? 0 : 1)
+        if (selection === 'true') expect(result.stdout).not.toContain('--grep-invert')
+        if (selection === 'false') expect(result.stdout).toContain('--grep-invert\n@capacity')
+      }
+    }
+  )
+
   it('batches main on a read-only schedule with one native runner and no package prerequisite', () => {
     expect(scheduled.on.schedule).toEqual([{ cron: '37 19 * * *' }])
     expect(scheduled.on).toHaveProperty('workflow_dispatch')
@@ -209,7 +291,7 @@ describe('independent source regression', () => {
     (group) => {
       expect(action.runs.using).toBe('composite')
       const command = action.runs.steps.find((step) => step.name === `Run supplemental ${group}`)!
-      expect(command.run).toBe(
+      expect(command.run).toContain(
         `npm run test:e2e:${group} -- --fail-on-flaky-tests --global-timeout=1200000 --output=test-results/${group}_macos`
       )
       for (const job of [pr.jobs.macos_e2e, scheduled.jobs.regression]) {

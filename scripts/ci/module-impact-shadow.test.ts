@@ -151,7 +151,12 @@ describe('module impact shadow', () => {
       ]
     })
     expect(report.shadow.testFiles).toEqual([...report.shadow.testFiles].sort())
-    expect(report.shadow.capabilityOverlays).toEqual(['renderer_state', 'windows_sensitive'])
+    expect(report.shadow.capabilityOverlays).toEqual([
+      'e2e_delegation',
+      'e2e_regressions',
+      'renderer_state',
+      'windows_sensitive'
+    ])
     expect(report.shadow.fallbackCapabilities).toEqual(['main_runtime', 'renderer_view'])
     expect(report.comparison.requiredLanes).toContain('typecheck_web')
     expect(report.comparison.selectedLanes).toEqual(report.authoritative.lanes)

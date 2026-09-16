@@ -51,7 +51,11 @@ describe('module test impact commands', () => {
         'src/main/notebook/local-rpc-server.mcpcall.test.ts'
       ])
     )
-    expect(plan.capabilityOverlays).toEqual(['windows_sensitive'])
+    expect(plan.capabilityOverlays).toEqual([
+      'e2e_delegation',
+      'e2e_regressions',
+      'windows_sensitive'
+    ])
     expect(plan.fallbackCapabilities).toEqual(['main_runtime'])
 
     const affected = createAffectedTestPlan(

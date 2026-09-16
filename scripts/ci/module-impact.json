@@ -144,7 +144,7 @@
           "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.test.ts"
         ]
       },
-      "capabilityOverlays": [],
+      "capabilityOverlays": ["e2e_regressions", "e2e_delegation"],
       "fallbackCapability": "main_runtime"
     },
     "project_files_view": {
@@ -301,7 +301,7 @@
           "src/renderer/src/reviewer-paged-preview/main.test.ts"
         ]
       },
-      "capabilityOverlays": ["windows_sensitive"],
+      "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
       "fallbackCapability": "main_runtime"
     },
     "compute_service": {
@@ -416,7 +416,7 @@
           "src/main/compute/enabled-hosts-registry.test.ts"
         ]
       },
-      "capabilityOverlays": ["windows_sensitive"],
+      "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
       "fallbackCapability": "main_runtime"
     },
     "user_skills_repository": {
@@ -467,7 +467,7 @@
           "src/renderer/src/pages/settings/SkillEditLoader.render.test.tsx"
         ]
       },
-      "capabilityOverlays": ["windows_sensitive"],
+      "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
       "fallbackCapability": "main_runtime"
     },
     "settings_repository": {
@@ -517,7 +517,7 @@
           "src/main/settings/skill-catalog.test.ts"
         ]
       },
-      "capabilityOverlays": ["windows_sensitive"],
+      "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
       "fallbackCapability": "main_runtime"
     },
     "settings_provider_accounts": {
@@ -564,7 +564,7 @@
           "src/renderer/src/stores/settings-provider-auth-slice.test.ts"
         ]
       },
-      "capabilityOverlays": ["windows_sensitive"],
+      "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
       "fallbackCapability": "main_runtime"
     },
     "settings_backend_resolution": {
@@ -645,7 +645,7 @@
           "src/main/reviewer/mcp-server.test.ts"
         ]
       },
-      "capabilityOverlays": ["windows_sensitive"],
+      "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
       "fallbackCapability": "main_runtime"
     },
     "settings_service_facade": {
@@ -703,7 +703,13 @@
           "src/renderer/src/stores/settings-store.test.ts"
         ]
       },
-      "capabilityOverlays": ["settings_ipc", "renderer_settings", "windows_sensitive"],
+      "capabilityOverlays": [
+        "settings_ipc",
+        "renderer_settings",
+        "windows_sensitive",
+        "e2e_regressions",
+        "e2e_delegation"
+      ],
       "fallbackCapability": "main_runtime"
     },
     "artifact_storage": {
@@ -727,7 +733,7 @@
         "contract": ["src/main/artifacts/ipc.test.ts"],
         "consumer": ["src/main/artifacts/provenance-repository.test.ts"]
       },
-      "capabilityOverlays": ["windows_sensitive"],
+      "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
       "fallbackCapability": "main_runtime"
     },
     "upload_repository": {
@@ -760,7 +766,7 @@
           "src/main/skills/conversation-import.test.ts"
         ]
       },
-      "capabilityOverlays": ["windows_sensitive"],
+      "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
       "fallbackCapability": "main_runtime"
     },
     "project_files_repository": {
@@ -785,7 +791,7 @@
           "src/main/session-persistence/artifact-finalization-recovery.integration.test.ts"
         ]
       },
-      "capabilityOverlays": ["windows_sensitive"],
+      "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
       "fallbackCapability": "main_runtime"
     },
     "artifact_provenance": {
@@ -880,7 +886,7 @@
           "src/renderer/src/pages/workspace/artifact-publication-preview.integration.test.tsx"
         ]
       },
-      "capabilityOverlays": ["windows_sensitive"],
+      "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
       "fallbackCapability": "main_runtime"
     },
     "session_persistence": {
@@ -918,7 +924,7 @@
           "src/main/session-persistence/deletion-integration.test.ts"
         ]
       },
-      "capabilityOverlays": ["windows_sensitive"],
+      "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
       "fallbackCapability": "main_runtime"
     },
     "i18n_catalog": {
@@ -1034,7 +1040,7 @@
           "src/renderer/src/pages/home/HomePage.render.test.tsx"
         ]
       },
-      "capabilityOverlays": ["windows_sensitive"],
+      "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
       "fallbackCapability": "main_runtime"
     },
     "ipc_surfaces": {
@@ -1193,7 +1199,7 @@
           "src/renderer/src/components/ProjectPackageDropZone.test.tsx"
         ]
       },
-      "capabilityOverlays": [],
+      "capabilityOverlays": ["e2e_regressions", "e2e_delegation"],
       "fallbackCapability": "main_runtime"
     },
     "connector_ontology": {
