@@ -23866,6 +23866,74 @@ describe('ACP runtime skill force-load + nudge', () => {
     }
   )
 
+  it.each(['failed', 'cancelled'] as const)(
+    'keeps the shared provider connected when continuation replay is %s before reload',
+    async (outcome) => {
+      const process = new FakeAgentProcess()
+      const agent = startFakeAgent(process, ['bound-session', 'other-session'])
+      let resolveHistory!: (session: PersistedChatSession) => void
+      const history = new Promise<PersistedChatSession>((resolve) => {
+        resolveHistory = resolve
+      })
+      const loadHistory = vi.fn(() => history)
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        resolveBackend: () => ({
+          framework: { ...opencodeFramework, spawn: () => asAgentProcess(process) },
+          executablePath: '/bin/agent',
+          env: {}
+        }),
+        permissionWait: {
+          sessions: {
+            readSessionRuntimeContext: vi.fn(),
+            patchSessionRuntimeContext: vi.fn(),
+            containsMessageOnActiveBranch: vi.fn(),
+            loadSessionForContinuation: loadHistory
+          }
+        },
+        resolveSpecialistIdentity: resolveForceLoadSpecialistIdentity,
+        resolveSpecialistSkills: resolveForceLoadSpecialistSkills,
+        skills: {
+          needForceLoad: async (ids) => ids.filter((id) => id === 'research'),
+          namesForIds: async (ids) => ids
+        }
+      })
+      try {
+        await runtime.createSession({
+          cwd: '/workspace',
+          projectId: 'project-1',
+          specialistId: 'force-load-specialist'
+        })
+        await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
+        const pending = runtime.sendAppContinuation({
+          sessionId: 'bound-session',
+          text: 'Continue the handoff',
+          provenanceContext: { promptMessageId: 'origin' }
+        })
+        const rejected = expect(pending).rejects.toThrow()
+        await vi.waitFor(() => expect(loadHistory).toHaveBeenCalledOnce())
+        if (outcome === 'cancelled') await runtime.cancelPrompt({ sessionId: 'bound-session' })
+        resolveHistory(
+          outcome === 'failed'
+            ? createRestoredContinuationSession('wrong-origin', 'bound-session')
+            : createRestoredContinuationSession('origin', 'bound-session')
+        )
+        await rejected
+        await new Promise<void>((resolve) => setImmediate(resolve))
+        expect(process.killed).toBe(false)
+        await runtime.sendPrompt({
+          sessionId: 'other-session',
+          text: 'Continue the unrelated conversation'
+        })
+        expect(agent.prompts).toHaveLength(1)
+        expect(agent.prompts[0].text).toContain('Continue the unrelated conversation')
+      } finally {
+        await runtime.disconnect()
+      }
+    }
+  )
+
   it('respawns and nudges when a picked skill is disabled, then restores after the turn', async () => {
     const spawner = createFreshAgentSpawner()
     const hooks = createSkillsHooks({ needForceLoad: ['research'] })

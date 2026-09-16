@@ -75,7 +75,7 @@ const codeBuddySkillRuntimeRoot = (
 type TurnSkillHandle = Readonly<{
   reloadDecision: Readonly<{ kind: 'continue' | 'reload' }>
   prepareProvider: (input: ProviderPreparationInput) => Promise<ProviderPreparation>
-  close: (outcome: TurnSkillOutcome) => void
+  close: (outcome: TurnSkillOutcome, options?: { reload?: boolean }) => void
 }>
 type Authorization = {
   outcome?: TurnSkillOutcome
@@ -133,7 +133,7 @@ class AcpTurnSkillOwner {
         return Object.freeze({
           reloadDecision: Object.freeze({ kind: needsReload ? 'reload' : 'continue' }),
           prepareProvider: (providerInput) => this.prepareProvider(state, providerInput),
-          close: (outcome) => this.close(state, outcome)
+          close: (outcome, options) => this.close(state, outcome, options?.reload ?? true)
         })
       }
       return this.options.skills && runtimeSkillIds.length > 0
@@ -225,12 +225,12 @@ class AcpTurnSkillOwner {
       }
     )
   }
-  private close(state: Authorization, outcome: TurnSkillOutcome): void {
+  private close(state: Authorization, outcome: TurnSkillOutcome, reload: boolean): void {
     if (state.outcome) return
     state.outcome = outcome
     if (this.forced !== state) return
     this.forced = undefined
-    this.options.requestSkillsReload()
+    if (reload) this.options.requestSkillsReload()
   }
   private async prepareProvider(
     state: Authorization,

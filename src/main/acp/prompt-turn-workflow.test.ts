@@ -999,7 +999,7 @@ describe('AcpPromptTurnWorkflow', () => {
       await rejected
       expect(harness.disconnectForReload).not.toHaveBeenCalled()
       expect(harness.executor).not.toHaveBeenCalled()
-      expect(skill.close).toHaveBeenCalledWith('reload-restored')
+      expect(skill.close).toHaveBeenCalledWith('failed', { reload: false })
       if (replacement) {
         expect(harness.owner.activatePrompt(replacement)).toBe(replacement)
       }
@@ -1017,7 +1017,7 @@ describe('AcpPromptTurnWorkflow', () => {
 
     expect(harness.disconnectForReload).not.toHaveBeenCalled()
     expect(harness.executor).not.toHaveBeenCalled()
-    expect(skill.close).toHaveBeenCalledWith('reload-restored')
+    expect(skill.close).toHaveBeenCalledWith('failed', { reload: false })
     expect(harness.interactions.release).toHaveBeenCalledOnce()
   })
 

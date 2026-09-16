@@ -58,6 +58,23 @@ describe('AcpTurnSkillOwner', () => {
     }
   )
 
+  it('discards unused forced authorization without scheduling a provider reload', async () => {
+    const requestSkillsReload = vi.fn()
+    const owner = new AcpTurnSkillOwner({
+      resolveSpecialistSkills: async () => reloadTestScope,
+      skills: { needForceLoad: async () => ['disabled'], namesForIds: async (ids) => ids },
+      requestSkillsReload
+    })
+    const handle = await owner.authorize({ specialistId: 'specialist' })
+    expect(owner.backendPreparation().forcedSkillIds).toEqual(['disabled'])
+
+    handle.close('failed', { reload: false })
+    handle.close('reload-restored')
+
+    expect(owner.backendPreparation().forcedSkillIds).toEqual([])
+    expect(requestSkillsReload).not.toHaveBeenCalled()
+  })
+
   it('keeps ordinary Main turns synchronous when no Skill work can yield', () => {
     const owner = new AcpTurnSkillOwner({ requestSkillsReload: vi.fn() })
 
