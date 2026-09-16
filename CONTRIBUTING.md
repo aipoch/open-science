@@ -389,15 +389,6 @@ profiling, and callers without an explicit capacity input retain complete covera
 
 ### CI control-plane approval
 
-Windows Full Test keeps five serial shards and assigns discovered test files by measured duration
-through Vitest's `BaseSequencer.shard` extension. `scripts/ci/windows-test-durations.json` records
-the source run and file durations of at least one second; shorter/new files receive the documented
-fallback plus a per-file setup allowance. The baseline affects scheduling only, never discovery or
-coverage. Refresh it from the file summary durations in a complete Windows run when shard times
-diverge, retaining the source run/head for review. Validate changes with
-`npm test -- scripts/ci/windows-test-sequencer.test.ts vitest.config.test.ts` and the manual
-Windows Full Test `regressions` dry-run. Other Vitest profiles retain the default sequencer.
-
 CI workflows, local actions, CI scripts, Dependabot configuration and CODEOWNERS itself have
 `@aipoch/ci-maintainers` as owner in `.github/CODEOWNERS`. Maintain membership in GitHub instead
 of editing individual usernames in the file. The team must be visible and have explicit repository

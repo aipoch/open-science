@@ -21,7 +21,7 @@ import vitestConfig, {
 } from './vitest.config'
 
 describe('Vitest discovery boundaries', () => {
-  it('enables duration-based sharding only in the Windows full-test profile', () => {
+  it('enables module-based sharding only in the Windows full-test profile', () => {
     expect(vitestConfig.test?.sequence?.sequencer).toBe(
       process.env.VITEST_WINDOWS_FULL_TEST === '1' ? WindowsTestSequencer : undefined
     )

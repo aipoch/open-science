@@ -147,7 +147,7 @@ export default defineConfig({
     }
   },
   test: {
-    // Only the advisory Windows full suite uses its measured timing baseline. Inherit Vitest's
+    // Only the advisory Windows full suite uses fixed module groups. Inherit Vitest's
     // sorting/group ordering; override just assignment, never test discovery or worker limits.
     ...(windowsFullTest ? { sequence: { sequencer: WindowsTestSequencer } } : {}),
     // Vitest shards each project independently. A valid full-suite shard can therefore contain no
