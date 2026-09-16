@@ -913,7 +913,9 @@ it.each(['direct', 'forward'] as const)(
       )?.packageOrigin?.excludedFiles
     ).toEqual(expect.arrayContaining([expect.objectContaining({ filename: 'plot.png' })]))
   },
-  60_000
+  // Multiple real archive imports each migrate a validation database; hosted Windows I/O
+  // exceeded 60 seconds even with one worker. Keep this bound local to these round trips.
+  process.platform === 'win32' ? 120_000 : 60_000
 )
 afterEach(async () => {
   vi.restoreAllMocks()
@@ -3225,7 +3227,9 @@ it.each(
       )
     ).toBe(lock)
   },
-  60_000
+  // Multiple real archive imports each migrate a validation database; hosted Windows I/O
+  // exceeded 60 seconds even with one worker. Keep this bound local to these round trips.
+  process.platform === 'win32' ? 120_000 : 60_000
 )
 
 it('retains a later Version lock when an earlier owner cannot supply the same checksum', async () => {

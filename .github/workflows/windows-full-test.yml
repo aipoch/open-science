@@ -18,6 +18,10 @@ on:
           - notebook-sandbox
           - notebook-mutation
           - regressions
+      test_name_pattern:
+        description: Optional Vitest test-name regex for the regressions dry-run only
+        type: string
+        default: '.*'
 
 permissions:
   actions: read
@@ -138,6 +142,9 @@ jobs:
         run: npm test -- --shard=${{ matrix.shard }}/5 --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000 --reporter=default --reporter=github-actions
 
       - name: Test recent Windows regressions
+        shell: bash
+        env:
+          TEST_NAME_PATTERN: ${{ inputs.test_name_pattern || '.*' }}
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'regressions' }}
         # Reuse the full job's runner, install and effective project budgets without running the
         # unrelated shards or native sandbox. These are the suites from the recent failed batches.
@@ -149,6 +156,16 @@ jobs:
           src/main/database/database-null-and-version-bounds.test.ts
           src/main/database/migration-service.test.ts
           src/main/notebook/runtime-service.test.ts
+          src/main/notebook/kernel-executor.test.ts
+          src/main/notebook/windows-repl-termination.integration.test.ts
+          src/main/notebook/kernel-startup-retry.integration.test.ts
+          src/main/agents/completion-gate.execute-control.integration.test.ts
+          src/main/storage/ipc.test.ts
+          scripts/windows-data-reset.test.ts
+          packages/notebook-network-sandbox/src/windows-appcontainer.test.ts
+          src/main/side-chat/runtime-owner.test.ts
+          src/main/skills/registered-helper-catalog.test.ts
+          src/renderer/src/pages/literature/LiteratureLibraryPage.render.test.tsx
           src/main/notebook/shell-process-ownership.test.ts
           src/main/literature/batch-jobs.test.ts
           src/main/notebook/source-file-access-analysis.test.ts
@@ -178,6 +195,7 @@ jobs:
           packages/notebook-network-sandbox/src/gateway.test.ts
           packages/notebook-network-sandbox/src/public-read-lifecycle.test.ts
           --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000
+          --testNamePattern="$TEST_NAME_PATTERN"
 
   notebook_sandbox:
     name: Windows Notebook sandbox lifecycle

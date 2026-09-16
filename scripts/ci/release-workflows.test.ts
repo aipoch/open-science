@@ -114,6 +114,9 @@ describe('release and scheduled workflow topology', () => {
       "${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'regressions' }}"
     )
     expect(regressions.run).not.toContain('--shard')
+    expect(regressions.shell).toBe('bash')
+    expect(regressions.env?.TEST_NAME_PATTERN).toBe("${{ inputs.test_name_pattern || '.*' }}")
+    expect(regressions.run).toContain('--testNamePattern="$TEST_NAME_PATTERN"')
     expect(regressions.run).toContain('--maxWorkers=1 --testTimeout=60000 --hookTimeout=60000')
     for (const file of [
       'vitest.config.test.ts',

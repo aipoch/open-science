@@ -1,3 +1,4 @@
+import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
 import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -134,8 +135,13 @@ it
       timeoutMs: 10_000
     }
     try {
-      const failed = await executor.execute(request)
-      expect(failed.stderr).toContain('Notebook kernel process exited with exit code 1.')
+      // taskkill may prove termination before the leader exits, or require the late native proof.
+      const failed = await executor.execute(request).catch((error) => {
+        expect(error).toBeInstanceOf(NotebookExecutionStopError)
+        return undefined
+      })
+      if (failed)
+        expect(failed.stderr).toContain('Notebook kernel process exited with exit code 1.')
       const spec = JSON.parse(Buffer.from(nativeLaunches[0].argv[2], 'base64url').toString('utf8'))
       // The native Job Object proof exists even though the already-exited leader cannot be
       // rediscovered by taskkill. Do not consume it before the production owner can use it.
@@ -145,24 +151,22 @@ it
       const oldReceipts = lifecycle ? await readdir(join(root, 'runtime', 'kernel-processes')) : []
       if (lifecycle) expect(oldReceipts).toHaveLength(1)
       await executor.shutdown()
-      const results = []
-      for (let attempt = 0; attempt < 3; attempt++) results.push(await executor.execute(request))
-      expect(results, JSON.stringify(results)).toEqual(
-        Array.from({ length: 3 }, (_, attempt) =>
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const execution = executor.execute(request)
+        if (
           proof === 'missing' ||
           proof === 'error' ||
           ((proof === 'late' || proof === 'receipt-retry') && attempt === 0)
-            ? expect.objectContaining({
-                status: 'failed',
-                kernelDispatched: false,
-                stderr: 'SHELL_CLEANUP_INCOMPLETE: Previous shell cleanup could not be reconciled.'
-              })
-            : expect.objectContaining({
-                status: 'completed',
-                stdout: expect.stringContaining('REPL_RECOVERED')
-              })
-        )
-      )
+        ) {
+          await expect(execution).rejects.toBeInstanceOf(NotebookExecutionStopError)
+          expect(nativeLaunches).toHaveLength(1)
+        } else {
+          await expect(execution).resolves.toMatchObject({
+            status: 'completed',
+            stdout: expect.stringContaining('REPL_RECOVERED')
+          })
+        }
+      }
       if (lifecycle) {
         const receipts = await readdir(join(root, 'runtime', 'kernel-processes'))
         expect(receipts).toHaveLength(1)
