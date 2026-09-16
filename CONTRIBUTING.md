@@ -380,8 +380,10 @@ profiling, and callers without an explicit capacity input retain complete covera
 ### CI control-plane approval rollout
 
 CI workflows, local actions, CI scripts, Dependabot configuration and CODEOWNERS itself have
-explicit owners in `.github/CODEOWNERS`. The intended normal path is an approval from one listed
-owner other than the PR author, followed by passing Integrity and PR Gate checks and the merge
+the `@aipoch/ci-maintainers` team as owner in `.github/CODEOWNERS`. Maintain its membership in
+GitHub instead of editing individual usernames in the file. The team must be visible and have
+explicit repository write access. The intended normal path is an approval from one team member
+other than the PR author, followed by passing Integrity and PR Gate checks and the merge
 queue. Additional commits invalidate stale approval when the main ruleset enforces that policy.
 Ordinary application files have no CODEOWNERS entry.
 
