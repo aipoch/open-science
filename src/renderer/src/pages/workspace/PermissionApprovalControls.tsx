@@ -977,7 +977,7 @@ const PermissionApprovalCard = ({
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="font-semibold text-foreground">{request.delegated.childTitle}</span>
             <span className="text-muted-foreground">
-              {sourcePresentation.categoryLabel === 'Read web pages'
+              {['Read web pages', 'Search the web'].includes(sourcePresentation.categoryLabel)
                 ? t('This conversation or this call')
                 : request.delegated.riskScope}
             </span>
@@ -1010,7 +1010,7 @@ const PermissionApprovalCard = ({
         />
       </div>
 
-      {sourcePresentation.categoryLabel === 'Read web pages' ? (
+      {['Read web pages', 'Search the web'].includes(sourcePresentation.categoryLabel) ? (
         <p className="text-muted-foreground">{presentation.description}</p>
       ) : null}
 

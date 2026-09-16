@@ -43,3 +43,26 @@ test('approves conversation web reading and captures the Chinese scope card', as
     )
     .toEqual([{ requestId: 'web-read', optionId: 'session' }])
 })
+
+test('offers conversation search approval with the scope visible', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 900, height: 550 })
+  await page.goto('/web-permission.html?lang=zh-Hans&search=1')
+  await expect(
+    page.getByTestId('permission-header').getByText('允许网页搜索？', { exact: true })
+  ).toBeVisible()
+  await expect(
+    page.getByText('会话授权允许本会话及其子智能体使用文字查询搜索网页。', { exact: true })
+  ).toBeVisible()
+  await page.getByRole('button', { name: '选择授权范围' }).click()
+  await expect(page.getByRole('menuitemradio')).toHaveCount(2)
+  await page.screenshot({ path: testInfo.outputPath('web-search-scopes-zh-Hans.png') })
+  await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: /允许.*对话|允许.*会话/ }).click()
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => (window as unknown as { webPermissionResponses: unknown[] }).webPermissionResponses
+      )
+    )
+    .toEqual([{ requestId: 'web-search', optionId: 'session' }])
+})

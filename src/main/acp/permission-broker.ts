@@ -15,9 +15,11 @@ import type {
 } from '../../shared/permission-grants'
 import type { SessionPermissionRuntimeContext } from '../../shared/session-persistence'
 import type { CommandShellDialect } from '../agent-framework/types'
+import { createLogger } from '../logger'
 import { extractProviderToolName } from './runtime-events'
 import {
   isNativeWebFetchPermission,
+  isNativeWebSearchPermission,
   isMcpToolName,
   resolveMcpProviderLeafIdentity,
   resolveAutomaticPermission,
@@ -879,6 +881,34 @@ class AcpPermissionBroker {
     return resolvedRequestIds
   }
 
+  // Registry notifications also reach sibling delegated runtimes. Recheck only verified search
+  // requests, and release each through its own one-shot response and durable settlement path.
+  async releaseGrantedWebSearchRequests(): Promise<void> {
+    if (!this.permissionGrantRegistry) return
+    for (const [requestId, pending] of Array.from(this.pendingRequests)) {
+      if (
+        pending.categoryKey !== 'builtin:web_search' ||
+        !pending.capability ||
+        !pending.providerAllowOnceOptionId
+      )
+        continue
+      try {
+        const match = await this.permissionGrantRegistry.resolve(pending.capability, {
+          projectId: pending.projectId,
+          sessionId: pending.policyContext?.permissionGrantSessionId ?? pending.request.sessionId
+        })
+        if (match && this.pendingRequests.get(requestId) === pending) {
+          await this.respond({ requestId, optionId: pending.providerAllowOnceOptionId })
+        }
+      } catch (error) {
+        createLogger('acp-permission').warn(
+          'Could not recheck pending web search authorization',
+          error
+        )
+      }
+    }
+  }
+
   // Lists the app conversation's grants so the composer can show and revoke them.
   listGrants(sessionId: string): AcpPermissionGrant[] {
     if (this.permissionGrantRegistry) {
@@ -966,23 +996,26 @@ class AcpPermissionBroker {
     const requestId = randomUUID()
     const mcpServerNames = policyContext?.mcpServerNames ?? []
     const isMcp = isMcpPermission(params, mcpServerNames)
+    const isWebSearch = !isMcp && isNativeWebSearchPermission(params, policyContext)
     const isWebFetch = !isMcp && isNativeWebFetchPermission(params, policyContext)
     const codexGroupMatch =
       policyContext?.frameworkId === 'codex' && !isMcp
         ? codexCommandGroup(params, policyContext.shellDialect)
         : undefined
     const codexGroup = codexGroupMatch?.kind === 'group' ? codexGroupMatch.group : undefined
-    const categoryKey = isWebFetch
-      ? 'builtin:web_fetch'
-      : (codexGroup?.categoryKey ??
-        (codexGroupMatch?.kind === 'unsafe'
-          ? undefined
-          : resolveCategoryKey(
-              params,
-              mcpServerNames,
-              !this.permissionGrantRegistry,
-              policyContext?.notebookShellRuntimeQualifier ?? policyContext?.notebookShellRuntime
-            )))
+    const categoryKey = isWebSearch
+      ? 'builtin:web_search'
+      : isWebFetch
+        ? 'builtin:web_fetch'
+        : (codexGroup?.categoryKey ??
+          (codexGroupMatch?.kind === 'unsafe'
+            ? undefined
+            : resolveCategoryKey(
+                params,
+                mcpServerNames,
+                !this.permissionGrantRegistry,
+                policyContext?.notebookShellRuntimeQualifier ?? policyContext?.notebookShellRuntime
+              )))
     const capability = categoryKey ? capabilityFromLegacyCategory(categoryKey) : undefined
     const mcpIdentity = isMcp
       ? (resolveTrustedMcpToolIdentity(params, mcpServerNames) ??
@@ -1020,7 +1053,7 @@ class AcpPermissionBroker {
           scope: 'session'
         })
         // Web reading is deliberately conversation-scoped, including delegated children.
-        if (!isWebFetch)
+        if (!isWebFetch && !isWebSearch)
           permissionOptions.push(
             {
               optionId: `${PROJECT_ALLOW_OPTION_ID_PREFIX}${requestId}`,
@@ -1050,7 +1083,11 @@ class AcpPermissionBroker {
       toolCallId: params.toolCall.toolCallId,
       title: resolvePermissionTitle(params, isMcp),
       status: params.toolCall.status ?? undefined,
-      providerToolName: isWebFetch ? 'WebFetch' : extractProviderToolName(params.toolCall),
+      providerToolName: isWebSearch
+        ? 'WebSearch'
+        : isWebFetch
+          ? 'WebFetch'
+          : extractProviderToolName(params.toolCall),
       isMcp,
       ...(mcpIdentity ? { mcpIdentity } : {}),
       toolKind: params.toolCall.kind ?? undefined,
@@ -1209,6 +1246,8 @@ class AcpPermissionBroker {
       reject: rejectResponse
     }
     this.pendingRequests.set(requestId, stored)
+    // Close the gap between the initial registry lookup and joining the pending queue.
+    if (stored.categoryKey === 'builtin:web_search') void this.releaseGrantedWebSearchRequests()
 
     if (!stored.durableCandidate || !this.permissionWaitHooks) {
       this.emitPermissionRequest(entry.request)

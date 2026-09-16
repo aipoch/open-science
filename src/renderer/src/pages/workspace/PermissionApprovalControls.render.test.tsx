@@ -16,47 +16,52 @@ import { PermissionApprovalControls } from './PermissionApprovalControls'
 const longRequestTitle =
   'Bash pwd echo whoami echo list home directory with enough extra words to clip'
 
-it('explains conversation-wide web reading including delegated children before approval', () => {
-  const html = renderToStaticMarkup(
-    <PermissionApprovalControls
-      requests={[
-        {
-          requestId: 'web',
-          sessionId: 'parent',
-          toolCallId: 'child',
-          title: 'https://www.resurchify.com/impact/details/20982',
-          providerToolName: 'WebFetch',
-          toolKind: 'fetch',
-          isMcp: false,
-          delegated: {
-            frameId: 'child',
-            attemptId: 'attempt',
-            childTitle: 'rct5-10-round2',
-            riskScope: 'This session or this call'
-          },
-          options: [
-            { optionId: 'once', name: 'Once', kind: 'allow_once', scope: 'once' },
-            {
-              optionId: 'session',
-              name: 'This conversation',
-              kind: 'allow_always',
-              scope: 'session'
+it.each(['WebFetch', 'WebSearch'] as const)(
+  'explains conversation-wide %s including delegated children before approval',
+  (tool) => {
+    const html = renderToStaticMarkup(
+      <PermissionApprovalControls
+        requests={[
+          {
+            requestId: 'web',
+            sessionId: 'parent',
+            toolCallId: 'child',
+            title: 'https://www.resurchify.com/impact/details/20982',
+            providerToolName: tool,
+            toolKind: 'fetch',
+            isMcp: false,
+            delegated: {
+              frameId: 'child',
+              attemptId: 'attempt',
+              childTitle: 'rct5-10-round2',
+              riskScope: 'This session or this call'
             },
-            { optionId: 'deny', name: 'Deny', kind: 'reject_once' }
-          ]
-        }
-      ]}
-      onRespond={() => undefined}
-    />
-  )
-  expect(html).toContain('Allow web reading?')
-  expect(html).toContain(
-    'Conversation approval allows web reading across websites for this conversation and its subagents.'
-  )
-  expect(html).toContain('for this conversation')
-  expect(html).toContain('data-testid="scope-chevron"')
-  expect(html).toContain('rct5-10-round2')
-})
+            options: [
+              { optionId: 'once', name: 'Once', kind: 'allow_once', scope: 'once' },
+              {
+                optionId: 'session',
+                name: 'This conversation',
+                kind: 'allow_always',
+                scope: 'session'
+              },
+              { optionId: 'deny', name: 'Deny', kind: 'reject_once' }
+            ]
+          }
+        ]}
+        onRespond={() => undefined}
+      />
+    )
+    expect(html).toContain(tool === 'WebFetch' ? 'Allow web reading?' : 'Allow web search?')
+    expect(html).toContain(
+      tool === 'WebFetch'
+        ? 'Conversation approval allows web reading across websites for this conversation and its subagents.'
+        : 'Conversation approval allows text searches on the web for this conversation and its subagents.'
+    )
+    expect(html).toContain('for this conversation')
+    expect(html).toContain('data-testid="scope-chevron"')
+    expect(html).toContain('rct5-10-round2')
+  }
+)
 const longAlwaysOptionName =
   'Always Allow Bash permission that keeps going across the composer and should be hidden'
 const allowOnceOptionNameWithAlways = 'Always in this label should not become always action'
