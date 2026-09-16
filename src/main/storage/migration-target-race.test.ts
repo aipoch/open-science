@@ -1,10 +1,11 @@
-import { mkdir, mkdtemp, rename, rm, writeFile, readFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rename, rm, writeFile, readFile, symlink } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it, vi } from 'vitest'
 
 const fault = vi.hoisted(() => ({
+  afterRealpath: undefined as ((path: string) => Promise<void>) | undefined,
   beforeMkdir: undefined as ((path: string) => Promise<void>) | undefined,
   afterMkdir: undefined as ((path: string) => Promise<void>) | undefined
 }))
@@ -12,6 +13,11 @@ vi.mock('node:fs/promises', async (original) => {
   const fs = await original<typeof import('node:fs/promises')>()
   return {
     ...fs,
+    realpath: async (...args: Parameters<typeof fs.realpath>) => {
+      const result = await fs.realpath(...args)
+      await fault.afterRealpath?.(String(args[0]))
+      return result
+    },
     mkdir: async (...args: Parameters<typeof fs.mkdir>) => {
       await fault.beforeMkdir?.(String(args[0]))
       const result = await fs.mkdir(...args)
@@ -171,3 +177,70 @@ it('does not reclaim an existing empty target replaced at the mkdir boundary', a
     await rm(fixture, { recursive: true, force: true })
   }
 })
+
+// Faults occur in the real canonical-path check after its answer was computed, before preparation
+// resumes. Neither a matching pathname nor a conventional inventory dirname confers deletion rights.
+it.each(['replace-target', 'link-provenance', 'unowned-inventory'])(
+  'preserves unowned inventory before staging cleanup (%s)',
+  async (faultKind) => {
+    const fixture = await mkdtemp(join(tmpdir(), 'migration-cleanup-race-'))
+    const source = join(fixture, 'source')
+    const picked = join(fixture, 'picked')
+    const target = join(picked, 'Open-Science')
+    const foreign = join(fixture, 'foreign')
+    const inventory = join('runtime', 'provenance', 'environment-inventory')
+    let checks = 0
+    let injected = false
+    try {
+      await mkdir(source)
+      await mkdir(join(target, 'runtime'), { recursive: true })
+      await mkdir(join(foreign, 'environment-inventory'), { recursive: true })
+      const seedInventory = async (): Promise<void> => {
+        await mkdir(join(target, inventory), { recursive: true })
+        await writeFile(join(target, inventory, 'preserve.json'), 'unrelated inventory')
+      }
+      if (faultKind === 'unowned-inventory') await seedInventory()
+      else
+        fault.afterRealpath = async (path) => {
+          if (path !== target || ++checks !== 2) return
+          fault.afterRealpath = undefined
+          injected = true
+          if (faultKind === 'replace-target') {
+            await rename(target, join(picked, 'original'))
+            await seedInventory()
+          } else {
+            await writeFile(
+              join(foreign, 'environment-inventory', 'preserve.json'),
+              'unrelated inventory'
+            )
+            await symlink(
+              foreign,
+              join(target, 'runtime', 'provenance'),
+              process.platform === 'win32' ? 'junction' : 'dir'
+            )
+          }
+        }
+      const copy = vi.fn().mockResolvedValue({ ok: true })
+      const result = await runDataRootMigration(
+        {
+          currentDataRoot: source,
+          runtime: { disconnect: async () => {} },
+          notebook: { shutdownAll: async () => ({ reaped: true }) },
+          copyAndVerify: copy,
+          validateProvenanceState: async () => {}
+        },
+        picked,
+        { signal: new AbortController().signal, onProgress: () => {} }
+      )
+      if (faultKind !== 'unowned-inventory') expect(injected).toBe(true)
+      expect(await readFile(join(target, inventory, 'preserve.json'), 'utf8')).toBe(
+        'unrelated inventory'
+      )
+      expect(result.ok).toBe(false)
+      expect(copy).not.toHaveBeenCalled()
+    } finally {
+      fault.afterRealpath = undefined
+      await rm(fixture, { recursive: true, force: true })
+    }
+  }
+)

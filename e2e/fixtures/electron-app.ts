@@ -24,6 +24,8 @@ import {
 import { terminateProcessTree } from '../../src/main/process-tree'
 import { createProjectDbClient } from '../../src/main/projects/prisma-client'
 import { RendererFailureGate } from './renderer-failure-gate'
+import { prepareBrandStorageFixture } from './brand-storage-data'
+import { captureNativeQuitDialog } from './native-quit-dialog'
 import type { PackageOperationSnapshot } from '../../src/shared/session-package'
 
 const APP_ROOT = resolve(process.cwd())
@@ -663,92 +665,7 @@ class ElectronAppHarness implements ElectronApp {
     includesRendererCatalog: boolean
     message: string
   } | null> {
-    return this.runningApplication.evaluate(async ({ app, dialog }) => {
-      const { readFileSync, readdirSync } = process.getBuiltinModule('node:fs')
-      const { createRequire } = process.getBuiltinModule('node:module')
-      const { join } = process.getBuiltinModule('node:path')
-      const appRoot = app.getAppPath()
-      const mainRoot = join(appRoot, 'out', 'main')
-      const chunk = (prefix: string): string => {
-        const name = readdirSync(mainRoot).find(
-          (candidate) => candidate.startsWith(`${prefix}-`) && candidate.endsWith('.js')
-        )
-        if (!name) throw new Error(`Built Electron chunk ${prefix} was not found.`)
-        return join(mainRoot, name)
-      }
-      const requireFromApp = createRequire(join(appRoot, 'package.json'))
-      const nativeChunk = chunk('main-process-messages')
-      const nativeSource = readFileSync(nativeChunk, 'utf8')
-      const ownerModule = requireFromApp(chunk('owner')) as {
-        LocalePreferenceOwner: new (
-          systemLanguageTags: readonly string[],
-          repository: { setLocalePreference: (locale: string) => Promise<void> },
-          initialPreference: string
-        ) => {
-          t: (key: string, options?: Record<string, string | number>) => string
-        }
-      }
-      const close = requireFromApp(chunk('window-close-confirm')) as {
-        createElectronCloseConfirm: (
-          getWindow: () => undefined,
-          preferences: {
-            get: () => Promise<undefined>
-            set: () => Promise<void>
-          },
-          translate: (key: string, options?: Record<string, string | number>) => string
-        ) => (
-          variant: 'quit',
-          sessions: Array<{ projectId: string; sessionId: string; kind: 'agent' }>
-        ) => Promise<string>
-      }
-      const storageRoot = process.env.OPEN_SCIENCE_STORAGE_ROOT
-      if (!storageRoot) throw new Error('Electron E2E storage root is unavailable.')
-      const settings = JSON.parse(readFileSync(join(storageRoot, 'settings.json'), 'utf8')) as {
-        localePreference?: string
-      }
-      if (!settings.localePreference || settings.localePreference === 'system') {
-        return null
-      }
-      const localeOwner = new ownerModule.LocalePreferenceOwner(
-        ['en-US'],
-        { setLocalePreference: async () => undefined },
-        settings.localePreference
-      )
-      let captured: { buttons?: string[]; detail?: string; message?: string } | undefined
-      const descriptor = Object.getOwnPropertyDescriptor(dialog, 'showMessageBox')
-      Object.defineProperty(dialog, 'showMessageBox', {
-        configurable: true,
-        value: async (...args: unknown[]) => {
-          captured = args.at(-1) as typeof captured
-          return { checkboxChecked: false, response: 0 }
-        }
-      })
-
-      try {
-        const confirm = close.createElectronCloseConfirm(
-          () => undefined,
-          { get: async () => undefined, set: async () => undefined },
-          (key, options) => localeOwner.t(key, options)
-        )
-        await confirm('quit', [{ projectId: 'e2e', sessionId: 'e2e', kind: 'agent' }])
-      } finally {
-        if (descriptor) Object.defineProperty(dialog, 'showMessageBox', descriptor)
-        else Reflect.deleteProperty(dialog, 'showMessageBox')
-      }
-
-      if (!captured?.buttons || !captured.detail || !captured.message) {
-        throw new Error('Native quit dialog options were not captured.')
-      }
-      return {
-        buttons: captured.buttons,
-        detail: captured.detail,
-        includesRendererCatalog: [
-          'Настройки',
-          'This directory does not exist or is not a directory'
-        ].some((sentinel) => nativeSource.includes(sentinel)),
-        message: captured.message
-      }
-    })
+    return this.runningApplication.evaluate(captureNativeQuitDialog)
   }
 
   async markResourceProfilePhase(phase: string): Promise<void> {
@@ -1224,29 +1141,12 @@ class ElectronAppHarness implements ElectronApp {
 
   async restartWithBrandFixture(mode: 'legacy' | 'custom' | 'onboarding'): Promise<Page> {
     await this.close()
-    const { rename } = await import('node:fs/promises')
-    const settingsPath = join(this.roots.storageRoot, 'settings.json')
-    const settings = JSON.parse(await readFile(settingsPath, 'utf8'))
-    if (mode !== 'onboarding') {
-      await mkdir(join(settings.dataRoot, 'workspaces', 'historical'), { recursive: true })
-      await writeFile(
-        join(settings.dataRoot, 'workspaces', 'historical', 'evidence.txt'),
-        'Historical research data retained verbatim'
-      )
-      const next =
-        mode === 'legacy'
-          ? join(
-              this.roots.storageRoot,
-              process.env.OPEN_SCIENCE_E2E_EXECUTABLE ? 'OpenScience' : 'OpenScience-DEV'
-            )
-          : join(this.testRoot, 'My OpenScience research')
-      await rename(settings.dataRoot, next)
-      if (mode === 'legacy') delete settings.dataRoot
-      else settings.dataRoot = next
-      delete settings.dataRootIsInitialDefault
-    }
-    delete settings.onboardingCompletedAt
-    await writeFile(settingsPath, JSON.stringify(settings) + '\n')
+    await prepareBrandStorageFixture(
+      this.roots.storageRoot,
+      this.testRoot,
+      mode,
+      Boolean(process.env.OPEN_SCIENCE_E2E_EXECUTABLE)
+    )
     await this.launch()
     return this.page
   }

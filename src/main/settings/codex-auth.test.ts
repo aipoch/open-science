@@ -1289,3 +1289,71 @@ describe('Codex authentication install admission', () => {
     }
   })
 })
+
+describe('legacy branded Codex markers', () => {
+  it.each(['Open Science', 'Open-Science'])(
+    'restores preserved user config while replacing an imported route marked %s',
+    async (brand) => {
+      const root = await mkdtemp(join(tmpdir(), 'codex-legacy-marker-'))
+      const source = join(root, 'source')
+      const destination = join(root, 'destination')
+      const configPath = join(destination, 'config.toml')
+      try {
+        await mkdir(source)
+        await mkdir(destination)
+        await writeFile(join(source, 'auth.json'), '{"tokens":{"access_token":"fixture"}}')
+        await writeFile(
+          join(source, 'config.toml'),
+          [
+            'model_provider = "imported"',
+            '[model_providers.imported]',
+            'name = "OpenAI"',
+            'base_url = "http://127.0.0.1:1234/v1"',
+            'wire_api = "responses"',
+            'requires_openai_auth = true',
+            ''
+          ].join('\n')
+        )
+        await writeFile(configPath, 'model = "preserve"\nmodel_provider = "user-route"\n')
+        await importCodexAuthentication(source, destination)
+        const current = await readFile(configPath, 'utf8')
+        await writeFile(configPath, current.replaceAll('# Open-Science:', `# ${brand}:`))
+        await writeFile(join(source, 'config.toml'), 'model = "ignored"\n')
+        await importCodexAuthentication(source, destination)
+        const restored = await readFile(configPath, 'utf8')
+        expect(restored).toContain('model = "preserve"')
+        expect(restored).toContain('model_provider = "user-route"')
+        expect(restored).not.toContain('imported Codex')
+        expect(restored).not.toContain('model_providers."imported"')
+        await importCodexAuthentication(source, destination)
+        expect(await readFile(configPath, 'utf8')).toBe(restored)
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it('replaces old transport marker pairs without duplicating providers or dropping user comments', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-legacy-transport-'))
+    const configPath = join(codexSubscriptionStorageDir(root), 'config.toml')
+    try {
+      await ensureCodexAuthHome('isolated', root, 'https')
+      const current = await readFile(configPath, 'utf8')
+      const comment = '# Open Science: user comment, not a managed marker'
+      await writeFile(
+        configPath,
+        `${comment}\n${current.replaceAll('# Open-Science:', '# Open Science:')}`
+      )
+      await ensureCodexAuthHome('isolated', root, 'websocket')
+      const updated = await readFile(configPath, 'utf8')
+      expect(updated).toContain(comment)
+      expect(updated).not.toContain('# Open Science: begin Codex transport')
+      expect(updated).not.toContain('open-science-chatgpt-https')
+      expect(updated).toContain('# Open-Science: begin Codex transport')
+      await ensureCodexAuthHome('isolated', root, 'websocket')
+      expect(await readFile(configPath, 'utf8')).toBe(updated)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+})

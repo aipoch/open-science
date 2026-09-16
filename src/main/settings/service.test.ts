@@ -959,17 +959,17 @@ describe('SettingsService: providers', () => {
     expect(await readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')).toBe(
       [
         'cli_auth_credentials_store = "file"',
-        '# Open Science: begin imported Codex route selection',
+        '# Open-Science: begin imported Codex route selection',
         'model_provider = "subscription-route"',
-        '# Open Science: end imported Codex route selection',
-        '# Open Science: begin imported Codex provider',
+        '# Open-Science: end imported Codex route selection',
+        '# Open-Science: begin imported Codex provider',
         '[model_providers."subscription-route"]',
         'name = "OpenAI"',
         'base_url = "http://127.0.0.1:1087/v1"',
         'wire_api = "responses"',
         'requires_openai_auth = true',
         'supports_websockets = false',
-        '# Open Science: end imported Codex provider',
+        '# Open-Science: end imported Codex provider',
         ''
       ].join('\n')
     )

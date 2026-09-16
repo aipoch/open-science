@@ -45,7 +45,6 @@ const renderStep = async (isResolvingDefaultLocation = false): Promise<RenderRes
   const setIsRelaunching = vi.fn()
   const Harness = (): React.JSX.Element => {
     const [locationDraft, setLocationDraft] = useState({
-      chosenParent: '',
       chosenDataRoot: '',
       chosenKind: null as 'move' | 'adopt' | null
     })

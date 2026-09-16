@@ -1,10 +1,7 @@
 import { homedir } from 'node:os'
 import { readdirSync } from 'node:fs'
 import { join } from 'node:path'
-import {
-  resolveBootstrapConfigRoot,
-  resolveConfigRootOverride
-} from '../../../src/shared/config-root.js'
+import { resolveBootstrapConfigRoot, resolveConfigRootOverride } from './config-root.js'
 import { isIP } from 'node:net'
 import { domainToASCII } from 'node:url'
 

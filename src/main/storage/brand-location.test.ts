@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile, symlink } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -539,3 +539,108 @@ it('recovers the durable settings selection before examining obsolete research c
   expect(resolveDataRoot()).toBe(custom)
   expect(await readFile(join(old, 'workspaces/history.json'), 'utf8')).toContain('retained')
 })
+
+it.each(['workspaces', 'workspaces/nested'])(
+  'requires recovery instead of inferring ownership from a linked %s',
+  async (linkedPath) => {
+    const old = join(fixture, 'OpenScience')
+    const unrelated = join(fixture, 'unrelated')
+    await mkdir(unrelated)
+    await writeFile(join(unrelated, 'history.json'), 'not application data')
+    await mkdir(linkedPath.includes('/') ? join(old, 'workspaces') : old, { recursive: true })
+    await symlink(
+      unrelated,
+      join(old, linkedPath),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+    const configRoot = resolveConfigRoot()
+    expect(() =>
+      pinFreshApplicationLocations({
+        configRoot,
+        profilePath: join(fixture, 'profile'),
+        home: fixture,
+        packaged: true,
+        existingInstallation: false
+      })
+    ).toThrow(/verify|recover/i)
+    expect(existsSync(join(configRoot, 'electron-profile.json'))).toBe(false)
+    await expect(initializeDataLocation(new SettingsRepository(configRoot))).rejects.toThrow(
+      /verify|recover/i
+    )
+    expect(existsSync(join(configRoot, 'settings.json'))).toBe(false)
+    const { classifyDataRoot } = await import('./migration-service')
+    expect(await classifyDataRoot(old, join(fixture, 'current'))).toMatchObject({ kind: 'invalid' })
+    expect(existsSync(join(fixture, 'Open-Science'))).toBe(false)
+    expect(await readFile(join(unrelated, 'history.json'), 'utf8')).toBe('not application data')
+  }
+)
+
+it('keeps a saved root with linked research instead of inferring another location', async () => {
+  const saved = join(fixture, 'saved')
+  const external = join(fixture, 'external')
+  await mkdir(saved)
+  await seed(external)
+  await symlink(
+    join(external, 'workspaces'),
+    join(saved, 'workspaces'),
+    process.platform === 'win32' ? 'junction' : 'dir'
+  )
+  const repository = new SettingsRepository(resolveConfigRoot())
+  await repository.pinInitialDataRoot(saved, false)
+  await initializeDataLocation(repository)
+  expect(resolveDataRoot()).toBe(saved)
+  expect((await repository.getSettings()).dataRoot).toBe(saved)
+})
+
+it.each([true, false])(
+  'starts a genuine legacy E2E fixture without a completed new profile record (packaged=%s)',
+  async (packaged) => {
+    state.packaged = packaged
+    const configRoot = resolveConfigRoot()
+    const profilePath = join(fixture, 'profile')
+    vi.stubEnv('OPEN_SCIENCE_USER_DATA', profilePath)
+    const { prepareApplicationLocations } = await import('./initialize-location')
+    await prepareApplicationLocations({ configRoot, profilePath, existingInstallation: false })
+    const { prepareBrandStorageFixture } = await import('../../../e2e/fixtures/brand-storage-data')
+    await prepareBrandStorageFixture(configRoot, fixture, 'legacy', packaged)
+    const prepared = await prepareApplicationLocations({
+      configRoot,
+      profilePath,
+      existingInstallation: true
+    })
+    const expected = join(configRoot, packaged ? 'OpenScience' : 'OpenScience-DEV')
+    expect((await prepared.repository.getSettings()).dataRoot).toBe(expected)
+    expect(await readFile(join(expected, 'workspaces/historical/evidence.txt'), 'utf8')).toBe(
+      'Historical research data retained verbatim'
+    )
+  }
+)
+
+it.each(['startup', 'adoption'])(
+  'does not infer ownership through a symlinked legacy root (%s)',
+  async (entry) => {
+    const old = join(fixture, 'OpenScience')
+    const external = join(fixture, 'unrelated')
+    await seed(external)
+    await symlink(external, old, process.platform === 'win32' ? 'junction' : 'dir')
+    if (entry === 'startup') {
+      const configRoot = resolveConfigRoot()
+      expect(() =>
+        pinFreshApplicationLocations({
+          configRoot,
+          profilePath: join(fixture, 'profile'),
+          home: fixture,
+          packaged: true,
+          existingInstallation: false
+        })
+      ).toThrow(/verify|recover/i)
+      expect(existsSync(join(configRoot, 'electron-profile.json'))).toBe(false)
+    } else {
+      const { classifyDataRoot } = await import('./migration-service')
+      expect(await classifyDataRoot(old, join(fixture, 'current'))).toMatchObject({
+        kind: 'invalid'
+      })
+    }
+    expect(await readFile(join(external, 'workspaces/history.json'), 'utf8')).toContain('retained')
+  }
+)

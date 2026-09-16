@@ -18,6 +18,9 @@ An absolute saved `dataRoot` stays authoritative, including custom paths contain
 For a legacy installation that has never completed a recorded selection, startup examines the current and historical default roots and the original
 configuration root for actual research data, using the same legacy ownership evidence as manual
 adoption. Generic `models` and `uploads` contents alone cannot establish application ownership.
+Unrecorded symlinked directories or files are content to preserve, not ownership evidence; startup
+and manual adoption do not follow them to infer a legacy root. An authoritative saved location
+remains unchanged even when it contains links.
 Runtime alone is not evidence of the active data root:
 migration can leave it at the old location. Empty scaffolding does not identify an existing installation. A single verified location is recorded before locale, database, or application writers
 start. Uncommitted migration targets are never adopted by inference. Multiple candidates, unreadable
@@ -44,6 +47,10 @@ resolved separately; an unbranded custom root needs an application workspace own
 an authoritative saved selection. Ambiguous or unverified content is preserved and requires explicit
 recovery, rather than being adopted or overwritten. Displayed paths are the real paths. The initial empty default is recorded separately so onboarding may still select an appropriate
 local drive, while later onboarding runs cannot replace a populated or missing saved root.
+Migration preparation rechecks the confirmed target after asynchronous validation before owner-verified
+cache cleanup. An `environment-inventory` directory name alone grants no deletion rights; unowned
+runtime content is preserved and blocks staging.
+
 Pinning an old in-place configuration/data layout does not dismiss its one-time migration suggestion.
 It remains available only while research content is there and the user has neither dismissed it nor
 selected a different root. Showing the suggestion never moves data automatically.
@@ -164,3 +171,7 @@ Both default-location actions use `defaultDataRoot`, including the legacy-layout
 Ordinary folder picking still recognizes verified legacy and custom roots. An isolated default nested
 inside the current data root is refused by the same containment guard; explicitly choose a separate
 folder. No upgrade-triggered migration is introduced.
+
+Managed Codex configuration blocks use `# Open-Science:` markers for new writes. Exact historical
+`# Open Science:` marker pairs and preserved-line records remain readable so changing or removing
+a managed route restores user configuration. Unrelated comments and TOML values are not renamed.

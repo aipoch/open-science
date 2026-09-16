@@ -81,12 +81,14 @@ let emptyParent: string
 
 beforeEach(async () => {
   currentParent = await mkdtemp(join(tmpdir(), 'ds-migsvc-current-'))
+  vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', join(currentParent, 'config'))
   currentDataRoot = dataRootFor(currentParent)
   await mkdir(currentDataRoot)
   emptyParent = await mkdtemp(join(tmpdir(), 'ds-migsvc-target-'))
 })
 
 afterEach(async () => {
+  vi.unstubAllEnvs()
   await rm(currentParent, { recursive: true, force: true })
   await rm(emptyParent, { recursive: true, force: true })
 })

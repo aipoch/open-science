@@ -1,5 +1,5 @@
-import { lstat, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises'
-import { existsSync, mkdirSync, readFileSync, readdirSync, type Dirent } from 'node:fs'
+import { readdir, realpath, rm, stat, writeFile } from 'node:fs/promises'
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, type Dirent } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 
@@ -84,10 +84,10 @@ const WINDOWS_MAX_USABLE_PATH = 259
 // the longest linked package path. Logical names deliberately do not participate in this budget.
 const WINDOWS_ENV_PREFIX_RESERVE = windowsDefaultEnvPrefixReserve()
 
-const runtimeTreeContainsLink = async (path: string): Promise<boolean> => {
+const runtimeTreeContainsLink = (path: string): boolean => {
   let state
   try {
-    state = await lstat(path)
+    state = lstatSync(path)
   } catch (error) {
     return (error as NodeJS.ErrnoException).code !== 'ENOENT'
   }
@@ -95,13 +95,13 @@ const runtimeTreeContainsLink = async (path: string): Promise<boolean> => {
 
   let entries: Dirent[]
   try {
-    entries = await readdir(path, { withFileTypes: true })
+    entries = readdirSync(path, { withFileTypes: true })
   } catch {
     return true
   }
   for (const entry of entries) {
     if (entry.isSymbolicLink()) return true
-    if (entry.isDirectory() && (await runtimeTreeContainsLink(join(path, entry.name)))) return true
+    if (entry.isDirectory() && runtimeTreeContainsLink(join(path, entry.name))) return true
   }
   return false
 }
@@ -492,7 +492,6 @@ export const RUNTIME_ENVIRONMENT_MANIFESTS_DIR = join(
   'environment-manifests'
 )
 export const RUNTIME_ENVIRONMENT_LOCKS_DIR = join('runtime', 'provenance', 'environment-locks')
-const RUNTIME_ENVIRONMENT_INVENTORY_DIR = join('runtime', 'provenance', 'environment-inventory')
 // The SQLite authority stays under the fixed config root. Keep the filename exported for migration
 // validation/tests, but never put it in the relocatable data-root copy/delete set.
 export const PROJECT_DATABASE_FILE = 'open-science.db'
@@ -683,7 +682,7 @@ export const runDataRootMigration = async (
   }
   operation.phase('prepare-staging')
   const targetRuntimeRoot = join(target, 'runtime')
-  if (await runtimeTreeContainsLink(targetRuntimeRoot)) {
+  if (runtimeTreeContainsLink(targetRuntimeRoot)) {
     const error = new Error('The new data location contains a linked runtime path.')
     operation.fail(error)
     return {
@@ -694,8 +693,15 @@ export const runDataRootMigration = async (
   }
   let targetRuntimeCacheClean = true
   try {
+    // Owner-verified cache cleanup is synchronous. Recheck the confirmed root after the earlier
+    // asynchronous validation and keep link inspection through cleanup in the same turn.
+    assertDataRootSelection(selection)
     targetRuntimeCacheClean = deps.cleanupRuntimeCache?.(targetRuntimeRoot) ?? true
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.message === DATA_ROOT_SELECTION_CHANGED) {
+      operation.fail(error)
+      return { ok: false, error: error.message }
+    }
     targetRuntimeCacheClean = false
   }
   if (!targetRuntimeCacheClean) {
@@ -723,11 +729,9 @@ export const runDataRootMigration = async (
       operation.fail(new Error(canonicalValidation.error))
       return canonicalValidation
     }
-    // A runtime-only destination is a valid move target and may be residue from an earlier location.
-    // The injected owner cleanup above removed verified rebuildable caches; now drop the path-keyed
-    // mutable Environment inventory. Any remaining runtime data is rejected below before the target
-    // becomes staging-owned, so rollback can never delete pre-existing archives or unknown files.
-    await rm(join(target, RUNTIME_ENVIRONMENT_INVENTORY_DIR), { recursive: true, force: true })
+    assertDataRootSelection(selection)
+    // A conventional inventory path is not proof of cleanup ownership. Preserve it like other
+    // unknown runtime data; the check below refuses to claim a nonempty target as staging.
   } catch (err) {
     operation.fail(err)
     return {

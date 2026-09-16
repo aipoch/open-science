@@ -41,7 +41,6 @@ type LocationStepProps = {
 }
 
 type LocationDraft = {
-  chosenParent: string
   chosenDataRoot: string
   chosenKind: 'move' | 'adopt' | null
   selection?: DataRootSelection
@@ -64,7 +63,7 @@ const LocationStep = ({
   setIsRelaunching
 }: LocationStepProps): React.JSX.Element => {
   const { t } = useTranslation()
-  const { chosenParent, chosenDataRoot, chosenKind } = locationDraft
+  const { chosenDataRoot, chosenKind } = locationDraft
   const isLoadingDefaultLocation = isResolvingDefaultLocation && dataRootInfo === null
   const [locationError, setLocationError] = useState<string | undefined>(undefined)
   const [confirmRestart, setConfirmRestart] = useState(false)
@@ -101,7 +100,6 @@ const LocationStep = ({
         }
 
         onLocationDraftChange({
-          chosenParent: picked,
           chosenDataRoot: result.dataRoot,
           chosenKind: result.kind,
           selection: result.selection
@@ -118,7 +116,7 @@ const LocationStep = ({
   const handleResetLocation = (): void => {
     if (requestInFlightRef.current) return
 
-    onLocationDraftChange({ chosenParent: '', chosenDataRoot: '', chosenKind: null })
+    onLocationDraftChange({ chosenDataRoot: '', chosenKind: null })
     onRelaunchErrorChange(undefined)
     setLocationError(undefined)
   }
@@ -126,7 +124,7 @@ const LocationStep = ({
   const handleContinueLocation = (): void => {
     if (requestInFlightRef.current) return
 
-    if (chosenParent) {
+    if (chosenDataRoot) {
       setConfirmRestart(true)
     } else {
       onRelaunchErrorChange(undefined)
@@ -136,7 +134,7 @@ const LocationStep = ({
 
   const handleKeepDefault = (): void => {
     setConfirmRestart(false)
-    onLocationDraftChange({ chosenParent: '', chosenDataRoot: '', chosenKind: null })
+    onLocationDraftChange({ chosenDataRoot: '', chosenKind: null })
     onRelaunchErrorChange(undefined)
     setLocationError(undefined)
     onContinue()

@@ -89,7 +89,6 @@ const findWindowsStorageDefault = async (
       if (signal.aborted) return null
       if (inspection.kind === 'move' && inspection.targetWasAbsent === true) {
         return {
-          chosenParent: drive.path,
           chosenDataRoot: inspection.dataRoot,
           chosenKind: 'move',
           selection: inspection.selection
@@ -235,7 +234,6 @@ const OnboardingWizard = ({
   // Like the provider draft, the data-location choice belongs to the stable shell so Back/Continue
   // does not discard it when LocationStep unmounts.
   const [locationDraft, setLocationDraft] = useState<LocationDraft>({
-    chosenParent: '',
     chosenDataRoot: '',
     chosenKind: null
   })
@@ -379,7 +377,7 @@ const OnboardingWizard = ({
       if (cancelled || locationDraftTouched.current) return
 
       if (recommendedDraft) {
-        setLocationDraft((current) => (current.chosenParent ? current : recommendedDraft))
+        setLocationDraft((current) => (current.chosenDataRoot ? current : recommendedDraft))
       }
       setDidResolveStorageDefault(true)
     })
