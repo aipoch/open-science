@@ -2,9 +2,11 @@ import { strToU8, zipSync, type Zippable } from 'fflate'
 
 import type {
   ArtifactExecutionSnapshot,
+  ArtifactVersionInputEvidence,
   ArtifactVersionProvenance
 } from '../../shared/artifact-provenance'
 import type { ArtifactVersionReviewProjection } from '../../shared/reviewer'
+import { outputFilename } from './artifact-reproducibility-export'
 import { sha256 } from './provenance-canonical'
 
 const RO_CRATE_CONTEXT = 'https://w3id.org/ro/crate/1.1/context'
@@ -12,6 +14,7 @@ const RO_CRATE_SPECIFICATION = 'https://w3id.org/ro/crate/1.1'
 // Lightweight profile: metadata + provenance records only. Data payloads are referenced by
 // SHA-256 checksum and are not packaged. The complete profile (step 2 of issue #925) will add them.
 const LIGHTWEIGHT_PROFILE = 'urn:open-science:ro-crate-profile:artifact-version-lightweight'
+const COMPLETE_PROFILE = 'urn:open-science:ro-crate-profile:artifact-version-complete'
 const ZIP_MTIME = new Date('1980-01-02T00:00:00.000Z')
 
 type RoCrateEntity = { '@id': string } & Record<string, unknown>
@@ -23,6 +26,17 @@ type ArtifactVersionRoCrateSource = Pick<
 > & {
   execution?: ArtifactExecutionSnapshot
   review?: ArtifactVersionReviewProjection
+}
+
+type ArtifactVersionRoCrateContentReaders = {
+  readVersionContent: (versionId: string) => Promise<Uint8Array | undefined>
+  readInputContent: (input: ArtifactVersionInputEvidence) => Promise<Uint8Array | undefined>
+}
+
+type RoCrateMetadataOptions = {
+  profile?: 'lightweight' | 'complete'
+  packagedDataPaths?: ReadonlyMap<string, string>
+  omittedDataReasons?: ReadonlyMap<string, string>
 }
 
 const fragment = (value: string): string => value.replace(/[^a-zA-Z0-9._~-]+/gu, '-')
@@ -100,10 +114,15 @@ const provenanceSidecars = (source: ArtifactVersionRoCrateSource): Map<string, s
 
 const buildArtifactVersionRoCrateMetadata = (
   source: ArtifactVersionRoCrateSource,
-  sidecars: ReadonlyMap<string, string> = new Map()
+  sidecars: ReadonlyMap<string, string> = new Map(),
+  options: RoCrateMetadataOptions = {}
 ): RoCrateMetadataDocument => {
   const { descriptor, evidence } = source
-  const payloadId = versionEntityId(evidence.version_id)
+  const profile = options.profile ?? 'lightweight'
+  const packagedDataPaths = options.packagedDataPaths ?? new Map<string, string>()
+  const omittedDataReasons = options.omittedDataReasons ?? new Map<string, string>()
+  const payloadId =
+    packagedDataPaths.get(evidence.version_id) ?? versionEntityId(evidence.version_id)
   const graph: RoCrateEntity[] = []
   const contextualIds: string[] = []
   const add = (entity: RoCrateEntity, contextual = false): void => {
@@ -121,10 +140,15 @@ const buildArtifactVersionRoCrateMetadata = (
     ...(evidence.content_type ? { encodingFormat: evidence.content_type } : {}),
     dateCreated: evidence.created_at,
     version: `v${evidence.version_number}`,
-    description:
-      source.contentStatus.state === 'available'
-        ? 'Immutable Open Science Artifact Version payload. This lightweight crate references the payload by SHA-256 checksum and does not include the bytes.'
-        : `Immutable Open Science Artifact Version payload. Payload content is currently unavailable (${source.contentStatus.reason}) from the source installation; the checksum remains the authoritative identity, and the bytes are not included in this crate.`,
+    description: packagedDataPaths.has(evidence.version_id)
+      ? 'Immutable Open Science Artifact Version payload included in this RO-Crate and verified against its declared size and SHA-256 checksum.'
+      : source.contentStatus.state === 'unavailable'
+        ? `Immutable Open Science Artifact Version payload. Payload content is currently unavailable (${source.contentStatus.reason}) from the source installation; the checksum remains the authoritative identity, and the bytes are not included in this crate.`
+        : omittedDataReasons.has(evidence.version_id)
+          ? `Immutable Open Science Artifact Version payload. The bytes ${omittedDataReasons.get(evidence.version_id)} and are not included; the checksum remains the authoritative identity.`
+          : profile === 'lightweight'
+            ? 'Immutable Open Science Artifact Version payload. This lightweight crate references the payload by SHA-256 checksum and does not include the bytes.'
+            : 'Immutable Open Science Artifact Version payload referenced by SHA-256 checksum; the bytes are not included in this crate.',
     ...(descriptor.originKind
       ? { additionalProperty: [propertyValue('originKind', descriptor.originKind)] }
       : {})
@@ -132,16 +156,26 @@ const buildArtifactVersionRoCrateMetadata = (
 
   const inputEntities: RoCrateEntity[] = [...evidence.inputs]
     .sort((left, right) => left.ordinal - right.ordinal)
-    .map((input) => ({
-      '@type': 'File',
-      '@id': versionEntityId(input.input_file_version_id),
-      name: input.filename,
-      contentSize: String(input.size_bytes),
-      sha256: input.checksum,
-      ...(input.content_type ? { encodingFormat: input.content_type } : {}),
-      ...(input.source_created_at ? { dateCreated: input.source_created_at } : {}),
-      description: `Exact immutable input file version (${input.source_kind}). Referenced by SHA-256 checksum and not included in this crate.`
-    }))
+    .map((input) => {
+      const packaged = packagedDataPaths.has(input.input_file_version_id)
+      const omittedReason = omittedDataReasons.get(input.input_file_version_id)
+      return {
+        '@type': 'File',
+        '@id':
+          packagedDataPaths.get(input.input_file_version_id) ??
+          versionEntityId(input.input_file_version_id),
+        name: input.filename,
+        contentSize: String(input.size_bytes),
+        sha256: input.checksum,
+        ...(input.content_type ? { encodingFormat: input.content_type } : {}),
+        ...(input.source_created_at ? { dateCreated: input.source_created_at } : {}),
+        description: packaged
+          ? `Exact immutable input file version (${input.source_kind}) included in this RO-Crate and verified against its declared size and SHA-256 checksum.`
+          : omittedReason
+            ? `Exact immutable input file version (${input.source_kind}). The bytes ${omittedReason} and are not included; the checksum remains the authoritative identity.`
+            : `Exact immutable input file version (${input.source_kind}). Referenced by SHA-256 checksum and not included in this crate.`
+      }
+    })
 
   const agentId = `urn:open-science:agent:${fragment(evidence.conversation.agent_frame_id)}`
   const agentEntity: RoCrateEntity = {
@@ -209,7 +243,11 @@ const buildArtifactVersionRoCrateMetadata = (
         run.inputFileVersionKeys
           .map((key) => inputsByVersionId.get(key.inputFileVersionId))
           .filter((input): input is NonNullable<typeof input> => Boolean(input))
-          .map((input) => versionEntityId(input.input_file_version_id))
+          .map(
+            (input) =>
+              packagedDataPaths.get(input.input_file_version_id) ??
+              versionEntityId(input.input_file_version_id)
+          )
       )
     ]
     createActionEntities.push({
@@ -251,7 +289,12 @@ const buildArtifactVersionRoCrateMetadata = (
       instrument: instruments,
       object: [...evidence.inputs]
         .sort((left, right) => left.ordinal - right.ordinal)
-        .map((input) => reference(versionEntityId(input.input_file_version_id))),
+        .map((input) =>
+          reference(
+            packagedDataPaths.get(input.input_file_version_id) ??
+              versionEntityId(input.input_file_version_id)
+          )
+        ),
       result: [reference(payloadId)],
       ...(evidence.execution_status.state === 'unavailable'
         ? {
@@ -397,11 +440,20 @@ const buildArtifactVersionRoCrateMetadata = (
     '@id': './',
     name: `${evidence.filename} (Artifact Version v${evidence.version_number}) RO-Crate`,
     description:
-      'Open Science Artifact Version provenance crate (lightweight profile). Serializes the provenance captured for one immutable Artifact Version — checksums, producer code, execution history, exact input references, environment inventory, message-branch context, and reviewer evidence — as RO-Crate 1.1 metadata. Provenance is an audit and traceability record, not a deterministic replay contract. Data payloads and input files are referenced by SHA-256 checksum and are not included.',
+      profile === 'lightweight'
+        ? 'Open Science Artifact Version provenance crate (lightweight profile). Serializes the provenance captured for one immutable Artifact Version — checksums, producer code, execution history, exact input references, environment inventory, message-branch context, and reviewer evidence — as RO-Crate 1.1 metadata. Provenance is an audit and traceability record, not a deterministic replay contract. Data payloads and input files are referenced by SHA-256 checksum and are not included.'
+        : omittedDataReasons.size
+          ? 'Open Science Artifact Version provenance crate (complete profile). Includes every available data file that passed declared size and SHA-256 verification. Some data files could not be included and remain immutable checksum references, so this crate is not fully self-contained. Provenance is an audit and traceability record, not a deterministic replay contract.'
+          : 'Open Science Artifact Version provenance crate (complete profile). Includes the Artifact Version payload and exact input file bytes together with their provenance as RO-Crate 1.1 metadata. Provenance is an audit and traceability record, not a deterministic replay contract.',
     mainEntity: reference(payloadId),
-    conformsTo: reference(LIGHTWEIGHT_PROFILE),
-    ...(sidecarEntities.length
-      ? { hasPart: sidecarEntities.map((entity) => reference(entity['@id'])) }
+    conformsTo: reference(profile === 'complete' ? COMPLETE_PROFILE : LIGHTWEIGHT_PROFILE),
+    ...(sidecarEntities.length || packagedDataPaths.size
+      ? {
+          hasPart: [
+            ...sidecarEntities.map((entity) => reference(entity['@id'])),
+            ...[...new Set(packagedDataPaths.values())].map(reference)
+          ]
+        }
       : {}),
     ...(contextualIds.length ? { mentions: contextualIds.map(reference) } : {})
   }
@@ -455,12 +507,109 @@ const buildArtifactVersionRoCrateArchive = (source: ArtifactVersionRoCrateSource
   return zipSync(entries, { level: 6 })
 }
 
+const buildArtifactVersionCompleteRoCrateArchive = async (
+  source: ArtifactVersionRoCrateSource,
+  readers: ArtifactVersionRoCrateContentReaders
+): Promise<Uint8Array> => {
+  const sidecars = provenanceSidecars(source)
+  const packagedDataPaths = new Map<string, string>()
+  const omittedDataReasons = new Map<string, string>()
+  const dataEntries = new Map<string, Uint8Array>()
+  const archivedChecksums = new Map<string, string>()
+  const pathChecksums = new Map<string, string>()
+
+  const include = async (
+    versionId: string,
+    filename: string,
+    size: number,
+    checksum: string,
+    read: () => Promise<Uint8Array | undefined>
+  ): Promise<void> => {
+    const archivedPath = archivedChecksums.get(checksum)
+    if (archivedPath) {
+      packagedDataPaths.set(versionId, archivedPath)
+      return
+    }
+    const bytes = await read()
+    if (!bytes) {
+      omittedDataReasons.set(versionId, 'could not be read from the source installation')
+      return
+    }
+    if (bytes.byteLength !== size) {
+      omittedDataReasons.set(versionId, 'failed size verification')
+      return
+    }
+    if (sha256(Buffer.from(bytes)) !== checksum) {
+      omittedDataReasons.set(versionId, 'failed checksum verification')
+      return
+    }
+    const path = `data/${outputFilename(filename)}`
+    const existingChecksum = pathChecksums.get(path)
+    if (existingChecksum && existingChecksum !== checksum) {
+      throw new Error(`RO-Crate archive path conflicts: ${path}`)
+    }
+    dataEntries.set(path, bytes)
+    pathChecksums.set(path, checksum)
+    archivedChecksums.set(checksum, path)
+    packagedDataPaths.set(versionId, path)
+  }
+
+  if (source.contentStatus.state === 'available') {
+    await include(
+      source.evidence.version_id,
+      source.evidence.filename,
+      source.evidence.size_bytes,
+      source.evidence.checksum,
+      () => readers.readVersionContent(source.evidence.version_id)
+    )
+  } else {
+    omittedDataReasons.set(
+      source.evidence.version_id,
+      `are currently unavailable (${source.contentStatus.reason}) from the source installation`
+    )
+  }
+  for (const input of [...source.evidence.inputs].sort(
+    (left, right) => left.ordinal - right.ordinal
+  )) {
+    await include(
+      input.input_file_version_id,
+      input.filename,
+      input.size_bytes,
+      input.checksum,
+      () => readers.readInputContent(input)
+    )
+  }
+
+  const metadata = buildArtifactVersionRoCrateMetadata(source, sidecars, {
+    profile: 'complete',
+    packagedDataPaths,
+    omittedDataReasons
+  })
+  const entries: Zippable = {
+    'ro-crate-metadata.json': [strToU8(serializeRoCrateMetadata(metadata)), { mtime: ZIP_MTIME }],
+    ...Object.fromEntries(
+      [...sidecars].map(([path, content]) => [path, [strToU8(content), { mtime: ZIP_MTIME }]])
+    ),
+    ...Object.fromEntries(
+      [...dataEntries].map(([path, bytes]) => [path, [bytes, { mtime: ZIP_MTIME, level: 0 }]])
+    )
+  }
+  return zipSync(entries, { level: 6 })
+}
+
 export {
+  buildArtifactVersionCompleteRoCrateArchive,
   buildArtifactVersionRoCrateArchive,
   buildArtifactVersionRoCrateMetadata,
   serializeRoCrateMetadata,
+  COMPLETE_PROFILE,
   LIGHTWEIGHT_PROFILE,
   RO_CRATE_CONTEXT,
   RO_CRATE_SPECIFICATION
 }
-export type { ArtifactVersionRoCrateSource, RoCrateEntity, RoCrateMetadataDocument }
+export type {
+  ArtifactVersionRoCrateContentReaders,
+  ArtifactVersionRoCrateSource,
+  RoCrateEntity,
+  RoCrateMetadataDocument
+}

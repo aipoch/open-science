@@ -8,8 +8,10 @@ import type {
 } from '../../shared/artifact-provenance'
 import type { ArtifactVersionReviewProjection, ReviewCheck } from '../../shared/reviewer'
 import {
+  buildArtifactVersionCompleteRoCrateArchive,
   buildArtifactVersionRoCrateArchive,
   buildArtifactVersionRoCrateMetadata,
+  COMPLETE_PROFILE,
   LIGHTWEIGHT_PROFILE,
   serializeRoCrateMetadata,
   type ArtifactVersionRoCrateSource,
@@ -216,6 +218,37 @@ const source = (
   ...overrides
 })
 
+const completeSource = (): {
+  source: ArtifactVersionRoCrateSource
+  payload: Buffer
+  input: Buffer
+} => {
+  const payload = Buffer.from('value\n42\n')
+  const input = Buffer.from('sample\nAda\n')
+  const completeEvidence = evidence()
+  completeEvidence.size_bytes = payload.byteLength
+  completeEvidence.checksum = sha256(payload)
+  completeEvidence.inputs = [
+    {
+      ...completeEvidence.inputs[0]!,
+      size_bytes: input.byteLength,
+      checksum: sha256(input)
+    }
+  ]
+  return {
+    source: source({
+      descriptor: {
+        ...descriptor(),
+        size: payload.byteLength,
+        checksum: sha256(payload)
+      },
+      evidence: completeEvidence
+    }),
+    payload,
+    input
+  }
+}
+
 const entity = (document: RoCrateMetadataDocument, id: string): RoCrateEntity => {
   const found = document['@graph'].find((candidate) => candidate['@id'] === id)
   if (!found) throw new Error(`Missing entity ${id}`)
@@ -370,6 +403,147 @@ describe('Artifact Version RO-Crate export', () => {
       { '@id': 'provenance/execution-snapshot.json' },
       { '@id': 'provenance/review-projection.json' }
     ])
+  })
+
+  it('builds a deterministic complete archive with verified data files and relative references', async () => {
+    const fixture = completeSource()
+    const readers = {
+      readVersionContent: async () => fixture.payload,
+      readInputContent: async () => fixture.input
+    }
+    const first = await buildArtifactVersionCompleteRoCrateArchive(fixture.source, readers)
+    const second = await buildArtifactVersionCompleteRoCrateArchive(fixture.source, readers)
+    expect(first).toEqual(second)
+
+    const files = unzipSync(first)
+    expect(Object.keys(files).sort()).toEqual([
+      'data/report.csv',
+      'data/samples.csv',
+      'provenance/artifact-version-evidence.json',
+      'provenance/execution-snapshot.json',
+      'provenance/review-projection.json',
+      'ro-crate-metadata.json'
+    ])
+    expect(Buffer.from(files['data/report.csv']!)).toEqual(fixture.payload)
+    expect(Buffer.from(files['data/samples.csv']!)).toEqual(fixture.input)
+
+    const metadata = JSON.parse(
+      strFromU8(files['ro-crate-metadata.json']!)
+    ) as RoCrateMetadataDocument
+    const root = entity(metadata, './')
+    expect(root.conformsTo).toEqual({ '@id': COMPLETE_PROFILE })
+    expect(root.mainEntity).toEqual({ '@id': 'data/report.csv' })
+    expect(root.hasPart).toEqual([
+      { '@id': 'provenance/artifact-version-evidence.json' },
+      { '@id': 'provenance/execution-snapshot.json' },
+      { '@id': 'provenance/review-projection.json' },
+      { '@id': 'data/report.csv' },
+      { '@id': 'data/samples.csv' }
+    ])
+    expect(entity(metadata, 'data/report.csv')).toMatchObject({
+      contentSize: String(fixture.payload.byteLength),
+      sha256: sha256(fixture.payload)
+    })
+    expect(entity(metadata, 'data/samples.csv')).toMatchObject({
+      contentSize: String(fixture.input.byteLength),
+      sha256: sha256(fixture.input)
+    })
+    expect(entity(metadata, '#create-action/run-1')).toMatchObject({
+      object: [{ '@id': 'data/samples.csv' }],
+      result: [{ '@id': 'data/report.csv' }]
+    })
+  })
+
+  it('stores identical content once and points every matching version at the archived file', async () => {
+    const fixture = completeSource()
+    const duplicateExecution = execution()
+    duplicateExecution.runs[0]!.inputFileVersionKeys.push({
+      sourceKind: 'upload-version',
+      inputFileVersionId: 'input-version-2'
+    })
+    const duplicateEvidence = {
+      ...fixture.source.evidence,
+      inputs: [
+        fixture.source.evidence.inputs[0]!,
+        {
+          ...fixture.source.evidence.inputs[0]!,
+          ordinal: 2,
+          input_file_version_id: 'input-version-2',
+          source_file_id: 'upload-2',
+          filename: 'duplicate.csv'
+        }
+      ]
+    }
+    const archive = await buildArtifactVersionCompleteRoCrateArchive(
+      { ...fixture.source, evidence: duplicateEvidence, execution: duplicateExecution },
+      {
+        readVersionContent: async () => fixture.payload,
+        readInputContent: async () => fixture.input
+      }
+    )
+    const files = unzipSync(archive)
+    expect(
+      Object.keys(files)
+        .filter((path) => path.startsWith('data/'))
+        .sort()
+    ).toEqual(['data/report.csv', 'data/samples.csv'])
+    const metadata = JSON.parse(
+      strFromU8(files['ro-crate-metadata.json']!)
+    ) as RoCrateMetadataDocument
+    expect(entity(metadata, '#create-action/run-1').object).toEqual([{ '@id': 'data/samples.csv' }])
+  })
+
+  it('keeps checksum references and explains complete-profile content that cannot be included', async () => {
+    const fixture = completeSource()
+    fixture.source.evidence.inputs.push({
+      ...fixture.source.evidence.inputs[0]!,
+      ordinal: 2,
+      input_file_version_id: 'input-version-2',
+      source_file_id: 'upload-2',
+      filename: 'missing.csv'
+    })
+    const archive = await buildArtifactVersionCompleteRoCrateArchive(
+      {
+        ...fixture.source,
+        contentStatus: { state: 'unavailable', reason: 'missing' }
+      },
+      {
+        readVersionContent: async () => {
+          throw new Error('payload reader must not run when content is unavailable')
+        },
+        readInputContent: async (input) =>
+          input.input_file_version_id === 'input-version-1' ? Buffer.from('wrong bytes') : undefined
+      }
+    )
+    const files = unzipSync(archive)
+    expect(Object.keys(files).some((path) => path.startsWith('data/'))).toBe(false)
+    const metadata = JSON.parse(
+      strFromU8(files['ro-crate-metadata.json']!)
+    ) as RoCrateMetadataDocument
+    const root = entity(metadata, './')
+    expect(root.conformsTo).toEqual({ '@id': COMPLETE_PROFILE })
+    expect(root.mainEntity).toEqual({ '@id': 'urn:open-science:version:version-1' })
+    expect(String(root.description)).toContain('could not be included')
+    expect(String(entity(metadata, 'urn:open-science:version:version-1').description)).toContain(
+      'currently unavailable (missing)'
+    )
+    expect(
+      String(entity(metadata, 'urn:open-science:version:input-version-1').description)
+    ).toContain('failed checksum verification')
+    expect(
+      String(entity(metadata, 'urn:open-science:version:input-version-2').description)
+    ).toContain('could not be read')
+  })
+
+  it('rejects different content that resolves to the same archive path', async () => {
+    const fixture = completeSource()
+    fixture.source.evidence.inputs[0]!.filename = 'report.csv'
+    await expect(
+      buildArtifactVersionCompleteRoCrateArchive(fixture.source, {
+        readVersionContent: async () => fixture.payload,
+        readInputContent: async () => fixture.input
+      })
+    ).rejects.toThrow('RO-Crate archive path conflicts: data/report.csv')
   })
 
   it('serializes stable metadata JSON', () => {
