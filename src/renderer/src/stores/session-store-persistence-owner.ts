@@ -1050,12 +1050,15 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
       ) {
         // A Task snapshot can arrive while a renderer save is queued. Its newer
         // receipt must reconcile the conversation too, not just its revision.
-        const merged = mergeNewerPersistedSessionByIdentity(current, session)
+        const merged = withTransientSessionState(
+          mergeNewerPersistedSessionByIdentity(current, session),
+          current
+        )
         projected = projectDurablePlanAuthority(
           {
             ...current,
             messages: merged.messages,
-            activities: merged.activities?.map(hydrateToolActivity),
+            activities: merged.activities,
             activityGroups: merged.activityGroups,
             conversationGraph: merged.conversationGraph
           },

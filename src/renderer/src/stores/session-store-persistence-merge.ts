@@ -97,6 +97,17 @@ const mergeConversationGraphByIdentity = (
 ): NonNullable<PersistedChatSession['conversationGraph']> => {
   const incomingWinsConflicts = options.incomingWinsConflicts ?? false
   const incomingOwnsFrameConflicts = options.incomingOwnsFrameConflicts ?? incomingWinsConflicts
+  const retainedMessageReferences = new Set([
+    ...current.activities
+      .filter((activity) => !incoming.activities.some(({ id }) => id === activity.id))
+      .map(({ promptMessageId }) => promptMessageId),
+    ...current.activityGroups
+      .filter((group) => !incoming.activityGroups.some(({ id }) => id === group.id))
+      .map(({ promptMessageId }) => promptMessageId),
+    ...current.frames
+      .filter((frame) => !incoming.frames.some(({ id }) => id === frame.id))
+      .map(({ originMessageId }) => originMessageId)
+  ])
   const newerUpdatedAt = <Item extends { updatedAt: number }>(left: Item, right: Item): boolean =>
     right.updatedAt > left.updatedAt
   const merge = <Item extends { id: string }>(
@@ -135,6 +146,13 @@ const mergeConversationGraphByIdentity = (
         const incomingPath = new Set(
           resolveMessageBranchPath(incoming, right.id).map(({ id }) => id)
         )
+        // Keeping an origin/prompt node alone is insufficient: it must remain on a Branch path.
+        if (
+          resolveMessageBranchPath(current, left.id).some(
+            ({ id }) => retainedMessageReferences.has(id) && !incomingPath.has(id)
+          )
+        )
+          return false
         // Local-only child Branches must still fork/revise a Message on their parent path.
         // A sibling completion is replaceable only while nothing depends on the old path.
         if (
