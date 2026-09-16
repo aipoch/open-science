@@ -1688,8 +1688,11 @@ class NotebookKernelExecutor implements NotebookExecutor {
     return cleanup
   }
 
-  private teardownProc(proc: ProcState): Promise<ProcessTreeKillResult> {
-    return (proc.processTeardownPromise ??= this.killChild(proc.child, proc.ownershipReceipt))
+  private async teardownProc(proc: ProcState): Promise<ProcessTreeKillResult> {
+    // Keep the OS result even if receipt removal fails: retry only the owned receipt, not an old PID.
+    const result = await (proc.processTeardownPromise ??= this.killChild(proc.child))
+    if (proc.ownershipReceipt) this.processLifecycle?.complete(proc.ownershipReceipt, result.reaped)
+    return result
   }
 
   // Kills a child and every descendant it spawned (a conda/micromamba launcher, an R subprocess),
@@ -1697,12 +1700,8 @@ class NotebookKernelExecutor implements NotebookExecutor {
   // Returns { reaped } so shutdown()/shutdownAll() can tell a clean teardown (all trees gone, file
   // handles released) from a degraded one — the update-install gate refuses the NSIS uninstall unless
   // every kernel tree was cleanly reaped. terminateProcessTree never rejects.
-  private async killChild(
-    child: ChildProcessWithoutNullStreams,
-    ownershipReceipt?: KernelProcessReceipt
-  ): Promise<ProcessTreeKillResult> {
+  private async killChild(child: ChildProcessWithoutNullStreams): Promise<ProcessTreeKillResult> {
     const result = await this.terminateTree(child)
-    if (ownershipReceipt) this.processLifecycle?.complete(ownershipReceipt, result.reaped)
     child.removeAllListeners('exit')
     child.removeAllListeners('close')
     return result

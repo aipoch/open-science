@@ -18,6 +18,10 @@ on:
           - notebook-sandbox
           - notebook-mutation
           - regressions
+      test_name_pattern:
+        description: Optional Vitest test-name regex for the regressions dry-run only
+        type: string
+        default: '.*'
 
 permissions:
   actions: read
@@ -138,6 +142,9 @@ jobs:
         run: npm test -- --shard=${{ matrix.shard }}/5 --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000 --reporter=default --reporter=github-actions
 
       - name: Test recent Windows regressions
+        shell: bash
+        env:
+          TEST_NAME_PATTERN: ${{ inputs.test_name_pattern || '.*' }}
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'regressions' }}
         # Reuse the full job's runner, install and effective project budgets without running the
         # unrelated shards or native sandbox. These are the suites from the recent failed batches.
@@ -188,6 +195,7 @@ jobs:
           packages/notebook-network-sandbox/src/gateway.test.ts
           packages/notebook-network-sandbox/src/public-read-lifecycle.test.ts
           --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000
+          --testNamePattern="$TEST_NAME_PATTERN"
 
   notebook_sandbox:
     name: Windows Notebook sandbox lifecycle

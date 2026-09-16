@@ -123,6 +123,8 @@ test('mobile navigation hides Undo until its focus trap closes', async ({ page }
   expect(await navigation.evaluate((el) => el.contains(document.activeElement))).toBe(true)
   await page.keyboard.press('Escape')
   await expect(navigation).toHaveCount(0)
+  // Wait for Settings' close effect to return focus before starting the next keyboard interaction.
+  await expect(page.getByRole('button', { name: 'Open settings navigation' })).toBeFocused()
   await expect(page.getByRole('dialog', { name: 'Settings', exact: true })).toBeVisible()
   await expect(undo).toBeVisible()
   expect(await undo.evaluate((el, previous) => el === previous, original)).toBe(true)
