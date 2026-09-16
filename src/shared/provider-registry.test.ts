@@ -209,6 +209,20 @@ describe('provider registry', () => {
     expect(getOfficialVendor('deepseek')?.label).toBe('DeepSeek')
   })
 
+  it('retains DeepSeek compatibility names after discovery without changing other vendors', () => {
+    const fetched = ['deepseek-flash', 'deepseek-v4-pro', 'future-model']
+    expect(getOfficialVendorModelIds('deepseek', undefined, fetched)).toEqual([
+      ...fetched,
+      'deepseek-v4-pro[1m]',
+      'deepseek-v4-flash',
+      'deepseek-v4-flash-vision-exp'
+    ])
+    expect(fetched).toEqual(['deepseek-flash', 'deepseek-v4-pro', 'future-model'])
+    expect(getOfficialVendorModelIds('anthropic', undefined, ['live-model'])).toEqual([
+      'live-model'
+    ])
+  })
+
   it('resolves V4.1 Flash protocol, context and reasoning capabilities', () => {
     expect(resolveVendorModelApiEndpoints('deepseek', 'deepseek-flash')).toEqual([
       'anthropic',

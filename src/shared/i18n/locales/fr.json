@@ -6216,6 +6216,9 @@
     "Conversation approval allows web reading across websites for this conversation and its subagents.": "L’autorisation pour cette conversation permet de lire des pages sur différents sites web pour cette conversation et ses sous-agents.",
     "This conversation": "Cette conversation",
     "Remembered for this conversation": "Mémorisé pour cette conversation",
-    "This conversation or this call": "Cette conversation ou cet appel"
+    "This conversation or this call": "Cette conversation ou cet appel",
+    "DeepSeek routes deepseek-v4-flash and deepseek-v4-flash-vision-exp to DeepSeek V4.1 Flash (deepseek-flash), with Flash pricing.": "DeepSeek redirige deepseek-v4-flash et deepseek-v4-flash-vision-exp vers DeepSeek V4.1 Flash (deepseek-flash), aux tarifs Flash.",
+    "Open Science keeps legacy model names after refresh so existing sessions can continue using their original model IDs.": "Open Science conserve les anciens noms de modèles après actualisation afin que les sessions existantes puissent continuer à utiliser leurs identifiants de modèle d’origine.",
+    "DeepSeek API model and routing details": "Détails des modèles et du routage de l’API DeepSeek"
   }
 }

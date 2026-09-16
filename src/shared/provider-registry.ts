@@ -1300,6 +1300,11 @@ export const getOfficialVendorModelIds = (
   if (!vendor) return []
   const region =
     vendor.regions?.find((candidate) => candidate.id === regionId) ?? vendor.regions?.[0]
+  // DeepSeek discovery omits still-routable legacy ids. Preserve the bundled names so
+  // pinned sessions remain usable, including settings cached before this compatibility rule.
+  if (id === 'deepseek' && fetchedModels?.length) {
+    return [...new Set([...fetchedModels, ...vendor.models.map((model) => model.id)])]
+  }
   return [
     ...(region?.modelIds ??
       (fetchedModels?.length ? fetchedModels : vendor.models.map((model) => model.id)))

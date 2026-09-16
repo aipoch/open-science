@@ -145,6 +145,34 @@ describe('ProviderRuntimeProjectionOwner', () => {
     expect(provider.keyMask).toBe('secr…-key')
   })
 
+  it.each(['claude-code', 'opencode', 'codex', 'codebuddy'] as const)(
+    'preserves pinned DeepSeek legacy ids after a cached refresh for %s',
+    (frameworkId) => {
+      const owner = new ProviderRuntimeProjectionOwner()
+      const provider: StoredProvider = {
+        id: 'deepseek',
+        type: 'official',
+        vendorId: 'deepseek',
+        name: 'DeepSeek',
+        fetchedModels: ['deepseek-flash', 'deepseek-v4-pro']
+      }
+      for (const model of [
+        'deepseek-v4-pro[1m]',
+        'deepseek-v4-flash',
+        'deepseek-v4-flash-vision-exp'
+      ]) {
+        expect(owner.toProviderView(provider).models).toContain(model)
+        expect(
+          owner.resolveRuntimeTarget(
+            provider,
+            { kind: 'required', model },
+            getAgentFramework(frameworkId)
+          )
+        ).toMatchObject({ effectiveModel: model, provider: { model }, frameworkCompatible: true })
+      }
+    }
+  )
+
   it('routes DeepSeek V4 Pro through native Responses for Codex', () => {
     const owner = new ProviderRuntimeProjectionOwner()
     const provider: StoredProvider = {
