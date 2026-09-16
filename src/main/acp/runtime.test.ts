@@ -27279,3 +27279,62 @@ describe('Specialist Skill scoping', () => {
     }
   })
 })
+
+it('protects disposable OpenCode homes at the ACP read boundary while allowing workspace files', async () => {
+  const workspaceRoot = await mkdtemp(join(tmpdir(), 'acp-opencode-private-home-'))
+  const privateHome = join(workspaceRoot, 'attempt', 'config')
+  const privateFile = join(privateHome, 'opencode.json')
+  const ordinaryFile = join(workspaceRoot, 'notes.txt')
+  const process = new FakeAgentProcess()
+  let denied = ''
+  let content = ''
+  const runtime = new AcpRuntime({
+    appVersion: '0.1.0',
+    defaultCwd: workspaceRoot,
+    additionalProtectedReadRoots: [privateHome],
+    spawnAgent: () => asAgentProcess(process)
+  })
+  try {
+    await mkdir(privateHome, { recursive: true })
+    await writeFile(privateFile, 'synthetic-private-config')
+    await writeFile(ordinaryFile, 'ordinary workspace content')
+    acp
+      .agent({ name: 'opencode-private-read-probe' })
+      .onRequest(acp.methods.agent.initialize, () => ({
+        protocolVersion: acp.PROTOCOL_VERSION,
+        agentCapabilities: { loadSession: false, sessionCapabilities: { close: {} } },
+        authMethods: []
+      }))
+      .onRequest(acp.methods.agent.session.new, () => ({ sessionId: 'private-read-session' }))
+      .onRequest(acp.methods.agent.session.prompt, async (ctx) => {
+        try {
+          await ctx.client.request(acp.methods.client.fs.readTextFile, {
+            sessionId: 'private-read-session',
+            path: privateFile
+          })
+        } catch (error) {
+          denied = String(error)
+        }
+        const result = await ctx.client.request(acp.methods.client.fs.readTextFile, {
+          sessionId: 'private-read-session',
+          path: ordinaryFile
+        })
+        content = result.content
+        return { stopReason: 'end_turn' }
+      })
+      .connect(
+        acp.ndJsonStream(
+          Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
+          Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>
+        )
+      )
+    const session = await runtime.createSession({ cwd: workspaceRoot })
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'Read both files' })
+    expect(denied).not.toBe('')
+    expect(denied).not.toContain('synthetic-private-config')
+    expect(content).toBe('ordinary workspace content')
+  } finally {
+    await runtime.disconnect()
+    await rm(workspaceRoot, { recursive: true, force: true })
+  }
+})

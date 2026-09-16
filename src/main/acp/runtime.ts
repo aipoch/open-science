@@ -218,6 +218,8 @@ export type AcpRuntimeCallbacks = {
 type AcpRuntimeOptions = {
   appVersion: string
   defaultCwd: string
+  // Disposable framework homes must retain the same read protection as app-owned config roots.
+  additionalProtectedReadRoots?: readonly string[]
   callbacks?: AcpRuntimeCallbacks
   auxiliaryUsage?: Readonly<{
     projectIdForSession: (sessionId: string) => Promise<string | undefined>
@@ -2766,11 +2768,13 @@ class AcpRuntime {
   // App-owned directories the agent's Read tool must never read: framework config dirs hold
   // materialized skills plus provider/auth configuration whose contents must not be surfaced.
   private protectedReadRoots(): string[] {
-    if (!this.artifactOptions) return []
+    const additional = this.options.additionalProtectedReadRoots ?? []
+    if (!this.artifactOptions) return [...additional]
 
     const root = this.artifactOptions.configRoot
 
     return [
+      ...additional,
       getAppClaudeConfigDir(root),
       opencodeStorageDir(root),
       codexStorageDir(root),

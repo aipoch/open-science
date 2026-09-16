@@ -3,7 +3,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { CODEX_SUBSCRIPTION_PROVIDER_ID, type AgentFrameworkId } from '../../shared/settings'
@@ -15,6 +15,8 @@ import {
   type AgentSpawnInput,
   type ResolvedAgentBackend
 } from '../agent-framework'
+import * as runtimeComposition from '../acp/runtime-composition'
+import { createDelegateExecutionBackendLease } from './execution-backend-lease'
 import {
   createProductionDelegatedFrameworkRuntime,
   DELEGATED_CHILD_SYSTEM_PROMPT_APPEND,
@@ -620,3 +622,273 @@ describe('production delegated framework runtime bridge', () => {
     }
   })
 })
+
+// Production composition is exercised up to ACP; pending prompts keep sibling resources live.
+it('isolates concurrent OpenCode Attempts and a continuation without releasing sibling resources', async () => {
+  const dataRoot = await mkdtemp(join(tmpdir(), 'delegated-opencode-isolation-'))
+  const admitted = backend('opencode')
+  const sourceConfig = join(dataRoot, 'shared-config', 'opencode')
+  admitted.env.XDG_CONFIG_HOME = join(dataRoot, 'shared-config')
+  admitted.env.XDG_DATA_HOME = join(dataRoot, 'shared-data')
+  admitted.env.OPENCODE_APP_API_KEY = 'synthetic-provider-key'
+  admitted.args = ['--port', '42424', '--hostname', '127.0.0.1']
+  admitted.opencodeUsageApi = {
+    baseUrl: 'http://127.0.0.1:42424',
+    authorization: 'Basic synthetic'
+  }
+  admitted.opencodeConfigFiles = [
+    { path: join(sourceConfig, 'opencode.json'), content: safeOpenCodeConfig }
+  ]
+  const release = vi.fn(async () => undefined)
+  admitted.providerTransportLease = { setTarget: () => true, release }
+  const admission = createDelegateExecutionBackendLease(admitted)
+  const original = JSON.stringify({
+    env: admitted.env,
+    args: admitted.args,
+    files: admitted.opencodeConfigFiles
+  })
+  const controls: Array<{ backend: ResolvedAgentBackend; finish(): void; fail(): void }> = []
+  const settlements: Promise<unknown>[] = []
+  const spy = vi.spyOn(runtimeComposition, 'createAcpRuntime').mockImplementation((options) => {
+    const childBackend = options.fixedBackend!
+    const key = childBackend.env.XDG_CONFIG_HOME
+    let finish!: () => void
+    let fail!: () => void
+    const completion = new Promise<{ stopReason: 'end_turn' }>((resolve, reject) => {
+      finish = () => resolve({ stopReason: 'end_turn' })
+      fail = () => reject(new Error('Synthetic child failure'))
+    })
+    controls.push({ backend: childBackend, finish, fail })
+    return {
+      createSession: async () => ({ sessionId: key }),
+      sendAppContinuation: () => {
+        options.runtimeCallbacks!.onProviderPromptAccepted?.(key)
+        return completion
+      },
+      deleteSession: async () => undefined,
+      shutdownForQuit: async () => ({ reaped: true })
+    } as never
+  })
+  try {
+    await mkdir(sourceConfig, { recursive: true })
+    await writeFile(join(sourceConfig, 'opencode.json'), 'shared source must stay untouched')
+    const frameworks = createProductionDelegatedFrameworkRuntime({
+      capacity: 3,
+      dataRoot,
+      runtime: { settingsService: {} } as never,
+      notebookRpcServer: () =>
+        ({
+          issueDelegatedNotebookConnection: async () => ({
+            endpoint: 'http://127.0.0.1:1',
+            token: 'synthetic',
+            release: () => undefined,
+            revoke: async () => undefined
+          })
+        }) as never,
+      readSession: async () => delegatedSession('opencode')
+    })
+    const selected = await frameworks.forSession(session('opencode'))
+    const reservation = await selected.execution.reserve(3)
+    const start = (
+      index: number,
+      slotId: string,
+      continuation = false
+    ): { handle: ReturnType<typeof selected.execution.run>; settled: Promise<unknown> } => {
+      const claim = admission.claim()
+      const handle = selected.execution.run(
+        {
+          session: { projectId: 'project-1', sessionId: 'session-opencode' },
+          frameId: 'child-frame',
+          attemptId: `isolation-${index}`,
+          runtimeSegmentId: `runtime-${index}`,
+          executionModel: {
+            frameworkId: 'opencode',
+            providerId: 'provider',
+            backendId: 'opencode:provider',
+            modelRoute: 'opencode-openai',
+            model: 'admitted-model',
+            reasoningEffort: 'default'
+          },
+          executionBackend: claim.backend,
+          task: 'Investigate',
+          inputs: [],
+          workspaceCwd: join(dataRoot, 'workspace', String(index)),
+          continuation
+        },
+        slotId
+      )
+      // The durable work owner, not the runtime, owns this claim.
+      const settled = handle.completion.then(
+        async (value) => {
+          await claim.release()
+          return { value }
+        },
+        async (error: unknown) => {
+          await claim.release()
+          return { error }
+        }
+      )
+      settlements.push(settled)
+      return { handle, settled }
+    }
+    const running = [0, 1, 2].map((index) => start(index, reservation.slotIds[index]))
+    await Promise.all(running.map(({ handle }) => handle.accepted))
+    expect(controls.length).toBe(3)
+    const first = [...controls]
+    for (const key of [
+      'XDG_CONFIG_HOME',
+      'XDG_DATA_HOME',
+      'XDG_CACHE_HOME',
+      'XDG_STATE_HOME',
+      'OPENCODE_TEST_HOME'
+    ]) {
+      expect(new Set(first.map(({ backend }) => backend.env[key])).size).toBe(3)
+    }
+    expect(new Set(first.map(({ backend }) => backend.opencodeUsageApi!.baseUrl)).size).toBe(3)
+    expect(new Set(first.map(({ backend }) => backend.env.OPENCODE_SERVER_PASSWORD)).size).toBe(3)
+    for (const { backend: child } of first) {
+      const port = child.args![child.args!.indexOf('--port') + 1]
+      expect(child.opencodeUsageApi).toEqual({
+        baseUrl: `http://127.0.0.1:${port}`,
+        authorization: `Basic ${Buffer.from(`opencode:${child.env.OPENCODE_SERVER_PASSWORD}`).toString('base64')}`
+      })
+      expect(child.env.OPENCODE_APP_API_KEY).toBe('synthetic-provider-key')
+      expect(child.providerTransportLease).toBeUndefined()
+      expect(
+        await readFile(join(child.env.XDG_CONFIG_HOME, 'opencode', 'opencode.json'), 'utf8')
+      ).toBe(safeOpenCodeConfig)
+    }
+    first[0].fail()
+    const failedIndex = Number(
+      basename(dirname(first[0].backend.env.XDG_CONFIG_HOME)).slice('isolation-'.length)
+    )
+    const failed = running[failedIndex]
+    expect(await failed.settled).toHaveProperty('error')
+    await expect(
+      readFile(join(first[0].backend.env.XDG_CONFIG_HOME, 'opencode', 'opencode.json'))
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+    for (const { backend: child } of first.slice(1)) {
+      await expect(
+        readFile(join(child.env.XDG_CONFIG_HOME, 'opencode', 'opencode.json'), 'utf8')
+      ).resolves.toBe(safeOpenCodeConfig)
+    }
+    expect(release).not.toHaveBeenCalled()
+    const nextReservation = await selected.execution.reserve(1)
+    const next = start(3, nextReservation.slotIds[0], true)
+    await next.handle.accepted
+    await admission.release()
+    expect(controls.length).toBe(4)
+    const continued = [...controls][3]
+    expect(first.slice(1).map(({ backend }) => backend.opencodeUsageApi!.baseUrl)).not.toContain(
+      continued.backend.opencodeUsageApi!.baseUrl
+    )
+    for (const control of [...first.slice(1), continued]) control.finish()
+    await Promise.all([...running.map(({ settled }) => settled), next.settled])
+    expect(release).toHaveBeenCalledOnce()
+    expect(
+      JSON.stringify({
+        env: admitted.env,
+        args: admitted.args,
+        files: admitted.opencodeConfigFiles
+      })
+    ).toBe(original)
+    expect(await readFile(join(sourceConfig, 'opencode.json'), 'utf8')).toBe(
+      'shared source must stay untouched'
+    )
+  } finally {
+    for (const control of controls) control.finish()
+    await Promise.allSettled(settlements)
+    await admission.release()
+    spy.mockRestore()
+    await rm(dataRoot, { recursive: true, force: true })
+  }
+})
+
+it.each(['malformed-config', 'unsafe-file-policy'] as const)(
+  'fails %s before ACP creation and cleans only its Attempt directory',
+  async (failure) => {
+    const dataRoot = await mkdtemp(join(tmpdir(), 'opencode-preparation-failure-'))
+    const admitted = backend('opencode')
+    const source = join(dataRoot, 'source', 'opencode')
+    admitted.env.XDG_CONFIG_HOME = dirname(source)
+    admitted.opencodeConfigFiles = [
+      {
+        path: join(source, 'opencode.json'),
+        content:
+          failure === 'malformed-config'
+            ? '{synthetic-secret-must-not-escape'
+            : JSON.stringify({ permission: { task: 'allow' } })
+      }
+    ]
+    const createRuntime = vi.spyOn(runtimeComposition, 'createAcpRuntime')
+    const revoke = vi.fn(async () => undefined)
+    const capability = vi.fn(async () => ({
+      endpoint: 'http://127.0.0.1:1',
+      token: 'synthetic',
+      release: () => undefined,
+      revoke
+    }))
+    try {
+      await mkdir(source, { recursive: true })
+      await writeFile(join(source, 'keep'), 'shared')
+      const frameworks = createProductionDelegatedFrameworkRuntime({
+        capacity: 1,
+        dataRoot,
+        runtime: { settingsService: {} } as never,
+        notebookRpcServer: () => ({ issueDelegatedNotebookConnection: capability }) as never,
+        readSession: async () => delegatedSession('opencode')
+      })
+      const selected = await frameworks.forSession(session('opencode'))
+      const reservation = await selected.execution.reserve(1)
+      const handle = selected.execution.run(
+        {
+          session: { projectId: 'project-1', sessionId: 'session-opencode' },
+          frameId: 'child-frame',
+          attemptId: 'failed-preparation',
+          runtimeSegmentId: 'runtime-failure',
+          executionModel: {
+            frameworkId: 'opencode',
+            providerId: 'provider',
+            backendId: 'opencode:provider',
+            modelRoute: 'opencode-openai',
+            model: 'admitted-model',
+            reasoningEffort: 'default'
+          },
+          executionBackend: admitted,
+          task: 'Investigate',
+          inputs: [],
+          workspaceCwd: join(dataRoot, 'workspace'),
+          continuation: false
+        },
+        reservation.slotIds[0]
+      )
+      await expect(handle.accepted).rejects.toBeInstanceOf(Error)
+      const failureResult = await handle.completion.catch((error: Error) => error)
+      expect(failureResult).toBeInstanceOf(Error)
+      expect(String(failureResult)).not.toContain('synthetic-secret')
+      expect(String(failureResult).length).toBeLessThan(1024)
+      expect(createRuntime).not.toHaveBeenCalled()
+      expect(revoke).toHaveBeenCalledTimes(failure === 'unsafe-file-policy' ? 1 : 0)
+      await expect(
+        readFile(
+          join(
+            dataRoot,
+            'delegation',
+            'project-1',
+            'session-opencode',
+            'runtime',
+            'failed-preparation',
+            'config',
+            'opencode',
+            'opencode.json'
+          )
+        )
+      ).rejects.toMatchObject({ code: 'ENOENT' })
+      expect(await readFile(join(source, 'keep'), 'utf8')).toBe('shared')
+      await expect(selected.execution.reserve(1)).resolves.toBeDefined()
+    } finally {
+      createRuntime.mockRestore()
+      await rm(dataRoot, { recursive: true, force: true })
+    }
+  }
+)
