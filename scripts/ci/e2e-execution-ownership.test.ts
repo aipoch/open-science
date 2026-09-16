@@ -34,7 +34,8 @@ it('assigns every discovered Electron spec to a workflow-reachable command', () 
       !command.includes('playwright.browser.config') &&
       new RegExp(`npm run ${name}(?:\\s|$)`).test(workflows)
   )
-  // The a11y wrapper owns its exact spec, and resource soak uses a direct CLI invocation.
+  // The a11y wrapper owns its exact spec, resource soak uses a direct CLI invocation, and the
+  // settings visual-preview smoke is a manual direct-CLI run (see the spec header).
   expect(workflows).toContain('npm run test:e2e:accessibility:signal')
   expect(workflows).toContain('npm run perf:runtime')
   expect(scripts['perf:runtime']).toContain('scripts/performance/run-runtime-profile.mjs')
@@ -49,7 +50,8 @@ it('assigns every discovered Electron spec to a workflow-reachable command', () 
     ...collect([
       'e2e/accessibility.spec.ts',
       'e2e/runtime-performance.spec.ts',
-      'e2e/startup-performance.spec.ts'
+      'e2e/startup-performance.spec.ts',
+      'e2e/settings-visual-preview.smoke.spec.ts'
     ])
   ])
   expect([...new Set(collect([]))].filter((file) => !selected.has(file))).toEqual([])
