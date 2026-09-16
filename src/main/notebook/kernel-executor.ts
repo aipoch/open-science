@@ -708,7 +708,9 @@ class NotebookKernelExecutor implements NotebookExecutor {
     // the proc from `procs`, so a teardown started just before shutdown is invisible to the loop above.
     // Snapshot and await those too: a still-dying old tree must not let the reaped result greenlight the
     // update-install uninstall while it still holds an interpreter file handle.
-    const pending = Array.from(this.pendingTeardowns.values(), ({ completion }) => completion)
+    const pending = Array.from(this.pendingTeardowns.keys(), (key) =>
+      this.reconcilePendingTeardown(key)
+    )
     const [results, pendingResults] = await Promise.all([
       Promise.all(procs.map((proc) => this.killChildTracked(proc))),
       Promise.all(pending)
@@ -721,7 +723,8 @@ class NotebookKernelExecutor implements NotebookExecutor {
     // Reaped only when every current proc AND every outstanding teardown reaped its whole tree.
     return {
       reaped:
-        results.every((result) => result.reaped) && pendingResults.every((result) => result.reaped)
+        results.every((result) => result.reaped) &&
+        pendingResults.every((result) => result?.reaped === true)
     }
   }
 

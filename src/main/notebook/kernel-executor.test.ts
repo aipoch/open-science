@@ -4056,51 +4056,57 @@ const delayedSandboxCleanup = (
 }
 
 describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
-  it('retries receipt completion without terminating the same process tree twice', async () => {
-    cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-receipt-retry-'))
-    const owner = new KernelProcessLifecycleOwner({ storageRoot: cwdDir })
-    await owner.ensureReady()
-    const complete = owner.complete.bind(owner)
-    let receiptWritable = false
-    vi.spyOn(owner, 'complete').mockImplementation((receipt, reaped) => {
-      if (reaped && !receiptWritable) throw new Error('Receipt temporarily locked')
-      complete(receipt, reaped)
-    })
-    const terminateTree = vi.fn(terminateProcessTree)
-    const executor = new NotebookKernelExecutor({
-      replLoopPath: REPL_LOOP,
-      processLifecycle: owner,
-      laneKey: '["project-1","session-1","root",null,null]',
-      terminateTree
-    })
-    const request = {
-      ...baseRequest(cwdDir),
-      kind: 'repl' as const,
-      code: "console.log('blocked')"
-    }
-    const ledger = join(cwdDir, 'runtime', 'kernel-processes')
-    try {
-      await executor.execute({ ...request, code: "console.log('warm')" })
-      const [oldReceipt] = await readdir(ledger)
-      await expect(executor.restart()).rejects.toThrow('persistent process tree was not reaped')
-      await expect(executor.execute(request)).rejects.toThrow('process tree could not be stopped')
-      expect(await readdir(ledger)).toEqual([oldReceipt])
-      expect(terminateTree).toHaveBeenCalledOnce()
-
-      receiptWritable = true
-      await expect(
-        executor.execute({ ...request, code: "console.log('recovered')" })
-      ).resolves.toMatchObject({
-        status: 'completed',
-        stdout: expect.stringContaining('recovered')
+  it.each(['execute', 'restart', 'shutdown'] as const)(
+    'retries receipt completion through %s without terminating the same process tree twice',
+    async (recovery) => {
+      cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-receipt-retry-'))
+      const owner = new KernelProcessLifecycleOwner({ storageRoot: cwdDir })
+      await owner.ensureReady()
+      const complete = owner.complete.bind(owner)
+      let receiptWritable = false
+      vi.spyOn(owner, 'complete').mockImplementation((receipt, reaped) => {
+        if (reaped && !receiptWritable) throw new Error('Receipt temporarily locked')
+        complete(receipt, reaped)
       })
-      expect(terminateTree).toHaveBeenCalledOnce()
-      expect(await readdir(ledger)).not.toContain(oldReceipt)
-    } finally {
-      receiptWritable = true
-      await executor.shutdown()
+      const terminateTree = vi.fn(terminateProcessTree)
+      const executor = new NotebookKernelExecutor({
+        replLoopPath: REPL_LOOP,
+        processLifecycle: owner,
+        laneKey: '["project-1","session-1","root",null,null]',
+        terminateTree
+      })
+      const request = {
+        ...baseRequest(cwdDir),
+        kind: 'repl' as const,
+        code: "console.log('blocked')"
+      }
+      const ledger = join(cwdDir, 'runtime', 'kernel-processes')
+      try {
+        await executor.execute({ ...request, code: "console.log('warm')" })
+        const [oldReceipt] = await readdir(ledger)
+        await expect(executor.restart()).rejects.toThrow('persistent process tree was not reaped')
+        await expect(executor.execute(request)).rejects.toThrow('process tree could not be stopped')
+        expect(await readdir(ledger)).toEqual([oldReceipt])
+        expect(terminateTree).toHaveBeenCalledOnce()
+
+        receiptWritable = true
+        if (recovery === 'restart') await expect(executor.restart()).resolves.toBeUndefined()
+        if (recovery === 'shutdown')
+          await expect(executor.shutdown()).resolves.toEqual({ reaped: true })
+        await expect(
+          executor.execute({ ...request, code: "console.log('recovered')" })
+        ).resolves.toMatchObject({
+          status: 'completed',
+          stdout: expect.stringContaining('recovered')
+        })
+        expect(terminateTree).toHaveBeenCalledOnce()
+        expect(await readdir(ledger)).not.toContain(oldReceipt)
+      } finally {
+        receiptWritable = true
+        await executor.shutdown()
+      }
     }
-  })
+  )
 
   it('reaps the Windows tree before reporting an outer REPL timeout', async () => {
     cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-windows-timeout-'))
