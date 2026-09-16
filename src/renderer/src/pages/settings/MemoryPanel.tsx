@@ -449,7 +449,9 @@ const EntryRow = ({
                 aria-label={t('Copy note')}
                 onClick={() => void copyNote()}
               >
-                {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+                <span key={String(copied)} className="button-feedback">
+                  {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+                </span>
               </Button>
             </TooltipTrigger>
             <TooltipContent>{copied ? t('Copied') : t('Copy note')}</TooltipContent>

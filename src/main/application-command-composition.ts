@@ -91,6 +91,11 @@ import {
   registerLiteratureApplicationCommands,
   type LiteratureCommandOwner
 } from './literature/application-commands'
+import {
+  bookmarkApplicationCommandGroup,
+  registerBookmarkApplicationCommands,
+  type BookmarkCommandOwner
+} from './bookmarks/application-commands'
 
 type AnyApplicationCommand = ApplicationCommand<string, readonly unknown[], unknown>
 type AnyApplicationCommandGroup = ApplicationCommandGroup<string, readonly AnyApplicationCommand[]>
@@ -130,6 +135,7 @@ type ApplicationCommandCompositionDependencies = Readonly<{
   memory: MemoryCommandOwner
   specialist: SpecialistApplicationOwner
   literature: LiteratureCommandOwner
+  bookmarks: BookmarkCommandOwner
   dataContent: DataContentApplicationCommandDependencies
   host: Omit<HostApplicationCommandDependencies, 'remoteAccess'>
 }>
@@ -162,6 +168,8 @@ const TASK_NATIVE_COMMAND_NAMES = Object.freeze([
   'settings:set-agent-routing',
   'sessions:fail-task-run',
   'sessions:settle-task-completion',
+  'sessions:bind-task-session',
+  'sessions:admit-task-turn',
   'sessions:stage-task-completion',
   'sessions:update-configuration'
 ])
@@ -191,6 +199,8 @@ const TASK_COMMAND_NAMES = Object.freeze([
   'settings:set-agent-routing',
   'sessions:load-all',
   'sessions:save-session',
+  'sessions:bind-task-session',
+  'sessions:admit-task-turn',
   'sessions:stage-task-completion',
   'sessions:settle-task-completion',
   'sessions:fail-task-run',
@@ -280,6 +290,9 @@ const createApplicationCommandModules = (
     ),
     defineApplicationCommandModule([literatureApplicationCommandGroup], (registrar) =>
       registerLiteratureApplicationCommands(registrar, dependencies.literature)
+    ),
+    defineApplicationCommandModule([bookmarkApplicationCommandGroup], (registrar) =>
+      registerBookmarkApplicationCommands(registrar, dependencies.bookmarks)
     ),
     defineApplicationCommandModule(dataContentApplicationCommandGroups, (registrar) =>
       registerDataContentApplicationCommands(registrar, dependencies.dataContent)

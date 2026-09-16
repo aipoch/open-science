@@ -16,6 +16,7 @@ export function recoverWrappedProportionGrid(table, items, captions, rules) {
   const predicted = table.structure.objects
     .filter((o) => o.label === 'table column')
     .sort((a, b) => a.rect[0] - b.rect[0])
+  if (predicted.length === 6) return recoverCountPercentagePairs(table, items, predicted, rules)
   if (predicted.length !== 4) return
   const cuts = [
     left,
@@ -100,5 +101,86 @@ export function recoverWrappedProportionGrid(table, items, captions, rules) {
     columns: cuts.slice(1).map((x, n) => [cuts[n], top, x, bottom]),
     spans: sections.map((s) => ({ row: bands.indexOf(s) + 1, column: 0, rowSpan: 1, colSpan: 4 })),
     completeSpans: true
+  }
+}
+
+// An n column anchors repeated records whose measured counts and percentages
+// occupy separate baselines. Every outcome must supply both native values.
+function recoverCountPercentagePairs(table, items, predicted, rules) {
+  const [left, top, right, bottom] = table.cropRect
+  const cuts = [
+    left,
+    ...predicted.slice(1).map((c, n) => left + (predicted[n].rect[2] + c.rect[0]) / 2),
+    right
+  ]
+  const source = tableSourceItems(items, table.cropRect),
+    col = (i) => cuts.slice(1).findIndex((x) => (i.rect[0] + i.rect[2]) / 2 < x)
+  const n = source.find((i) => col(i) === 1 && i.text === 'n')
+  if (!n) return
+  const counts = source.filter((i) => col(i) === 1 && /^\d+$/.test(i.text) && i.rect[1] > n.rect[3])
+  if (counts.length < 2 || counts.length > 20) return
+  const head = source.filter((i) => i.rect[3] < counts[0].rect[1])
+  if (![2, 3, 4, 5].every((c) => head.some((i) => col(i) === c && /%/.test(i.text)))) return
+  const footer = rules.find(
+    (r) =>
+      r[1] === r[3] &&
+      r[0] <= left + 12 &&
+      r[2] >= right - 12 &&
+      r[1] > counts.at(-1).rect[3] &&
+      r[1] <= bottom
+  )
+  if (!footer) return
+  const body = source.filter((i) => !head.includes(i) && i.rect[3] < footer[1])
+  const ys = [
+    Math.max(...head.map((i) => i.rect[3])),
+    ...counts
+      .slice(1)
+      .map(
+        (a) =>
+          Math.min(
+            ...body
+              .filter((i) => Math.abs(i.baseline - a.baseline) < a.height * 0.6)
+              .map((i) => i.rect[1])
+          ) - 0.1
+      ),
+    footer[1]
+  ]
+  const records = counts.map((_, n) =>
+    body.filter((i) => i.rect[1] >= ys[n] && i.rect[3] <= ys[n + 1])
+  )
+  if (
+    !hasUniqueRecordTokens(source, [head, ...records]) ||
+    records.some((g, n) => {
+      const cells = cuts
+        .slice(1)
+        .map((_, c) =>
+          g
+            .filter((i) => col(i) === c)
+            .sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])
+        )
+      return (
+        !/\p{L}/u.test(cells[0].map((i) => i.text).join(' ')) ||
+        cells[1].length !== 1 ||
+        cells
+          .slice(2)
+          .some(
+            (cell) =>
+              cell.length !== 2 ||
+              !/^\d+$/.test(cell[0].text) ||
+              !/^\(\d+(?:\.\d+)?%\)$/.test(cell[1].text) ||
+              Math.abs(cell[0].baseline - counts[n].baseline) > cell[0].height * 0.6 ||
+              cell[1].baseline - cell[0].baseline > cell[0].height * 2.5
+          )
+      )
+    })
+  )
+    return
+  return {
+    rows: [union(head), ...records.map(union)].map((r) => [left, r[1], right, r[3]]),
+    columns: cuts.slice(1).map((x, c) => [cuts[c], top, x, bottom]),
+    spans: [],
+    headerRows: [0],
+    completeSpans: true,
+    ownedTokens: new Set(source)
   }
 }

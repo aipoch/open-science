@@ -44,6 +44,7 @@ describe('WorkspaceToolCodeBlock', () => {
     container.remove()
     document.documentElement.classList.remove('dark')
     vi.clearAllMocks()
+    vi.useRealTimers()
   })
 
   it('applies the Shiki htmlStyle color to highlighted tokens', async () => {
@@ -88,6 +89,88 @@ describe('WorkspaceToolCodeBlock', () => {
 
     expect(writeText).toHaveBeenCalledWith('import')
     expect(container.querySelector('[aria-label="Copied"]')).toBeNull()
+    expect(container.querySelector('[role="status"]')?.textContent).toBe(
+      'Could not copy code. Try again.'
+    )
+    expect(container.querySelector('.lucide-circle-alert')).not.toBeNull()
+  })
+
+  it('shows a visible success while preserving the button and focus, then resets', async () => {
+    vi.useFakeTimers()
+    root = createRoot(container)
+    await act(async () => root.render(<WorkspaceToolCodeBlock code="a" copyable />))
+    const button = container.querySelector<HTMLButtonElement>('button')!
+    button.focus()
+    await act(async () => button.click())
+    expect(container.querySelector('button')).toBe(button)
+    expect(document.activeElement).toBe(button)
+    expect(button.querySelector('.lucide-check')).not.toBeNull()
+    expect(container.querySelector('[role="status"]')?.textContent).toBe('Copied')
+    act(() => vi.advanceTimersByTime(2000))
+    expect(button.getAttribute('aria-label')).toBe('Copy code')
+  })
+
+  it('retains a copy failure until retry succeeds, including unavailable clipboard', async () => {
+    Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true })
+    root = createRoot(container)
+    await act(async () => root.render(<WorkspaceToolCodeBlock code="a" copyable />))
+    const button = container.querySelector<HTMLButtonElement>('button')!
+    await act(async () => button.click())
+    expect(button.getAttribute('aria-label')).toBe('Could not copy code. Try again.')
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    await act(async () => button.click())
+    expect(button.getAttribute('aria-label')).toBe('Copied')
+    expect(button.querySelector('.lucide-circle-alert')).toBeNull()
+  })
+
+  it('ignores a late copy result after source replacement and does not revive an old success', async () => {
+    let complete!: () => void
+    writeText.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          complete = resolve
+        })
+    )
+    root = createRoot(container)
+    await act(async () => root.render(<WorkspaceToolCodeBlock code="a" copyable />))
+    await act(async () => container.querySelector<HTMLButtonElement>('button')!.click())
+    await act(async () => root.render(<WorkspaceToolCodeBlock code="b" copyable />))
+    await act(async () => complete())
+    expect(container.querySelector('button')?.getAttribute('aria-label')).toBe('Copy code')
+    await act(async () => container.querySelector<HTMLButtonElement>('button')!.click())
+    expect(container.querySelector('button')?.getAttribute('aria-label')).toBe('Copied')
+    await act(async () => root.render(<WorkspaceToolCodeBlock code="a" copyable />))
+    await act(async () => root.render(<WorkspaceToolCodeBlock code="b" copyable />))
+    expect(container.querySelector('button')?.getAttribute('aria-label')).toBe('Copy code')
+  })
+
+  it('ignores an older request and clears its success timer when copying again', async () => {
+    vi.useFakeTimers()
+    let complete!: () => void
+    writeText.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          complete = resolve
+        })
+    )
+    root = createRoot(container)
+    await act(async () => root.render(<WorkspaceToolCodeBlock code="a" copyable />))
+    const button = container.querySelector<HTMLButtonElement>('button')!
+    await act(async () => button.click())
+    writeText.mockRejectedValueOnce(new Error('denied'))
+    await act(async () => button.click())
+    await act(async () => complete())
+    expect(button.querySelector('.lucide-circle-alert')).not.toBeNull()
+    await act(async () => button.click())
+    act(() => vi.advanceTimersByTime(1500))
+    await act(async () => button.click())
+    act(() => vi.advanceTimersByTime(1000))
+    expect(button.getAttribute('aria-label')).toBe('Copied')
+    act(() => vi.advanceTimersByTime(1000))
+    expect(button.getAttribute('aria-label')).toBe('Copy code')
+    await act(async () => button.click())
+    act(() => root.render(<></>))
+    expect(vi.getTimerCount()).toBe(0)
   })
 
   it('pins the copy button outside the scrollable code area', async () => {

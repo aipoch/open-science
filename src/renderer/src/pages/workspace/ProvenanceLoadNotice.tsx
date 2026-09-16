@@ -53,6 +53,8 @@ export const ProvenanceLoadNotice = ({
           </Button>
           {showDiagnostics ? (
             <Button
+              aria-live="polite"
+              aria-atomic="true"
               variant="outline"
               size="sm"
               className="ml-auto focus-visible:transition-none"
@@ -65,8 +67,10 @@ export const ProvenanceLoadNotice = ({
                   .catch(() => setCopyFailed(true))
               }}
             >
-              {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
-              <span aria-live="polite">{copied ? t('Copied') : t('Copy diagnostics')}</span>
+              <span key={String(copied)} className="button-feedback">
+                {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+                <span>{copied ? t('Copied') : t('Copy diagnostics')}</span>
+              </span>
             </Button>
           ) : null}
         </div>

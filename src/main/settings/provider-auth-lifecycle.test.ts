@@ -171,6 +171,31 @@ describe('ProviderAuthLifecycleOwner', () => {
     expect(resolveCodexExecutable).not.toHaveBeenCalled()
   })
 
+  it('keeps a keyless loopback custom gateway usable while a remote one needs its key', async () => {
+    // Local model servers (Ollama, LM Studio, …) never carry a key; preflight must not block
+    // their spawn on a credential they will not have.
+    await expect(
+      owner.isProviderKeyUsable({
+        id: 'ollama',
+        type: 'custom',
+        name: 'Ollama (local)',
+        baseUrl: 'http://localhost:11434',
+        model: 'qwen3:14b',
+        apiEndpoints: ['openai']
+      })
+    ).resolves.toBe(true)
+
+    await expect(
+      owner.isProviderKeyUsable({
+        id: 'remote',
+        type: 'custom',
+        name: 'Remote gateway',
+        baseUrl: 'https://gateway.example/v1',
+        model: 'some-model'
+      })
+    ).resolves.toBe(false)
+  })
+
   it('does not resolve the Codex executable while inspecting stored credentials', async () => {
     await storeAppCodexAuth()
     const stored = await storeCodexProvider('isolated')

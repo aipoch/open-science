@@ -75,12 +75,18 @@ app version; preserve the damaged file and recovery records. Startup never repla
   An occupied destination or duplicate bundle blocks repair with a clear recovery message. The app
   registers the new bundle, repairs its exact existing Dock references, and relaunches the new physical
   executable before initializing updater and CLI owners. User-named bundles are not renamed.
+  The DMG installation assistant replaces a single old-name physical bundle only after verifying
+  its application ID, and restores its original path if installation fails. Coexisting old/new
+  bundles or a different application identity stop installation before any replacement.
 - Windows retains the application ID, executable identity, and `.science` ProgID. Display descriptions,
   installer, uninstall entry, and shortcuts use the new brand. The installer preserves the matching
   same-location installation's shortcut choices during manual and updater upgrades. Renames emit shell
   rename notifications instead of unpinning. Startup repairs owned taskbar and implicit shortcut
   filenames with sparse updates that preserve arguments and working directories. Windows may cache
   a pinned tooltip until the next sign-in; this cannot be certified by a file rename alone.
+  The standalone, explicitly confirmed data-reset tool recognizes both brand names for data,
+  Electron profiles and runtime cache parents. An incomplete, damaged or nonstandard profile
+  selection blocks reset before deletion and requires manual review; the selection is preserved.
 - Linux retains package/desktop identifiers. Package metadata and launchers use the new product path;
   Debian registers the replacement CLI alternative before removing exact historical product targets.
   Unrelated manual alternatives remain untouched. Owned user desktop-entry copies retain their

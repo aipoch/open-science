@@ -1,3 +1,4 @@
+import { InlineNotice } from '@/components/ui/inline-notice'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -233,9 +234,9 @@ export function ComputeAddForm({ onCreated, onCancel }: ComputeAddFormProps): Re
         )}
 
         {error ? (
-          <p role="alert" className="text-sm text-destructive">
+          <InlineNotice level="error" role="alert">
             {error}
-          </p>
+          </InlineNotice>
         ) : null}
 
         <div className="flex justify-end gap-2">

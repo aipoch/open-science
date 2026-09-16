@@ -11,6 +11,7 @@ import { performance } from 'node:perf_hooks'
 import { createCanvas } from '@napi-rs/canvas'
 import {
   captionKind,
+  excludePdfLineNumbers,
   joinPdfSmallCapsLine,
   startsDetachedTableCaption,
   startsDetachedTextColumn
@@ -69,7 +70,7 @@ try {
       const viewport = page.getViewport({ scale: 1, rotation: renderRotation })
       const structure = await page.getStructTree()
       const operators = await page.getOperatorList()
-      content = await repairPdfSymbolText(page, content, operators)
+      content = excludePdfLineNumbers(await repairPdfSymbolText(page, content, operators), viewport)
       const roles = {}
       const visit = (node) => {
         if (node?.role) roles[node.role] = (roles[node.role] ?? 0) + 1

@@ -90,6 +90,7 @@ beforeEach(() => {
     }
     return {
       firstWindow: async () => page,
+      browserWindow: async () => ({ evaluate: async () => 1 }),
       evaluate: async () => logs,
       close,
       process: () => ({ pid: 12345 })
@@ -332,6 +333,7 @@ it('restarts without passing the timing label as a package file argument', async
     { status: 'passed', expectedStatus: 'passed', attach }
   )
   expect(boundary.launch).toHaveBeenCalledTimes(2)
+  expect(boundary.reap).not.toHaveBeenCalled()
   expect(boundary.launch.mock.calls[1][0].args).toEqual(boundary.launch.mock.calls[0][0].args)
 })
 

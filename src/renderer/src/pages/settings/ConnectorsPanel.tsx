@@ -1,3 +1,4 @@
+import { InlineNotice } from '@/components/ui/inline-notice'
 import { connectorDescription } from './connector-copy'
 import { ErrorNotice } from '@/components/error-notice'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V3
@@ -930,7 +931,7 @@ export function ConnectorsPanel({
                 )}
               </AlertDialog.Description>
               {removal?.specialistNames?.length ? (
-                <div className="mt-4 rounded-lg border border-warning-100/50 bg-warning-100/10 px-3 py-2.5 text-sm text-foreground">
+                <InlineNotice className="mt-4">
                   <p>
                     {removal.specialistNames.length === 1
                       ? t(
@@ -945,9 +946,9 @@ export function ConnectorsPanel({
                   <p className="mt-1 text-xs text-muted-foreground">
                     {removal.specialistNames.join(', ')}
                   </p>
-                </div>
+                </InlineNotice>
               ) : removal && removal.specialistNames === undefined ? (
-                <div className="mt-4 rounded-lg border border-warning-100/50 bg-warning-100/10 px-3 py-2.5 text-sm text-foreground">
+                <InlineNotice className="mt-4">
                   <p>
                     {tCommon(
                       'Specialist references could not be checked. Retry before removing this Connector.'
@@ -963,7 +964,7 @@ export function ConnectorsPanel({
                   >
                     {checkingRemoval ? tCommon('Checking…') : tCommon('Retry')}
                   </Button>
-                </div>
+                </InlineNotice>
               ) : null}
               {removalError ? (
                 <ErrorNotice
@@ -1030,7 +1031,9 @@ export function ConnectorsPanel({
                     )}
               </AlertDialog.Description>
               {oauthConnectionError ? (
-                <p className="mt-3 text-sm text-status-failure">{oauthConnectionError}</p>
+                <InlineNotice level="error" className="mt-3" role="alert">
+                  {oauthConnectionError}
+                </InlineNotice>
               ) : null}
             </div>
             <div className={dialogFooterClassName}>

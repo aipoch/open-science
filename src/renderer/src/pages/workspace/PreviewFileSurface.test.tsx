@@ -3459,37 +3459,42 @@ describe('PreviewFileSurface PDF context action matrix', () => {
     })
   })
 
-  it('adds an immutable Literature PDF Version to the active Session context', async () => {
-    selectPdfContextSession()
-    const { linkPdfContext } = installPdfContextApi()
-    const literaturePdf: PreviewFileItem = {
-      ...pdfItem,
-      id: 'literature-version:attachment-version-1',
-      sessionId: '__literature__',
-      path: 'literature-attachment-version:attachment-version-1',
-      source: 'literature',
-      artifactId: undefined,
-      selectedVersionId: undefined
+  it.each([undefined, 'literature-attachment-1'])(
+    'adds an immutable Literature PDF Version to the active Session context (file identity: %s)',
+    async (managedFileId) => {
+      selectPdfContextSession()
+      const { linkPdfContext } = installPdfContextApi()
+      const literaturePdf: PreviewFileItem = {
+        ...pdfItem,
+        id: 'literature-version:attachment-version-1',
+        managedFileId,
+        sessionId: '__literature__',
+        path: 'literature-attachment-version:attachment-version-1',
+        source: 'literature',
+        artifactId: undefined,
+        selectedVersionId: undefined
+      }
+
+      await act(async () => {
+        root.render(<PreviewFileSurface item={literaturePdf} onClose={vi.fn()} />)
+        await Promise.resolve()
+      })
+      await clickHeaderAction('Read with agent')
+
+      expect(linkPdfContext).toHaveBeenCalledWith({
+        projectId: 'project-1',
+        sessionId: 'active-session',
+        expectedRevision: 3,
+        sources: [
+          {
+            sourceKind: 'literature-attachment-version',
+            ...(managedFileId ? { sourceFileId: managedFileId } : {}),
+            sourceVersionId: 'attachment-version-1'
+          }
+        ]
+      })
     }
-
-    await act(async () => {
-      root.render(<PreviewFileSurface item={literaturePdf} onClose={vi.fn()} />)
-      await Promise.resolve()
-    })
-    await clickHeaderAction('Read with agent')
-
-    expect(linkPdfContext).toHaveBeenCalledWith({
-      projectId: 'project-1',
-      sessionId: 'active-session',
-      expectedRevision: 3,
-      sources: [
-        {
-          sourceKind: 'literature-attachment-version',
-          sourceVersionId: 'attachment-version-1'
-        }
-      ]
-    })
-  })
+  )
 
   it('hides Reading context controls when the preview owner disables them', async () => {
     selectPdfContextSession()

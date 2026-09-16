@@ -96,6 +96,7 @@ type NavigationStore = {
   artifactMentionAvailability: ArtifactMentionAvailability | undefined
   recordUserNavigation: () => void
   goHome: (origin: NavigationOrigin) => void
+  returnFromLibrary: (origin: NavigationOrigin) => void
   openLibrary: (origin: NavigationOrigin) => void
   openLiteratureItem: (itemId: string, origin: NavigationOrigin) => void
   openProjectLiterature: (projectId: string, origin: NavigationOrigin) => boolean
@@ -250,6 +251,22 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
     requestPreviewLeaveForNavigation({ view: 'home' }, () =>
       set((state) => navigationState(state, origin, { view: 'home' }))
     )
+  },
+
+  // Library retains the Workspace selection, including an unsent New Conversation. Opening the
+  // Project again would instead select its latest Session and replace that context.
+  returnFromLibrary: (origin) => {
+    const { view, activeProjectId } = get()
+    if (view !== 'library') return
+    if (!activeProjectId || !isActiveProject(activeProjectId)) {
+      get().goHome(origin)
+      return
+    }
+
+    const { selectedSessionId, clearSelection } = useSessionStore.getState()
+    if (selectedSessionId && !isActiveSession(activeProjectId, selectedSessionId)) clearSelection()
+    set((state) => navigationState(state, origin, { view: 'workspace', activeProjectId }))
+    usePreviewWorkbenchStore.getState().activateProject(activeProjectId, undefined, true)
   },
 
   openLibrary: (origin) =>

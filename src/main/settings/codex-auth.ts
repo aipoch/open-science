@@ -273,16 +273,16 @@ export const projectSafeCodexProviderRoute = (configToml: string): string | unde
   return route ? serializeLegacyCodexProviderRoute(route) : undefined
 }
 
-const IMPORTED_ROUTE_SELECTION_BEGIN = '# Open Science: begin imported Codex route selection'
-const IMPORTED_ROUTE_SELECTION_END = '# Open Science: end imported Codex route selection'
-const IMPORTED_ROUTE_PROVIDER_BEGIN = '# Open Science: begin imported Codex provider'
-const IMPORTED_ROUTE_PROVIDER_END = '# Open Science: end imported Codex provider'
-const IMPORTED_ROUTE_PRESERVED_LINE = '# Open Science: preserved Codex config '
+const IMPORTED_ROUTE_SELECTION_BEGIN = '# Open-Science: begin imported Codex route selection'
+const IMPORTED_ROUTE_SELECTION_END = '# Open-Science: end imported Codex route selection'
+const IMPORTED_ROUTE_PROVIDER_BEGIN = '# Open-Science: begin imported Codex provider'
+const IMPORTED_ROUTE_PROVIDER_END = '# Open-Science: end imported Codex provider'
+const IMPORTED_ROUTE_PRESERVED_LINE = '# Open-Science: preserved Codex config '
 const CODEX_FILE_CREDENTIAL_STORE = 'cli_auth_credentials_store = "file"'
-const TRANSPORT_ROUTE_SELECTION_BEGIN = '# Open Science: begin Codex transport route selection'
-const TRANSPORT_ROUTE_SELECTION_END = '# Open Science: end Codex transport route selection'
-const TRANSPORT_ROUTE_PROVIDER_BEGIN = '# Open Science: begin Codex transport provider'
-const TRANSPORT_ROUTE_PROVIDER_END = '# Open Science: end Codex transport provider'
+const TRANSPORT_ROUTE_SELECTION_BEGIN = '# Open-Science: begin Codex transport route selection'
+const TRANSPORT_ROUTE_SELECTION_END = '# Open-Science: end Codex transport route selection'
+const TRANSPORT_ROUTE_PROVIDER_BEGIN = '# Open-Science: begin Codex transport provider'
+const TRANSPORT_ROUTE_PROVIDER_END = '# Open-Science: end Codex transport provider'
 const CODEX_TRANSPORT_PROVIDER_IDS = [
   'open-science-chatgpt-https',
   'open-science-chatgpt-websocket'
@@ -727,7 +727,15 @@ const readCodexAuthenticationSnapshot = async (
     const parsed = JSON.parse(content) as unknown
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error()
   } catch (error) {
-    if (!required && (error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      if (!required) return undefined
+      // A missing auth.json most often means Codex keeps its credential in the OS credential store
+      // (macOS Keychain / Windows Credential Manager / Linux keyring). Name that boundary instead of
+      // surfacing a generic import failure that reads like a required second sign-in.
+      throw new Error(
+        'Open-Science could not find a file-backed Codex credential to import. Your existing Codex sign-in may be stored in the system credential store, which Open-Science cannot import from. Continue with the Open-Science Codex sign-in instead.'
+      )
+    }
     throw new Error('The selected Codex profile does not contain importable authentication.')
   }
 

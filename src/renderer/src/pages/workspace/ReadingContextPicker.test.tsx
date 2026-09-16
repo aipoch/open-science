@@ -396,6 +396,7 @@ describe('ReadingContextPicker', () => {
     })
     const literatureSource = {
       sourceKind: 'literature-attachment-version' as const,
+      sourceFileId: 'attachment-1',
       sourceVersionId: 'literature-version-1'
     }
     const filterPdfContextCandidates = vi.fn().mockResolvedValue({

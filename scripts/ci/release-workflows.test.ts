@@ -122,6 +122,8 @@ describe('release and scheduled workflow topology', () => {
       'src/main/database/database-null-and-version-bounds.test.ts',
       'src/main/database/migration-service.test.ts',
       'src/main/notebook/runtime-service.test.ts',
+      'src/main/notebook/shell-process-ownership.test.ts',
+      'src/main/literature/batch-jobs.test.ts',
       'src/main/notebook/source-file-access-analysis.test.ts',
       'src/main/notebook/source-file-access-analysis.additional-omics.test.ts',
       'src/main/notebook/source-file-access-analysis.clinical-formats.test.ts',

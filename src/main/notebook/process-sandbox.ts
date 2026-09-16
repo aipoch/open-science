@@ -43,6 +43,7 @@ export type NotebookSandboxInvocation = Readonly<{
   superviseProcessTree?: boolean
   filesystem: Readonly<{
     readOnlyRoots: readonly string[]
+    optionalReadOnlyRoots?: readonly string[]
     readWriteRoots: readonly string[]
     deniedReadRoots: readonly string[]
     deniedWriteRoots: readonly string[]

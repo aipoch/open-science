@@ -254,6 +254,9 @@ const createProductionDelegatedWorkComposition = (
     sessionId: key.sessionId,
     toolCallId: request.frameId,
     title: request.action,
+    providerToolName: request.providerToolName,
+    isMcp: request.isMcp,
+    toolKind: request.toolKind,
     options: request.options.map((option) => ({ ...option })),
     delegated: {
       frameId: request.frameId,

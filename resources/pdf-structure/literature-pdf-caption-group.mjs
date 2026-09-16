@@ -84,6 +84,50 @@ export function joinPdfSmallCapsLine(items) {
     .trim()
 }
 
+// Manuscript line numbers are separate native runs. Require an aligned,
+// consecutive margin sequence and matching body baselines before excluding it.
+// Isolated numbers, chart ticks and numbered list content remain untouched.
+export function excludePdfLineNumbers(content, viewport) {
+  const candidates = content.items.filter((item) => {
+    if (!/^\d{1,4}$/.test(item.str?.trim() ?? '') || item.height <= 0) return false
+    const [x] = viewport.convertToViewportPoint(...item.transform.slice(4))
+    return x < viewport.width * 0.1 || x > viewport.width * 0.9
+  })
+  const excluded = new Set()
+  for (const anchor of candidates) {
+    if (excluded.has(anchor)) continue
+    const column = candidates
+      .filter(
+        (item) =>
+          Math.abs(item.transform[4] - anchor.transform[4]) < 2 &&
+          Math.abs(item.height - anchor.height) < 0.5
+      )
+      .sort((a, b) => b.transform[5] - a.transform[5])
+    if (
+      column.length < 8 ||
+      column.some(
+        (item, i) =>
+          i &&
+          (Number(item.str) !== Number(column[i - 1].str) + 1 ||
+            column[i - 1].transform[5] - item.transform[5] < item.height)
+      )
+    )
+      continue
+    const paired = column.filter((item) =>
+      content.items.some(
+        (body) =>
+          body.str?.length > 20 &&
+          Math.abs(body.transform[5] - item.transform[5]) < 1 &&
+          (body.transform[4] > item.transform[4] + item.width + item.height ||
+            body.transform[4] + body.width < item.transform[4] - item.height)
+      )
+    )
+    if (paired.length < 6) continue
+    for (const item of column) excluded.add(item)
+  }
+  return { ...content, items: content.items.filter((item) => !excluded.has(item)) }
+}
+
 // PDF streams can interleave columns at almost the same baseline without EOL.
 // Split at a physical gutter or a backward column jump before concatenating text.
 export function startsDetachedTextColumn(pending, item) {
@@ -107,8 +151,20 @@ export function startsDetachedTextColumn(pending, item) {
 }
 
 export function captionKind(text) {
+  // Publisher/appendix prefixes belong to the displayed label. Normalize only
+  // for classification; keep the original caption text and source rectangle.
+  text = (text ?? '')
+    .replace(/^TaggedEnd(?=Table\s+\d)/, '')
+    .replace(/^Appendix\s+(?=(?:Figure|Fig\.|Table)\b)/i, '')
+  if (/^(?:Figure|Fig\.?)\s+\d+\s+(?:but\b|\(available\b)/i.test(text)) return undefined
   if (
-    /^(?:Table|Fig\.?|Figure)\s+[AS]?\d+\s+(?:shows?|shown|presents?|presented|illustrates?|depicts?|reiterates?)\b/i.test(
+    /^(?:Table|Fig\.?|Figure)\s+(?:[AS]?\d+|[IVXLCDM]+)\s+in\s+(?:Appendix|Supplement(?:ary)?|Section)\b/i.test(
+      text
+    )
+  )
+    return undefined
+  if (
+    /^(?:Table|Chart|Fig\.?|Figure)\s+[AS]?\d+(?:\s+and\s+(?:Table|Chart|Fig\.?|Figure)\s+[AS]?\d+)?\s+(?:shows?|shown|presents?|presented|illustrates?|depicts?|represents?|reiterates?|reviews?)\b/i.test(
       text ?? ''
     )
   )
@@ -117,7 +173,9 @@ export function captionKind(text) {
   if (/^Appendix\s+[A-Z][.:]\s+(?:CONSORT\s+)?(?:flow diagram|flowchart)\.?$/i.test(text ?? ''))
     return 'figure'
   // Single-table articles can use an explicit label without a sequence number.
-  if (/^Table[.:]\s+\p{Lu}\p{L}/u.test(text ?? '')) return 'table'
+  if (/^(?:Table|Figure)[.:]\s+\p{Lu}\p{L}/u.test(text))
+    return /^Table/.test(text) ? 'table' : 'figure'
+  if (/^(?:Figure|Fig\.?)\s+[AS]?\d+\s*[—–-]\s*Continued\.?$/i.test(text)) return 'figure'
   if (/^Figure\s+(?:[n▪■]\s+)?(?:Flow diagram|Flowchart)\b/.test(text ?? '')) return 'figure'
   // Pathology journals use decorated Image labels; a closing marker followed
   // by a period is an inline reference, not a caption heading.
@@ -127,7 +185,7 @@ export function captionKind(text) {
   if (/^(?:Fig\.?|Figure)\s+\d+[A-Z][.:]\s/i.test(text ?? '')) return 'figure'
   if (/^(?:Table|Tab\.)\s+[IVXLCDM]+(?=[\s.:：．、]|$)/i.test(text ?? '')) return 'table'
   const match =
-    /^(?:(?:Supplementary|Supplemental|Supplement|Extended\s+Data)\s+)?(F\s*I\s*G\s*U\s*R\s*E|F\s*I\s*G\.?|T\s*A\s*B\s*L\s*E|T\s*A\s*B\.?|图|圖|表)\s*[AS]?\d+(?:[.-]\d+)*(?=[\s.:：．、。]|$)/i.exec(
+    /^(?:(?:Supplementary|Supplemental|Supplement|Extended\s+Data)\s+)?(F\s*I\s*G\s*U\s*R\s*E|F\s*I\s*G\.?|C\s*H\s*A\s*R\s*T|T\s*A\s*B\s*L\s*E|T\s*A\s*B\.?|图|圖|表)\s*[AS]?\d+(?:[.-]\d+)*(?=[\s.:：．、。]|$)/i.exec(
       text ?? ''
     )
   return match
@@ -288,14 +346,34 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
       // A reference wrapped after "listed in" is part of the same paragraph.
       // Require its preceding source line, matching typography and tight leading.
       if (
-        /^Table\s+\d+\s+for\s+[a-z]/.test(start.text) &&
+        (/^Table\s+\d+\s+for\s+[a-z]/.test(start.text) ||
+          /^(?:(?:Figure|Fig\.)\s+\d+|Table\s+[IVXLCDM]+)[.:]\s+[A-Z]/.test(start.text)) &&
         runs.some(
           (line) =>
-            /\b(?:listed|shown|provided|presented|reported) in$/.test(line.text) &&
+            /(?:\b(?:listed|shown|provided|presented|reported|conditions) in|\bbetween conditions,)$/.test(
+              line.text
+            ) &&
             Math.abs(line.x - start.x) <= 2 &&
             Math.abs(line.fontSize - start.fontSize) <= 0.5 &&
             line.bottom <= start.y &&
-            start.y - line.bottom <= start.fontSize * 0.5
+            start.y - line.bottom <=
+              start.fontSize * (captionKind(start.text) === 'figure' ? 1.5 : 0.5)
+        )
+      )
+        continue
+      // A bare reference wrapped onto the final line of a prose paragraph
+      // retains that paragraph's font, leading and small indentation.
+      if (
+        /^(?:Fig\.?|Figure)\s+\d+\s*\.$/i.test(start.text) &&
+        runs.some(
+          (line) =>
+            line.text.length > 40 &&
+            !/[.!?:]$/.test(line.text) &&
+            Math.abs(line.fontSize - start.fontSize) < 0.5 &&
+            start.x - line.x >= -1 &&
+            start.x - line.x < start.fontSize &&
+            line.bottom <= start.y &&
+            start.y - line.bottom < start.fontSize * 0.5
         )
       )
         continue
@@ -339,8 +417,19 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
             lines.push(tail)
         }
       }
+      const sideLegend =
+        captionKind(start.text) === 'figure' &&
+        (page.graphicsBounds ?? []).some(
+          ({ normalizedRect: r }) =>
+            (r[2] - r[0]) * (r[3] - r[1]) > 0.03 &&
+            r[1] * page.height <= start.y &&
+            r[3] * page.height >= start.bottom &&
+            ((r[2] * page.width <= start.x && start.x - r[2] * page.width < 60) ||
+              (r[0] * page.width >= start.right && r[0] * page.width - start.right < 60))
+        )
       // Hanging legends align their continuation with the title after the figure
-      // number. Require two adjacent prose lines at that indent before adopting it.
+      // number. Require two adjacent prose lines, or a closed lowercase tail
+      // beside a graphic when the first caption line is unfinished.
       const hangingTableTitle =
         captionKind(start.text) === 'table' && /\b(?:of|with|for|and)$/i.test(start.text)
       const hanging =
@@ -351,10 +440,14 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
             line.y - start.y <= start.fontSize * 1.6 &&
             line.x - start.x >= start.fontSize * 2 &&
             line.x - start.x <= start.fontSize * 6 &&
-            line.text.length >= (hangingTableTitle ? 12 : 30) &&
+            line.text.length >= (hangingTableTitle || sideLegend ? 12 : 30) &&
             Math.abs(line.fontSize - start.fontSize) <= 0.7 &&
             !captionKind(line.text) &&
             ((hangingTableTitle && /[.)]$/.test(line.text) && line.right <= start.right + 2) ||
+              (sideLegend &&
+                !/[.!?]$/.test(start.text) &&
+                /^[a-z].*\.$/.test(line.text) &&
+                line.right <= start.right + 2) ||
               runs.some(
                 (next) =>
                   next.y > line.y + 2 &&
@@ -364,16 +457,6 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
                   Math.abs(next.fontSize - start.fontSize) <= 0.7 &&
                   !captionKind(next.text)
               ))
-        )
-      const sideLegend =
-        captionKind(start.text) === 'figure' &&
-        (page.graphicsBounds ?? []).some(
-          ({ normalizedRect: r }) =>
-            (r[2] - r[0]) * (r[3] - r[1]) > 0.03 &&
-            r[1] * page.height <= start.y &&
-            r[3] * page.height >= start.bottom &&
-            ((r[2] * page.width <= start.x && start.x - r[2] * page.width < 60) ||
-              (r[0] * page.width >= start.right && r[0] * page.width - start.right < 60))
         )
       // Some journals place the descriptive title in a separate full-width
       // ruled strip below an italic table number. Do not mistake that strip
@@ -445,7 +528,12 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
             (line, index) =>
               !captionKind(line.text) &&
               Math.abs(line.x - title[0].x) <= 2 &&
-              Math.abs(line.fontSize - start.fontSize) <= 1.5 &&
+              // Italic font matrices can slightly inflate fontSize while the
+              // painted height still matches the surrounding upright title.
+              Math.min(
+                Math.abs(line.fontSize - start.fontSize),
+                Math.abs(line.bottom - line.y - (start.bottom - start.y))
+              ) <= 1.5 &&
               line.y - (index ? title[index - 1].bottom : start.bottom) <= start.fontSize * 1.5
           ) &&
           title[0].x < start.x &&
@@ -631,13 +719,27 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
           .join(' ')
           .matchAll(/(?:Note:|;)\s*([A-Y])\.\s/g)
       ].at(-1)?.[1]
+      const lowerPanels = [
+        ...lines
+          .map((l) => l.text)
+          .join(' ')
+          .matchAll(/[:,]\s*([a-y])\s+(?=[a-z])/g)
+      ]
+      const lowerContinuation =
+        lowerPanels.length >= 2 &&
+        lowerPanels.every(
+          (p, i) => !i || p[1].charCodeAt(0) === lowerPanels[i - 1][1].charCodeAt(0) + 1
+        ) &&
+        !/[.!?]$/.test(lines.at(-1).text)
+          ? String.fromCharCode(lowerPanels.at(-1)[1].charCodeAt(0) + 1)
+          : undefined
       const continuedPanel =
         captionKind(start.text) === 'figure' &&
         lastPanel &&
         /\b(?:between|and|of|with|for)$/.test(lines.at(-1).text)
           ? String.fromCharCode(lastPanel.charCodeAt(0) + 1)
           : undefined
-      if ((start.text.includes('|') || continuedPanel) && lines.length >= 2) {
+      if ((start.text.includes('|') || continuedPanel || lowerContinuation) && lines.length >= 2) {
         const right = runs.find(
           (line) =>
             line.x > Math.max(...lines.map((l) => l.right)) &&
@@ -646,7 +748,9 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
             Math.abs(line.fontSize - start.fontSize) <= 0.7 &&
             line.text.length >= 40 &&
             (start.text.includes('|') ||
-              new RegExp(';\\s*' + continuedPanel + '\\.\\s').test(line.text)) &&
+              new RegExp(';\\s*' + continuedPanel + '\\.\\s').test(line.text) ||
+              (lowerContinuation &&
+                new RegExp(',\\s*' + lowerContinuation + '\\s').test(line.text))) &&
             !captionKind(line.text)
         )
         if (right) {

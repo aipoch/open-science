@@ -1,3 +1,4 @@
+import { InlineNotice } from '@/components/ui/inline-notice'
 import { useId, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Checkbox } from 'radix-ui'
@@ -165,7 +166,11 @@ export const PackageFileSelection = ({
       (summary?.retainedFiles.reduce((sum, file) => sum + file.sizeBytes, 0) ?? 0),
     [summary]
   )
+  const compactUnavailable = files.some(
+    (file) => file.source === 'literature' && file.requiredForEvidence
+  )
   const choosePreset = (preset: 'full' | 'compact'): void => {
+    if (preset === 'compact' && compactUnavailable) return
     usePackageOperationStore.setState({
       selectionPreset: preset,
       excludedStorageKeys:
@@ -185,7 +190,7 @@ export const PackageFileSelection = ({
           {(['compact', 'full'] as const).map((preset) => (
             <label
               key={preset}
-              className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 text-sm transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring ${selectionPreset === preset ? 'border-primary bg-primary/5' : 'border-border hover:bg-muted/50'} ${preset === 'full' && oversized ? 'cursor-not-allowed opacity-50' : ''}`}
+              className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 text-sm transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring ${selectionPreset === preset ? 'border-primary bg-primary/5' : 'border-border hover:bg-muted/50'} ${(preset === 'full' && oversized) || (preset === 'compact' && compactUnavailable) ? 'cursor-not-allowed opacity-50' : ''}`}
             >
               <input
                 type="radio"
@@ -193,7 +198,9 @@ export const PackageFileSelection = ({
                 className="mt-0.5 shrink-0 accent-primary"
                 aria-label={preset === 'full' ? t('Full export') : t('Essential export')}
                 checked={selectionPreset === preset}
-                disabled={preset === 'full' && oversized}
+                disabled={
+                  (preset === 'full' && oversized) || (preset === 'compact' && compactUnavailable)
+                }
                 onChange={() => choosePreset(preset)}
               />
               <span className="space-y-1">
@@ -214,8 +221,15 @@ export const PackageFileSelection = ({
             </label>
           ))}
         </fieldset>
-        {oversized ? (
+        {compactUnavailable ? (
           <p className="text-xs text-status-warning">
+            {t(
+              'Essential export is unavailable because a Literature PDF is required evidence. Use Full export or customize the contents.'
+            )}
+          </p>
+        ) : null}
+        {oversized ? (
+          <InlineNotice>
             {requiredOversized
               ? t(
                   'Required evidence exceeds {{limit}} per file. This Session cannot be exported.',
@@ -225,7 +239,7 @@ export const PackageFileSelection = ({
                   'Full export is unavailable because a file exceeds {{limit}}. Choose Essential export or customize the contents.',
                   { limit: packageBytes(PACKAGE_MAX_FILE_BYTES) }
                 )}
-          </p>
+          </InlineNotice>
         ) : null}
         <div className="space-y-3 rounded-lg bg-muted/50 p-4">
           {selectionPreset === 'custom' ? (
@@ -313,6 +327,13 @@ export const PackageFileSelection = ({
             </Tooltip>
           </TooltipProvider>
         </div>
+        {files.some((file) => file.source === 'literature') ? (
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            {t(
+              'Literature metadata is always included. Full export includes PDFs; Essential export omits them. Choose PDFs in Customize contents.'
+            )}
+          </p>
+        ) : null}
         {customizing ? (
           <div id="package-customization" className="space-y-4 border-t border-border pt-4">
             {summary && summary.retainedFiles.length > 0 ? (
@@ -534,6 +555,9 @@ export const PackageFileSelection = ({
                           </Checkbox.Indicator>
                         </Checkbox.Root>
                         <span className="min-w-0 flex-1 break-all">{entries[0].filename}</span>
+                        {entries[0].source === 'literature' ? (
+                          <span className="text-xs text-muted-foreground">{t('Literature')}</span>
+                        ) : null}
                         {entries.some((file) => file.requiredForEvidence) ? (
                           <TooltipProvider delayDuration={200}>
                             <Tooltip>

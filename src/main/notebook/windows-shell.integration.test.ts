@@ -1,6 +1,9 @@
 import { join } from 'node:path'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
+import { build } from 'esbuild'
 
 import { describe, expect, it, vi } from 'vitest'
 
@@ -84,6 +87,84 @@ const runPowerShell = (command: string): ReturnType<typeof runShellCommand> =>
   })
 
 describe.runIf(process.platform === 'win32')('Windows notebook shell integration', () => {
+  it.each([undefined, '0'])(
+    'preserves the Shell workload Node-mode environment: %s',
+    async (nodeMode) => {
+      const root = await mkdtemp(join(tmpdir(), 'shell-workload-env-'))
+      try {
+        const registry = new ShellProcessOwnershipRegistry(root)
+        const adapter = new NotebookShellProcessAdapter(
+          'win32',
+          fixtureSandbox(root, 'process.stdout.write(process.env.ELECTRON_RUN_AS_NODE ?? "unset")'),
+          registry
+        )
+        const result = await adapter.execute({
+          ...shellRequest(root),
+          environment: { ...process.env, ELECTRON_RUN_AS_NODE: nodeMode }
+        })
+        expect(result.stdout).toBe(nodeMode ?? 'unset')
+        expect(result.exitCode).toBe(0)
+        expect(registry.hasReceipts()).toBe(false)
+      } finally {
+        await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+      }
+    }
+  )
+
+  it('allows updating after the application exits during shell identity capture', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'shell-interrupted-owner-'))
+    try {
+      const controller = join(root, 'controller.cjs')
+      await build({
+        entryPoints: [join(__dirname, 'fixtures/windows-interrupted-shell-launch.ts')],
+        outfile: controller,
+        bundle: true,
+        platform: 'node',
+        format: 'cjs',
+        packages: 'external',
+        logLevel: 'silent'
+      })
+      await promisify(execFile)(
+        join(process.cwd(), 'node_modules/electron/dist/electron.exe'),
+        [
+          controller,
+          root,
+          join(
+            process.cwd(),
+            'packages/notebook-network-sandbox/vendor/windows',
+            process.arch,
+            'notebook-appcontainer-host.exe'
+          ),
+          join(process.cwd(), 'resources/notebook/kernel_process_host.js')
+        ],
+        {
+          env: {
+            ...process.env,
+            ELECTRON_RUN_AS_NODE: '1',
+            NODE_PATH: join(process.cwd(), 'node_modules')
+          },
+          windowsHide: true,
+          timeout: 20_000
+        }
+      ).catch((error) => {
+        if (error.killed || error.code === 'ENOENT') throw error
+      })
+      expect(await readFile(join(root, 'workload-started'), 'utf8')).toBe('started')
+      const restarted = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'project'
+      })
+      try {
+        await expect(restarted.shutdownAll()).resolves.toEqual({ reaped: true })
+      } finally {
+        await restarted.dispose()
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+    }
+  }, 30_000)
+
   it.each(['execute', 'prepare'] as const)(
     'keeps environment status recoverable after a short-lived shell process exits via %s',
     async (entry) => {
@@ -161,7 +242,7 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
       await expect(new ShellProcessOwnershipRegistry(root).recover()).rejects.toMatchObject({
         code: 'SHELL_PROCESS_RECOVERY_BLOCKED'
       })
-      await expect(service.shutdownAll()).resolves.toEqual({ reaped: false })
+      await expect(service.shutdownAll()).resolves.toMatchObject({ reaped: false })
     } finally {
       await rm(root, { recursive: true, force: true })
     }

@@ -196,6 +196,7 @@ describe('User Skill repository architecture', () => {
       'matchImportedAgentHomeSkills',
       'previewAgentHomeSkill',
       'previewGitHubSkill',
+      'previewMarketplaceUpdate',
       'previewZip',
       'publishPersonalDirectory',
       'scanRepo',

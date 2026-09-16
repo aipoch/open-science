@@ -176,7 +176,7 @@ export const envPrefix = (
   if (
     name === DEFAULT_R_ENV &&
     (committedDirectory === undefined || committedDirectory === name) &&
-    existsSync(join(legacy, 'Lib', 'R', 'bin', 'R.exe'))
+    existsSync(rBin(legacy, platform))
   )
     return legacy
   // With no committed legacy environment, an existing partial short prefix remains authoritative so
@@ -214,17 +214,21 @@ export const pythonBin = (prefix: string, platform: NodeJS.Platform = process.pl
 export const pipBin = (prefix: string, platform: NodeJS.Platform = process.platform): string =>
   platform === 'win32' ? join(prefix, 'Scripts', 'pip.exe') : join(prefix, 'bin', 'pip')
 
-// The R interpreter inside an env prefix. Windows conda-forge r-base installs R under
-// <prefix>\Lib\R\bin; the .exe suffix and that layout are the Windows convention (verify on a real
-// Windows build — the runtime is macOS-baselined today).
-export const rBin = (prefix: string, platform: NodeJS.Platform = process.platform): string =>
-  platform === 'win32' ? join(prefix, 'Lib', 'R', 'bin', 'R.exe') : join(prefix, 'bin', 'R')
+// Preserve the root-bin identity when both layouts exist, and the expected provisioning path when
+// neither exists. Some Windows conda R builds install their executables only in bin/x64.
+const windowsRExecutable = (prefix: string, name: string): string => {
+  const standard = join(prefix, 'Lib', 'R', 'bin', name)
+  const x64 = join(prefix, 'Lib', 'R', 'bin', 'x64', name)
+  return !existsSync(standard) && existsSync(x64) ? x64 : standard
+}
 
-// The Rscript CLI inside an env prefix (see rBin for the Windows-layout caveat).
+// The R interpreter inside an env prefix, shared by discovery, readiness and managed execution.
+export const rBin = (prefix: string, platform: NodeJS.Platform = process.platform): string =>
+  platform === 'win32' ? windowsRExecutable(prefix, 'R.exe') : join(prefix, 'bin', 'R')
+
+// The Rscript CLI inside an env prefix, using the same layout policy as R.
 export const rScriptBin = (prefix: string, platform: NodeJS.Platform = process.platform): string =>
-  platform === 'win32'
-    ? join(prefix, 'Lib', 'R', 'bin', 'Rscript.exe')
-    : join(prefix, 'bin', 'Rscript')
+  platform === 'win32' ? windowsRExecutable(prefix, 'Rscript.exe') : join(prefix, 'bin', 'Rscript')
 
 // The env's own R package library (Unix: <prefix>/lib/R/library; Windows: <prefix>\Lib\R\library).
 export const rLibraryDir = (
@@ -527,7 +531,13 @@ export const rReady = (
 ): boolean => {
   const marker = readRReadyMarker(root)
   return Boolean(
-    marker && marker.defaultEnvVersion >= expectedVersion && rMaterialized(root, platform)
+    marker &&
+    marker.defaultEnvVersion >= expectedVersion &&
+    rMaterialized(root, platform) &&
+    (platform !== 'win32' ||
+      isFile(
+        join(dirname(rBin(envPrefix(root, DEFAULT_R_ENV, platform), platform)), 'Rscript.exe')
+      ))
   )
 }
 

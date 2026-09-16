@@ -378,6 +378,17 @@ export class SpecialistRepository {
     return join(this.storageDir, SPECIALISTS_FILE)
   }
 
+  // Hold the document stable while a dependent Skill package is checked and promoted.
+  // The callback may read, but must not enqueue a write to this repository.
+  withReadLock<T>(read: () => Promise<T>): Promise<T> {
+    const run = this.saveQueue.then(read)
+    this.saveQueue = run.then(
+      () => undefined,
+      () => undefined
+    )
+    return run
+  }
+
   async getAll(): Promise<StoredSpecialists> {
     return (await this.getAllWithIntegrity()).document
   }

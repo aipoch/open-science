@@ -154,6 +154,7 @@ const setup = (
     Pick<
       AppLifecycleDeps,
       | 'shutdownBackends'
+      | 'beforeExit'
       | 'prepareForQuit'
       | 'abortQuitPreparation'
       | 'flushSessionPersistence'
@@ -233,6 +234,7 @@ const setup = (
       onAppearanceChanged: overrides.onAppearanceChanged,
       platform: overrides.platform ?? 'linux',
       detectActiveSessions,
+      beforeExit: overrides.beforeExit,
       hasActiveReviewerWork: overrides.hasActiveReviewerWork ?? (() => false),
       getActiveSettingsInstallId:
         overrides.getActiveSettingsInstallId ??
@@ -268,6 +270,89 @@ const installWithCapturedOpts = (opts: {
 }
 
 describe('installAppLifecycle', () => {
+  it('reconfirms a replacement Settings install when app.quit synchronously reenters before-quit', async () => {
+    let activeInstallId = 'install-1'
+    const decisions: Array<(choice: CloseConfirmChoice) => void> = []
+    const confirmClose = vi.fn(
+      () => new Promise<CloseConfirmChoice>((resolve) => decisions.push(resolve))
+    )
+    const { app, quit, prepareForQuit, flushSessionPersistence, shutdownBackends } = setup({
+      getActiveSettingsInstallId: () => activeInstallId,
+      confirmClose
+    })
+    // Electron emits before-quit inside app.quit(), before the prior confirmation chain settles.
+    quit.mockImplementation(() => app.emit('before-quit'))
+
+    app.emit('before-quit')
+    expect(confirmClose).toHaveBeenCalledOnce()
+    expect(confirmClose).toHaveBeenLastCalledWith('quit', [], true)
+    // The old installation finishes and another starts while its warning is still open.
+    activeInstallId = 'install-2'
+    decisions[0]('quit')
+    await flush()
+
+    expect(quit).toHaveBeenCalledOnce()
+    expect(confirmClose).toHaveBeenCalledTimes(2)
+    expect(confirmClose).toHaveBeenLastCalledWith('quit', [], true)
+    // The completed dialog must also leave the replacement dialog's admission latch intact.
+    app.emit('before-quit')
+    await flush()
+    expect(confirmClose).toHaveBeenCalledTimes(2)
+    decisions[1]('cancel')
+    await flush()
+
+    expect(prepareForQuit).not.toHaveBeenCalled()
+    expect(flushSessionPersistence).not.toHaveBeenCalled()
+    expect(shutdownBackends).not.toHaveBeenCalled()
+    expect(app.exit).not.toHaveBeenCalled()
+  })
+
+  it.each(['retry', 'force-quit'] as const)(
+    'rechecks installation work admitted during persistence %s confirmation',
+    async (choice) => {
+      let activeInstallId: string | undefined = undefined
+      const decisions: Array<(choice: CloseConfirmChoice) => void> = []
+      const confirmClose = vi.fn(
+        () => new Promise<CloseConfirmChoice>((resolve) => decisions.push(resolve))
+      )
+      const { app, quit, closeOpts, shutdownBackends, flushSessionPersistence } = setup({
+        getActiveSettingsInstallId: () => activeInstallId,
+        flushSessionPersistence: vi.fn(async () => 'timeout' as const),
+        confirmClose
+      })
+      quit.mockImplementation(() => app.emit('before-quit'))
+      closeOpts[0].requestQuit()
+      await flush()
+      expect(confirmClose).toHaveBeenLastCalledWith('persistence-failed', [])
+
+      activeInstallId = 'new-install'
+      decisions[0](choice)
+      await flush()
+      expect(confirmClose).toHaveBeenCalledTimes(2)
+      expect(confirmClose).toHaveBeenLastCalledWith('quit', [], true)
+      app.emit('before-quit')
+      await flush()
+      expect(confirmClose).toHaveBeenCalledTimes(2)
+      decisions[1]('cancel')
+      await flush()
+      expect(flushSessionPersistence).toHaveBeenCalledOnce()
+      expect(shutdownBackends).not.toHaveBeenCalled()
+      expect(app.exit).not.toHaveBeenCalled()
+    }
+  )
+
+  it('shuts down once when a synchronously reissued quit confirms the same installation', async () => {
+    const { app, quit, shutdownBackends, confirmClose } = setup({
+      getActiveSettingsInstallId: () => 'same-install'
+    })
+    quit.mockImplementation(() => app.emit('before-quit'))
+    app.emit('before-quit')
+    await flush()
+    expect(confirmClose).toHaveBeenCalledOnce()
+    expect(shutdownBackends).toHaveBeenCalledOnce()
+    expect(app.exit).toHaveBeenCalledExactlyOnceWith(0)
+  })
+
   it('creates the first window and tray on install', () => {
     const { windows, trayHandlers } = setup()
     expect(windows).toHaveLength(1)
@@ -352,21 +437,44 @@ describe('installAppLifecycle', () => {
   it('runs an awaited backend teardown then exits on a normal quit', async () => {
     // Default confirmClose resolves 'quit'; a normal quit goes through the confirm gate first,
     // then the real Electron re-issues before-quit once requestQuit's quit() lands.
-    const { app, tray, shutdownBackends, quit } = setup()
+    const beforeExit = vi.fn()
+    const { app, tray, shutdownBackends, quit } = setup({ beforeExit })
 
     const event = app.emit('before-quit')
     expect(event.defaultPrevented).toBe(true)
     expect(app.exit).not.toHaveBeenCalled() // still awaiting confirmation
+    expect(beforeExit).not.toHaveBeenCalled()
 
     await flush()
     expect(quit).toHaveBeenCalledTimes(1)
     expect(app.exit).not.toHaveBeenCalled() // still awaiting shutdown
+    expect(beforeExit).not.toHaveBeenCalled()
 
     app.emit('before-quit') // re-issued quit, now confirmed
     await flush()
     expect(shutdownBackends).toHaveBeenCalledTimes(1)
     expect(tray?.destroy).toHaveBeenCalledTimes(1)
     expect(app.exit).toHaveBeenCalledWith(0)
+    expect(beforeExit).toHaveBeenCalledOnce()
+    expect(beforeExit.mock.invocationCallOrder[0]).toBeLessThan(
+      app.exit.mock.invocationCallOrder[0]
+    )
+  })
+
+  it('logs a failed exit handoff and still exits after teardown', async () => {
+    const log = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+    const beforeExit = vi.fn(async () => {
+      throw new Error('relaunch unavailable')
+    })
+    const { app, closeOpts, shutdownBackends } = setup({ beforeExit, log })
+    closeOpts[0].requestQuit()
+    app.emit('before-quit')
+    await flush()
+
+    expect(shutdownBackends).toHaveBeenCalledOnce()
+    expect(beforeExit).toHaveBeenCalledOnce()
+    expect(log.error).toHaveBeenCalledWith('application exit handoff failed', expect.any(Object))
+    expect(app.exit).toHaveBeenCalledExactlyOnceWith(0)
   })
 
   it('routes a system request through the existing shutdown owner', async () => {

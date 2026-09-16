@@ -1,3 +1,4 @@
+import { InlineNotice } from '@/components/ui/inline-notice'
 import { ErrorNotice } from '@/components/error-notice'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { QRCodeSVG } from '@rc-component/qrcode'
@@ -712,8 +713,13 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
                               size="sm"
                               onClick={() => void copyUrl()}
                             >
-                              <Copy className="size-3.5" aria-hidden="true" />
-                              {copyStatus === 'copied' ? t('Copied') : t('Copy')}
+                              <span
+                                key={String(copyStatus === 'copied')}
+                                className="button-feedback"
+                              >
+                                <Copy className="size-3.5" aria-hidden="true" />
+                                {copyStatus === 'copied' ? t('Copied') : t('Copy')}
+                              </span>
                             </Button>
                             <Button type="button" variant="outline" size="sm" asChild>
                               <a href={snapshot.accessUrl} target="_blank" rel="noreferrer">
@@ -727,13 +733,14 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
                           {snapshot.accessUrl}
                         </div>
                         {copyStatus === 'error' ? (
-                          <div
+                          <InlineNotice
+                            level="error"
                             role="alert"
-                            className="mt-2 text-xs text-destructive"
+                            className="mt-2"
                             data-testid="remote-link-copy-error"
                           >
                             {t('Could not copy the browser link. Select it and copy it manually.')}
-                          </div>
+                          </InlineNotice>
                         ) : null}
                         <span
                           role="status"

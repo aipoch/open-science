@@ -1263,7 +1263,7 @@ const LITERATURE_REVIEW_CTA_ATTENTION_KEY = 'open-science:literature-review-cta-
 
 const LiteratureLibraryPage = (): React.JSX.Element => {
   const { i18n, t } = useTranslation()
-  const goHome = useNavigationStore((state) => state.goHome)
+  const returnFromLibrary = useNavigationStore((state) => state.returnFromLibrary)
   const startPdfReadingConversation = useNavigationStore(
     (state) => state.startPdfReadingConversation
   )
@@ -2104,6 +2104,9 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     () => projects.filter((project) => project.archivedAt === undefined),
     [projects]
   )
+  const returnLabel = activeProjects.some((project) => project.id === activeProjectId)
+    ? t('Back to Project')
+    : t('Back to Home')
   const selectedProject = useMemo(
     () => activeProjects.find((project) => project.id === projectId),
     [activeProjects, projectId]
@@ -3206,10 +3209,12 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   }
 
   const previewFirstAttachment = (entry: LiteratureItemView): void => {
-    const version = entry.attachments.find((attachment) => attachment.versions[0])?.versions[0]
+    const attachment = entry.attachments.find((candidate) => candidate.versions[0])
+    const version = attachment?.versions[0]
     if (
       section === 'trash' ||
       entry.deletedAt !== undefined ||
+      !attachment ||
       !version ||
       version.availability === 'unavailable' ||
       useAttachmentOperations
@@ -3223,6 +3228,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       title: version.filename,
       type: 'file',
       source: 'literature',
+      managedFileId: attachment.id,
       path: createLiteratureAttachmentVersionReference(version.id),
       format: 'pdf',
       name: version.filename,
@@ -3757,12 +3763,12 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 <button
                   type="button"
                   className={navButtonClassName}
-                  aria-label={t('Back to Home')}
-                  title={sidebarCollapsed ? t('Back to Home') : undefined}
-                  onClick={() => goHome('user')}
+                  aria-label={returnLabel}
+                  title={sidebarCollapsed ? returnLabel : undefined}
+                  onClick={() => returnFromLibrary('user')}
                 >
                   <ArrowLeft className="size-4" aria-hidden="true" />
-                  {!sidebarCollapsed ? <span>{t('Back to Home')}</span> : null}
+                  {!sidebarCollapsed ? <span>{returnLabel}</span> : null}
                 </button>
               </div>
               <nav
@@ -5634,7 +5640,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
             <Dialog.Content className={dialogPanelClassName('w-[min(620px,calc(100vw-2rem))] p-0')}>
               <div className={cn(dialogHeaderClassName, 'px-5 py-3')}>
                 <div className="min-w-0">
-                  <Dialog.Title className={cn(dialogTitleClassName, 'truncate text-base')}>
+                  <Dialog.Title className={cn(dialogTitleClassName, 'truncate')}>
                     {selectedCandidate.candidate.item.title}
                   </Dialog.Title>
                   <Dialog.Description
@@ -5900,9 +5906,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                       <div className="min-w-0 flex-1">
                         {metadata.mode !== 'view' ? (
                           <>
-                            <Dialog.Title
-                              className={cn(dialogTitleClassName, 'truncate text-base')}
-                            >
+                            <Dialog.Title className={cn(dialogTitleClassName, 'truncate')}>
                               {metadata.mode === 'edit'
                                 ? t('Edit metadata')
                                 : metadata.mode === 'complete'
@@ -5932,7 +5936,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                             <Dialog.Title
                               className={cn(
                                 dialogTitleClassName,
-                                'line-clamp-3 break-words text-base leading-snug'
+                                'line-clamp-3 break-words leading-snug'
                               )}
                             >
                               {selectedItem.item.title}
@@ -6416,13 +6420,20 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                           readItem={detailController.read}
                           key={selectedItem.id}
                           item={selectedItem}
-                          onPreview={(version) =>
+                          onPreview={(version) => {
+                            const attachment = selectedItem.attachments.find((candidate) =>
+                              candidate.versions.some(
+                                (candidateVersion) => candidateVersion.id === version.id
+                              )
+                            )
+                            if (!attachment) return
                             setPreviewItem({
                               id: `literature:${version.id}`,
                               sessionId: LITERATURE_PREVIEW_SESSION_ID,
                               title: version.filename,
                               type: 'file',
                               source: 'literature',
+                              managedFileId: attachment.id,
                               path: createLiteratureAttachmentVersionReference(version.id),
                               format: 'pdf',
                               name: version.filename,
@@ -6430,7 +6441,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                               size: version.sizeBytes,
                               versionNumber: version.versionNumber
                             })
-                          }
+                          }}
                         />
                         {selectedItem.attachments.length === 0 ? (
                           <button

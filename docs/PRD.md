@@ -149,6 +149,24 @@ existing cleanup path already satisfies the contract:
 - Custom stdio Connector processes remain process-scoped and are closed by Connector deletion and
   application shutdown.
 
+Windows supervised Shell launches use version-2 receipts owned by `ShellProcessOwnershipRegistry`
+under `shell-process-ownership/`. The existing process host atomically promotes a pending receipt
+to a PID-addressable active filename before starting the native supervisor. Recovery cancels pending
+admission or verifies the active host's random `receiptId` / `commandIdentityMarker` before stopping
+it; ambiguous identity retains the receipt and blocks installation. Normal completion removes the
+receipt only after process cleanup. The host and its supervised children are process-scoped; no new
+system service, uninstall hook, or database schema is introduced.
+
+Version-1 launch intents without process identity cannot be upgraded into proof of stopped work.
+After identifiable backends stop, the update dialog offers explicit recovery for old intact launch
+intents only. Confirmation is bound to their exact bytes; changed, current-instance, malformed and
+claimed records are excluded. Recovery moves the originals into
+`shell-process-ownership-backups/<recovery-id>/` and then repeats the normal install/durability gate.
+This is acknowledged abandonment of unknown historical work, not evidence that an unidentified
+process was killed. Project data and settings are preserved. Backups remain in the data directory;
+support can restore an original to `shell-process-ownership/` with the app closed, provided no record
+with that filename exists. No automatic backup pruning or bulk historical migration is performed.
+
 The Composer owns the desired model and reasoning-effort preference for its Session. On Session
 selection, the renderer validates that preference against the current provider inventory and ACP
 framework. An unavailable preference is lazily replaced only when the Settings default is itself

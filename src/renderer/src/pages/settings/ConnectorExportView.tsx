@@ -164,7 +164,7 @@ export function ConnectorExportView({ id, onDone }: ConnectorExportViewProps): R
                 key={`${item.code}:${item.path ?? ''}`}
                 className={`flex items-start gap-2 text-xs ${
                   item.severity === 'warning'
-                    ? 'text-amber-600 dark:text-amber-400'
+                    ? 'text-status-warning-foreground dark:text-status-warning-dark-foreground'
                     : 'text-destructive'
                 }`}
               >

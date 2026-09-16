@@ -135,6 +135,8 @@ export type NotebookSessionExecutionResult = {
   stdout: string
   stderr: string
   traceback: string
+  // Actual data-process cwd, which can differ from the Session's last selected directory.
+  cwdBefore?: string
   cwdAfter: string
   outputs: NotebookOutput[]
   truncated?: boolean

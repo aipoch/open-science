@@ -1,3 +1,4 @@
+import { InlineNotice } from '@/components/ui/inline-notice'
 import { useSessionStore } from '@/stores/session-store'
 import { usePackageOperationStore, sessionExportLocked } from '../../stores/package-operation-store'
 import { Tabs } from 'radix-ui'
@@ -1842,11 +1843,11 @@ const ArtifactProvenancePanel = ({
             {generatedCode?.sourceTruncated ||
             (codeReconstructionState?.state === 'ready' &&
               codeReconstructionState.sourceTruncated) ? (
-              <p className="border-b border-warning-100/50 bg-warning-100/10 px-4 py-2 text-xs text-text-200">
+              <InlineNotice className="m-2">
                 {t(
                   'The immutable Execution Log was bounded; the reconstruction may include a provenance-gap comment.'
                 )}
-              </p>
+              </InlineNotice>
             ) : null}
             {codeReconstructionResult?.status === 'generating' ? (
               <div
@@ -1910,6 +1911,7 @@ const ArtifactProvenancePanel = ({
           <ArtifactSourcesPanel
             key={selectedVersionId}
             literature={literature}
+            isPackageSession={importedSession}
             versionSummary={editSummary}
             formatContext={
               item.artifactId &&
@@ -1932,7 +1934,7 @@ const ArtifactProvenancePanel = ({
           executionRuns.length > 0 ? (
             <div>
               {executionTruncation ? (
-                <p className="border-b border-warning-100/50 bg-warning-100/10 px-4 py-2 text-xs text-text-200">
+                <InlineNotice className="m-2">
                   {t(
                     'Execution evidence was bounded for storage: omitted {{runs}} earlier runs, {{outputs}} outputs, and {{inputs}} inputs.',
                     {
@@ -1941,7 +1943,7 @@ const ArtifactProvenancePanel = ({
                       inputs: executionTruncation.omittedInputCount
                     }
                   )}
-                </p>
+                </InlineNotice>
               ) : null}
               <div className={tabActionBarClassName}>
                 <Button
@@ -1949,20 +1951,23 @@ const ArtifactProvenancePanel = ({
                   size="sm"
                   disabled={executionKernels.length === 0 || exportingNotebook}
                   onClick={() => void downloadExecutionNotebook()}
+                  aria-busy={Boolean(exportingNotebook)}
                 >
-                  {exportingNotebook ? (
-                    <LoaderCircle
-                      className="animate-spin motion-reduce:animate-none"
-                      aria-hidden="true"
-                    />
-                  ) : (
-                    <Download aria-hidden="true" />
-                  )}
-                  {exportingNotebook
-                    ? t('Preparing…')
-                    : executionKernels.length > 1
-                      ? t('Download notebooks')
-                      : t('Download notebook')}
+                  <span key={String(exportingNotebook)} className="button-feedback">
+                    {exportingNotebook ? (
+                      <LoaderCircle
+                        className="animate-spin motion-reduce:animate-none"
+                        aria-hidden="true"
+                      />
+                    ) : (
+                      <Download aria-hidden="true" />
+                    )}
+                    {exportingNotebook
+                      ? t('Preparing…')
+                      : executionKernels.length > 1
+                        ? t('Download notebooks')
+                        : t('Download notebook')}
+                  </span>
                 </Button>
               </div>
               {notebookExportError ? (
@@ -2127,16 +2132,19 @@ const ArtifactProvenancePanel = ({
                               }
                               aria-label={t('Download {{name}}', { name: lockName })}
                               onClick={() => void downloadEnvironmentLock(lock)}
+                              aria-busy={Boolean(exporting)}
                             >
-                              {exporting ? (
-                                <LoaderCircle
-                                  className="animate-spin motion-reduce:animate-none"
-                                  aria-hidden="true"
-                                />
-                              ) : (
-                                <Download aria-hidden="true" />
-                              )}
-                              {exporting ? t('Preparing…') : t('Download bundle')}
+                              <span key={String(exporting)} className="button-feedback">
+                                {exporting ? (
+                                  <LoaderCircle
+                                    className="animate-spin motion-reduce:animate-none"
+                                    aria-hidden="true"
+                                  />
+                                ) : (
+                                  <Download aria-hidden="true" />
+                                )}
+                                {exporting ? t('Preparing…') : t('Download bundle')}
+                              </span>
                             </Button>
                           ) : null}
                           {lock.state === 'available' &&
@@ -2154,16 +2162,19 @@ const ArtifactProvenancePanel = ({
                                 exportingSession
                               }
                               onClick={() => void createEnvironmentFromLock(lockRequest(lock))}
+                              aria-busy={Boolean(creating)}
                             >
-                              {creating ? (
-                                <LoaderCircle
-                                  className="animate-spin motion-reduce:animate-none"
-                                  aria-hidden="true"
-                                />
-                              ) : (
-                                <PackagePlus aria-hidden="true" />
-                              )}
-                              {creating ? t('Creating…') : t('Reuse environment')}
+                              <span key={String(creating)} className="button-feedback">
+                                {creating ? (
+                                  <LoaderCircle
+                                    className="animate-spin motion-reduce:animate-none"
+                                    aria-hidden="true"
+                                  />
+                                ) : (
+                                  <PackagePlus aria-hidden="true" />
+                                )}
+                                {creating ? t('Creating…') : t('Reuse environment')}
+                              </span>
                             </Button>
                           ) : null}
                         </div>

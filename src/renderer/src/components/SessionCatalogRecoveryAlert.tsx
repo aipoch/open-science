@@ -4,7 +4,11 @@ import * as Dialog from '@/components/ui/dialog'
 
 import type { SessionCatalogRecovery } from '@/lib/session-persistence/session-persistence'
 import { Button } from '@/components/ui/button'
-import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
+import {
+  dialogOverlayClassName,
+  dialogPanelClassName,
+  dialogTitleClassName
+} from '@/components/ui/dialog-chrome'
 import { SessionPersistenceAlert } from './SessionPersistenceAlert'
 
 type SessionCatalogRecoveryAlertProps = {
@@ -125,7 +129,7 @@ const SessionCatalogRecoveryAlert = ({
               data-testid="session-recovery-details-dialog"
             >
               <div className="border-b border-border px-5 py-4">
-                <Dialog.Title className="text-base font-semibold text-foreground">
+                <Dialog.Title className={dialogTitleClassName}>
                   {t('Affected saved conversations')}
                 </Dialog.Title>
                 <Dialog.Description className="mt-1 text-sm text-muted-foreground">

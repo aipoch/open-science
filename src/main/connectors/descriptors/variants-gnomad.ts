@@ -24,12 +24,36 @@ const DATASETS = [
   'exac'
 ] as const
 const SV_DATASETS = ['gnomad_sv_r4', 'gnomad_sv_r2_1'] as const
+// Keep parent gene/region coordinates on the same assembly as the selected call set.
+const DATASET_REFERENCE_GENOMES: Record<
+  (typeof DATASETS)[number] | (typeof SV_DATASETS)[number],
+  'GRCh37' | 'GRCh38'
+> = {
+  gnomad_r4: 'GRCh38',
+  gnomad_r4_non_ukb: 'GRCh38',
+  gnomad_r3: 'GRCh38',
+  gnomad_r3_controls_and_biobanks: 'GRCh38',
+  gnomad_r3_non_cancer: 'GRCh38',
+  gnomad_r3_non_neuro: 'GRCh38',
+  gnomad_r3_non_topmed: 'GRCh38',
+  gnomad_r3_non_v2: 'GRCh38',
+  gnomad_r2_1: 'GRCh37',
+  gnomad_r2_1_controls: 'GRCh37',
+  gnomad_r2_1_non_cancer: 'GRCh37',
+  gnomad_r2_1_non_neuro: 'GRCh37',
+  gnomad_r2_1_non_topmed: 'GRCh37',
+  exac: 'GRCh37',
+  gnomad_sv_r4: 'GRCh38',
+  gnomad_sv_r2_1: 'GRCh37'
+}
 const DEFAULT_DATASET = 'gnomad_r4'
 const DEFAULT_SV_DATASET = 'gnomad_sv_r4'
 // Region queries are capped so a runaway window can't ask gnomAD for the whole genome.
 const MAX_REGION_BP = 1_000_000
+// The upstream region resolver requires both coordinates to be less than 1e9.
+const MAX_REGION_COORDINATE = 999_999_999
 
-// ---- GraphQL documents (transcribed verbatim from upstream queries.py) ----------------------
+// ---- GraphQL documents (adapted from upstream queries.py) ----------------------------------
 
 const VARIANT_QUERY = `
 query Variant($variantId: String!, $dataset: DatasetId!) {
@@ -48,8 +72,8 @@ query VariantSearch($query: String!, $dataset: DatasetId!) {
 `
 
 const GENE_VARIANTS_QUERY = `
-query GeneVariants($symbol: String, $geneId: String, $dataset: DatasetId!) {
-  gene(gene_symbol: $symbol, gene_id: $geneId, reference_genome: GRCh38) {
+query GeneVariants($symbol: String, $geneId: String, $dataset: DatasetId!, $referenceGenome: ReferenceGenomeId!) {
+  gene(gene_symbol: $symbol, gene_id: $geneId, reference_genome: $referenceGenome) {
     gene_id symbol start stop chrom
     variants(dataset: $dataset) {
       variant_id pos ref alt rsids
@@ -74,8 +98,8 @@ query GeneConstraint($symbol: String, $geneId: String) {
 `
 
 const REGION_VARIANTS_QUERY = `
-query RegionVariants($chrom: String!, $start: Int!, $stop: Int!, $dataset: DatasetId!) {
-  region(chrom: $chrom, start: $start, stop: $stop, reference_genome: GRCh38) {
+query RegionVariants($chrom: String!, $start: Int!, $stop: Int!, $dataset: DatasetId!, $referenceGenome: ReferenceGenomeId!) {
+  region(chrom: $chrom, start: $start, stop: $stop, reference_genome: $referenceGenome) {
     variants(dataset: $dataset) {
       variant_id pos ref alt rsids
       exome { ac an af } genome { ac an af }
@@ -109,8 +133,8 @@ query ClinvarVariants($symbol: String, $geneId: String) {
 `
 
 const STRUCTURAL_VARIANTS_GENE_QUERY = `
-query StructuralVariantsGene($symbol: String, $geneId: String, $dataset: StructuralVariantDatasetId!) {
-  gene(gene_symbol: $symbol, gene_id: $geneId, reference_genome: GRCh38) {
+query StructuralVariantsGene($symbol: String, $geneId: String, $dataset: StructuralVariantDatasetId!, $referenceGenome: ReferenceGenomeId!) {
+  gene(gene_symbol: $symbol, gene_id: $geneId, reference_genome: $referenceGenome) {
     gene_id symbol
     structural_variants(dataset: $dataset) {
       variant_id consequence major_consequence ac an af homozygote_count
@@ -269,13 +293,31 @@ function gqlData(result: GqlResponse): NonNullable<GqlResponse['data']> | null {
   return result.data ?? null
 }
 
-// Coerces a value to an integer, clamped to an optional [min, max]. Non-finite input falls back.
-function clampInt(value: unknown, min?: number, max?: number, fallback = 0): number {
-  const n = Math.trunc(Number(value))
-  let v = Number.isFinite(n) ? n : fallback
-  if (min != null && v < min) v = min
-  if (max != null && v > max) v = max
-  return v
+// Region coordinates are 1-based GraphQL Ints. Reject malformed values instead of silently
+// clamping them, which could turn a caller error into a plausible but incorrect empty result.
+function regionCoordinate(value: unknown, name: string): number {
+  if (
+    typeof value !== 'number' ||
+    !Number.isInteger(value) ||
+    value < 1 ||
+    value > MAX_REGION_COORDINATE
+  ) {
+    throw new Error(`${name} must be an integer between 1 and ${MAX_REGION_COORDINATE}`)
+  }
+  return value
+}
+
+function shortVariantChrom(value: unknown): string {
+  const input = String(value).trim()
+  const withoutPrefix = input.replace(/^chr/i, '')
+  if (/^(?:M|MT)$/i.test(withoutPrefix)) {
+    throw new Error('chrom is mitochondrial; use mitochondrial_variants for chrM/MT region queries')
+  }
+  const chrom = /^[XY]$/i.test(withoutPrefix) ? withoutPrefix.toUpperCase() : withoutPrefix
+  if (!/^(?:[1-9]|1[0-9]|2[0-2]|X|Y)$/.test(chrom)) {
+    throw new Error('chrom must identify chromosome 1-22, X, or Y')
+  }
+  return chrom
 }
 
 // Enforces the upstream "pass exactly one of gene_symbol / gene_id" ValueError — a usage error, not
@@ -290,7 +332,7 @@ function geneArgs(a: Record<string, unknown>): { symbol: string | null; geneId: 
 }
 
 // Rejects an unknown dataset pin (usage error), matching upstream _check_dataset.
-function checkDataset(dataset: string, allowed: readonly string[]): string {
+function checkDataset<T extends readonly string[]>(dataset: string, allowed: T): T[number] {
   if (!allowed.includes(dataset)) {
     throw new Error(`unknown dataset '${dataset}'; allowed: ${allowed.join(', ')}`)
   }
@@ -517,7 +559,7 @@ export const VARIANTS_GNOMAD_TOOLS: ToolDescriptor[] = [
     id: 'gene_variants',
     connector: 'variants',
     description:
-      'List ALL gnomAD short variants in a gene (complete listing — can be thousands of rows for large genes). Pass exactly one of `gene_symbol` (HGNC symbol, e.g. `APOE`) or `gene_id` (Ensembl gene ID, e.g. `ENSG00000130203`).',
+      'List ALL gnomAD short variants in a gene. Gene bounds and variant coordinates use the dataset reference build (GRCh37 for r2.1/ExAC, GRCh38 for r3/r4). The complete listing can contain thousands of rows for large genes. Pass exactly one of `gene_symbol` (HGNC symbol, e.g. `APOE`) or `gene_id` (Ensembl gene ID, e.g. `ENSG00000130203`).',
     input: {
       type: 'object',
       properties: {
@@ -533,7 +575,14 @@ export const VARIANTS_GNOMAD_TOOLS: ToolDescriptor[] = [
     run: async (ctx, a) => {
       const { symbol, geneId } = geneArgs(a)
       const dataset = checkDataset(String(a.dataset ?? DEFAULT_DATASET), DATASETS)
-      const data = gqlData(await postGql(ctx, GENE_VARIANTS_QUERY, { symbol, geneId, dataset }))
+      const data = gqlData(
+        await postGql(ctx, GENE_VARIANTS_QUERY, {
+          symbol,
+          geneId,
+          dataset,
+          referenceGenome: DATASET_REFERENCE_GENOMES[dataset]
+        })
+      )
       const g = data?.gene ?? null
       if (!g) {
         // Absent gene — compact empty result rather than an error (never throw on empty).
@@ -595,13 +644,17 @@ export const VARIANTS_GNOMAD_TOOLS: ToolDescriptor[] = [
     id: 'region_variants',
     connector: 'variants',
     description:
-      'List ALL gnomAD short variants in a genomic region (max 1 Mb — split larger regions into consecutive windows). `chrom` is a chromosome name without `chr` prefix (`1`-`22`, `X`, `Y`); `start`/`stop` are 1-based inclusive and `stop - start` must be <= 1,000,000. The dataset determines the reference build of the coordinates (GRCh38 for r3/r4).',
+      'List ALL gnomAD short variants in a genomic region (max 1 Mb — split larger regions into consecutive windows). `chrom` is a chromosome name without `chr` prefix (`1`-`22`, `X`, `Y`); `start`/`stop` are 1-based inclusive and `stop - start` must be <= 1,000,000. The dataset determines the reference build of the coordinates (GRCh37 for r2.1/ExAC, GRCh38 for r3/r4); input coordinates must already use that build, with no automatic liftover.',
     input: {
       type: 'object',
       properties: {
-        chrom: { type: 'string' },
-        start: { type: 'integer' },
-        stop: { type: 'integer' },
+        chrom: {
+          type: 'string',
+          description:
+            'Chromosome 1-22, X, or Y; an optional chr prefix and lowercase x/y are accepted'
+        },
+        start: { type: 'integer', minimum: 1, maximum: MAX_REGION_COORDINATE },
+        stop: { type: 'integer', minimum: 1, maximum: MAX_REGION_COORDINATE },
         dataset: { type: 'string', enum: [...DATASETS], default: DEFAULT_DATASET }
       },
       required: ['chrom', 'start', 'stop']
@@ -612,16 +665,23 @@ export const VARIANTS_GNOMAD_TOOLS: ToolDescriptor[] = [
     example:
       'const result = await host.mcp("variants", "region_variants", {"chrom": "1", "start": 55039475, "stop": 55064852, "dataset": "gnomad_r4"})',
     run: async (ctx, a) => {
-      const chrom = String(a.chrom)
-      const start = clampInt(a.start, 0)
-      const stop = clampInt(a.stop, 0)
+      const chrom = shortVariantChrom(a.chrom)
+      const start = regionCoordinate(a.start, 'start')
+      const stop = regionCoordinate(a.stop, 'stop')
       const dataset = checkDataset(String(a.dataset ?? DEFAULT_DATASET), DATASETS)
+      if (start > stop) throw new Error('start must be less than or equal to stop')
       // Region size cap is a usage error (matches upstream ValueError), not an empty result.
       if (stop - start > MAX_REGION_BP) {
         throw new Error(`region exceeds ${MAX_REGION_BP} bp; split the query`)
       }
       const data = gqlData(
-        await postGql(ctx, REGION_VARIANTS_QUERY, { chrom, start, stop, dataset })
+        await postGql(ctx, REGION_VARIANTS_QUERY, {
+          chrom,
+          start,
+          stop,
+          dataset,
+          referenceGenome: DATASET_REFERENCE_GENOMES[dataset]
+        })
       )
       const region = data?.region ?? null
       const rows = sortRows((region?.variants ?? []).map(buildShortVariantRow))
@@ -734,7 +794,12 @@ export const VARIANTS_GNOMAD_TOOLS: ToolDescriptor[] = [
       const { symbol, geneId } = geneArgs(a)
       const dataset = checkDataset(String(a.dataset ?? DEFAULT_SV_DATASET), SV_DATASETS)
       const data = gqlData(
-        await postGql(ctx, STRUCTURAL_VARIANTS_GENE_QUERY, { symbol, geneId, dataset })
+        await postGql(ctx, STRUCTURAL_VARIANTS_GENE_QUERY, {
+          symbol,
+          geneId,
+          dataset,
+          referenceGenome: DATASET_REFERENCE_GENOMES[dataset]
+        })
       )
       const g = data?.gene ?? null
       if (!g) {
@@ -798,8 +863,8 @@ export const VARIANTS_GNOMAD_TOOLS: ToolDescriptor[] = [
       properties: {
         gene_symbol: { type: 'string' },
         gene_id: { type: 'string' },
-        region_start: { type: 'integer' },
-        region_stop: { type: 'integer' },
+        region_start: { type: 'integer', minimum: 1, maximum: MAX_REGION_COORDINATE },
+        region_stop: { type: 'integer', minimum: 1, maximum: MAX_REGION_COORDINATE },
         dataset: { type: 'string', enum: [...DATASETS], default: DEFAULT_DATASET }
       }
     },
@@ -817,8 +882,9 @@ export const VARIANTS_GNOMAD_TOOLS: ToolDescriptor[] = [
         if (a.gene_symbol != null || a.gene_id != null) {
           throw new Error('pass gene OR region, not both')
         }
-        const start = clampInt(a.region_start, 0)
-        const stop = clampInt(a.region_stop, 0)
+        const start = regionCoordinate(a.region_start, 'region_start')
+        const stop = regionCoordinate(a.region_stop, 'region_stop')
+        if (start > stop) throw new Error('region_start must be less than or equal to region_stop')
         const data = gqlData(
           await postGql(ctx, MITO_VARIANTS_REGION_QUERY, { start, stop, dataset })
         )

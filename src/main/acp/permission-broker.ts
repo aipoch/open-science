@@ -17,6 +17,7 @@ import type { SessionPermissionRuntimeContext } from '../../shared/session-persi
 import type { CommandShellDialect } from '../agent-framework/types'
 import { extractProviderToolName } from './runtime-events'
 import {
+  isNativeWebFetchPermission,
   isMcpToolName,
   resolveMcpProviderLeafIdentity,
   resolveAutomaticPermission,
@@ -629,7 +630,7 @@ const resolveCategoryKey = (
 
   if (isSkillPermission(params, allowLegacyReportedMcp)) return 'skill'
 
-  // V1 provider-native web tools are always one-shot, including the legacy in-memory broker path.
+  // Without the verified framework contract handled by requestPermission, web names stay Once-only.
   if (providerToolName === 'WebFetch' || providerToolName === 'WebSearch') return undefined
 
   if (providerToolName === 'Bash' || toolCall.kind === 'execute') {
@@ -965,21 +966,23 @@ class AcpPermissionBroker {
     const requestId = randomUUID()
     const mcpServerNames = policyContext?.mcpServerNames ?? []
     const isMcp = isMcpPermission(params, mcpServerNames)
+    const isWebFetch = !isMcp && isNativeWebFetchPermission(params, policyContext)
     const codexGroupMatch =
       policyContext?.frameworkId === 'codex' && !isMcp
         ? codexCommandGroup(params, policyContext.shellDialect)
         : undefined
     const codexGroup = codexGroupMatch?.kind === 'group' ? codexGroupMatch.group : undefined
-    const categoryKey =
-      codexGroup?.categoryKey ??
-      (codexGroupMatch?.kind === 'unsafe'
-        ? undefined
-        : resolveCategoryKey(
-            params,
-            mcpServerNames,
-            !this.permissionGrantRegistry,
-            policyContext?.notebookShellRuntimeQualifier ?? policyContext?.notebookShellRuntime
-          ))
+    const categoryKey = isWebFetch
+      ? 'builtin:web_fetch'
+      : (codexGroup?.categoryKey ??
+        (codexGroupMatch?.kind === 'unsafe'
+          ? undefined
+          : resolveCategoryKey(
+              params,
+              mcpServerNames,
+              !this.permissionGrantRegistry,
+              policyContext?.notebookShellRuntimeQualifier ?? policyContext?.notebookShellRuntime
+            )))
     const capability = categoryKey ? capabilityFromLegacyCategory(categoryKey) : undefined
     const mcpIdentity = isMcp
       ? (resolveTrustedMcpToolIdentity(params, mcpServerNames) ??
@@ -1010,26 +1013,28 @@ class AcpPermissionBroker {
     )
     if (categoryKey) {
       if (this.permissionGrantRegistry && capability && policyContext?.projectId) {
-        permissionOptions.push(
-          {
-            optionId: `${SESSION_ALLOW_OPTION_ID_PREFIX}${requestId}`,
-            name: 'This session',
-            kind: ALLOW_ALWAYS_OPTION_KIND,
-            scope: 'session'
-          },
-          {
-            optionId: `${PROJECT_ALLOW_OPTION_ID_PREFIX}${requestId}`,
-            name: 'This project',
-            kind: ALLOW_ALWAYS_OPTION_KIND,
-            scope: 'project'
-          },
-          {
-            optionId: `${GLOBAL_ALLOW_OPTION_ID_PREFIX}${requestId}`,
-            name: 'Always',
-            kind: ALLOW_ALWAYS_OPTION_KIND,
-            scope: 'global'
-          }
-        )
+        permissionOptions.push({
+          optionId: `${SESSION_ALLOW_OPTION_ID_PREFIX}${requestId}`,
+          name: 'This session',
+          kind: ALLOW_ALWAYS_OPTION_KIND,
+          scope: 'session'
+        })
+        // Web reading is deliberately conversation-scoped, including delegated children.
+        if (!isWebFetch)
+          permissionOptions.push(
+            {
+              optionId: `${PROJECT_ALLOW_OPTION_ID_PREFIX}${requestId}`,
+              name: 'This project',
+              kind: ALLOW_ALWAYS_OPTION_KIND,
+              scope: 'project'
+            },
+            {
+              optionId: `${GLOBAL_ALLOW_OPTION_ID_PREFIX}${requestId}`,
+              name: 'Always',
+              kind: ALLOW_ALWAYS_OPTION_KIND,
+              scope: 'global'
+            }
+          )
       } else if (!this.permissionGrantRegistry) {
         permissionOptions.push({
           optionId: `${SESSION_ALLOW_OPTION_ID_PREFIX}${requestId}`,
@@ -1045,7 +1050,7 @@ class AcpPermissionBroker {
       toolCallId: params.toolCall.toolCallId,
       title: resolvePermissionTitle(params, isMcp),
       status: params.toolCall.status ?? undefined,
-      providerToolName: extractProviderToolName(params.toolCall),
+      providerToolName: isWebFetch ? 'WebFetch' : extractProviderToolName(params.toolCall),
       isMcp,
       ...(mcpIdentity ? { mcpIdentity } : {}),
       toolKind: params.toolCall.kind ?? undefined,

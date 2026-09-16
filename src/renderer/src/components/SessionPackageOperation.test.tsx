@@ -1157,3 +1157,76 @@ it.each([false, true])(
     }
   }
 )
+
+it('includes Literature PDFs in Full, excludes them in Essential, and selects them individually in Custom', async () => {
+  const file = {
+    storageKey: 'uploads/p/s/paper/versions/v/content',
+    filename: 'paper.pdf',
+    sizeBytes: 4096,
+    groupId: 'paper',
+    source: 'literature' as const,
+    versionNumber: 1,
+    dependentFiles: []
+  }
+  const operation: PackageOperationSnapshot = { ...snapshot, files: [file] }
+  vi.stubGlobal('api', {
+    sessions: {
+      packageOperation: vi.fn(async () => operation),
+      onPackageOperation: () => () => undefined
+    }
+  })
+  usePackageOperationStore.getState().receive(operation)
+  await act(async () => root.render(<SessionPackageOperation />))
+  expect(usePackageOperationStore.getState().excludedStorageKeys).toEqual([file.storageKey])
+  expect(document.body.textContent).toContain('Literature metadata is always included.')
+  await act(async () =>
+    document.querySelector<HTMLInputElement>('input[aria-label="Full export"]')!.click()
+  )
+  expect(usePackageOperationStore.getState().excludedStorageKeys).toEqual([])
+  await act(async () => button('Customize contents').click())
+  const checkbox = document.querySelector<HTMLButtonElement>(
+    '[role="checkbox"][aria-label="paper.pdf"]'
+  )!
+  expect(checkbox.getAttribute('data-state')).toBe('checked')
+  await act(async () => checkbox.click())
+  expect(usePackageOperationStore.getState().selectionPreset).toBe('custom')
+  expect(usePackageOperationStore.getState().excludedStorageKeys).toEqual([file.storageKey])
+  await act(async () => checkbox.click())
+  expect(usePackageOperationStore.getState().excludedStorageKeys).toEqual([])
+  await act(async () =>
+    document.querySelector<HTMLInputElement>('input[aria-label="Essential export"]')!.click()
+  )
+  expect(usePackageOperationStore.getState().excludedStorageKeys).toEqual([file.storageKey])
+})
+
+it('never labels required Literature PDF evidence as Essential export', async () => {
+  const file = {
+    storageKey: 'uploads/p/s/a/versions/v/content',
+    filename: 'evidence.pdf',
+    sizeBytes: 4096,
+    groupId: 'a',
+    source: 'literature' as const,
+    versionNumber: 1,
+    dependentFiles: [],
+    requiredForEvidence: true
+  }
+  const operation: PackageOperationSnapshot = { ...snapshot, files: [file] }
+  vi.stubGlobal('api', {
+    sessions: {
+      packageOperation: vi.fn(async () => operation),
+      onPackageOperation: () => () => undefined
+    }
+  })
+  usePackageOperationStore.getState().receive(operation)
+  await act(async () => root.render(<SessionPackageOperation />))
+  expect(usePackageOperationStore.getState().selectionPreset).toBe('custom')
+  const essential = document.querySelector<HTMLInputElement>(
+    'input[aria-label="Essential export"]'
+  )!
+  expect(essential.disabled).toBe(true)
+  expect(essential.checked).toBe(false)
+  expect(usePackageOperationStore.getState().excludedStorageKeys).toEqual([])
+  expect(document.body.textContent).toContain(
+    'Essential export is unavailable because a Literature PDF is required evidence.'
+  )
+})

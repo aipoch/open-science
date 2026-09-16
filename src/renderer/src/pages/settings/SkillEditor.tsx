@@ -1,3 +1,4 @@
+import { fieldErrorClassName } from '@/components/ui/notice-chrome'
 import { TooltipProvider } from '@/components/ui/tooltip'
 /* Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4 */
 import type { TFunction } from 'i18next'
@@ -458,7 +459,7 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
                 aria-invalid={nameError ? true : undefined}
                 placeholder={t('e.g. changelog-style')}
               />
-              {nameError ? <span className="text-xs text-danger-000">{nameError}</span> : null}
+              {nameError ? <span className={fieldErrorClassName}>{nameError}</span> : null}
             </label>
             <label data-slot="settings-editor-field" className="grid min-w-0 gap-1.5">
               <span className="text-sm font-medium text-foreground">{t('Description')}</span>

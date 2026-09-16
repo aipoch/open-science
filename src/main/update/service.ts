@@ -10,12 +10,14 @@ import { isCurrentInFlight } from '../../shared/in-flight-promise'
 import {
   isNewer,
   selectDownload,
+  UPDATE_INSTALLATION_REQUIRED,
   type UpdateApplyOptions,
   type UpdateDownloadOptions,
   type UpdateStatus
 } from '../../shared/update'
 import { startDiagnosticOperation, type DiagnosticOperation } from '../diagnostics/operation'
 import type { Logger } from '../logger'
+import { createMacInstallationGuard } from '../mac-installation'
 import { downloadInstaller } from './downloader'
 import { fetchManifest } from './manifest'
 import { canStartUpdateDownload, toAvailableUpdateStatus, type UpdateStrategy } from './strategy'
@@ -29,6 +31,7 @@ type UpdateBroadcast = <Channel extends 'update:status' | 'update:progress'>(
 ) => void
 
 export type UpdateServiceDeps = {
+  installationGuard?: (interactive: boolean) => boolean
   fetchImpl?: typeof fetch
   platform?: NodeJS.Platform
   arch?: string
@@ -106,6 +109,7 @@ export class UpdateService implements UpdateStrategy {
   private readonly openExternal: (url: string) => Promise<void>
   private readonly removeFile: (path: string) => Promise<void>
   private readonly log: Logger
+  private readonly installationGuard: (interactive: boolean) => boolean
   private readonly translate: NativeTranslator
   // Per-session set of target paths that have already been downloaded once this run. The first
   // download to a given path removes any pre-existing <target>.part and validator sidecar so a restart
@@ -131,6 +135,7 @@ export class UpdateService implements UpdateStrategy {
     this.removeFile = deps.removeFile ?? ((path) => rm(path, { force: true }))
     this.log = deps.log ?? NOOP_LOGGER
     this.translate = deps.translate ?? englishNativeTranslator
+    this.installationGuard = deps.installationGuard ?? createMacInstallationGuard()
     this.status = { state: 'idle', current: this.currentVersion, applyKind: 'installer' }
   }
 
@@ -159,6 +164,13 @@ export class UpdateService implements UpdateStrategy {
 
   // Manifest flow always applies via an installer, so stamp applyKind here so every broadcast status
   // carries it (the renderer picks the "Open installer" vs "Restart" action off this field).
+  private blockForInstallation(interactive: boolean): boolean {
+    if (!this.installationGuard(interactive)) return false
+    this.setStatus({ ...this.status, state: 'error', error: UPDATE_INSTALLATION_REQUIRED })
+    this.log.warn('update requires installation', { reason: 'read-only-volume' })
+    return true
+  }
+
   private setStatus(next: UpdateStatus): void {
     this.status = { ...next, applyKind: 'installer' }
     this.broadcast('update:status', this.status)
@@ -254,6 +266,7 @@ export class UpdateService implements UpdateStrategy {
     }
     if (this.downloadAbort) return this.status
     if (!canStartUpdateDownload(this.status)) return this.status
+    if (this.blockForInstallation(!options.nonInteractive)) return this.status
 
     const { download } = this.status
     if (!download) return this.status
@@ -440,8 +453,8 @@ export class UpdateService implements UpdateStrategy {
     admittedStatus: UpdateStatus,
     options?: UpdateApplyOptions
   ): Promise<UpdateStatus> {
-    void options
     if (this.status !== admittedStatus) return this.status
+    if (this.blockForInstallation(options?.relaunch !== false)) return this.status
     let ownedStatus = admittedStatus
     const operation = startDiagnosticOperation(this.log, {
       operation: 'update-apply',

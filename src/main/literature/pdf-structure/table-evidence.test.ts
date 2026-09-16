@@ -7,6 +7,34 @@ const moduleUrl = pathToFileURL(
 ).href
 const { hasTableEvidence } = await import(moduleUrl)
 
+it('rejects short keyword panels and colon-style citations while retaining measured comparisons', () => {
+  const grids = [
+    [
+      ['Key words:', 'Chemotherapy'],
+      ['Genetic variation', 'Neuropathy']
+    ],
+    [
+      ['Author A. Ophthalmol (2003): 12–18', 'Study title'],
+      ['Author B. Cancer (2004): 20–25', 'Second study'],
+      ['Author C. Journal (2005): 31–38', 'Third study']
+    ]
+  ]
+  for (const grid of grids) {
+    expect(hasTableEvidence({ grid })).toBe(false)
+    expect(hasTableEvidence({ grid }, { text: 'Table 1. Included studies' })).toBe(true)
+    expect(hasTableEvidence({ grid: grid.map(([label]) => [label, '12', '14']), issues: [] })).toBe(
+      true
+    )
+  }
+})
+
+it('rejects a bibliography fragment with issue numbers only with repeated source citations', () => {
+  const table = { grid: [['Smith et al. 2021;14(2):12–18', 'Citation continuation']] }
+  const source = [{ text: '2021;14(2):12 2022;15(3):20 2023;16(1):31' }]
+  expect(hasTableEvidence(table, undefined, source)).toBe(false)
+  expect(hasTableEvidence(table, { text: 'Table 1. Studies' }, source)).toBe(true)
+})
+
 it('rejects incomplete glossary grids, unnumbered references and corresponding-author addresses', () => {
   const glossary = {
     issues: [],

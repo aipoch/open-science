@@ -1,3 +1,7 @@
+import {
+  rebaseTaskSessionBinding,
+  rebaseTaskTurnOntoLatestSession
+} from '../session-persistence/task-admission'
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, sep } from 'node:path'
@@ -22,6 +26,14 @@ import { EnabledComputeHostsRegistry } from '../compute/enabled-hosts-registry'
 import { SessionEnabledComputeHostsOwner } from '../compute/session-enabled-hosts-owner'
 import { loadManagedCodexErrorHandler } from '../settings/codex-error.test-utils'
 import { isProviderPromptError } from '../acp/prompt-error'
+import { randomUUID } from 'node:crypto'
+import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
+import { fetchLocalRpc } from '../local-rpc-transport'
+import { NotebookLocalRpcServer } from '../notebook/local-rpc-server'
+import { NotebookRuntimeService } from '../notebook/runtime-service'
+import { NotebookRunRepository } from '../notebook/repository'
+import { SessionRepository } from '../session-persistence/repository'
+import { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
 import { FileTaskRunJournal, type TaskRunJournalEntry } from './task-run-journal'
 import {
   TASK_RUN_DISPOSAL_BUDGET_MS,
@@ -32,6 +44,8 @@ import {
   type TaskRunnerDependencies,
   type TaskSessionPort
 } from './task-runner'
+
+vi.mock('electron', () => ({ app: { getPath: () => tmpdir(), isPackaged: true } }))
 
 const temporaryRoots: string[] = []
 
@@ -136,6 +150,17 @@ const createRunner = (overrides: TaskRunnerOverrides = {}): TaskRunner => {
       return loaded
     },
     save,
+    bindSession: async (request) => {
+      const latest = (await defaultSessions.list()).find(({ id }) => id === request.session.id)
+      if (!latest)
+        throw new Error(`Session not found for Task provider binding: ${request.session.id}`)
+      return save(rebaseTaskSessionBinding(latest, request))
+    },
+    admitTurn: async ({ session: prepared, contextReset }) => {
+      const latest = (await defaultSessions.list()).find(({ id }) => id === prepared.id)
+      if (!latest) throw new Error(`Session not found for Task prompt admission: ${prepared.id}`)
+      return save(rebaseTaskTurnOntoLatestSession(latest, prepared, contextReset))
+    },
     stageCompletion: async (request) => {
       const current = loadSession(request.sessionId)
       const candidate: PersistedChatSession = {
@@ -233,6 +258,194 @@ const createRunner = (overrides: TaskRunnerOverrides = {}): TaskRunner => {
   })
 }
 describe('TaskRunner', () => {
+  it.each([
+    { concurrent: false, cancel: false, tool: false },
+    { concurrent: true, cancel: false, tool: false },
+    { concurrent: true, cancel: false, tool: false, resume: true },
+    { concurrent: false, cancel: true, tool: false },
+    { concurrent: false, cancel: true, tool: true },
+    { concurrent: false, cancel: true, tool: true, webMessage: 'streaming' as const },
+    { concurrent: false, cancel: true, tool: true, webMessage: 'complete' as const }
+  ])(
+    'preserves a follow-up across a Web title save during admission (concurrent: $concurrent, cancel: $cancel, tool: $tool, web: $webMessage, resume: $resume)',
+    async ({ concurrent, cancel, tool, webMessage, resume }) => {
+      const root = await mkdtemp(join(tmpdir(), 'task-web-admission-'))
+      temporaryRoots.push(root)
+      let promptInFlight = false
+      const repository = new SessionRepository(root, {
+        hasActiveRuntimePrompt: () => promptInFlight
+      })
+      const coordinator = new SessionPersistenceCoordinator(repository, {
+        syncSession: async () => [],
+        softDeleteSession: async () => 'deleted',
+        restoreSession: async () => undefined,
+        softDeleteProject: async () => 'deleted',
+        reconcileActiveSessions: async () => undefined,
+        reconcileProjectSessions: async () => undefined,
+        markReconciliationIncomplete: () => undefined
+      })
+      let injectWebSave = false
+      let turn = 0
+      let admitFollowUp!: () => void
+      const followUpAdmitted = new Promise<void>((resolve) => {
+        admitFollowUp = resolve
+      })
+      let stopFollowUp!: () => void
+      const followUpStopped = new Promise<void>((resolve) => {
+        stopFollowUp = resolve
+      })
+      let emit: ((event: AcpRuntimeEvent) => void) | undefined
+      const runner = createRunner({
+        createId: randomUUID,
+        now: Date.now,
+        sessions: {
+          list: async () => (await coordinator.loadAllReadOnly()).sessions,
+          save: async (candidate) => {
+            if (injectWebSave) {
+              injectWebSave = false
+              const latest = await coordinator.loadSessionForContinuation(project.id, candidate.id)
+              await coordinator.saveSession({ ...latest, title: 'Title from Web' })
+            }
+            return coordinator.saveSession(candidate)
+          },
+          bindSession: async (request) => {
+            if (injectWebSave) {
+              injectWebSave = false
+              const latest = await coordinator.loadSessionForContinuation(
+                project.id,
+                request.session.id
+              )
+              await coordinator.saveSession({ ...latest, title: 'Title from Web' })
+            }
+            return coordinator.bindTaskSession(request)
+          },
+          admitTurn: async (request) => {
+            if (injectWebSave) {
+              injectWebSave = false
+              const latest = await coordinator.loadSessionForContinuation(
+                project.id,
+                request.session.id
+              )
+              await coordinator.saveSession({ ...latest, title: 'Title from Web' })
+            }
+            return coordinator.admitTaskTurn(request)
+          },
+          stageCompletion: (request) => coordinator.stageTaskCompletion(request),
+          settleCompletion: (request) => coordinator.settleTaskCompletion(request),
+          failRun: (request) => coordinator.failTaskRun(request)
+        },
+        runtimeEvents: {
+          subscribe: (listener) => {
+            emit = listener
+            return () => undefined
+          }
+        },
+        agent: {
+          createSession: async () => ({
+            sessionId: session.id,
+            cwd: root,
+            ...(resume ? { backendId: 'codex' } : {})
+          }),
+          resumeSession: async () => ({
+            sessionId: session.id,
+            cwd: root,
+            backendId: 'codex',
+            providerSessionId: 'resumed-provider-session'
+          }),
+          listAttachedSessionIds: async () => [session.id],
+          cancelPrompt: async () => {
+            stopFollowUp()
+          },
+          prompt: async (request, observer) => {
+            turn += 1
+            promptInFlight = true
+            await observer?.onPromptAdmitted?.()
+            observer?.onProviderPromptAccepted?.()
+            emit?.({
+              id: randomUUID(),
+              timestamp: Date.now(),
+              kind: 'message',
+              level: 'info',
+              sessionId: request.sessionId,
+              role: 'assistant',
+              text: cancel && turn === 1 ? 'Which report and chart formats?' : 'Research answer'
+            })
+            if (webMessage && turn === 2) {
+              const latest = await coordinator.loadSessionForContinuation(
+                project.id,
+                request.sessionId
+              )
+              const timestamp = Date.now()
+              await coordinator.saveSession({
+                ...latest,
+                ...(webMessage === 'complete'
+                  ? { activeRun: undefined, status: 'idle' as const }
+                  : {}),
+                messages: [
+                  ...latest.messages,
+                  {
+                    id: randomUUID(),
+                    role: 'agent',
+                    content: 'Research answer',
+                    responseToMessageId: request.promptMessageId,
+                    status: webMessage,
+                    eventIds: [],
+                    createdAt: timestamp,
+                    updatedAt: timestamp
+                  }
+                ],
+                updatedAt: timestamp
+              })
+            }
+            if (tool && turn === 2) {
+              emit?.({
+                id: randomUUID(),
+                timestamp: Date.now(),
+                kind: 'tool',
+                level: 'info',
+                sessionId: request.sessionId,
+                promptMessageId: request.promptMessageId,
+                toolCallId: 'notebook-execution',
+                title: 'Execute Python',
+                status: 'in_progress'
+              })
+            }
+            if (cancel && turn === 2) {
+              admitFollowUp()
+              await followUpStopped
+            }
+            promptInFlight = false
+          }
+        }
+      })
+      const first = await runner.startRun({
+        project: project.id,
+        prompt: 'Analyze the CSV.',
+        ...(cancel ? { turnIntent: 'plan-first' as const } : {})
+      })
+      expect(await runner.waitForRun(first.id)).toMatchObject({ status: 'completed' })
+      injectWebSave = concurrent
+      const next = await runner.startRun({
+        project: project.id,
+        sessionId: session.id,
+        prompt: 'Summarize the results.'
+      })
+      if (cancel) await followUpAdmitted
+      const result = cancel ? await runner.cancelRun(next.id) : await runner.waitForRun(next.id)
+      expect(result, JSON.stringify(result)).toMatchObject({
+        status: cancel ? 'cancelled' : 'completed',
+        error: undefined
+      })
+      const saved = await coordinator.loadSessionForContinuation(project.id, session.id)
+      expect(
+        saved.messages
+          .filter((message) => message.role === 'user')
+          .map((message) => message.content)
+      ).toEqual(['Analyze the CSV.', 'Summarize the results.'])
+      if (concurrent) expect(saved.title).toBe('Title from Web')
+    }
+  )
+
   it.each(['terminal-error', 'retryable-error', 'foreign-error', 'assistant-quotation'] as const)(
     'reports the pinned Codex capacity outcome correctly for %s',
     async (delivery) => {
@@ -4352,6 +4565,184 @@ describe('TaskRunner', () => {
 
     finishPrompt?.()
     await expect(runner.waitForRun(started.id)).resolves.toMatchObject({ status: 'completed' })
+  })
+
+  it.each([true, false])(
+    'persists failed Notebook stop despite accepted cancellation (admitted: %s)',
+    async (admitted) => {
+      let stop!: () => void
+      const stopped = new Promise<void>((resolve) => {
+        stop = resolve
+      })
+      let durableSession = structuredClone(session)
+      let durableRuns: TaskRunJournalEntry[] = []
+      const failure = new NotebookExecutionStopError()
+      const runner = createRunner({
+        createId: randomUUID,
+        sessions: {
+          list: async () => [structuredClone(durableSession)],
+          save: async (candidate) => {
+            durableSession = structuredClone(candidate)
+            return candidate
+          }
+        },
+        runJournal: {
+          load: async () => durableRuns,
+          replace: async (runs) => {
+            durableRuns = runs.map((entry) => structuredClone(entry))
+          }
+        },
+        agent: {
+          prompt: async (_request, observer) => {
+            if (admitted) await observer?.onPromptAdmitted?.()
+            await stopped
+            throw failure
+          },
+          cancelPrompt: async () => {
+            stop()
+          }
+        }
+      })
+      try {
+        const run = await runner.startRun({
+          project: project.id,
+          sessionId: session.id,
+          prompt: 'Execute then cancel.'
+        })
+        await expect(runner.cancelRun(run.id)).resolves.toMatchObject({
+          status: 'failed',
+          error: failure.message,
+          cancelledAt: undefined
+        })
+        expect(durableRuns.find((entry) => entry.id === run.id)).toMatchObject({
+          status: 'failed',
+          error: failure.message
+        })
+        expect(durableSession.activeRun).toBeUndefined()
+        if (admitted)
+          expect(durableSession).toMatchObject({ status: 'error', error: failure.message })
+      } finally {
+        stop()
+        await runner.dispose()
+      }
+    }
+  )
+
+  it('persists a replaced Notebook turn stop failure after Task cancellation', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'task-replaced-notebook-stop-'))
+    temporaryRoots.push(root)
+    let started!: () => void
+    const executionStarted = new Promise<void>((resolve) => {
+      started = resolve
+    })
+    let stop!: () => void
+    const stopped = new Promise<void>((resolve) => {
+      stop = resolve
+    })
+    const failure = new NotebookExecutionStopError()
+    const notebook = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: project.id,
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: async () => {
+          started()
+          await stopped
+          throw failure
+        },
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+    const rpc = new NotebookLocalRpcServer(notebook, { transport: 'tcp' })
+    const connection = await rpc.issueSessionConnection(
+      session.id,
+      project.id,
+      `root-frame-${session.id}`
+    )
+    const bind = (executionId: string): void =>
+      rpc.setArtifactTurnBinding(session.id, {
+        ownerExecutionId: executionId,
+        projectId: project.id,
+        provenanceContext: {
+          rootFrameId: `root-frame-${session.id}`,
+          agentFrameId: `root-frame-${session.id}`,
+          messageBranchId: 'branch-1',
+          runtimeSegmentId: executionId,
+          promptMessageId: executionId
+        }
+      })
+    bind('old-execution')
+    const journal = new FileTaskRunJournal(root)
+    let pending: Promise<Response> | undefined
+    let cleanupError: unknown
+    let rpcOutcome: { status: number; body: unknown } | undefined
+    const runner = createRunner({
+      createId: randomUUID,
+      runJournal: journal,
+      sessions: { list: async () => [structuredClone(session)] },
+      agent: {
+        prompt: async (_request, observer) => {
+          pending = fetchLocalRpc(
+            connection,
+            {
+              method: 'POST',
+              headers: {
+                authorization: `Bearer ${connection.token}`,
+                'content-type': 'application/json'
+              },
+              body: JSON.stringify({
+                method: 'execute',
+                params: { sessionId: session.id, workspaceCwd: root, code: 'work()' }
+              })
+            },
+            'Task replaced Notebook turn'
+          )
+          await executionStarted
+          await observer?.onPromptAdmitted?.()
+          await stopped
+          const response = await pending
+          rpcOutcome = { status: response.status, body: await response.json() }
+          try {
+            await rpc.clearArtifactTurnBinding(session.id, 'old-execution')
+          } catch (error) {
+            cleanupError = error
+            throw error
+          }
+        },
+        cancelPrompt: async () => {
+          bind('new-execution')
+          stop()
+        }
+      }
+    })
+    try {
+      const run = await runner.startRun({
+        project: project.id,
+        sessionId: session.id,
+        prompt: 'Execute and cancel.'
+      })
+      await executionStarted
+      const cancelled = await runner.cancelRun(run.id)
+      expect(rpcOutcome).toEqual({ status: 500, body: { error: failure.message } })
+      expect.soft(cleanupError).toBe(failure)
+      expect.soft(cancelled).toMatchObject({
+        status: 'failed',
+        error: failure.message,
+        cancelledAt: undefined
+      })
+      expect((await journal.load()).find((entry) => entry.id === run.id)).toMatchObject({
+        status: 'failed',
+        error: failure.message
+      })
+    } finally {
+      stop()
+      await pending?.catch(() => undefined)
+      await runner.dispose()
+      connection.release?.()
+      await rpc.close()
+      await notebook.dispose()
+    }
   })
 
   it('lets Artifact finalization failure win after cancellation is accepted', async () => {

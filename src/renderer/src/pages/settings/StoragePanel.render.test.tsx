@@ -666,8 +666,8 @@ describe('StoragePanel', () => {
     const repairNotice = container.querySelector<HTMLElement>(
       '[aria-label="Application storage"] .space-y-3'
     )
-    expect(repairNotice?.className).toContain('border-amber-500/30')
-    expect(repairNotice?.className).toContain('bg-amber-500/5')
+    expect(repairNotice?.className).toContain('border-status-warning-foreground/30')
+    expect(repairNotice?.className).toContain('bg-status-warning-surface/5')
     expect(repairNotice?.querySelector('.lucide-triangle-alert')).not.toBeNull()
 
     const recheck = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
@@ -678,8 +678,8 @@ describe('StoragePanel', () => {
     const repairedNotice = container.querySelector<HTMLElement>(
       '[aria-label="Application storage"] .space-y-3'
     )
-    expect(repairedNotice?.className).not.toContain('border-amber-500/30')
-    expect(repairedNotice?.className).not.toContain('bg-amber-500/5')
+    expect(repairedNotice?.className).not.toContain('border-status-warning-foreground/30')
+    expect(repairedNotice?.className).not.toContain('bg-status-warning-surface/5')
     expect(repairedNotice?.querySelector('.lucide-triangle-alert')).toBeNull()
     expect(repairedNotice?.querySelector('.text-emerald-600')).not.toBeNull()
   })

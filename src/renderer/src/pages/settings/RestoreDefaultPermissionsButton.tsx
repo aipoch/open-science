@@ -44,6 +44,8 @@ const RestoreDefaultPermissionsButton = ({
 
   return (
     <Button
+      aria-live="polite"
+      aria-atomic="true"
       type="button"
       variant={error ? 'destructive' : 'outline'}
       disabled={isDisabled}
@@ -59,11 +61,13 @@ const RestoreDefaultPermissionsButton = ({
       )}
       onClick={onRestore}
     >
-      <Icon
-        className={cn('size-4', loading && 'animate-spin motion-reduce:animate-none')}
-        aria-hidden="true"
-      />
-      <span aria-live="polite">{label}</span>
+      <span key={String(visualState)} className="button-feedback">
+        <Icon
+          className={cn('size-4', loading && 'animate-spin motion-reduce:animate-none')}
+          aria-hidden="true"
+        />
+        <span>{label}</span>
+      </span>
     </Button>
   )
 }

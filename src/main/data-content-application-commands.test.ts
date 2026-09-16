@@ -177,6 +177,8 @@ const createDependencies = () => {
     loadOne: vi.fn(),
     loadUsage: vi.fn(),
     saveSession: vi.fn(async () => ({ created: true, session })),
+    bindTaskSession: vi.fn(async () => session),
+    admitTaskTurn: vi.fn(async () => session),
     stageTaskCompletion: vi.fn(async () => session),
     settleTaskCompletion: vi.fn(async () => session),
     failTaskRun: vi.fn(async () => session),
@@ -272,6 +274,8 @@ const WRAPPED_COMMAND_KEYS = [
   'sessionLoadUsage',
   'sessionSaveManifest',
   'sessionSave',
+  'sessionBindTask',
+  'sessionAdmitTaskTurn',
   'sessionStageTaskCompletion',
   'sessionSettleTaskCompletion',
   'sessionFailTaskRun',
@@ -360,6 +364,8 @@ describe('Data and content application commands', () => {
         'sessions:update-archive',
         'sessions:unlink-pdf-context',
         'sessions:save-session',
+        'sessions:bind-task-session',
+        'sessions:admit-task-turn',
         'sessions:stage-task-completion',
         'sessions:settle-task-completion',
         'sessions:fail-task-run',
@@ -997,6 +1003,8 @@ describe('Data and content application commands', () => {
       | 'unlinkPdfContext'
       | 'updateArchive'
       | 'saveSession'
+      | 'bindTaskSession'
+      | 'admitTaskTurn'
       | 'stageTaskCompletion'
       | 'settleTaskCompletion'
       | 'failTaskRun'
@@ -1106,6 +1114,20 @@ describe('Data and content application commands', () => {
             updatedAt: 2
           }
         ],
+        caller: taskCaller
+      },
+      {
+        label: 'task provider binding',
+        command: 'sessionBindTask',
+        owner: 'bindTaskSession',
+        args: (deps) => [{ session: deps.session, contextReset: false }],
+        caller: taskCaller
+      },
+      {
+        label: 'task turn admission',
+        command: 'sessionAdmitTaskTurn',
+        owner: 'admitTaskTurn',
+        args: (deps) => [{ session: deps.session, contextReset: false }],
         caller: taskCaller
       },
       {

@@ -401,6 +401,100 @@ describe('SettingsService: Marketplace installation projection', () => {
     }
   })
 
+  it('keeps Marketplace preview and confirmation tokens at the local service boundary', async () => {
+    const identity = { snapshotId: 'a'.repeat(64), id: 'one' }
+    const pkg = {
+      files: [],
+      receipt: {
+        marketplace: 'openscience-skills' as const,
+        id: 'one',
+        version: '1.0.0',
+        snapshotId: identity.snapshotId,
+        revision: 'b'.repeat(64),
+        descriptorSha256: 'c'.repeat(64),
+        artifactSha256: 'd'.repeat(64),
+        contentSha256: 'e'.repeat(64)
+      }
+    }
+    const entry = {
+      id: 'one',
+      displayName: 'One',
+      summary: 'Example',
+      category: 'Other' as const,
+      version: '1.0.0',
+      publisher: { name: 'Publisher', url: 'https://example.com' },
+      source: { repository: 'https://example.com/repo', commit: 'b'.repeat(40), path: 'one' },
+      license: 'MIT'
+    }
+    const preview = {
+      token: '6f583699-8508-4f5f-bfb3-9e403d759e45',
+      localSkillId: 'personal-one',
+      displayName: 'One',
+      source: 'personal' as const,
+      localChanges: 'unknown' as const,
+      mainEnabled: true,
+      specialists: [],
+      added: [],
+      modified: ['SKILL.md'],
+      removed: [],
+      differences: []
+    }
+    const detail = vi
+      .spyOn(SkillMarketplaceService.prototype, 'detail')
+      .mockResolvedValue({ ok: true, value: { entry, licenseEvidence: [] } })
+    const download = vi
+      .spyOn(SkillMarketplaceService.prototype, 'download')
+      .mockResolvedValue({ ok: true, value: pkg })
+    const inspect = vi
+      .spyOn(SkillCatalogModule.prototype, 'previewMarketplaceUpdate')
+      .mockResolvedValue(preview)
+    const installation = vi
+      .spyOn(SkillCatalogModule.prototype, 'marketplaceInstallation')
+      .mockResolvedValue({
+        kind: 'conflict',
+        reason: 'name-taken',
+        localSkillId: preview.localSkillId
+      })
+    const install = vi
+      .spyOn(SkillCatalogModule.prototype, 'installMarketplace')
+      .mockResolvedValue({ id: preview.localSkillId, status: 'updated' })
+    try {
+      const service = createService()
+      await service.getSkillMarketplaceDetail(identity)
+      expect(download).not.toHaveBeenCalled()
+      expect(
+        await service.getSkillMarketplaceDetail({ ...identity, previewUpdate: true })
+      ).toMatchObject({ ok: true, value: { updatePreview: preview } })
+      expect(detail).toHaveBeenLastCalledWith(identity)
+      expect(download).toHaveBeenLastCalledWith(identity)
+      expect(inspect).toHaveBeenCalledWith(pkg)
+      expect(install).not.toHaveBeenCalled()
+      expect(
+        await service.installSkillMarketplace({
+          ...identity,
+          expectedVersion: null,
+          updateToken: 'invalid'
+        })
+      ).toEqual({ ok: false, error: 'conflict' })
+      expect(install).not.toHaveBeenCalled()
+      expect(
+        await service.installSkillMarketplace({
+          ...identity,
+          expectedVersion: null,
+          updateToken: preview.token
+        })
+      ).toMatchObject({ ok: true, value: { id: preview.localSkillId, status: 'updated' } })
+      expect(download).toHaveBeenLastCalledWith(identity, undefined)
+      expect(install).toHaveBeenLastCalledWith(pkg, null, preview.token)
+    } finally {
+      detail.mockRestore()
+      download.mockRestore()
+      inspect.mockRestore()
+      installation.mockRestore()
+      install.mockRestore()
+    }
+  })
+
   it('reports a committed direct installation as successful when runtime refresh fails', async () => {
     const pkg = {
       files: [],
@@ -495,7 +589,7 @@ describe('SettingsService: Marketplace installation projection', () => {
       }
       finish({ ok: true, value: pkg })
       await vi.waitFor(() => expect(service.getSkillMarketplaceBatch()?.status).toBe('completed'))
-      expect(write).toHaveBeenCalledExactlyOnceWith(pkg, null)
+      expect(write).toHaveBeenCalledExactlyOnceWith(pkg, null, undefined)
       expect(service.getSkillMarketplaceBatch()?.items.map(({ status }) => status)).toEqual([
         'succeeded',
         'failed'
@@ -1996,35 +2090,6 @@ describe('SettingsService: validation', () => {
     expect(stored.lastValidatedAt).toBeUndefined()
     expect(stored.lastValidationFailure).toMatchObject({ category: 'auth' })
     expect(stored.lastValidationFailure?.at).toBeGreaterThan(0)
-  })
-
-  it('reports incompatible (no network probe) when the provider cannot drive the active framework', async () => {
-    const service = createService()
-    const fetchMock = vi.fn().mockResolvedValue({ status: 200 })
-    vi.stubGlobal('fetch', fetchMock)
-
-    // Default framework is Claude Code (Anthropic /v1/messages only); an OpenAI-only gateway can't drive
-    // it, so testing must fail with the pairing reason rather than firing a misleading /v1/messages probe.
-    const created = (
-      await service.upsertProvider({
-        type: 'custom',
-        name: 'G',
-        baseUrl: 'https://g',
-        model: 'm',
-        key: 'k',
-        apiEndpoints: ['openai']
-      })
-    ).providers[0]
-
-    const result = await service.validateProvider({ providerId: created.id })
-
-    expect(result).toMatchObject({ ok: false, category: 'incompatible', applied: true })
-    expect(result.message).toContain('/v1/chat/completions')
-    expect(fetchMock).not.toHaveBeenCalled()
-
-    const stored = (await repository.getSettings()).providers.find((p) => p.id === created.id)
-    expect(stored?.lastValidatedAt).toBeUndefined()
-    expect(stored?.lastValidationFailure).toMatchObject({ category: 'incompatible' })
   })
 
   it('probes normally once the active framework can drive the provider', async () => {

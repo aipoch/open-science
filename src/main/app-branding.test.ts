@@ -25,7 +25,9 @@ describe('app display branding', () => {
     expect(rendererHtmlSource).toContain(`<title>${displayName}</title>`)
     expect(builderSource).toContain(`productName: ${displayName}`)
     expect(builderSource).toContain(`CFBundleName: ${displayName}`)
-    expect(builderSource).toContain(`CFBundleDisplayName: ${displayName}`)
+    // Finder uses the installation label; CFBundleName stays aligned with Electron Helpers.
+    expect(builderSource).toContain('CFBundleDisplayName: Open-Science')
+    expect(builderSource).toContain('name: Open-Science.app')
     expect(packageSource).toContain(`"productName": "${displayName}"`)
     expect(homePageSource).toContain(displayName)
   })

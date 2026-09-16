@@ -562,6 +562,7 @@ class AcpRuntimeCoordinator {
     try {
       response = await runtime.createSession(request)
     } catch (error) {
+      this.pendingSessionCreations.delete(pending)
       await this.retireUnusedTargetedRuntime(runtime)
       throw error
     } finally {
@@ -1828,7 +1829,11 @@ class AcpRuntimeCoordinator {
       !runtime ||
       !this.runtimeTargets.has(runtime) ||
       this.retiredRuntimes.has(runtime) ||
-      Array.from(this.sessionRuntimes.values()).includes(runtime)
+      Array.from(this.sessionRuntimes.values()).includes(runtime) ||
+      Array.from(this.pendingSessionCreations).some((pending) => pending.runtime === runtime) ||
+      Array.from(this.pendingSessionAdoptions.values()).some(
+        (pending) => pending.runtime === runtime
+      )
     ) {
       return
     }

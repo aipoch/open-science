@@ -1,3 +1,4 @@
+import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
 import { createFrameNotebookLane } from '../notebook/lane-identity'
 import { createArtifactSaveFixture } from '../artifacts/save-test-fixtures'
 import sharp from 'sharp'
@@ -18,6 +19,8 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { PassThrough, Readable, Writable } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+
+vi.mock('electron', () => ({ app: { getPath: () => tmpdir(), isPackaged: true } }))
 
 import { AcpRuntime } from './runtime.test-utils'
 import type { AcpPromptContentOwner } from './prompt-content-owner'
@@ -83,7 +86,9 @@ import {
   type PersistedChatSession,
   type SessionRuntimeContext
 } from '../../shared/session-persistence'
-import type { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
+import { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
+import { SessionRepository } from '../session-persistence/repository'
+import { HeadlessTaskApi } from '../web-service/task-api'
 import type { ActivePlanProjection } from '../../shared/session-plan/contract'
 import { UploadRepository } from '../uploads/repository'
 import { stageUploadFixtures } from '../uploads/repository.test-utils'
@@ -5560,7 +5565,7 @@ describe('ACP runtime session management', () => {
 
     await vi.waitFor(() => expect(runtime.getSnapshot().status).toBe('closed'))
     expect(releaseSessionCapabilities).toHaveBeenCalledOnce()
-    expect(releaseSessionCapabilities).toHaveBeenCalledWith(session.sessionId)
+    expect(releaseSessionCapabilities).toHaveBeenCalledWith(session.sessionId, ['secret-token'])
   })
 
   it('emits a terminal failure for every in-flight prompt before an unexpected close clears state', async () => {
@@ -8399,8 +8404,8 @@ describe('ACP runtime session management', () => {
           notebookRpcServer.issueSessionConnection(sessionId, projectId, `root-frame-${sessionId}`),
         registerSessionAlias: (aliasSessionId, sessionId) =>
           notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId),
-        releaseSessionCapabilities: (sessionId) =>
-          notebookRpcServer.releaseSessionCapabilities(sessionId)
+        releaseSessionCapabilities: (sessionId, capabilityTokens) =>
+          notebookRpcServer.releaseSessionCapabilitiesIfOwned(sessionId, capabilityTokens)
       }
     })
 
@@ -16921,7 +16926,7 @@ describe('ACP runtime session management', () => {
     await runtime.deleteSession({ sessionId: session.sessionId })
 
     expect(releaseSessionCapabilities).toHaveBeenCalledOnce()
-    expect(releaseSessionCapabilities).toHaveBeenCalledWith(session.sessionId)
+    expect(releaseSessionCapabilities).toHaveBeenCalledWith(session.sessionId, ['secret-token'])
   })
 
   it('releases notebook RPC capabilities for every session on disconnect', async () => {
@@ -16948,8 +16953,8 @@ describe('ACP runtime session management', () => {
     await runtime.disconnect()
 
     expect(releaseSessionCapabilities).toHaveBeenCalledTimes(2)
-    expect(releaseSessionCapabilities).toHaveBeenCalledWith(first.sessionId)
-    expect(releaseSessionCapabilities).toHaveBeenCalledWith(second.sessionId)
+    expect(releaseSessionCapabilities).toHaveBeenCalledWith(first.sessionId, ['secret-token'])
+    expect(releaseSessionCapabilities).toHaveBeenCalledWith(second.sessionId, ['secret-token'])
   })
 
   it('clears all MCP server names on disconnect', async () => {
@@ -17233,7 +17238,7 @@ describe('ACP runtime session management', () => {
       ).rejects.toBe(failure)
 
       expect(releaseSessionCapabilities).toHaveBeenCalledOnce()
-      expect(releaseSessionCapabilities).toHaveBeenCalledWith('restored-session')
+      expect(releaseSessionCapabilities).toHaveBeenCalledWith('restored-session', ['resumed-token'])
 
       const recovered = await runtime.resumeSession({
         sessionId: 'restored-session',
@@ -17287,7 +17292,7 @@ describe('ACP runtime session management', () => {
       ).rejects.toBe(failure)
 
       expect(releaseSessionCapabilities).toHaveBeenCalledOnce()
-      expect(releaseSessionCapabilities).toHaveBeenCalledWith('switched-session')
+      expect(releaseSessionCapabilities).toHaveBeenCalledWith('switched-session', ['adopted-token'])
 
       const recovered = await runtime.resumeSession({
         sessionId: 'switched-session',
@@ -17444,7 +17449,7 @@ describe('ACP runtime session management', () => {
 
     expect(getRpcConnection).toHaveBeenCalledTimes(2)
     expect(releaseSessionCapabilities).toHaveBeenCalledOnce()
-    expect(releaseSessionCapabilities).toHaveBeenCalledWith('restored-session')
+    expect(releaseSessionCapabilities).toHaveBeenCalledWith('restored-session', ['session-token'])
   })
 
   it('times out and tears down a reconnect when the agent never answers session/resume', async () => {
@@ -23074,6 +23079,270 @@ describe('ACP runtime session management', () => {
     await vi.waitFor(() => expect(runtime.getSnapshot().promptInFlightSessionIds).toEqual([]))
   })
 
+  it.each(
+    PERMISSION_PROJECTION_FRAMEWORKS.flatMap((route) =>
+      [false, true].map((stopFailed) => ({
+        name: route[0],
+        framework: route[1],
+        modelRoute: route[2],
+        backendId: route[3],
+        stopFailed
+      }))
+    )
+  )(
+    'settles Task API cancellation for $name (stopFailed: $stopFailed)',
+    async ({ framework, modelRoute, backendId, stopFailed }) => {
+      const root = await createTemporaryRoot()
+      const started = createDeferred()
+      const tick = createDeferred()
+      const stopAllowed = createDeferred()
+      let executionSignal: AbortSignal | undefined
+      const canStop = createDeferred()
+      const heartbeat = join(root, 'heartbeat.txt')
+      const notebookService = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'project-1',
+        repository: new NotebookRunRepository(root),
+        executorFactory: () => ({
+          execute: async (request) => {
+            executionSignal = request.signal
+            await writeFile(heartbeat, '')
+            started.resolve()
+            if (!request.signal) throw new Error('Execution signal missing')
+            await Promise.race([
+              tick.promise,
+              new Promise<void>((resolve) => {
+                if (request.signal!.aborted) resolve()
+                else request.signal!.addEventListener('abort', () => resolve(), { once: true })
+              })
+            ])
+            if (request.signal.aborted) {
+              await stopAllowed.promise
+              // The real Kernel failed-reaping contract is covered in kernel-executor.test.ts.
+              // Replay its typed failure here to verify the entire Task/ACP/RPC propagation path.
+              if (stopFailed) throw new NotebookExecutionStopError()
+            } else await writeFile(heartbeat, '1\n')
+            return {
+              status: request.signal?.aborted ? 'cancelled' : 'completed',
+              stdout: '',
+              stderr: '',
+              traceback: '',
+              cwdAfter: request.cwd,
+              outputs: [],
+              workingFiles: []
+            }
+          },
+          shutdown: async () => ({ reaped: true })
+        })
+      })
+      const rpc = new NotebookLocalRpcServer(notebookService, { transport: 'tcp' })
+      let connection: Awaited<ReturnType<typeof rpc.issueSessionConnection>> | undefined
+      let pendingRpc: Promise<unknown> | undefined
+      const process = new FakeAgentProcess()
+      acp
+        .agent({ name: 'cancel-notebook-agent' })
+        .onRequest(acp.methods.agent.initialize, () => ({
+          protocolVersion: acp.PROTOCOL_VERSION,
+          agentCapabilities: {},
+          authMethods: []
+        }))
+        .onRequest(acp.methods.agent.session.new, () => ({
+          sessionId: 'task-notebook-session',
+          modes: createModes(
+            ['default', 'bypassPermissions', 'read-only', 'agent', 'agent-full-access'],
+            framework.id === 'codex' ? 'agent' : 'default'
+          )
+        }))
+        .onRequest(acp.methods.agent.session.setMode, () => ({}))
+        .onRequest(acp.methods.agent.session.prompt, async () => {
+          if (!connection) throw new Error('Notebook connection missing')
+          pendingRpc = fetch(connection.endpoint, {
+            method: 'POST',
+            headers: {
+              authorization: `Bearer ${connection.token}`,
+              'content-type': 'application/json'
+            },
+            body: JSON.stringify({
+              method: 'execute',
+              params: {
+                sessionId: 'task-notebook-session',
+                workspaceCwd: root,
+                code: 'heartbeat()',
+                background: false
+              }
+            })
+          }).then(async (response) => {
+            const body = await response.json()
+            if (stopFailed) {
+              expect(response.status).toBe(500)
+              expect(body).toMatchObject({ error: 'Notebook process tree could not be stopped.' })
+            } else if (!response.ok) throw new Error(JSON.stringify(body))
+            return body
+          })
+          // Provider acknowledges cancellation while its MCP request remains connected.
+          await canStop.promise
+          return { stopReason: 'cancelled' }
+        })
+        .onNotification(acp.methods.agent.session.cancel, () => canStop.resolve())
+        .connect(
+          acp.ndJsonStream(
+            Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
+            Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>
+          )
+        )
+      const listeners = new Set<(event: AcpRuntimeEvent) => void>()
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: root,
+        resolveBackend: () => ({
+          framework: { ...framework, spawn: () => asAgentProcess(process) },
+          backendId,
+          modelRoute,
+          executablePath: '/bin/agent',
+          env: {},
+          ...(modelRoute === 'codex-bridge'
+            ? { responsesBridgeLease: createBackendLeaseHarness().lease }
+            : {})
+        }),
+        artifacts: {
+          configRoot: root,
+          dataRoot: root,
+          projectId: 'project-1',
+          mcpEntryPath: '/app/index.js',
+          repository: new ArtifactRepository(root)
+        },
+        notebook: {
+          projectId: 'project-1',
+          mcpEntryPath: '/app/index.js',
+          getRpcConnection: async ({ sessionId, projectId }) => {
+            connection = await rpc.issueSessionConnection(
+              sessionId,
+              projectId,
+              `root-frame-${sessionId}`
+            )
+            return connection
+          },
+          registerSessionAlias: (alias, sessionId) => rpc.registerSessionAlias(alias, sessionId),
+          setArtifactTurnBinding: (sessionId, binding) =>
+            rpc.setArtifactTurnBinding(sessionId, binding),
+          clearArtifactTurnBinding: (sessionId, owner) =>
+            rpc.clearArtifactTurnBinding(sessionId, owner)
+        },
+        callbacks: {
+          onEvent: (event) => {
+            for (const listener of listeners) listener(event)
+          }
+        }
+      })
+      const sessions = new SessionPersistenceCoordinator(new SessionRepository(root), {
+        syncSession: async () => [],
+        softDeleteSession: async () => 'deleted',
+        restoreSession: async () => undefined,
+        softDeleteProject: async () => 'deleted',
+        reconcileActiveSessions: async () => undefined,
+        reconcileProjectSessions: async () => undefined,
+        markReconciliationIncomplete: () => undefined
+      })
+      const taskAgent = createAcpTaskAgentPort(
+        {
+          getSnapshot: () => runtime.getSnapshot(),
+          resumeSession: (request) => runtime.resumeSession(request),
+          setPermissionProfile: (request) => runtime.setPermissionProfile(request),
+          setMemoryEnabled: (sessionId, enabled) => runtime.setMemoryEnabled(sessionId, enabled),
+          sendPrompt: (request) => runtime.sendPrompt(request),
+          sendPromptObserved: async (request, onAccepted, onAdmitted) => {
+            await onAdmitted?.()
+            onAccepted()
+            return runtime.sendPrompt(request)
+          },
+          cancelPrompt: (request) => runtime.cancelPrompt(request)
+        },
+        { create: (request) => runtime.createSession(request) }
+      )
+      const api = new HeadlessTaskApi(
+        {
+          agent: taskAgent,
+          commands: {
+            commandNames: () => [],
+            invoke: async (name, invocation) => {
+              const [arg] = invocation.args
+              switch (name) {
+                case 'projects:list':
+                  return [
+                    {
+                      id: 'project-1',
+                      name: 'Research',
+                      description: '',
+                      isExample: false,
+                      createdAt: 1,
+                      updatedAt: 1
+                    }
+                  ]
+                case 'settings:get-settings':
+                  return { providers: [], agentFrameworkId: framework.id, agentFrameworks: [] }
+                case 'sessions:load-all':
+                  return sessions.loadAllReadOnly()
+                case 'sessions:save-session':
+                  return sessions.saveSession(arg as PersistedChatSession)
+                case 'sessions:stage-task-completion':
+                  return sessions.stageTaskCompletion(
+                    arg as Parameters<typeof sessions.stageTaskCompletion>[0]
+                  )
+                case 'sessions:settle-task-completion':
+                  return sessions.settleTaskCompletion(
+                    arg as Parameters<typeof sessions.settleTaskCompletion>[0]
+                  )
+                case 'sessions:fail-task-run':
+                  return sessions.failTaskRun(arg as Parameters<typeof sessions.failTaskRun>[0])
+                default:
+                  throw new Error(`Unexpected command: ${name}`)
+              }
+            }
+          }
+        },
+        {
+          subscribeEvents: (listener) => {
+            listeners.add(listener)
+            return () => {
+              listeners.delete(listener)
+            }
+          }
+        }
+      )
+      try {
+        const run = await api.startRun({
+          project: 'project-1',
+          prompt: 'Execute the heartbeat script.'
+        })
+        await started.promise
+        let cancellationReturned = false
+        const cancelling = api.cancelRun(run.id).then((result) => {
+          cancellationReturned = true
+          return result
+        })
+        await vi.waitFor(() => expect(executionSignal?.aborted).toBe(true))
+        expect(cancellationReturned).toBe(false)
+        stopAllowed.resolve()
+        const cancelled = await cancelling
+        expect(cancelled).toMatchObject({ status: stopFailed ? 'failed' : 'cancelled' })
+        if (stopFailed) expect(cancelled.error).toContain('process tree could not be stopped')
+        tick.resolve()
+        await pendingRpc
+        expect(await readFile(heartbeat, 'utf8')).toBe('')
+      } finally {
+        canStop.resolve()
+        stopAllowed.resolve()
+        tick.resolve()
+        await pendingRpc
+        await api.dispose()
+        await runtime.disconnect()
+        await rpc.close()
+        await notebookService.dispose()
+      }
+    }
+  )
+
   it('keeps a cancelling prompt in flight until the agent returns its stop response', async () => {
     const process = new FakeAgentProcess()
     const promptCanStop = createDeferred()
@@ -26151,7 +26420,8 @@ describe('ACP runtime — session-creation and spawn diagnostics', () => {
 
     expect(releaseSessionCapabilities).toHaveBeenCalledOnce()
     expect(releaseSessionCapabilities).toHaveBeenCalledWith(
-      expect.stringMatching(/^notebook-session-/)
+      expect.stringMatching(/^notebook-session-/),
+      ['secret-token']
     )
   })
 
@@ -26188,7 +26458,8 @@ describe('ACP runtime — session-creation and spawn diagnostics', () => {
     expect(release).toHaveBeenCalledOnce()
     expect(releaseSessionCapabilities).toHaveBeenCalledOnce()
     expect(releaseSessionCapabilities).toHaveBeenCalledWith(
-      expect.stringMatching(/^notebook-session-/)
+      expect.stringMatching(/^notebook-session-/),
+      ['secret-token']
     )
   })
 
@@ -27276,4 +27547,63 @@ describe('Specialist Skill scoping', () => {
       owners.sessionInteractions.release(execution)
     }
   })
+})
+
+it('protects disposable OpenCode homes at the ACP read boundary while allowing workspace files', async () => {
+  const workspaceRoot = await mkdtemp(join(tmpdir(), 'acp-opencode-private-home-'))
+  const privateHome = join(workspaceRoot, 'attempt', 'config')
+  const privateFile = join(privateHome, 'opencode.json')
+  const ordinaryFile = join(workspaceRoot, 'notes.txt')
+  const process = new FakeAgentProcess()
+  let denied = ''
+  let content = ''
+  const runtime = new AcpRuntime({
+    appVersion: '0.1.0',
+    defaultCwd: workspaceRoot,
+    additionalProtectedReadRoots: [privateHome],
+    spawnAgent: () => asAgentProcess(process)
+  })
+  try {
+    await mkdir(privateHome, { recursive: true })
+    await writeFile(privateFile, 'synthetic-private-config')
+    await writeFile(ordinaryFile, 'ordinary workspace content')
+    acp
+      .agent({ name: 'opencode-private-read-probe' })
+      .onRequest(acp.methods.agent.initialize, () => ({
+        protocolVersion: acp.PROTOCOL_VERSION,
+        agentCapabilities: { loadSession: false, sessionCapabilities: { close: {} } },
+        authMethods: []
+      }))
+      .onRequest(acp.methods.agent.session.new, () => ({ sessionId: 'private-read-session' }))
+      .onRequest(acp.methods.agent.session.prompt, async (ctx) => {
+        try {
+          await ctx.client.request(acp.methods.client.fs.readTextFile, {
+            sessionId: 'private-read-session',
+            path: privateFile
+          })
+        } catch (error) {
+          denied = String(error)
+        }
+        const result = await ctx.client.request(acp.methods.client.fs.readTextFile, {
+          sessionId: 'private-read-session',
+          path: ordinaryFile
+        })
+        content = result.content
+        return { stopReason: 'end_turn' }
+      })
+      .connect(
+        acp.ndJsonStream(
+          Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
+          Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>
+        )
+      )
+    const session = await runtime.createSession({ cwd: workspaceRoot })
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'Read both files' })
+    expect(denied).not.toBe('')
+    expect(denied).not.toContain('synthetic-private-config')
+    expect(content).toBe('ordinary workspace content')
+  } finally {
+    await runtime.disconnect()
+    await rm(workspaceRoot, { recursive: true, force: true })
+  }
 })

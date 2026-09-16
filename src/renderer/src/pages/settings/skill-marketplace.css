@@ -73,6 +73,7 @@
 .skill-marketplace-card-controls > .skill-marketplace-primary-action {
   grid-column: 2;
   grid-row: 1;
+  justify-self: end;
 }
 .skill-marketplace-card-controls > :not(.skill-marketplace-primary-action) {
   grid-column: 1 / -1;

@@ -1,3 +1,4 @@
+import { inlineNoticeClassName } from '@/components/ui/notice-chrome'
 import { ErrorNotice } from '@/components/error-notice'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { AlertTriangle, Shield, ShieldAlert, ShieldCheck, X } from 'lucide-react'
@@ -339,7 +340,11 @@ const PermissionsPanel = ({
                       value={profile.id}
                       icon={
                         <Icon
-                          className={cn('size-4', isFull && 'text-amber-600 dark:text-amber-400')}
+                          className={cn(
+                            'size-4',
+                            isFull &&
+                              'text-status-warning-foreground dark:text-status-warning-dark-foreground'
+                          )}
                           aria-hidden="true"
                         />
                       }
@@ -349,7 +354,8 @@ const PermissionsPanel = ({
                         <span
                           className={cn(
                             'block font-medium leading-5',
-                            isFull && 'text-amber-600 dark:text-amber-400'
+                            isFull &&
+                              'text-status-warning-foreground dark:text-status-warning-dark-foreground'
                           )}
                         >
                           {t(profile.label)}
@@ -357,7 +363,8 @@ const PermissionsPanel = ({
                         <span
                           className={cn(
                             'block text-xs leading-4 text-muted-foreground whitespace-normal',
-                            isFull && 'text-amber-600/75 dark:text-amber-400/75'
+                            isFull &&
+                              'text-status-warning-foreground/75 dark:text-status-warning-dark-foreground/75'
                           )}
                         >
                           {t(profile.description)}
@@ -371,10 +378,7 @@ const PermissionsPanel = ({
           </SettingsRow>
 
           {defaultPermissionProfile === 'full' ? (
-            <div
-              role="status"
-              className="mt-1 flex items-start gap-2 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-700 dark:text-amber-300"
-            >
+            <div role="status" className={`${inlineNoticeClassName} mt-1`}>
               <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
               {t(
                 'New conversations can run commands, change files, and access the network without asking first. Existing conversations keep their current permission mode.'
@@ -532,7 +536,7 @@ const PermissionsPanel = ({
             >
               <div className={dialogHeaderClassName}>
                 <div className="flex min-w-0 items-start gap-3">
-                  <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+                  <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-status-warning-surface dark:bg-status-warning-dark-surface text-status-warning-foreground dark:text-status-warning-dark-foreground dark:bg-status-warning-dark-surface/40">
                     <AlertTriangle className="size-5" strokeWidth={2} aria-hidden="true" />
                   </span>
                   <div className="min-w-0">
@@ -567,7 +571,7 @@ const PermissionsPanel = ({
                 <AlertDialog.Action asChild>
                   <Button
                     type="button"
-                    className="bg-amber-600 text-white hover:bg-amber-700"
+                    className="bg-status-warning-surface text-status-warning-foreground hover:bg-status-warning-surface/80 dark:bg-status-warning-dark-surface dark:text-status-warning-dark-foreground dark:hover:bg-status-warning-dark-surface/80"
                     onClick={() => void setDefaultPermissionProfile('full')}
                   >
                     {t('Use Full access')}

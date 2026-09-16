@@ -389,6 +389,37 @@ describe('importCodexAuthentication', () => {
     }
   })
 
+  it('names the credential-store boundary when the required import finds no auth.json', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-auth-import-missing-'))
+    const source = join(root, 'source')
+    const destination = join(root, 'destination')
+    try {
+      await mkdir(source, { recursive: true })
+
+      await expect(importCodexAuthentication(source, destination)).rejects.toThrow(
+        'Open-Science could not find a file-backed Codex credential to import. Your existing Codex sign-in may be stored in the system credential store, which Open-Science cannot import from. Continue with the Open-Science Codex sign-in instead.'
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps the generic import failure for a present-but-unreadable auth.json', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-auth-import-invalid-'))
+    const source = join(root, 'source')
+    const destination = join(root, 'destination')
+    try {
+      await mkdir(source, { recursive: true })
+      await writeFile(join(source, 'auth.json'), '"not-an-object"')
+
+      await expect(importCodexAuthentication(source, destination)).rejects.toThrow(
+        'The selected Codex profile does not contain importable authentication.'
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('projects only a validated provider route from app-owned configuration', () => {
     expect(
       projectSafeCodexProviderRoute(
@@ -503,17 +534,17 @@ describe('importCodexAuthentication', () => {
         [
           'model = "app-default"',
           'cli_auth_credentials_store = "file"',
-          '# Open Science: begin imported Codex route selection',
+          '# Open-Science: begin imported Codex route selection',
           'model_provider = "subscription-route"',
-          '# Open Science: end imported Codex route selection',
-          '# Open Science: begin imported Codex provider',
+          '# Open-Science: end imported Codex route selection',
+          '# Open-Science: begin imported Codex provider',
           '[model_providers."subscription-route"]',
           'name = "OpenAI"',
           'base_url = "http://127.0.0.1:1087/v1"',
           'wire_api = "responses"',
           'requires_openai_auth = true',
           'supports_websockets = false',
-          '# Open Science: end imported Codex provider',
+          '# Open-Science: end imported Codex provider',
           ''
         ].join('\n')
       )

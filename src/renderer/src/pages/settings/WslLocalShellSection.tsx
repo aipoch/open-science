@@ -1,3 +1,4 @@
+import { InlineNotice } from '@/components/ui/inline-notice'
 import {
   CheckCircle2,
   CircleHelp,
@@ -768,9 +769,9 @@ export const WslLocalShellSection = ({
         setupStatus?.operation.state === 'finished' &&
         setupStatus.operation.kind === 'install-platform' &&
         setupStatus.operation.outcome === 'restart-required' ? (
-          <p className="mt-3 text-sm text-status-warning-foreground" role="status">
+          <InlineNotice level="warning" className="mt-3" role="status">
             {t('Restart Windows before continuing. Returning here will start a fresh check.')}
-          </p>
+          </InlineNotice>
         ) : null}
 
         {!busy && snapshot.state === 'distro-required' && snapshot.distros.length === 0 ? (

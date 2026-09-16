@@ -73,6 +73,7 @@ type ComposerModelPickerProps = Readonly<{
   configuration: SessionAgentConfiguration | undefined
   unavailable: boolean
   includeAllClaudeSubscriptions?: boolean
+  alwaysShow?: boolean
   onChange: (configuration: SessionAgentConfiguration) => void
 }>
 
@@ -82,6 +83,7 @@ const ComposerModelPicker = ({
   configuration,
   unavailable,
   includeAllClaudeSubscriptions = false,
+  alwaysShow = false,
   onChange
 }: ComposerModelPickerProps): React.JSX.Element | null => {
   const { t } = useTranslation()
@@ -156,7 +158,8 @@ const ComposerModelPicker = ({
   // A single usable option leaves nothing to switch between unless it still exposes the Session's
   // reasoning-effort control. An incompatible sole provider also stays visible so its reason remains
   // reachable — an all-incompatible framework must never silently vanish.
-  if (options.length === 1 && hasUsable && !unavailable && !showEffortRow) return null
+  if (!alwaysShow && options.length === 1 && hasUsable && !unavailable && !showEffortRow)
+    return null
 
   // The active option matches by provider and model; an undefined activeModel maps to the empty-model
   // "default" entry. Account-owned subscription defaults omit the model, so the trigger shows the

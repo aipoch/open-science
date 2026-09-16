@@ -15,6 +15,25 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" DATETIME NOT NULL
 );`,
+  `CREATE TABLE IF NOT EXISTS "bookmarks" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "projectId" TEXT NOT NULL,
+    "sessionId" TEXT NOT NULL,
+    "kind" TEXT NOT NULL,
+    "sourceKind" TEXT NOT NULL,
+    "sourceId" TEXT NOT NULL,
+    "sourceJson" TEXT NOT NULL,
+    "selectorJson" TEXT NOT NULL,
+    "quote" TEXT,
+    "note" TEXT NOT NULL DEFAULT '',
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "bookmarks_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "Project" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "bookmarks_identity_check" CHECK (length(trim("id")) > 0 AND length(trim("projectId")) > 0 AND length(trim("sessionId")) > 0 AND length(trim("sourceId")) > 0),
+    CONSTRAINT "bookmarks_kind_check" CHECK ("kind" IN ('text', 'pdf-text', 'pdf-region') AND "sourceKind" IN ('agent-message', 'session-item', 'project-file', 'artifact-version', 'upload-version', 'literature-attachment-version')),
+    CONSTRAINT "bookmarks_json_check" CHECK (json_valid("sourceJson") AND json_type("sourceJson") = 'object' AND json_valid("selectorJson") AND json_type("selectorJson") = 'object' AND length("sourceJson") <= 65536 AND length("selectorJson") <= 65536),
+    CONSTRAINT "bookmarks_content_check" CHECK (length("note") <= 2000 AND ("quote" IS NULL OR length("quote") BETWEEN 1 AND 4000) AND ("kind" != 'text' OR "quote" IS NOT NULL))
+);`,
   `CREATE TABLE IF NOT EXISTS "SessionNumberSequence" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "nextNumber" INTEGER NOT NULL,
@@ -984,6 +1003,8 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
 ] as const
 
 const RUNTIME_SCHEMA_INDEX_DDLS = [
+  `CREATE INDEX IF NOT EXISTS "bookmarks_projectId_sessionId_createdAt_id_idx" ON "bookmarks"("projectId", "sessionId", "createdAt", "id");`,
+  `CREATE INDEX IF NOT EXISTS "bookmarks_projectId_sessionId_sourceKind_sourceId_idx" ON "bookmarks"("projectId", "sessionId", "sourceKind", "sourceId");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "Session_number_key" ON "Session"("number");`,
   `CREATE INDEX IF NOT EXISTS "Session_projectId_deletedAtMs_archivedAtMs_updatedAtMs_id_idx" ON "Session"("projectId", "deletedAtMs", "archivedAtMs", "updatedAtMs", "id");`,
   `CREATE INDEX IF NOT EXISTS "Session_deletedAtMs_archivedAtMs_updatedAtMs_id_idx" ON "Session"("deletedAtMs", "archivedAtMs", "updatedAtMs", "id");`,
@@ -1128,6 +1149,7 @@ const RUNTIME_SCHEMA_TARGET_SQL = [
 
 const RUNTIME_SCHEMA_TABLES = [
   'Project',
+  'bookmarks',
   'SessionNumberSequence',
   'Session',
   'SessionProjectionState',

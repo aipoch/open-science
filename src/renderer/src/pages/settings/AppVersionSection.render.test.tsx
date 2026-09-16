@@ -36,6 +36,16 @@ afterEach(() => {
 })
 
 describe('AppVersionSection', () => {
+  it('opens the project license from a resource row without an inline disclosure', () => {
+    act(() => root.render(<AppVersionSection />))
+    const link = container.querySelector('a[aria-label="Open-source license"]')
+    expect(link?.getAttribute('href')).toBe(
+      'https://github.com/aipoch/open-science/blob/main/LICENSE'
+    )
+    expect(link?.textContent).toContain('Apache-2.0')
+    expect(container.querySelector('details, pre')).toBeNull()
+  })
+
   it('shows the app name, version, and copyright', () => {
     act(() => {
       root.render(<AppVersionSection />)
@@ -52,10 +62,11 @@ describe('AppVersionSection', () => {
     })
 
     const links = Array.from(container.querySelectorAll('a'))
-    expect(links).toHaveLength(2)
+    expect(links).toHaveLength(3)
     expect(links.map((link) => link.getAttribute('href'))).toEqual([
       'https://www.aipoch.com/docs/',
-      'https://github.com/aipoch/open-science/releases'
+      'https://github.com/aipoch/open-science/releases',
+      'https://github.com/aipoch/open-science/blob/main/LICENSE'
     ])
     expect(links.every((link) => link.target === '_blank' && link.rel === 'noreferrer')).toBe(true)
   })
@@ -72,9 +83,9 @@ describe('AppVersionSection', () => {
       container.querySelectorAll('[data-slot="about-resource-description"]')
     )
 
-    expect(links).toHaveLength(2)
+    expect(links).toHaveLength(3)
     expect(links.every((link) => link.classList.contains('group'))).toBe(true)
-    expect(icons).toHaveLength(2)
+    expect(icons).toHaveLength(3)
     expect(
       icons.every(
         (icon) =>
@@ -82,7 +93,7 @@ describe('AppVersionSection', () => {
           icon.classList.contains('group-focus-visible:text-primary')
       )
     ).toBe(true)
-    expect(titles).toHaveLength(2)
+    expect(titles).toHaveLength(3)
     expect(titles.every((title) => !title.classList.contains('translate-y-2.5'))).toBe(true)
     expect(
       titles.every(
@@ -97,7 +108,7 @@ describe('AppVersionSection', () => {
           title.classList.contains('[@media(any-pointer:coarse)]:!translate-y-0')
       )
     ).toBe(true)
-    expect(descriptions).toHaveLength(2)
+    expect(descriptions).toHaveLength(3)
     expect(descriptions.every((description) => !description.classList.contains('opacity-0'))).toBe(
       true
     )

@@ -1,3 +1,8 @@
+import {
+  capturePackageLiterature,
+  sessionLiteratureReferences,
+  validatePackageLiteratureSession
+} from './literature'
 import { assertSettledHistory, readSession, preview, inspectSessionPackage } from './inspection'
 import {
   capturePackageReproducibility,
@@ -133,8 +138,10 @@ type PackageExportOptions = {
   onProgress?: (progress: PackageProgress) => void
 }
 
-// Strip only known runtime metadata. A similarly named key inside research evidence must be
-// inspected and rejected when sensitive, never silently removed from the evidence.
+// Strip only known private or auxiliary runtime metadata. Delivered Side Chat relays already live
+// in the main conversation graph and remain exportable; the auxiliary transcripts and queue do not.
+// A similarly named key inside research evidence must still be inspected and rejected when
+// sensitive, never silently removed from the evidence.
 const withoutPrivateAuthority = (session: PersistedChatSession): PersistedChatSession => ({
   ...session,
   providerSessionId: undefined,
@@ -143,16 +150,64 @@ const withoutPrivateAuthority = (session: PersistedChatSession): PersistedChatSe
     ? {
         ...session.runtimeContext,
         permission: undefined,
-        sideChat: session.runtimeContext.sideChat
-          ? {
-              ...session.runtimeContext.sideChat,
-              providerSessionId: undefined,
-              providerContinuityToken: undefined
-            }
-          : undefined
+        sideChat: undefined,
+        sideChats: undefined,
+        sideChatRelays: undefined
       }
     : undefined
 })
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const requiresPrivateAuthorityRemoval = (envelope: unknown): boolean => {
+  if (!isRecord(envelope)) return false
+  const hasEnvelopeField = Object.hasOwn(envelope, 'version') || Object.hasOwn(envelope, 'session')
+  const session = hasEnvelopeField ? envelope.session : envelope
+  if (!isRecord(session)) return false
+  if (
+    Object.hasOwn(session, 'providerSessionId') ||
+    Object.hasOwn(session, 'providerContinuityToken')
+  )
+    return true
+  const runtimeContext = session.runtimeContext
+  return (
+    isRecord(runtimeContext) &&
+    ['permission', 'sideChat', 'sideChats', 'sideChatRelays'].some((key) =>
+      Object.hasOwn(runtimeContext, key)
+    )
+  )
+}
+
+const exportRelevantSession = (session: PersistedChatSession): PersistedChatSession => {
+  // The persistence export reservation admits only Side Chat projection writes. Those fields are
+  // excluded above, but their save still advances Session/runtime revisions and the active branch's
+  // derived timestamp; normalize that bookkeeping while keeping exported research state strict.
+  const shared = withoutPrivateAuthority(session)
+  const hasRuntimeState =
+    shared.runtimeContext &&
+    Object.entries(shared.runtimeContext).some(
+      ([key, value]) => key !== 'version' && key !== 'revision' && value !== undefined
+    )
+  return {
+    ...shared,
+    revision: undefined,
+    updatedAt: 0,
+    runtimeContext:
+      hasRuntimeState && shared.runtimeContext
+        ? { ...shared.runtimeContext, revision: 0 }
+        : undefined,
+    conversationGraph: shared.conversationGraph
+      ? {
+          ...shared.conversationGraph,
+          branches: shared.conversationGraph.branches.map((branch) => ({
+            ...branch,
+            updatedAt: 0
+          }))
+        }
+      : undefined
+  }
+}
 
 // Recognizers stop export; they never silently rewrite research text. File preview is still
 // necessary: arbitrary binary research data cannot be certified free of private information.
@@ -360,7 +415,15 @@ export class SessionPackageService {
       if (manifest.source.projectId !== origin.sourceManifest.source.projectId)
         throw new Error('Session package source identity mismatch.')
       await assertShareable(manifest, this.signal)
-      await assertShareable(await readPackageJson(join(source, 'session.json')), this.signal)
+      const sourceSessionEnvelope = await readPackageJson(join(source, 'session.json'))
+      const sourceSession = await readSession(source)
+      const forwardedSession = withoutPrivateAuthority(sourceSession)
+      await assertShareable(forwardedSession, this.signal)
+      // Inspect the raw envelope so malformed legacy Side Chat data dropped by the Session
+      // sanitizer cannot bypass the rewrite and be copied into the forwarded package.
+      const forwardedSessionJson = requiresPrivateAuthorityRemoval(sourceSessionEnvelope)
+        ? JSON.stringify({ version: 2, session: forwardedSession })
+        : undefined
       const records = parseNativeRecords(await readPackageJson(join(source, 'records.json')))
       await assertShareable(records, this.signal)
       const alreadyExcluded = validateExcludedFiles(records, manifest.excludedFiles)
@@ -415,11 +478,19 @@ export class SessionPackageService {
           excluded.add(copy.storageKey)
         }
       }
-      const forwarded = {
+      const forwarded: SessionPackageManifest = {
         ...manifest,
-        inventory: manifest.inventory.filter(
-          (entry) => !entry.storageKey || !excluded.has(entry.storageKey)
-        ),
+        inventory: manifest.inventory
+          .filter((entry) => !entry.storageKey || !excluded.has(entry.storageKey))
+          .map((entry) =>
+            entry.path === 'session.json' && forwardedSessionJson
+              ? {
+                  ...entry,
+                  sizeBytes: Buffer.byteLength(forwardedSessionJson),
+                  checksum: sha256(forwardedSessionJson)
+                }
+              : entry
+          ),
         excludedFiles: [...manifest.excludedFiles, ...additional]
       }
       assertNoExcludedContentCopies(records, forwarded.excludedFiles, forwarded.inventory)
@@ -433,6 +504,10 @@ export class SessionPackageService {
           await mkdir(join(staging, 'objects'))
           for (const entry of forwarded.inventory) {
             this.signal.throwIfAborted()
+            if (entry.path === 'session.json' && forwardedSessionJson) {
+              await writeFile(join(staging, entry.path), forwardedSessionJson)
+              continue
+            }
             await assertShareableFile(join(source, entry.path), this.signal)
             await copyFileWithinBudget(
               join(source, entry.path),
@@ -456,7 +531,7 @@ export class SessionPackageService {
           await publishUserFile(path, (temporary) =>
             writePackageArchive(staging, temporary, this.signal)
           )
-          return preview(forwarded, await readSession(source))
+          return preview(forwarded, forwardedSession)
         },
         () => rm(staging, { recursive: true, force: true })
       )
@@ -471,9 +546,10 @@ export class SessionPackageService {
     const project = await client.project.findUniqueOrThrow({ where: { id: request.projectId } })
     const notebookKeys = await notebookStorageKeys(this.options.storageRoot, request)
     const notebooks = await readPackageNotebooks(this.options.storageRoot, notebookKeys)
+    const literatureIds = sessionLiteratureReferences(session).versionIds
     const versionIds = [
       ...new Set([
-        ...sessionFileVersionIds(session),
+        ...sessionFileVersionIds(session).filter((id) => !literatureIds.has(id)),
         ...notebooks.flatMap((document) =>
           document.runs.flatMap((run) =>
             (run.inputFiles ?? []).map((input) => input.inputFileVersionId)
@@ -482,6 +558,8 @@ export class SessionPackageService {
       ])
     ]
     const records = await captureNativeRecords(client, request, versionIds)
+    const literatureSources = await capturePackageLiterature(client, session, records)
+    const sourceKey = (key: string): string => literatureSources.get(key) ?? key
     const history = await capturePackageHistory(this.configRoot, this.options.getClient, request)
     records.history = history
     records.reproducibility = await capturePackageReproducibility(
@@ -514,11 +592,11 @@ export class SessionPackageService {
     ])) {
       if (optionalKeys.has(key)) continue
       this.signal.throwIfAborted()
-      await assertPackageSourcePath(this.options.storageRoot, key)
+      await assertPackageSourcePath(this.options.storageRoot, sourceKey(key))
       retainedFiles.push({
         storageKey: key,
         filename: key,
-        sizeBytes: (await lstat(resolveStorageKey(this.options.storageRoot, key))).size
+        sizeBytes: (await lstat(resolveStorageKey(this.options.storageRoot, sourceKey(key)))).size
       })
     }
     const sessionJson = JSON.stringify({ version: 2, session: sharedSession })
@@ -564,8 +642,8 @@ export class SessionPackageService {
         ].filter((key) => !excludedKeys.has(key))
         const sizes = new Map<string, number>()
         for (const key of storageKeys) {
-          await assertPackageSourcePath(this.options.storageRoot, key)
-          const original = resolveStorageKey(this.options.storageRoot, key)
+          await assertPackageSourcePath(this.options.storageRoot, sourceKey(key))
+          const original = resolveStorageKey(this.options.storageRoot, sourceKey(key))
           const metadata = await lstat(original)
           if (
             isNotebookInputCopy(key) &&
@@ -600,8 +678,8 @@ export class SessionPackageService {
         let completedFiles = 0
         for (const storageKey of sizes.keys()) {
           assertPortablePackageStorageKey(storageKey)
-          await assertPackageSourcePath(this.options.storageRoot, storageKey)
-          const original = resolveStorageKey(this.options.storageRoot, storageKey)
+          await assertPackageSourcePath(this.options.storageRoot, sourceKey(storageKey))
+          const original = resolveStorageKey(this.options.storageRoot, sourceKey(storageKey))
           const metadata = await lstat(original)
           if (!metadata.isFile() || metadata.size > PACKAGE_MAX_FILE_BYTES)
             throw new Error('Invalid or oversized package source file.')
@@ -641,6 +719,7 @@ export class SessionPackageService {
         }
         const manifest: SessionPackageManifest = {
           format: 'open-science-session',
+          ...(records.literature ? { requiredFeatures: ['literature' as const] } : {}),
           schemaVersion: 1,
           createdAt: Date.now(),
           source: { ...request, projectName: project.name, title: session.title },
@@ -693,9 +772,9 @@ export class SessionPackageService {
           throw new Error('The Session changed during export. Try again.')
         for (const entry of inventory) {
           if (!entry.storageKey) continue
-          await assertPackageSourcePath(this.options.storageRoot, entry.storageKey)
+          await assertPackageSourcePath(this.options.storageRoot, sourceKey(entry.storageKey))
           const currentFile = await digestFileWithinBudget(
-            resolveStorageKey(this.options.storageRoot, entry.storageKey),
+            resolveStorageKey(this.options.storageRoot, sourceKey(entry.storageKey)),
             entry.sizeBytes,
             this.signal
           )
@@ -708,6 +787,13 @@ export class SessionPackageService {
           request.sessionId
         )
         const currentRecords = await captureNativeRecords(client, request, versionIds)
+        const currentLiteratureSources = await capturePackageLiterature(
+          client,
+          session,
+          currentRecords
+        )
+        if (!isDeepStrictEqual(currentLiteratureSources, literatureSources))
+          throw new Error('The Session changed during export. Try again.')
         currentRecords.history = await capturePackageHistory(
           this.configRoot,
           this.options.getClient,
@@ -721,7 +807,10 @@ export class SessionPackageService {
         )
         if (
           current.status !== 'found' ||
-          !isDeepStrictEqual(current.session, session) ||
+          !isDeepStrictEqual(
+            exportRelevantSession(current.session),
+            exportRelevantSession(session)
+          ) ||
           !isDeepStrictEqual(currentRecords, records)
         )
           throw new Error('The Session changed during export. Try again.')
@@ -818,6 +907,7 @@ export class SessionPackageService {
       const sourceSession = await readSession(sourceRoot)
       this.assertIdentity(manifest, sourceSession)
       const records = parseNativeRecords(await readPackageJson(join(sourceRoot, 'records.json')))
+      validatePackageLiteratureSession(records, sourceSession)
       const native = await prepareNativeImport(
         sourceRoot,
         destinationRoot,
@@ -899,6 +989,7 @@ export class SessionPackageService {
           excludedFiles: manifest.excludedFiles
         }
       }
+      validatePackageLiteratureSession(native.records, session)
       const sessionStage = join(configOperationRoot, 'session-stage')
       const evidenceDirectory = join(
         destinationRoot,

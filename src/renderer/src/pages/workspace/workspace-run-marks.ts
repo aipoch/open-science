@@ -111,7 +111,7 @@ const runMarkIndicatorClassName = (
   const distance = highlightedIndex === null ? undefined : Math.abs(highlightedIndex - markIndex)
 
   return cn(
-    'block h-0.5 w-5 origin-left rounded-full transition-transform duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] group-active/run-mark:translate-x-px motion-reduce:transition-none rtl:origin-right',
+    'block h-px w-5 origin-left rounded-full transition-transform duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] group-active/run-mark:translate-x-px motion-reduce:transition-none rtl:origin-right',
     distance === 0
       ? 'scale-x-100 bg-text-000'
       : distance === 1

@@ -92,6 +92,32 @@ const optionalOwner = (name: ProjectOwnerFieldName): ProjectOwnerField => ({
 
 const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
   {
+    id: 'bookmarks',
+    medium: 'sqlite',
+    resources: ['Bookmark'],
+    prismaModels: [
+      {
+        name: 'Bookmark',
+        ownerFields: [requiredOwner('projectId'), requiredOwner('sessionId')],
+        relationContracts: [
+          {
+            field: 'project',
+            target: 'Project',
+            fromFields: ['projectId'],
+            onDelete: 'Cascade'
+          }
+        ]
+      }
+    ],
+    policy: {
+      kind: 'coordinator-cleanup',
+      effect: 'hard-delete',
+      path: 'project-metadata-soft-delete',
+      operation: 'ProjectRepository.delete',
+      note: 'Private Bookmarks are removed before the Project metadata row is retained as history.'
+    }
+  },
+  {
     id: 'project-memory',
     medium: 'sqlite',
     resources: ['MemoryEntry'],

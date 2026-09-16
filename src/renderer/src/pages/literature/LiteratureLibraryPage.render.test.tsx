@@ -17,6 +17,7 @@ import type {
 } from '../../../../shared/literature'
 import type { Project } from '../../../../shared/projects'
 import { useNavigationStore } from '@/stores/navigation-store'
+import { createInitialSessionState, useSessionStore } from '@/stores/session-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
@@ -207,6 +208,7 @@ describe('LiteratureLibraryPage', () => {
 
   beforeEach(() => {
     useAttachmentOperations.setState({ operations: [] })
+    useSessionStore.setState(createInitialSessionState())
     // Failed assertions must not leak unused one-shot IPC replies into another scenario.
     search.mockReset()
     get.mockReset()
@@ -452,6 +454,64 @@ describe('LiteratureLibraryPage', () => {
     vi.clearAllMocks()
     transact.mockReset().mockResolvedValue({ kind: 'item', id: 'item-1', state: 'present' })
     vi.unstubAllGlobals()
+  })
+
+  it.each([false, true])(
+    'returns to the selected conversation with collapsed sidebar %s',
+    async (collapsed) => {
+      useSessionStore.getState().hydrateSessions([
+        {
+          id: 'older',
+          projectId: 'project-1',
+          title: 'Earlier work',
+          cwd: '/workspace',
+          status: 'idle',
+          messages: [],
+          createdAt: 1,
+          updatedAt: 1
+        },
+        {
+          id: 'newer',
+          projectId: 'project-1',
+          title: 'Later work',
+          cwd: '/workspace',
+          status: 'idle',
+          messages: [],
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ])
+      useNavigationStore.getState().openSession('project-1', 'older', 'user')
+      useNavigationStore.getState().openLibrary('user')
+      render(<LiteratureLibraryPage />)
+      if (collapsed) fireEvent.click(screen.getByRole('button', { name: 'Collapse sidebar panel' }))
+      const back = screen.getByRole('button', { name: 'Back to Project' })
+      if (collapsed) expect(back.getAttribute('title')).toBe('Back to Project')
+      else expect(back.textContent).toBe('Back to Project')
+      fireEvent.click(back)
+      expect(useNavigationStore.getState()).toMatchObject({
+        view: 'workspace',
+        activeProjectId: 'project-1'
+      })
+      expect(useSessionStore.getState().selectedSessionId).toBe('older')
+    }
+  )
+
+  it.each(['home', 'deleted', 'archived'] as const)('returns Home for a %s origin', (kind) => {
+    useNavigationStore.setState({ activeProjectId: kind === 'home' ? undefined : 'project-1' })
+    if (kind === 'deleted') useProjectStore.setState({ projects: [] })
+    if (kind === 'archived')
+      useProjectStore.setState({
+        projects: useProjectStore
+          .getState()
+          .projects.map((project) => ({ ...project, archivedAt: 2 }))
+      })
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'Back to Home' }))
+    expect(useNavigationStore.getState()).toMatchObject({
+      view: 'home',
+      activeProjectId: undefined
+    })
   })
 
   it.each(['Edit metadata', 'New collection'])(
@@ -3082,6 +3142,7 @@ describe('LiteratureLibraryPage', () => {
         sources: [
           {
             sourceKind: 'literature-attachment-version',
+            sourceFileId: 'attachment-1',
             sourceVersionId: 'version-1'
           }
         ]
@@ -3095,6 +3156,7 @@ describe('LiteratureLibraryPage', () => {
       }),
       {
         sourceKind: 'literature-attachment-version',
+        sourceFileId: 'attachment-1',
         sourceVersionId: 'version-1'
       }
     )
@@ -3137,7 +3199,11 @@ describe('LiteratureLibraryPage', () => {
       expect(startPdfReadingConversation).toHaveBeenCalledWith(
         'project-35',
         expect.objectContaining({ source: 'literature' }),
-        { sourceKind: 'literature-attachment-version', sourceVersionId: 'version-1' }
+        {
+          sourceKind: 'literature-attachment-version',
+          sourceFileId: 'attachment-1',
+          sourceVersionId: 'version-1'
+        }
       )
     )
   })
@@ -3184,13 +3250,25 @@ describe('LiteratureLibraryPage', () => {
     await waitFor(() =>
       expect(startPdfReadingConversations).toHaveBeenCalledWith('project-1', [
         expect.objectContaining({
-          source: { sourceKind: 'literature-attachment-version', sourceVersionId: 'version-1' }
+          source: {
+            sourceKind: 'literature-attachment-version',
+            sourceFileId: 'attachment-1',
+            sourceVersionId: 'version-1'
+          }
         }),
         expect.objectContaining({
-          source: { sourceKind: 'literature-attachment-version', sourceVersionId: 'version-3' }
+          source: {
+            sourceKind: 'literature-attachment-version',
+            sourceFileId: 'attachment-3',
+            sourceVersionId: 'version-3'
+          }
         }),
         expect.objectContaining({
-          source: { sourceKind: 'literature-attachment-version', sourceVersionId: 'version-4' }
+          source: {
+            sourceKind: 'literature-attachment-version',
+            sourceFileId: 'attachment-4',
+            sourceVersionId: 'version-4'
+          }
         })
       ])
     )
@@ -3198,6 +3276,7 @@ describe('LiteratureLibraryPage', () => {
       projectId: 'project-1',
       sources: [1, 3, 4].map((id) => ({
         sourceKind: 'literature-attachment-version',
+        sourceFileId: `attachment-${id}`,
         sourceVersionId: `version-${id}`
       }))
     })
@@ -3249,8 +3328,16 @@ describe('LiteratureLibraryPage', () => {
     expect(filterPdfContextCandidates).toHaveBeenCalledWith({
       projectId: 'project-1',
       sources: [
-        { sourceKind: 'literature-attachment-version', sourceVersionId: 'version-1' },
-        { sourceKind: 'literature-attachment-version', sourceVersionId: 'last-version' }
+        {
+          sourceKind: 'literature-attachment-version',
+          sourceFileId: 'attachment-1',
+          sourceVersionId: 'version-1'
+        },
+        {
+          sourceKind: 'literature-attachment-version',
+          sourceFileId: 'last-attachment',
+          sourceVersionId: 'last-version'
+        }
       ]
     })
   })
@@ -3898,6 +3985,7 @@ describe('LiteratureLibraryPage', () => {
         sources: [
           {
             sourceKind: 'literature-attachment-version',
+            sourceFileId: 'attachment-1',
             sourceVersionId: 'version-1'
           }
         ]
@@ -3908,6 +3996,7 @@ describe('LiteratureLibraryPage', () => {
       expect.objectContaining({ path: 'literature-attachment-version:version-1' }),
       {
         sourceKind: 'literature-attachment-version',
+        sourceFileId: 'attachment-1',
         sourceVersionId: 'version-1'
       }
     )
@@ -3938,6 +4027,7 @@ describe('LiteratureLibraryPage', () => {
         sources: [
           {
             sourceKind: 'literature-attachment-version',
+            sourceFileId: 'attachment-1',
             sourceVersionId: 'version-1'
           }
         ]
@@ -3948,6 +4038,7 @@ describe('LiteratureLibraryPage', () => {
       expect.objectContaining({ path: 'literature-attachment-version:version-1' }),
       {
         sourceKind: 'literature-attachment-version',
+        sourceFileId: 'attachment-1',
         sourceVersionId: 'version-1'
       }
     )
@@ -4434,8 +4525,8 @@ describe('LiteratureLibraryPage', () => {
     await openReferenceDetail(await screen.findByText('Corrective Retrieval Augmented Generation'))
 
     const detailDialog = screen.getByRole('dialog')
-    await openMenu(within(detailDialog).getByRole('button', { name: 'Manage Tags' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Favorites' }))
+    fireEvent.click(within(detailDialog).getByRole('button', { name: 'Manage Tags' }))
+    fireEvent.click(screen.getByRole('option', { name: 'Favorites' }))
     await waitFor(() => expect(tagsApi.setAssignment).toHaveBeenCalledOnce())
     await act(async () => {
       emitChanged?.({ revision: 3 })
@@ -4443,9 +4534,9 @@ describe('LiteratureLibraryPage', () => {
     })
 
     expect(screen.getByText('Add or remove Tags')).not.toBeNull()
-    expect(screen.getByRole('menuitem', { name: 'Favorites' })).not.toBeNull()
+    expect(screen.getByRole('option', { name: 'Favorites' })).not.toBeNull()
 
-    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' })
+    fireEvent.keyDown(screen.getByRole('listbox'), { key: 'Escape' })
     await waitFor(() => expect(screen.queryByText('Add or remove Tags')).toBeNull())
   })
 
@@ -4464,13 +4555,13 @@ describe('LiteratureLibraryPage', () => {
     filePreviewRenderCount.value = 0
     fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false })
     fireEvent.click(trigger)
-    expect(screen.getByRole('menu')).not.toBeNull()
+    expect(screen.getByRole('listbox')).not.toBeNull()
     expect(filePreviewRenderCount.value).toBe(0)
 
     fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false })
     fireEvent.click(trigger)
 
-    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull())
+    await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull())
     expect(screen.getByRole('dialog')).toBe(detail)
   })
 
@@ -4485,15 +4576,15 @@ describe('LiteratureLibraryPage', () => {
 
     const detail = screen.getByRole('dialog')
     const trigger = within(detail).getByRole('button', { name: 'Manage Tags' })
-    await openMenu(trigger)
-    expect(screen.getByRole('menu')).not.toBeNull()
+    fireEvent.click(trigger)
+    expect(screen.getByRole('listbox')).not.toBeNull()
 
-    fireEvent.keyDown(trigger, { key: 'Enter' })
+    fireEvent.click(trigger)
     await act(async () => {
       await new Promise((resolve) => window.setTimeout(resolve, 10))
     })
 
-    expect(screen.queryByRole('menu')).toBeNull()
+    expect(screen.queryByRole('listbox')).toBeNull()
     expect(screen.getByRole('dialog')).toBe(detail)
   })
 

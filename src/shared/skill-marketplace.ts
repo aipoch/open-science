@@ -52,14 +52,56 @@ export type SkillMarketplaceCatalogRequest = {
   snapshotId?: string
 }
 
-export type SkillMarketplaceDetailRequest = { snapshotId: string; id: string }
+export type SkillMarketplaceDetailRequest = {
+  snapshotId: string
+  id: string
+  previewUpdate?: boolean
+}
+export type SkillMarketplaceConflictReason =
+  | 'name-taken'
+  | 'local-content-changed'
+  | 'installation-unverifiable'
+  | 'invalid-name'
+  | 'version-changed'
+  | 'release-mismatch'
+
+export type SkillMarketplaceUpdateImpact = {
+  mainEnabled: boolean
+  specialists: { id: string; name: string }[]
+}
+
+// Short-lived preview only. Tokens are process-local and never stored in a Skill receipt.
+export type SkillMarketplaceUpdatePreview = SkillMarketplaceUpdateImpact & {
+  token: string
+  localSkillId: string
+  displayName: string
+  source: 'personal' | 'imported'
+  installedVersion?: string
+  localChanges: 'unchanged' | 'modified' | 'unknown'
+  added: string[]
+  modified: string[]
+  removed: string[]
+  differences: { path: string; patch?: string }[]
+}
+
 export type SkillMarketplaceInstallation =
   | { kind: 'not-installed' }
-  | { kind: 'conflict' }
-  | { kind: 'installed'; version: string; canUpdate: boolean; localSkillId?: string }
-export type SkillMarketplaceInstallRequest = SkillMarketplaceDetailRequest & {
+  | { kind: 'conflict'; reason?: SkillMarketplaceConflictReason; localSkillId?: string }
+  | {
+      kind: 'installed'
+      version: string
+      canUpdate: boolean
+      localSkillId?: string
+      requiresPreview?: boolean
+      protected?: boolean
+    }
+export type SkillMarketplaceInstallRequest = Pick<
+  SkillMarketplaceDetailRequest,
+  'snapshotId' | 'id'
+> & {
   // null is an explicit first install, a version is an optimistic update precondition.
   expectedVersion: string | null
+  updateToken?: string
 }
 export type SkillMarketplaceInstallResult =
   | {
@@ -74,6 +116,7 @@ export type SkillMarketplaceInstallResult =
   | {
       ok: false
       error: 'network' | 'integrity' | 'snapshot-unavailable' | 'conflict' | 'installation-failed'
+      reason?: SkillMarketplaceConflictReason
     }
 
 // Memory-only installation jobs; these states are not persisted Skill states.
@@ -97,6 +140,7 @@ export type SkillMarketplaceDetail = {
   entry: SkillMarketplaceEntry
   licenseEvidence: { url: string; sha256: string }[]
   installation?: SkillMarketplaceInstallation
+  updatePreview?: SkillMarketplaceUpdatePreview
 }
 
 // Transport-safe failures; these are transient browsing results, not installed Skill states.

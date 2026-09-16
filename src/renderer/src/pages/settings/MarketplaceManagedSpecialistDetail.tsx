@@ -1,3 +1,4 @@
+import { inlineNoticeClassName } from '@/components/ui/notice-chrome'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 · slop: pass */
 import { AlertTriangle, ArrowLeft, Copy, Download, Trash2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -117,10 +118,10 @@ const MarketplaceManagedSpecialistDetail = ({
         </div>
 
         {sourceMissing ? (
-          <div className="mt-5 rounded-lg border border-warning-100/50 bg-warning-100/10 px-4 py-3">
+          <div className={`${inlineNoticeClassName} mt-5 block`}>
             <div className="flex items-start gap-2">
               <AlertTriangle
-                className="mt-0.5 size-4 shrink-0 text-warning-900"
+                className="mt-0.5 size-4 shrink-0 text-status-warning-foreground dark:text-status-warning-dark-foreground"
                 aria-hidden="true"
               />
               <div>

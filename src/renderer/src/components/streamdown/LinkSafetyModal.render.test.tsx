@@ -49,6 +49,7 @@ describe('LinkSafetyModal', () => {
 
     expect(overlay).not.toBeNull()
     expect(panel).not.toBeNull()
+    expect(panel?.querySelector('h2')?.textContent).toBe('Open external link?')
     expect(overlay?.contains(panel)).toBe(false)
     expect(overlay?.getAttribute('data-state')).toBe('open')
     expect(overlay?.className).toContain('bg-black/50')

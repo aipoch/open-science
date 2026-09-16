@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { once } from 'node:events'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -103,6 +103,39 @@ describe('Windows AppContainer elevation', () => {
 })
 
 describe('Windows AppContainer launch', () => {
+  it('keeps nested optional PATH candidates until their individual permissions are checked', () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'optional-path-')))
+    const parent = join(root, 'tools')
+    const child = join(parent, 'bin')
+    try {
+      const launch = windowsLaunch({
+        command: 'node script.js',
+        executable: process.execPath,
+        args: ['script.js'],
+        cwd: root,
+        gatewayPort: 49700,
+        gatewayCredentials: { username: 'command', password: 'secret' },
+        env: {},
+        filesystem: {
+          readOnlyRoots: [],
+          optionalReadOnlyRoots: [parent, child, child],
+          readWriteRoots: [root],
+          deniedReadRoots: [],
+          deniedWriteRoots: []
+        },
+        hostPath: join(root, 'host.exe'),
+        installationId: '0123456789abcdef01234567',
+        ownershipRoot: root
+      })
+      const specification = JSON.parse(
+        Buffer.from(launch.argv.at(-1)!, 'base64url').toString('utf8')
+      )
+      expect(specification.optionalReadOnlyRoots).toEqual([parent, child])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it('supervises standard-mode commands without requiring AppContainer setup', () => {
     const request = {
       command: 'Write-Output ready',

@@ -1,4 +1,8 @@
-import { spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import {
+  spawnSync,
+  type ChildProcess,
+  type ChildProcessWithoutNullStreams
+} from 'node:child_process'
 import { existsSync, realpathSync } from 'node:fs'
 import {
   chmod,
@@ -29,6 +33,7 @@ import {
   rBin,
   rScriptBin
 } from './runtime-paths'
+import { terminateProcessTree } from '../process-tree'
 import { TimeoutController } from './timeout-controller'
 import type { NotebookProcessSandbox } from './process-sandbox'
 import { NOTEBOOK_PROTOCOL_LINE_LIMIT_BYTES, NOTEBOOK_TEXT_LIMIT_BYTES } from './content-limits'
@@ -374,6 +379,61 @@ afterEach(async () => {
   }
 })
 
+it('executes an x64-only managed R through the public kernel boundary', async () => {
+  cwdDir = await mkdtemp(join(tmpdir(), 'os-managed-r-x64-'))
+  const request = baseRequest(cwdDir)
+  const bin = join(envPrefix(request.runtimeRoot, DEFAULT_R_ENV, 'win32'), 'Lib', 'R', 'bin', 'x64')
+  await mkdir(bin, { recursive: true })
+  await writeFile(join(bin, 'R.exe'), 'fixture')
+  await writeFile(join(bin, 'Rscript.exe'), 'fixture')
+  const wrap = vi.fn<NotebookProcessSandbox['wrap']>(async (invocation) => {
+    // The existing OS adapter boundary substitutes a portable protocol child only after validating
+    // the real selected executable. No interpreter override bypasses managed readiness or selection.
+    await stat(invocation.executable)
+    expect(invocation.executable).toBe(join(bin, 'Rscript.exe'))
+    return {
+      executable: process.execPath,
+      args: [
+        '-e',
+        `
+        let input = Buffer.alloc(0)
+        process.stdin.on('data', chunk => {
+          input = Buffer.concat([input, chunk])
+          const newline = input.indexOf(10)
+          if (newline < 0) return
+          const [req_id, size] = input.subarray(0, newline).toString().split(' ')
+          if (input.length < newline + 1 + Number(size)) return
+          input = input.subarray(newline + 1 + Number(size))
+          console.log(JSON.stringify({ req_id, stdout: '2', stderr: '', error: null, figures: [] }))
+        })
+      `
+      ],
+      env: invocation.env,
+      annotateStderr: (stderr) => stderr,
+      cleanup: async (_reason, outcome) => ({
+        processesTerminated: outcome.processesTerminated,
+        networkClosed: true,
+        temporaryResourcesRemoved: true
+      })
+    }
+  })
+  const executor = new NotebookKernelExecutor({ platform: 'win32', processSandbox: { wrap } })
+  try {
+    const result = await executor.execute({
+      ...request,
+      language: 'r',
+      code: '1 + 1',
+      sessionId: 'x64-test',
+      projectId: 'x64-test'
+    })
+    expect(result.status, result.stderr || result.traceback).toBe('completed')
+    expect(result.stdout).toBe('2')
+    expect(wrap).toHaveBeenCalledOnce()
+  } finally {
+    await executor.shutdown()
+  }
+})
+
 describe.skipIf(process.platform === 'win32')('managed R kernel isolation', () => {
   it('ignores user startup files and uses only the managed environment library', async () => {
     cwdDir = await mkdtemp(join(tmpdir(), 'os-managed-r-kernel-home-'))
@@ -671,6 +731,108 @@ gate('NotebookKernelExecutor (fake loop)', () => {
       await executor.shutdown()
     }
   })
+
+  it('AUDIT: retains each persistent process cwd when another kernel changes the request directory', async () => {
+    cwdDir = await makeDefaultEnvCwd('os-kernel-cwd-evidence-')
+    const request = baseRequest(cwdDir)
+    const firstDir = join(request.dataRoot, 'analysis')
+    const otherDir = join(request.dataRoot, 'other')
+    await mkdir(firstDir, { recursive: true })
+    await mkdir(otherDir, { recursive: true })
+    await stubEnvPython(request.runtimeRoot, 'other')
+    const executor = new NotebookKernelExecutor({
+      pythonBin: python3,
+      pythonLoopPath: join(__dirname, '../../../resources/notebook/python_loop.py'),
+      platform: 'linux'
+    })
+    try {
+      const changed = await executor.execute({
+        ...request,
+        cwd: request.dataRoot,
+        code: `import os; os.chdir(${JSON.stringify(firstDir)})`
+      })
+      expect(changed.status).toBe('completed')
+      expect(changed.cwdAfter).toBe(realpathSync(firstDir))
+      const other = await executor.execute({
+        ...request,
+        cwd: otherDir,
+        environment: 'other',
+        code: '1'
+      })
+      expect(other.status).toBe('completed')
+      const written = await executor.execute({
+        ...request,
+        cwd: otherDir,
+        code: 'with open("generated.csv", "w") as output: output.write("x,y\\n1,2\\n")'
+      })
+      expect(written.status).toBe('completed')
+      expect(await readFile(join(firstDir, 'generated.csv'), 'utf8')).toBe('x,y\n1,2\n')
+      expect(existsSync(join(otherDir, 'generated.csv'))).toBe(false)
+      expect.soft(written).toHaveProperty('cwdBefore', realpathSync(firstDir))
+      expect(written.workingFiles).toContainEqual(
+        expect.objectContaining({
+          path: resolve(firstDir, 'generated.csv'),
+          relativePath: 'data/analysis/generated.csv'
+        })
+      )
+    } finally {
+      await executor.shutdown()
+    }
+  }, 30_000)
+
+  it('AUDIT: observes producer files in the directory selected by helper initialization', async () => {
+    cwdDir = realpathSync(await makeDefaultEnvCwd('os-kernel-helper-cwd-evidence-'))
+    const request = baseRequest(cwdDir)
+    const producerDir = join(request.dataRoot, 'analysis')
+    await mkdir(producerDir, { recursive: true })
+    await writeFile(join(producerDir, 'input.csv'), '42')
+    await writeFile(join(request.dataRoot, 'input.csv'), 'wrong input')
+    const helperHost = new NotebookHelperModuleHost({
+      resolve: async (id) => ({
+        id,
+        language: 'python',
+        source: `import os; os.chdir(${JSON.stringify(producerDir)})\ndef helper_answer():\n    return 42`,
+        exports: ['helper_answer']
+      })
+    })
+    const plan = await helperHost.plan(
+      { id: 'helper-cwd-epoch', processKey: 'python:default-python' },
+      await helperHost.preflight('python', ['cwd-helper'])
+    )
+    const executor = new NotebookKernelExecutor({
+      pythonLoopPath: join(__dirname, '../../../resources/notebook/python_loop.py'),
+      platform: 'linux'
+    })
+    try {
+      const result = await executor.execute({
+        ...request,
+        cwd: request.dataRoot,
+        helperModules: plan.injections,
+        language: 'python',
+        runId: 'helper-cwd-run',
+        code: [
+          'with open("input.csv") as source: data = source.read()',
+          'with open("generated.csv", "w") as output: output.write(data)'
+        ].join('\n')
+      })
+      expect(result).toMatchObject({
+        status: 'completed',
+        cwdBefore: realpathSync(request.dataRoot),
+        cwdAfter: realpathSync(producerDir),
+        helperModulesInitialized: ['cwd-helper']
+      })
+      expect(await readFile(join(producerDir, 'generated.csv'), 'utf8')).toBe('42')
+      expect(result.confirmedReadPaths).toEqual(['data/analysis/input.csv'])
+      expect(result.workingFiles).toContainEqual(
+        expect.objectContaining({
+          path: resolve(producerDir, 'generated.csv'),
+          relativePath: 'data/analysis/generated.csv'
+        })
+      )
+    } finally {
+      await executor.shutdown()
+    }
+  }, 30_000)
 
   it('runs a cell, echoes stdout, and reports the working directory', async () => {
     cwdDir = await makeDefaultEnvCwd('os-kernel-exec-')
@@ -1445,6 +1607,195 @@ gate('NotebookKernelExecutor (fake loop)', () => {
     }
   }, 15_000)
 
+  it.each(['win32', 'linux'] as const)(
+    'waits for process teardown before settling cancellation on %s',
+    async (platform) => {
+      cwdDir = await makeDefaultEnvCwd('os-kernel-cancel-drain-', platform)
+      let release!: () => void
+      const stopping = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      let teardownStarted = false
+      const executor = new NotebookKernelExecutor({
+        pythonLoopPath: FIXTURE,
+        platform,
+        cancellationGraceMs: 1,
+        terminateTree: async (...args) => {
+          teardownStarted = true
+          await stopping
+          return terminateProcessTree(...args)
+        }
+      })
+      let settled = false
+      try {
+        await executor.execute({ ...baseRequest(cwdDir), code: 'warm' })
+        const cancellation = new AbortController()
+        const run = executor
+          .execute({
+            ...baseRequest(cwdDir),
+            code: '__IGNORE_SIGINT__',
+            signal: cancellation.signal
+          })
+          .then((result) => {
+            settled = true
+            return result
+          })
+        await vi.waitFor(() => expect(procFor(executor, 'python')?.pending).toBeDefined())
+        cancellation.abort()
+        await vi.waitFor(() => expect(teardownStarted).toBe(true))
+        await new Promise((resolve) => setTimeout(resolve, 50))
+        expect(settled).toBe(false)
+        release()
+        await expect(run).resolves.toMatchObject({ status: 'cancelled' })
+      } finally {
+        release()
+        await executor.shutdown()
+      }
+    },
+    15_000
+  )
+
+  it.each(['win32', 'linux'] as const)(
+    'rejects cancellation when the process tree cannot be reaped on %s',
+    async (platform) => {
+      cwdDir = await makeDefaultEnvCwd('os-kernel-cancel-unreaped-', platform)
+      const unreapedChildren = new Set<ChildProcess>()
+      const executor = new NotebookKernelExecutor({
+        pythonLoopPath: FIXTURE,
+        platform,
+        cancellationGraceMs: 1,
+        terminateTree: async (child) => {
+          unreapedChildren.add(child)
+          return { reaped: false }
+        }
+      })
+      try {
+        await executor.execute({ ...baseRequest(cwdDir), code: 'warm' })
+        const cancellation = new AbortController()
+        const run = executor.execute({
+          ...baseRequest(cwdDir),
+          code: '__IGNORE_SIGINT__',
+          signal: cancellation.signal
+        })
+        await vi.waitFor(() => expect(procFor(executor, 'python')?.pending).toBeDefined())
+        cancellation.abort()
+        await expect(run).rejects.toThrow('process tree could not be stopped')
+        expect([...unreapedChildren][0]?.exitCode).toBeNull()
+        await expect(executor.execute({ ...baseRequest(cwdDir), code: 'again' })).rejects.toThrow(
+          'process tree could not be stopped'
+        )
+        await expect(executor.terminate('python', DEFAULT_PY_ENV)).rejects.toThrow(
+          'runtime switch refused'
+        )
+        await expect(executor.shutdown()).resolves.toEqual({ reaped: false })
+      } finally {
+        await executor.shutdown()
+        for (const child of unreapedChildren) await terminateProcessTree(child)
+      }
+    },
+    15_000
+  )
+
+  it.runIf(process.platform !== 'win32')(
+    'retains an unreaped barrier when a cancelled kernel exits before the grace timer',
+    async () => {
+      cwdDir = await makeDefaultEnvCwd('os-kernel-cancel-early-exit-', 'linux')
+      const children = new Set<ChildProcess>()
+      const executor = new NotebookKernelExecutor({
+        pythonLoopPath: FIXTURE,
+        platform: 'linux',
+        cancellationGraceMs: 10_000,
+        terminateTree: async (child) => {
+          children.add(child)
+          return { reaped: false }
+        }
+      })
+      try {
+        await executor.execute({ ...baseRequest(cwdDir), code: 'warm' })
+        const child = procFor(executor, 'python')?.child
+        if (!child) throw new Error('Expected a running kernel')
+        const cancellation = new AbortController()
+        const run = executor.execute({
+          ...baseRequest(cwdDir),
+          code: '__IGNORE_SIGINT__',
+          signal: cancellation.signal
+        })
+        await vi.waitFor(() => expect(procFor(executor, 'python')?.pending).toBeDefined())
+        cancellation.abort()
+        // An actual child exit wins before the grace timer; the OS reaping boundary reports that
+        // surviving descendants could not be confirmed stopped.
+        child.kill('SIGKILL')
+        await expect.soft(run).rejects.toThrow('process tree could not be stopped')
+        await expect.soft(executor.shutdown()).resolves.toEqual({ reaped: false })
+        await expect(executor.execute({ ...baseRequest(cwdDir), code: 'again' })).rejects.toThrow(
+          'process tree could not be stopped'
+        )
+      } finally {
+        await executor.shutdown()
+        for (const child of children) await terminateProcessTree(child)
+      }
+    },
+    15_000
+  )
+
+  it.each(['win32', 'linux'] as const)(
+    'reports rejected cancellation cleanup as unreaped on %s',
+    async (platform) => {
+      cwdDir = await makeDefaultEnvCwd('os-kernel-cancel-cleanup-reject-', platform)
+      const terminated = vi.fn()
+      const cleanup = vi.fn(async () => {
+        throw new Error('sandbox cleanup rejected')
+      })
+      const executor = new NotebookKernelExecutor({
+        pythonLoopPath: FIXTURE,
+        platform,
+        cancellationGraceMs: 1,
+        onTerminated: terminated,
+        processSandbox: {
+          wrap: async (invocation) => ({
+            ...invocation,
+            annotateStderr: (stderr: string) => stderr,
+            cleanup
+          })
+        }
+      })
+      try {
+        expect(
+          await executor.execute({
+            ...baseRequest(cwdDir),
+            sessionId: 'session-1',
+            projectId: 'project-1',
+            code: 'warm'
+          })
+        ).toMatchObject({ status: 'completed', stderr: '' })
+        const cancellation = new AbortController()
+        const run = executor.execute({
+          ...baseRequest(cwdDir),
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          code: '__IGNORE_SIGINT__',
+          signal: cancellation.signal
+        })
+        await vi.waitFor(() => expect(procFor(executor, 'python')?.pending).toBeDefined())
+        cancellation.abort()
+        await expect(run).rejects.toThrow('process tree could not be stopped')
+        expect.soft(terminated).toHaveBeenCalledWith('python', DEFAULT_PY_ENV)
+        await expect.soft(executor.shutdown()).resolves.toEqual({ reaped: false })
+        await expect(
+          executor.execute({
+            ...baseRequest(cwdDir),
+            sessionId: 'session-1',
+            projectId: 'project-1',
+            code: 'again'
+          })
+        ).rejects.toThrow('process tree could not be stopped')
+      } finally {
+        await executor.shutdown().catch(() => undefined)
+      }
+    },
+    15_000
+  )
+
   it('drops and respawns the kernel when Windows cancellation cannot preserve it', async () => {
     cwdDir = await makeDefaultEnvCwd('os-kernel-windows-cancel-', 'win32')
     const terminated: Array<['python' | 'r' | 'repl', string]> = []
@@ -1910,7 +2261,7 @@ posixGate('NotebookKernelExecutor (real Python loop mutation policy)', () => {
     }
   })
 
-  it('preserves a sanitized missing dependency diagnostic without dispatching producer code', async () => {
+  it('AUDIT: preserves process cwd and a sanitized diagnostic when helper initialization fails', async () => {
     cwdDir = await mkdtemp(join(tmpdir(), 'os-python-loop-helper-missing-dependency-'))
     const request = baseRequest(cwdDir)
     await stubEnvPython(request.runtimeRoot, DEFAULT_PY_ENV)
@@ -1935,8 +2286,18 @@ posixGate('NotebookKernelExecutor (real Python loop mutation policy)', () => {
       await helperHost.preflight('python', ['dependency-helper'])
     )
     const sentinel = join(cwdDir, 'missing-dependency-producer-sentinel.txt')
+    const processDir = join(cwdDir, 'analysis')
+    await mkdir(processDir)
 
     try {
+      const changed = await executor.execute({
+        ...request,
+        code: `import os; os.chdir(${JSON.stringify(processDir)})`
+      })
+      expect(changed).toMatchObject({
+        status: 'completed',
+        cwdAfter: realpathSync(processDir)
+      })
       const result = await executor.execute({
         ...request,
         language: 'python',
@@ -1953,6 +2314,8 @@ posixGate('NotebookKernelExecutor (real Python loop mutation policy)', () => {
       expect(result.traceback).toContain(
         'Python ModuleNotFoundError: No module named "open_science_definitely_missing_dependency".'
       )
+      expect.soft(result).toHaveProperty('cwdBefore', realpathSync(processDir))
+      expect.soft(result.cwdAfter).toBe(realpathSync(processDir))
       expect(result.traceback).toContain('inspect_packages')
       expect(result.traceback).toContain('manage_packages')
       expect(result.traceback).not.toContain('def dependency_export')
@@ -3711,9 +4074,8 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
           sessionId: 'session-1',
           projectId: 'project-1'
         })
-        .then((result) => {
+        .finally(() => {
           completed = true
-          return result
         })
 
       await vi.waitFor(() => expect(registerOwnedProcessGroup).toHaveBeenCalledOnce())
@@ -3725,7 +4087,8 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
       )
       expect(completed).toBe(false)
       sandbox.release()
-      await expect(execution).resolves.toMatchObject({ status: 'failed' })
+      await expect(execution).rejects.toThrow('process tree could not be stopped')
+      await expect(executor.shutdown()).resolves.toEqual({ reaped: false })
     } finally {
       releaseReaping?.()
       sandbox.release()
@@ -3792,9 +4155,8 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
           sessionId: 'session-1',
           projectId: 'project-1'
         })
-        .then((result) => {
+        .finally(() => {
           completed = true
-          return result
         })
 
       await vi.waitFor(() =>
@@ -3804,7 +4166,11 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
       )
       expect(completed).toBe(false)
       sandbox.release()
-      await expect(execution).resolves.toMatchObject({ status: 'failed' })
+      if (process.platform === 'win32') {
+        await expect(execution).rejects.toThrow('process tree could not be stopped')
+      } else {
+        await expect(execution).resolves.toMatchObject({ status: 'failed' })
+      }
       expect(sandbox.cleanup).toHaveBeenCalledOnce()
     } finally {
       sandbox.release()

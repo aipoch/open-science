@@ -431,6 +431,9 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
           awaiting: true,
           requestId: request.requestId,
           title: request.title,
+          providerToolName: request.providerToolName,
+          isMcp: request.isMcp,
+          toolKind: request.toolKind,
           options: request.options.map(({ optionId, name, kind, scope }) => ({
             optionId,
             name,

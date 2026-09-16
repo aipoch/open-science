@@ -1,3 +1,4 @@
+import { InlineNotice } from '@/components/ui/inline-notice'
 import { EthernetPort, Network, RefreshCw, Wifi, WifiOff } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -414,9 +415,9 @@ const NetworkPanel = ({
               </div>
 
               {message ? (
-                <p className="text-xs text-destructive" role="alert">
+                <InlineNotice level="error" role="alert">
                   {t('Could not save the package mirror.')}
-                </p>
+                </InlineNotice>
               ) : null}
 
               <div className="flex justify-end gap-2">

@@ -271,11 +271,28 @@ export function runModuleTestCli(arguments_ = process.argv.slice(2), options = {
         VITEST_CHANGED_COVERAGE_THRESHOLDS: '1'
       }
     : options.environment
+  // CI checks out a synthetic merge commit. Vitest's coverage.changed compares against
+  // checkout HEAD, which also includes newer base-branch changes outside this PR's test plan.
+  const coverageChanges = coverageChanged
+    ? coverageChanged === base
+      ? changes
+      : changesFromGit(coverageChanged, head, options)
+    : []
+  const coveragePaths = sorted(
+    coverageChanges
+      .filter(({ path, status }) => status !== 'deleted' && /^src\/.*\.tsx?$/.test(path))
+      .map(({ path }) => path)
+  )
   return executeModuleTestPlan(plan, {
     ...options,
     environment,
     testArguments: coverageChanged
-      ? ['--coverage', '--coverage.changed', coverageChanged]
+      ? [
+          '--coverage',
+          ...(coveragePaths.length > 0 ? coveragePaths : ['__no_changed_sources__']).map(
+            (path) => `--coverage.include=${path}`
+          )
+        ]
       : options.testArguments
   })
 }
