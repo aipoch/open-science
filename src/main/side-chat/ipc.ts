@@ -6,7 +6,11 @@ import type {
   SideChatSessionRequest,
   SideChatStartRequest
 } from '../../shared/side-chat'
-import { SIDE_CHAT_MESSAGE_LIMIT } from '../../shared/side-chat'
+import {
+  SIDE_CHAT_MESSAGE_LIMIT,
+  sideChatParentBranch,
+  type SideChatParentBranch
+} from '../../shared/side-chat'
 import { buildHistoryPreamble } from '../../shared/history-preamble'
 import { ipcMainHandle } from '../ipc-handler-registry'
 import type { SideChatRuntimeOwner } from './runtime-owner'
@@ -19,6 +23,19 @@ type SideChatIpcDependencies = Readonly<{
   hasLiveParentSession: (projectId: string, sessionId: string) => boolean
   withParentAvailable<Result>(sessionId: string, operation: () => Promise<Result>): Promise<Result>
 }>
+
+const assertParentSnapshot = (
+  parent: PersistedChatSession | undefined,
+  expected: SideChatParentBranch | undefined
+): void => {
+  if (!expected) return
+  const saved = sideChatParentBranch(parent?.conversationGraph)
+  if (!saved || saved.frameId !== expected.frameId || saved.branchId !== expected.branchId) {
+    throw new Error(
+      'The selected conversation branch has not been saved yet. Retry Side chat after saving completes.'
+    )
+  }
+}
 
 const registerSideChatIpcHandlers = (
   runtime: SideChatRuntimeOwner,
@@ -49,6 +66,7 @@ const registerSideChatIpcHandlers = (
         if (closedStarts.delete(startId)) {
           throw new Error('Side chat closed before startup completed.')
         }
+        assertParentSnapshot(parent, request.expectedParentBranch)
         const historyPreamble = parent
           ? buildHistoryPreamble(parent.messages, {
               target: 'codex-bridge',
@@ -91,6 +109,7 @@ const registerSideChatIpcHandlers = (
         send.cancellation.signal.throwIfAborted()
         const parentSession = await loadAvailableParent(parent.projectId, parent.parentSessionId)
         send.cancellation.signal.throwIfAborted()
+        assertParentSnapshot(parentSession, request.expectedParentBranch)
         const historyPreamble = parentSession
           ? buildHistoryPreamble(parentSession.messages, {
               target: 'codex-bridge',

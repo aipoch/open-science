@@ -1235,6 +1235,10 @@ class AcpRuntimeCoordinator {
       : dispatch()
   }
 
+  hasPendingSideChatInteraction(sessionId: string): boolean {
+    return this.runtimeForSession(sessionId).hasPendingSideChatInteraction(sessionId)
+  }
+
   async steerSideChatAdvisory(
     request: AcpSteerFollowUpRequest
   ): ReturnType<AcpRuntime['steerSideChatAdvisory']> {

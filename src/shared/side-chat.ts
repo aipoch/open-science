@@ -1,8 +1,18 @@
+import type { PersistedConversationGraph } from './conversation-graph'
 export type SideChatModelSelection = Readonly<{
   providerId: string
   model?: string
   reasoningEffort?: import('./settings').ReasoningEffort
 }>
+
+export type SideChatParentBranch = Readonly<{ frameId: string; branchId: string }>
+
+export function sideChatParentBranch(
+  graph: PersistedConversationGraph | undefined
+): SideChatParentBranch | undefined {
+  const frame = graph?.frames.find((item) => item.id === graph.activeFrameId)
+  return frame ? { frameId: frame.id, branchId: frame.activeBranchId } : undefined
+}
 
 export const SIDE_CHAT_MESSAGE_LIMIT = 12_000
 
@@ -24,6 +34,7 @@ export type SideChatSendMessageResult = Readonly<{
 }>
 
 export type SideChatStartRequest = Readonly<{
+  expectedParentBranch?: SideChatParentBranch
   sideSessionId?: string
   parentSessionId: string
   projectId: string
@@ -38,6 +49,7 @@ export type SideChatStartResponse = Readonly<{
 }>
 
 export type SideChatPromptRequest = Readonly<{
+  expectedParentBranch?: SideChatParentBranch
   modelSelection?: SideChatModelSelection
   sideSessionId: string
   text: string

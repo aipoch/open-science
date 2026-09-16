@@ -5882,6 +5882,14 @@
     "Conversation approval allows web reading across websites for this conversation and its subagents.": "이 대화에 대한 승인은 이 대화와 하위 서브에이전트가 여러 웹사이트의 페이지를 읽을 수 있도록 허용합니다.",
     "This conversation": "이 대화",
     "Remembered for this conversation": "이 대화에서 승인 기억",
-    "This conversation or this call": "이 대화 또는 이번 호출"
+    "This conversation or this call": "이 대화 또는 이번 호출",
+    "The parent Session is unavailable.": "상위 세션을 사용할 수 없습니다.",
+    "This session is read-only.": "이 세션은 읽기 전용입니다.",
+    "Send a message in the main conversation first.": "먼저 기본 대화에서 메시지를 보내세요.",
+    "Waiting for conversation history to be saved.": "대화 기록이 저장되기를 기다리는 중입니다.",
+    "A Side chat prompt is already running.": "사이드 채팅 프롬프트가 이미 실행 중입니다.",
+    "Enter a message to send.": "보낼 메시지를 입력하세요.",
+    "Send draft to Side chat": "초안을 사이드 채팅으로 보내기",
+    "Opens an empty Side chat; keeps your draft.": "빈 사이드 채팅을 열고 초안을 유지합니다."
   }
 }

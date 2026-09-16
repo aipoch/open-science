@@ -5884,6 +5884,14 @@
     "Conversation approval allows web reading across websites for this conversation and its subagents.": "この会話への許可により、この会話とそのサブエージェントは複数のウェブサイトのページを読み取れます。",
     "This conversation": "この会話",
     "Remembered for this conversation": "この会話で許可を記憶",
-    "This conversation or this call": "この会話または今回の呼び出し"
+    "This conversation or this call": "この会話または今回の呼び出し",
+    "The parent Session is unavailable.": "親セッションを利用できません。",
+    "This session is read-only.": "このセッションは読み取り専用です。",
+    "Send a message in the main conversation first.": "先にメインの会話でメッセージを送信してください。",
+    "Waiting for conversation history to be saved.": "会話履歴の保存を待っています。",
+    "A Side chat prompt is already running.": "サイドチャットは応答中です。",
+    "Enter a message to send.": "送信するメッセージを入力してください。",
+    "Send draft to Side chat": "下書きをサイドチャットに送信",
+    "Opens an empty Side chat; keeps your draft.": "空の Side chat を開き、下書きを保持します。"
   }
 }

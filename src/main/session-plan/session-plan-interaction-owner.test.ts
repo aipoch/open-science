@@ -248,3 +248,20 @@ describe('SessionPlanInteractionOwner', () => {
     expect(owner.interactionIdFor('session-1', 'version-1')).toBeUndefined()
   })
 })
+
+it('blocks advisories from approval reservation until provider pause is released', async () => {
+  const owner = new SessionPlanInteractionOwner()
+  owner.reserveApproval('main', 'approval')
+  expect(owner.hasPendingApproval('main')).toBe(true)
+  expect(owner.hasPendingApproval('other')).toBe(false)
+  owner.releaseApprovalReservation('main', 'approval')
+  expect(owner.hasPendingApproval('main')).toBe(false)
+  const response = owner.parkApproval('main', 'approval')
+  owner.suspendProvider('main', 1, response, () => vi.fn())
+  owner.resolveApproval('main', { decision: 'approved' }, owner.approvalTokenFor('main'))
+  await response
+  expect(owner.hasPendingApproval('main')).toBe(true)
+  const pause = owner.providerPauseFor('main')!
+  owner.releaseProviderPause('main', pause)
+  expect(owner.hasPendingApproval('main')).toBe(false)
+})

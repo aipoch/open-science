@@ -121,6 +121,15 @@ const createReviewableSession = (): ChatSession =>
   createSession({
     messages: [
       {
+        id: 'user-before-analysis',
+        role: 'user',
+        content: 'Analyze',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 0,
+        updatedAt: 0
+      },
+      {
         id: 'agent-1',
         role: 'agent',
         content: 'Analysis complete.',
@@ -1143,6 +1152,16 @@ describe('WorkspacePage send gate while compacting', () => {
     expect(conversationProps.agentControls.canChangeMemory).toBe(true)
     expect(conversationProps.agentControls.canChangeSpecialist).toBe(true)
     expect(conversationProps.permissions.canChangePermissionProfile).toBe(false)
+    expect(conversationProps.view.sideChatDisabledReason).toBeUndefined()
+    expect(useSessionStore.getState().sessions[0].pendingHistoryReplay).toEqual({ kind: 'all' })
+  })
+
+  it('keeps Side chat blocked while the parent Session is still being created', async () => {
+    useSessionStore.setState({
+      sessions: [{ ...createReviewableSession(), isPending: true }]
+    })
+    await renderPage()
+
     expect(conversationProps.view.sideChatDisabledReason).toBe(
       'Resolve the current Session operation first.'
     )

@@ -195,3 +195,28 @@ describe('CredentialRequestBroker', () => {
     expect(broker.getPending('credential-2')).toBeNull()
   })
 })
+
+it('tracks per-session credential waits through settlement and cancellation', async () => {
+  let id = 0
+  const broker = new CredentialRequestBroker({
+    generateId: () => String(++id),
+    broadcast: vi.fn(),
+    replay: vi.fn()
+  })
+  const info = {
+    credentialId: 'openalex' as const,
+    connector: 'literature',
+    method: 'openalex_search_works'
+  }
+  const a = broker.request({ ...info, sessionId: 'a' })
+  const b = broker.request({ ...info, sessionId: 'b' })
+  expect(broker.hasPendingForSession('a')).toBe(true)
+  expect(broker.hasPendingForSession('missing')).toBe(false)
+  broker.respond('1', false)
+  await a
+  expect(broker.hasPendingForSession('a')).toBe(false)
+  expect(broker.hasPendingForSession('b')).toBe(true)
+  broker.cancelAll()
+  await b
+  expect(broker.hasPendingForSession('b')).toBe(false)
+})

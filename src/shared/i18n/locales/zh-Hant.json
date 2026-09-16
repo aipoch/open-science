@@ -5884,6 +5884,14 @@
     "Conversation approval allows web reading across websites for this conversation and its subagents.": "對話授權允許本對話及其子智能體讀取不同網站的網頁。",
     "This conversation": "此對話",
     "Remembered for this conversation": "在此對話中記住授權",
-    "This conversation or this call": "此對話或僅此次呼叫"
+    "This conversation or this call": "此對話或僅此次呼叫",
+    "The parent Session is unavailable.": "主工作階段無法使用。",
+    "This session is read-only.": "此工作階段為唯讀。",
+    "Send a message in the main conversation first.": "請先在主對話中傳送一則訊息。",
+    "Waiting for conversation history to be saved.": "正在等候儲存對話歷史。",
+    "A Side chat prompt is already running.": "側邊聊天正在回覆。",
+    "Enter a message to send.": "請輸入要傳送的訊息。",
+    "Send draft to Side chat": "將草稿傳送至側邊聊天",
+    "Opens an empty Side chat; keeps your draft.": "開啟空白側聊，保留目前草稿。"
   }
 }

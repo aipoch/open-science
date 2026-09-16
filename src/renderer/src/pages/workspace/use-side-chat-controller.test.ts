@@ -12,7 +12,7 @@ const createRoot: typeof createReactRoot = (...args) => {
   }
   return root
 }
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSessionStore } from '@/stores/session-store'
@@ -32,6 +32,48 @@ const deferred = <Value>(): {
 }
 
 const originalApi = window.api
+const sideChatParent = (
+  id: string,
+  projectId = 'project-1'
+): import('@/stores/session-store').ChatSession => ({
+  id,
+  projectId,
+  title: id,
+  cwd: '/workspace',
+  status: 'idle' as const,
+  createdAt: 1,
+  updatedAt: 1,
+  messages: [
+    {
+      id: 'user',
+      role: 'user' as const,
+      content: 'Main question',
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+  ]
+})
+beforeEach(() => {
+  useSessionStore.setState({
+    sessions: [
+      ...[
+        'main-1',
+        'main-scope',
+        'main-other',
+        'main-closing',
+        'main-retry',
+        'main-a',
+        'main-b',
+        'main-closed',
+        'main-transient'
+      ].map((id) => sideChatParent(id)),
+      sideChatParent('saved-parent', 'saved-project'),
+      sideChatParent('empty-parent', 'empty-project')
+    ]
+  })
+})
 
 afterEach(() => {
   act(() => {
@@ -1049,7 +1091,10 @@ describe('Side chat model choices', () => {
     useSettingsStore.setState({ activeProviderId: undefined, activeModel: undefined })
     useSessionStore.setState({
       sessions: [
-        { id: 'model-parent', agentConfiguration: { ...modelA, reasoningEffort: 'default' } }
+        {
+          ...sideChatParent('model-parent', 'project'),
+          agentConfiguration: { ...modelA, reasoningEffort: 'default' }
+        }
       ] as never
     })
     let listener: ((event: never) => void) | undefined
@@ -1087,7 +1132,10 @@ describe('Side chat model choices', () => {
     act(() =>
       useSessionStore.setState({
         sessions: [
-          { id: 'model-parent', agentConfiguration: { ...modelB, reasoningEffort: 'default' } }
+          {
+            ...sideChatParent('model-parent', 'project'),
+            agentConfiguration: { ...modelB, reasoningEffort: 'default' }
+          }
         ] as never
       })
     )
@@ -1127,7 +1175,7 @@ describe('Side chat model choices', () => {
     useSessionStore.setState({
       sessions: [
         {
-          id: 'model-parent',
+          ...sideChatParent('model-parent', 'project'),
           agentConfiguration: {
             providerId: 'parent-provider',
             model: 'parent-model',
@@ -1246,3 +1294,116 @@ it.each(['preview', 'session', 'page', 'project'] as const)(
     useSessionStore.setState({ selectedSessionId: previousSelected })
   }
 )
+
+it('keeps a local draft through delayed restore and admits it only after the snapshot arrives', async () => {
+  const restore = deferred<{ revision: number; chats: [] }>()
+  const start = vi.fn(async (request) => ({
+    sideSessionId: request.sideSessionId,
+    frameworkId: 'claude-code'
+  }))
+  const close = vi.fn()
+  window.api = {
+    sideChat: {
+      list: () => restore.promise,
+      start,
+      close,
+      onEvent: () => () => {},
+      onRelayDelivered: () => () => {}
+    }
+  } as unknown as Window['api']
+  let chat!: ReturnType<typeof useSideChatController>
+  const root = createRoot(document.createElement('div'))
+  const Harness = (): null => {
+    chat = useSideChatController({ sessionId: 'main-1', projectId: 'project-1' })
+    return null
+  }
+  act(() => root.render(createElement(SideChatProvider, null, createElement(Harness))))
+  let id: string | undefined
+  act(() => {
+    id = chat.createDraft?.()
+  })
+  act(() => chat.setDraft('Keep my question'))
+  expect(chat.openDisabledReason).toBeUndefined()
+  expect(chat.unavailableReason).toContain('Restoring')
+  await act(async () => {
+    expect(await chat.send('Keep my question')).toBe(false)
+  })
+  expect(start).not.toHaveBeenCalled()
+  expect(chat.view?.draft).toBe('Keep my question')
+  await act(async () => {
+    restore.resolve({ revision: 99, chats: [] })
+  })
+  expect(chat.view?.id).toBe(id)
+  expect(chat.view?.draft).toBe('Keep my question')
+  await act(async () => {
+    expect(await chat.send('Keep my question')).toBe(true)
+  })
+  expect(start).toHaveBeenCalledOnce()
+  expect(close).not.toHaveBeenCalled()
+})
+
+it('revalidates parent state at execution, including callbacks captured before it became read-only', async () => {
+  const start = vi.fn()
+  window.api = {
+    sideChat: { start, onEvent: () => () => {}, onRelayDelivered: () => () => {} }
+  } as unknown as Window['api']
+  let chat!: ReturnType<typeof useSideChatController>
+  const root = createRoot(document.createElement('div'))
+  const Harness = (): null => {
+    chat = useSideChatController({ sessionId: 'main-1', projectId: 'project-1' })
+    return null
+  }
+  act(() => root.render(createElement(SideChatProvider, null, createElement(Harness))))
+  const staleOpen = chat.createDraft!
+  const staleSend = chat.start
+  act(() =>
+    useSessionStore.setState({ sessions: [{ ...sideChatParent('main-1'), archivedAt: 5 }] })
+  )
+  act(() => expect(staleOpen()).toBeUndefined())
+  await act(async () => {
+    await expect(staleSend('Do not dispatch')).rejects.toThrow('unavailable')
+  })
+  expect(start).not.toHaveBeenCalled()
+})
+
+it('applies persistence readiness to direct side-panel sends and rechecks stale callbacks', async () => {
+  const start = vi.fn(async (request) => ({
+    sideSessionId: request.sideSessionId,
+    frameworkId: 'claude-code'
+  }))
+  window.api = {
+    sideChat: { start, onEvent: () => () => {}, onRelayDelivered: () => () => {} }
+  } as unknown as Window['api']
+  let chat!: ReturnType<typeof useSideChatController>
+  let persistence = { ready: true, blockedSessionIds: [] as string[] }
+  const root = createRoot(document.createElement('div'))
+  const Harness = (): null => {
+    chat = useSideChatController({ sessionId: 'main-1', projectId: 'project-1' })
+    return null
+  }
+  const render = (): void => {
+    root.render(createElement(SideChatProvider, { persistence }, createElement(Harness)))
+  }
+  act(render)
+  act(() => {
+    chat.createDraft?.()
+  })
+  act(() => chat.setDraft('Preserve on storage failure'))
+  const staleSend = chat.send
+  for (const state of [
+    { ready: false, blockedSessionIds: [] },
+    { ready: true, blockedSessionIds: ['main-1'] }
+  ]) {
+    persistence = state
+    act(render)
+    expect(chat.openDisabledReason).toBeUndefined()
+    expect(chat.unavailableReason).toContain('history')
+    await act(async () => expect(await staleSend('Preserve on storage failure')).toBe(false))
+    expect(start).not.toHaveBeenCalled()
+    expect(chat.view?.draft).toBe('Preserve on storage failure')
+  }
+  persistence = { ready: true, blockedSessionIds: [] }
+  act(render)
+  await act(async () => expect(await chat.send('Preserve on storage failure')).toBe(true))
+  expect(start).toHaveBeenCalledOnce()
+})

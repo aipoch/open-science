@@ -1,3 +1,4 @@
+import { sideChatBlock, sideChatBlockMessage } from './side-chat-availability'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { PackageOperationIndicator } from '@/components/SessionPackageOperation'
 import { sessionExportLocked, usePackageOperationStore } from '@/stores/package-operation-store'
@@ -146,7 +147,7 @@ import { workspaceHandoffLifecycleClient } from './handoff-lifecycle-source'
 import { SubagentAvailabilityNotice, SubagentsBar } from './SubagentReleaseSurfaces'
 import { projectSessionSubagents } from './subagent-release-projection'
 import { ResizableBottomPanel } from './ResizableBottomPanel'
-import { hasMainConversation, type SideChatController } from './use-side-chat-controller'
+import { type SideChatController } from './use-side-chat-controller'
 import type { WorkspaceComposerController } from './workspace-composer-controller'
 import type { WorkspaceConversationController } from './workspace-conversation-controller'
 import type { WorkspaceSessionController } from './workspace-session-controller'
@@ -1003,18 +1004,26 @@ const ConversationPanel = ({
   )
   const canPlanFirst = effectiveCanSend && hasTextDraft
   const hasSideChatDraft = hasTextDraft || annotations.length > 0
-  const canStartSideChat =
-    Boolean(activeSession) &&
-    hasMainConversation(activeSession) &&
-    actionability?.actions.startSideChat.allowed !== false &&
-    canEditDraft &&
-    (hasSideChatDraft || Boolean(sideChatController.createDraft)) &&
-    attachments.length === 0 &&
-    attachmentTransfers.length === 0 &&
-    !sideChatDisabledReason
+  const openSideChatReason =
+    sideChatController.openDisabledReason ??
+    sideChatBlockMessage(sideChatBlock({ action: 'open', parent: activeSession }), t)
+  const sendSideChatReason =
+    sideChatDisabledReason ??
+    sideChatBlockMessage(
+      sideChatBlock({
+        action: 'send',
+        parent: activeSession,
+        hasAttachments: attachments.length > 0 || attachmentTransfers.length > 0,
+        hasContent: hasSideChatDraft
+      }),
+      t
+    )
+  const canOpenSideChat = !openSideChatReason && Boolean(sideChatController.createDraft)
+  const canStartSideChat = !sendSideChatReason
   const canRetrySideChatHydration = Boolean(onRetrySideChatHydration)
   const canOpenSendOptions =
     canPlanFirst ||
+    canOpenSideChat ||
     canStartSideChat ||
     canRetrySideChatHydration ||
     (effectiveCanSend && Boolean(onBranchInNewSession) && canBranchInNewSession)
@@ -1024,12 +1033,43 @@ const ConversationPanel = ({
     onPlanFirst(docToSkillIds(draftDoc))
   }
 
+  const sendsSideChatDraft = hasSideChatDraft && canStartSideChat
+  const sideChatHint =
+    openSideChatReason ??
+    (sendsSideChatDraft
+      ? t('Send draft to Side chat')
+      : t('Opens an empty Side chat; keeps your draft.'))
   const handleSideChat = (): void => {
-    if (canStartSideChat) {
-      if (hasSideChatDraft) onStartSideChat()
-      else sideChatController.createDraft?.()
-    } else onRetrySideChatHydration?.()
+    if (!canOpenSideChat) return
+    if (sendsSideChatDraft) onStartSideChat()
+    else sideChatController.createDraft?.()
   }
+  const sideChatMenuItems = (
+    <>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <DropdownMenuItem
+            data-testid="menu-side-chat"
+            aria-disabled={!canOpenSideChat}
+            className="h-8 whitespace-nowrap aria-disabled:cursor-not-allowed aria-disabled:opacity-50 [@media(pointer:coarse)]:min-h-11"
+            onSelect={(event) => {
+              if (!canOpenSideChat) event.preventDefault()
+              else handleSideChat()
+            }}
+          >
+            <MessageCircleMore className="mr-2 size-4 shrink-0 text-text-300" aria-hidden="true" />
+            {t('New side chat')}
+          </DropdownMenuItem>
+        </TooltipTrigger>
+        <TooltipContent side="left">{sideChatHint}</TooltipContent>
+      </Tooltip>
+      {canRetrySideChatHydration ? (
+        <DropdownMenuItem data-testid="menu-retry-side-chat" onSelect={onRetrySideChatHydration}>
+          {t('Retry Side chat restore')}
+        </DropdownMenuItem>
+      ) : null}
+    </>
+  )
 
   // Converts the hidden file input selection into the shared staging callback.
   const handleAttachmentInputChange = (event: React.ChangeEvent<HTMLInputElement>): void => {
@@ -1484,6 +1524,19 @@ const ConversationPanel = ({
                       data-testid="blocking-composer-overlay"
                       className="absolute inset-x-0 bottom-0 z-30"
                     >
+                      <div className="mb-2 flex justify-end">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          data-testid="blocked-composer-side-chat"
+                          disabled={!canOpenSideChat}
+                          title={openSideChatReason}
+                          onClick={() => sideChatController.createDraft?.()}
+                        >
+                          {t('New side chat')}
+                        </Button>
+                      </div>
                       {hasPendingPermission ? (
                         <ResizablePermissionComposer key={rootPermissionRequests[0]?.requestId}>
                           <PermissionApprovalControls
@@ -1909,12 +1962,7 @@ const ConversationPanel = ({
                           projectId={activeSession?.projectId ?? ''}
                           parentSessionId={activeSession?.id ?? ''}
                           annotations={annotations}
-                          disabled={
-                            !canEditDraft ||
-                            !activeSession ||
-                            !hasMainConversation(activeSession) ||
-                            Boolean(sideChatDisabledReason)
-                          }
+                          disabled={Boolean(openSideChatReason)}
                           onRemove={onRemoveAnnotation}
                         >
                           <AnnotationDraftCards
@@ -2571,7 +2619,9 @@ const ConversationPanel = ({
                                               type="button"
                                               className={composerIconButtonClassName}
                                               disabled={
-                                                !canStartSideChat && !canRetrySideChatHydration
+                                                !canOpenSideChat &&
+                                                !canStartSideChat &&
+                                                !canRetrySideChatHydration
                                               }
                                               aria-label={t('More send options')}
                                               data-testid="running-side-chat-menu-trigger"
@@ -2590,27 +2640,7 @@ const ConversationPanel = ({
                                     </Tooltip>
                                   </>
                                   <DropdownMenuContent side="top" align="end" className="w-64">
-                                    <DropdownMenuItem
-                                      data-testid="menu-side-chat"
-                                      disabled={!canStartSideChat && !canRetrySideChatHydration}
-                                      onSelect={handleSideChat}
-                                      title={sideChatDisabledReason}
-                                    >
-                                      <MessageCircleMore
-                                        className="mr-2 size-4 text-text-300"
-                                        aria-hidden="true"
-                                      />
-                                      <span>
-                                        {canRetrySideChatHydration
-                                          ? t('Retry Side chat restore')
-                                          : t('New side chat')}
-                                        {sideChatDisabledReason ? (
-                                          <span className="block text-[11px] text-text-300">
-                                            {sideChatDisabledReason}
-                                          </span>
-                                        ) : null}
-                                      </span>
-                                    </DropdownMenuItem>
+                                    {sideChatMenuItems}
                                   </DropdownMenuContent>
                                 </DropdownMenu>
                               </div>
@@ -2698,28 +2728,7 @@ const ConversationPanel = ({
                                         />
                                         {t('Plan first')}
                                       </DropdownMenuItem>
-                                      <DropdownMenuItem
-                                        data-testid="menu-side-chat"
-                                        disabled={!canStartSideChat && !canRetrySideChatHydration}
-                                        onSelect={handleSideChat}
-                                        title={sideChatDisabledReason}
-                                        className="whitespace-nowrap [@media(pointer:coarse)]:min-h-11"
-                                      >
-                                        <MessageCircleMore
-                                          className="mr-2 size-4 text-text-300"
-                                          aria-hidden="true"
-                                        />
-                                        <span>
-                                          {canRetrySideChatHydration
-                                            ? t('Retry Side chat restore')
-                                            : t('New side chat')}
-                                          {sideChatDisabledReason ? (
-                                            <span className="block text-[11px] text-text-300">
-                                              {sideChatDisabledReason}
-                                            </span>
-                                          ) : null}
-                                        </span>
-                                      </DropdownMenuItem>
+                                      {sideChatMenuItems}
                                       <DropdownMenuItem
                                         data-testid="menu-branch-in-new-session"
                                         disabled={

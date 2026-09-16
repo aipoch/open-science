@@ -6216,6 +6216,14 @@
     "Conversation approval allows web reading across websites for this conversation and its subagents.": "L’autorisation pour cette conversation permet de lire des pages sur différents sites web pour cette conversation et ses sous-agents.",
     "This conversation": "Cette conversation",
     "Remembered for this conversation": "Mémorisé pour cette conversation",
-    "This conversation or this call": "Cette conversation ou cet appel"
+    "This conversation or this call": "Cette conversation ou cet appel",
+    "The parent Session is unavailable.": "La session parente est indisponible.",
+    "This session is read-only.": "Cette session est en lecture seule.",
+    "Send a message in the main conversation first.": "Envoyez d’abord un message dans la conversation principale.",
+    "Waiting for conversation history to be saved.": "En attente de l’enregistrement de l’historique de la conversation.",
+    "A Side chat prompt is already running.": "Une réponse de la discussion parallèle est déjà en cours.",
+    "Enter a message to send.": "Saisissez un message à envoyer.",
+    "Send draft to Side chat": "Envoyer le brouillon à la discussion parallèle",
+    "Opens an empty Side chat; keeps your draft.": "Ouvre un Side chat vide et conserve votre brouillon."
   }
 }

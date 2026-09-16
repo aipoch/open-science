@@ -397,8 +397,7 @@ describe('session store', () => {
       actions: {
         startTurn: { allowed: false, disabledReason: 'permission-pending' },
         revise: { allowed: false, disabledReason: 'permission-pending' },
-        branchFromMessage: { allowed: false, disabledReason: 'permission-pending' },
-        startSideChat: { allowed: false, disabledReason: 'permission-pending' }
+        branchFromMessage: { allowed: false, disabledReason: 'permission-pending' }
       }
     })
   })
@@ -427,8 +426,7 @@ describe('session store', () => {
       actions: {
         startTurn: { allowed: true },
         revise: { allowed: true },
-        branchFromMessage: { allowed: false, disabledReason: 'permission-pending' },
-        startSideChat: { allowed: false, disabledReason: 'permission-pending' }
+        branchFromMessage: { allowed: false, disabledReason: 'permission-pending' }
       }
     })
   })
@@ -458,8 +456,7 @@ describe('session store', () => {
       blockingInteraction: 'credential',
       actions: {
         startTurn: { allowed: false, disabledReason: 'credential-pending' },
-        revise: { allowed: false, disabledReason: 'credential-pending' },
-        startSideChat: { allowed: false, disabledReason: 'credential-pending' }
+        revise: { allowed: false, disabledReason: 'credential-pending' }
       }
     })
   })
@@ -481,7 +478,6 @@ describe('session store', () => {
       startTurn: { allowed: false, disabledReason: 'session-pending' },
       revise: { allowed: true },
       branchFromMessage: { allowed: false, disabledReason: 'session-pending' },
-      startSideChat: { allowed: false, disabledReason: 'session-pending' },
       changeAgentControls: { allowed: false, disabledReason: 'session-pending' },
       changeAutoReview: { allowed: false, disabledReason: 'session-pending' },
       changeSpecialist: { allowed: false, disabledReason: 'session-pending' },
@@ -506,7 +502,6 @@ describe('session store', () => {
       startTurn: { allowed: true },
       revise: { allowed: true },
       branchFromMessage: { allowed: true },
-      startSideChat: { allowed: false, disabledReason: 'session-pending' },
       changeAgentControls: { allowed: false, disabledReason: 'session-pending' },
       changeAutoReview: { allowed: true },
       changeSpecialist: { allowed: true },
@@ -7014,6 +7009,7 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/session-plan/plan-file-projection.ts',
       'src/renderer/src/pages/workspace/session-plan/respond-to-session-plan.ts',
       'src/renderer/src/pages/workspace/session-wait-reason.ts',
+      'src/renderer/src/pages/workspace/side-chat-availability.ts',
       'src/renderer/src/pages/workspace/tool-execution-phase.ts',
       'src/renderer/src/pages/workspace/use-pdf-context-action.ts',
       'src/renderer/src/pages/workspace/use-side-chat-controller.ts',

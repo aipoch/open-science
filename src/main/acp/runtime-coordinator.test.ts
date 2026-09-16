@@ -5204,3 +5204,33 @@ describe('AcpRuntimeCoordinator', () => {
     })
   })
 })
+
+it('queries Side chat interaction authority on the session owner after framework retirement', async () => {
+  const oldPrompt = createDeferred<{ stopReason: string }>()
+  const created: ReturnType<typeof createFakeRuntime>[] = []
+  const checks: ReturnType<typeof vi.fn>[] = []
+  const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+    const index = created.length
+    const fake = createFakeRuntime({
+      frameworkId: index === 0 ? 'claude-code' : 'codex',
+      sessionIds: [`side-admission-${index}`],
+      callbacks,
+      ...(index === 0 ? { prompt: () => oldPrompt.promise } : {})
+    })
+    const check = vi.fn(() => index === 0)
+    Object.assign(fake.runtime, { hasPendingSideChatInteraction: check })
+    checks.push(check)
+    created.push(fake)
+    return fake.runtime
+  })
+  const old = await coordinator.createSession({ cwd: '/workspace' })
+  const turn = coordinator.sendPrompt({ sessionId: old.sessionId, text: 'keep old runtime alive' })
+  await coordinator.requestAgentFrameworkSwitch()
+  const current = await coordinator.createSession({ cwd: '/workspace' })
+  expect(coordinator.hasPendingSideChatInteraction(old.sessionId)).toBe(true)
+  expect(coordinator.hasPendingSideChatInteraction(current.sessionId)).toBe(false)
+  expect(checks[0]).toHaveBeenCalledWith(old.sessionId)
+  expect(checks[1]).toHaveBeenCalledWith(current.sessionId)
+  oldPrompt.resolve({ stopReason: 'end_turn' })
+  await turn
+})

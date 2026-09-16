@@ -6357,6 +6357,14 @@
     "Conversation approval allows web reading across websites for this conversation and its subagents.": "Разрешение для этого диалога позволяет читать страницы разных сайтов в этом диалоге и его субагентах.",
     "This conversation": "Этот диалог",
     "Remembered for this conversation": "Запомнить для этого диалога",
-    "This conversation or this call": "Этот диалог или этот вызов"
+    "This conversation or this call": "Этот диалог или этот вызов",
+    "The parent Session is unavailable.": "Родительская сессия недоступна.",
+    "This session is read-only.": "Эта сессия доступна только для чтения.",
+    "Send a message in the main conversation first.": "Сначала отправьте сообщение в основном диалоге.",
+    "Waiting for conversation history to be saved.": "Ожидание сохранения истории диалога.",
+    "A Side chat prompt is already running.": "Боковой чат уже обрабатывает запрос.",
+    "Enter a message to send.": "Введите сообщение для отправки.",
+    "Send draft to Side chat": "Отправить черновик в боковой чат",
+    "Opens an empty Side chat; keeps your draft.": "Открывает пустой боковой чат и сохраняет черновик."
   }
 }

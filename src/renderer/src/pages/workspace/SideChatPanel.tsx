@@ -47,6 +47,8 @@ type SideChatPanelProps = Readonly<{
   onClose: () => void
   controls?: ReactNode
   headerAction?: ReactNode
+  sendDisabledReason?: string
+  onRetryRestore?: () => void
 }>
 
 type SideChatMessageEntry = Extract<SideChatEntry, { kind: 'message' }>
@@ -162,7 +164,9 @@ const SideChatPanel = ({
   onCancel,
   onClose,
   controls,
-  headerAction
+  headerAction,
+  sendDisabledReason,
+  onRetryRestore
 }: SideChatPanelProps): React.JSX.Element => {
   const { t } = useTranslation()
   const [annotationError, setAnnotationError] = useState<string>()
@@ -222,6 +226,7 @@ const SideChatPanel = ({
   }, [view.sideSessionId])
 
   const submit = (): void => {
+    if (sendDisabledReason) return
     const text = view.draft.trim()
     if ((!text && annotations.length === 0) || view.running || !view.sideSessionId) return
     const validation = validateAnnotations(annotations, text)
@@ -354,6 +359,16 @@ const SideChatPanel = ({
               {view.running && presentationBarrierIndex < 0 ? (
                 <div className="py-2 text-text-300">{t('Thinking…')}</div>
               ) : null}
+              {sendDisabledReason && !view.running ? (
+                <div role="status" className="py-2 text-[12px] text-text-300">
+                  {sendDisabledReason}
+                  {onRetryRestore ? (
+                    <button type="button" className="ml-2 underline" onClick={onRetryRestore}>
+                      {t('Retry Side chat restore')}
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
               {view.persistenceError ? (
                 <div role="alert" className="py-2 text-[12px] text-danger-000">
                   {t('Could not save Side chat: {{error}}', { error: view.persistenceError })}
@@ -461,7 +476,9 @@ const SideChatPanel = ({
                     disabled={
                       view.running
                         ? !view.sideSessionId
-                        : (!view.draft.trim() && annotations.length === 0) || !view.sideSessionId
+                        : Boolean(sendDisabledReason) ||
+                          (!view.draft.trim() && annotations.length === 0) ||
+                          !view.sideSessionId
                     }
                     aria-label={
                       view.running ? t('Cancel Side chat response') : t('Send Side chat follow up')

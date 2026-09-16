@@ -187,6 +187,7 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
   delegatedNotebookConnection?: NotebookRpcConnection
   delegatedArtifactCurrentRunFile?: string
   spawnAgent?: () => ChildProcessWithoutNullStreams
+  hasPendingCredentialRequest?: AcpRuntimeOptions['hasPendingCredentialRequest']
   sideChatRelays?: AcpRuntimeOptions['sideChatRelays']
   imageInputCompatibility?: AcpRuntimeOptions['imageInputCompatibility']
   resolveComputeExecutionTargetIds?: AcpRuntimeOptions['resolveComputeExecutionTargetIds']
@@ -262,6 +263,7 @@ const createAcpRuntime = ({
   delegatedArtifactCurrentRunFile,
   spawnAgent,
   sideChatRelays,
+  hasPendingCredentialRequest,
   imageInputCompatibility,
   resolveComputeExecutionTargetIds,
   memory,
@@ -833,6 +835,7 @@ const createAcpRuntime = ({
           : {}),
         callbacks: runtimeCallbacks,
         sideChatRelays,
+        hasPendingCredentialRequest,
         ...(!delegatedNotebookConnection && memory ? { memory } : {}),
         permissionGrantStore,
         permissionGrantRegistry,

@@ -217,6 +217,7 @@ export type AcpRuntimeCallbacks = {
 }
 
 type AcpRuntimeOptions = {
+  hasPendingCredentialRequest?: (sessionId: string) => boolean
   appVersion: string
   defaultCwd: string
   // Disposable framework homes must retain the same read protection as app-owned config roots.
@@ -646,6 +647,7 @@ class AcpRuntime {
   // App-owned MCP construction, routing aliases, and bearer lease ownership are kept behind one
   // explicit role policy. Connection/process lifetime remains with the connection resource owner.
   private readonly sessionInteractions: AcpSessionInteractionOwner
+  readonly hasPendingSideChatInteraction: (sessionId: string) => boolean
   private readonly elicitationOwner: AcpElicitationOwner
   private readonly appContinuations: AcpAppContinuationOwner
   private readonly userChoiceProvenanceContexts = new Map<
@@ -739,6 +741,14 @@ class AcpRuntime {
     this.permissionContext = session.permissionContext
     this.clientInteractions = session.clientInteractions
     this.elicitationOwner = session.elicitationOwner
+    this.hasPendingSideChatInteraction = (sessionId) =>
+      this.permissionContext.hasPendingForSession(sessionId) ||
+      this.elicitationOwner
+        .getPendingRequests()
+        .some((request) => request.sessionId === sessionId) ||
+      base.planInteractions.hasPendingApproval(sessionId) ||
+      options.hasPendingCredentialRequest?.(sessionId) === true
+
     this.durableContinuationContext = session.durableContinuationContext
     this.permissionWaitOwner = session.permissionWaitOwner
     this.planDeliveryOwner = options.plan
@@ -801,6 +811,7 @@ class AcpRuntime {
       activeProviderSessionId: (sessionId) => this.activeSessionFor(sessionId)?.sessionId,
       hasLivePrompt: (sessionId) => this.sessionInteractions.current(sessionId)?.kind === 'prompt',
       hasPendingPermission: (sessionId) => this.permissionContext.hasPendingForSession(sessionId),
+      hasPendingSideChatInteraction: this.hasPendingSideChatInteraction,
       livePrompt: (sessionId) => {
         const current = this.sessionInteractions.current(sessionId)
         return current?.kind === 'prompt'
