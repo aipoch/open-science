@@ -1918,7 +1918,7 @@ class TaskRunner {
       historyPreamble: contextReset ? previousHistoryPreamble : undefined,
       contextReset,
       resumeFallback:
-        request.skillIds?.length && previousHistoryPreamble
+        (request.skillIds?.length || specialistId) && previousHistoryPreamble
           ? { historyPreamble: previousHistoryPreamble }
           : undefined
     }

@@ -80,6 +80,7 @@ type TurnSkillHandle = Readonly<{
 type Authorization = {
   outcome?: TurnSkillOutcome
   selectedSkillIds: readonly string[]
+  forcedSkillIds?: readonly string[]
   scope?: EffectiveSpecialistSkills
 }
 class AcpTurnSkillOwner {
@@ -112,6 +113,9 @@ class AcpTurnSkillOwner {
           throw new Error(`Skill "${rejected}" is not available to the active specialist.`)
         }
       }
+      const runtimeSkillIds = [
+        ...new Set([...selected, ...(scope?.kind === 'specialist' ? scope.skillIds : [])])
+      ]
       const create = (disabled: string[]): TurnSkillHandle => {
         if (scope?.kind === 'main') {
           const rejected = selected.find((id) => disabled.includes(id))
@@ -122,6 +126,7 @@ class AcpTurnSkillOwner {
         const needsReload = disabled.length > 0 && !input.signal?.aborted
         const state: Authorization = {
           selectedSkillIds: selected,
+          forcedSkillIds: Object.freeze([...disabled]),
           ...(scope ? { scope } : {})
         }
         if (needsReload) this.forced = state
@@ -131,8 +136,8 @@ class AcpTurnSkillOwner {
           close: (outcome) => this.close(state, outcome)
         })
       }
-      return this.options.skills && selected.length > 0
-        ? this.options.skills.needForceLoad([...selected]).then(create)
+      return this.options.skills && runtimeSkillIds.length > 0
+        ? this.options.skills.needForceLoad(runtimeSkillIds).then(create)
         : create([])
     }
     const role = input.role ?? 'primary'
@@ -151,7 +156,7 @@ class AcpTurnSkillOwner {
   }
   backendPreparation(): Readonly<{ forcedSkillIds: readonly string[] }> {
     return Object.freeze({
-      forcedSkillIds: Object.freeze([...(this.forced?.selectedSkillIds ?? [])])
+      forcedSkillIds: Object.freeze([...(this.forced?.forcedSkillIds ?? [])])
     })
   }
   // Mid-turn inject must not force-load disabled Skills: that reconnects the session. Main still

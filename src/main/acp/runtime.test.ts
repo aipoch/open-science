@@ -23485,7 +23485,10 @@ describe('ACP runtime skill force-load + nudge', () => {
 
   // Builds a spawner that returns a fresh fake agent per connect, so a force-load reconnect can spawn a
   // second working agent. All agent handles are collected so tests can assert prompts across reconnects.
-  const createFreshAgentSpawner = (): {
+  const createFreshAgentSpawner = (
+    modes?: SessionModeState,
+    sessionId = 'remote-session-1'
+  ): {
     spawn: () => ChildProcessWithoutNullStreams
     agents: Array<ReturnType<typeof startFakeAgent>>
     spawnCount: () => number
@@ -23497,7 +23500,7 @@ describe('ACP runtime skill force-load + nudge', () => {
       spawn: () => {
         count += 1
         const process = new FakeAgentProcess()
-        agents.push(startFakeAgent(process, ['remote-session-1']))
+        agents.push(startFakeAgent(process, [sessionId], { modes }))
         return asAgentProcess(process)
       },
       agents,
@@ -23548,6 +23551,7 @@ describe('ACP runtime skill force-load + nudge', () => {
     const releaseNewerPrompt = createDeferred()
     const onPromptStarted = vi.fn()
     const onPromptEnded = vi.fn()
+    let skillChecks = 0
     startFakeAgent(process, ['remote-session-1'], {
       onPrompt: async ({ text }) => {
         if (text === 'newer prompt') {
@@ -23565,6 +23569,8 @@ describe('ACP runtime skill force-load + nudge', () => {
       resolveSpecialistSkills: resolveForceLoadSpecialistSkills,
       skills: {
         needForceLoad: async () => {
+          // The newer preflight sees the refreshed, enabled catalog and may proceed.
+          if (++skillChecks > 1) return []
           skillCheckEntered.resolve()
           await releaseSkillCheck.promise
           return ['research']
@@ -23613,7 +23619,8 @@ describe('ACP runtime skill force-load + nudge', () => {
     > = []
     const createRuntime = (
       spawner: ReturnType<typeof createFreshAgentSpawner>,
-      contexts: Array<{ forcedSkillIds: string[]; systemPromptAppends?: string[] } | undefined>
+      contexts: Array<{ forcedSkillIds: string[]; systemPromptAppends?: string[] } | undefined>,
+      skillId: string
     ): AcpRuntime =>
       new AcpRuntime({
         appVersion: '0.1.0',
@@ -23630,15 +23637,20 @@ describe('ACP runtime skill force-load + nudge', () => {
           }
         },
         resolveSpecialistIdentity: resolveForceLoadSpecialistIdentity,
-        resolveSpecialistSkills: resolveForceLoadSpecialistSkills,
+        resolveSpecialistSkills: async () => ({
+          kind: 'specialist',
+          skillIds: [skillId],
+          frameworkNames: [skillId],
+          missingSkillIds: []
+        }),
         skills: {
           needForceLoad: async (ids) => ids,
           namesForIds: async (ids) => ids
         }
       })
 
-    const first = createRuntime(firstSpawner, firstContexts)
-    const second = createRuntime(secondSpawner, secondContexts)
+    const first = createRuntime(firstSpawner, firstContexts, 'skill-a')
+    const second = createRuntime(secondSpawner, secondContexts, 'skill-b')
     await Promise.all([
       first.createSession({ cwd: '/workspace', specialistId: 'force-load-specialist' }),
       second.createSession({ cwd: '/workspace', specialistId: 'force-load-specialist' })
@@ -23669,6 +23681,78 @@ describe('ACP runtime skill force-load + nudge', () => {
       expect.arrayContaining([expect.objectContaining({ forcedSkillIds: ['skill-a'] })])
     )
   })
+
+  it.each([
+    { framework: claudeCodeFramework, modelRoute: undefined },
+    { framework: opencodeFramework, modelRoute: undefined },
+    { framework: codexFramework, modelRoute: 'codex-responses' as const },
+    { framework: codexFramework, modelRoute: 'codex-bridge' as const },
+    { framework: codeBuddyFramework, modelRoute: undefined }
+  ])(
+    'prepares bound disabled Skills without chips before $framework.id/$modelRoute dispatch and restores afterward',
+    async ({ framework, modelRoute }) => {
+      const spawner = createFreshAgentSpawner(
+        framework.id === 'codex'
+          ? createModes(['read-only', 'agent', 'agent-full-access'], 'read-only')
+          : undefined,
+        framework.id === 'codex' ? '11111111-1111-4111-8111-111111111111' : undefined
+      )
+      const contexts: string[][] = []
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        resolveBackend: (context) => {
+          contexts.push([...context.forcedSkillIds])
+          return {
+            framework: { ...framework, spawn: spawner.spawn },
+            modelRoute,
+            executablePath: '/bin/agent',
+            env: {}
+          }
+        },
+        resolveSpecialistIdentity: resolveForceLoadSpecialistIdentity,
+        resolveSpecialistSkills: resolveForceLoadSpecialistSkills,
+        skills: {
+          needForceLoad: async (ids) => ids.filter((id) => id === 'research'),
+          namesForIds: async (ids) => ids
+        }
+      })
+      try {
+        const session = await runtime.createSession({
+          cwd: '/workspace',
+          specialistId: 'force-load-specialist'
+        })
+        await runtime.sendPrompt({
+          sessionId: session.sessionId,
+          text: 'summarize the paper',
+          resumeFallback: { historyPreamble: 'EXISTING_CONVERSATION_HISTORY' }
+        })
+        expect(contexts.slice(0, 2)).toEqual([[], ['research']])
+        if (modelRoute === 'codex-bridge') {
+          // Existing force-load reconnects do not retain bridge continuity: replay app history.
+          expect(spawner.agents[1].newSessions).toHaveLength(1)
+          expect(spawner.agents[1].prompts[0].text).toContain('EXISTING_CONVERSATION_HISTORY')
+        } else {
+          // CodeBuddy resumes once more to apply its per-turn Skill route before dispatch.
+          expect(spawner.agents[1].resumedSessions).toHaveLength(
+            framework.id === 'codebuddy' ? 2 : 1
+          )
+        }
+        expect(spawner.agents[1].prompts[0].text).not.toContain(
+          'Use the following skill(s) for this task:'
+        )
+        await vi.waitFor(() => expect(runtime.getSnapshot().status).toBe('idle'))
+        await runtime.resumeSession({
+          sessionId: session.sessionId,
+          cwd: '/workspace',
+          specialistId: 'force-load-specialist'
+        })
+        expect(contexts.at(-1)).toEqual([])
+      } finally {
+        await runtime.disconnect()
+      }
+    }
+  )
 
   it('respawns and nudges when a picked skill is disabled, then restores after the turn', async () => {
     const spawner = createFreshAgentSpawner()
@@ -23743,7 +23827,7 @@ describe('ACP runtime skill force-load + nudge', () => {
       resolveSpecialistIdentity: resolveForceLoadSpecialistIdentity,
       resolveSpecialistSkills: resolveForceLoadSpecialistSkills,
       skills: {
-        needForceLoad: async (ids) => ids,
+        needForceLoad: async (ids) => ids.filter((id) => id === 'research'),
         namesForIds: async (ids) => ids
       }
     })

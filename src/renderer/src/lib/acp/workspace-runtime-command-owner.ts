@@ -686,7 +686,11 @@ const startPendingPrompt = (
       referencedArtifacts: withPdf(request.projectId, request.referencedArtifacts, pdfContext),
       referencedSessions: collectSessionReferences(request.parts),
       parts: request.parts,
-      replay: { ...request.replay, contextReset: Boolean(request.contextReset) },
+      replay: {
+        ...request.replay,
+        ...(request.specialistId ? { resumeFallback: request.replay } : {}),
+        contextReset: Boolean(request.contextReset)
+      },
       turnIntent: request.turnIntent,
       accepted: () =>
         useSessionStore.getState().clearPendingContextReplay(created.sessionId, boundMessageId)
@@ -996,7 +1000,7 @@ const sendWorkspaceMessage = async (
         cutMessageId: input.truncateFromMessageId,
         excludeMessageId: rearmExistingStableMessage ? existingStableMessage?.id : undefined,
         force: input.forceHistoryReplay,
-        includeResumeFallback: Boolean(input.forcedSkillIds?.length)
+        includeResumeFallback: Boolean(input.forcedSkillIds?.length || session?.specialistId)
       },
       onPreparationStateChange: lifecycle.onSendPreparationStateChange,
       drainRuntimeEvents: lifecycle.drainRuntimeEvents,
