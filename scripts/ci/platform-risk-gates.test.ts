@@ -212,6 +212,28 @@ it.each([
   }
 )
 
+it.each(['pull_request', 'merge_group'])(
+  'keeps second-instance launch routing on expanded Mac coverage for %s',
+  (event) => {
+    const changed = changes('src/main/second-instance-router.ts')
+    const candidate = classifyChanges(changed)
+    expect(candidate.mode).toBe('selective')
+    expect(platformExecutionPlan(candidate, changed, event).macosProfile).toBe('expanded')
+    const { plan } = runModuleImpactAuthorityCli(
+      ['--base', 'a'.repeat(40), '--head', 'b'.repeat(40)],
+      { EVENT_NAME: event, PR_GATE_PLATFORM_POLICY: 'risk-v1' },
+      {
+        execute: () => Buffer.from('M\0src/main/second-instance-router.ts\0'),
+        write: () => undefined
+      }
+    )
+    expect(plan.macosProfile).toBe('expanded')
+    expect(plan.bundles).toContain('macos_e2e')
+    expect(plan.lanes).toContain('e2e_regressions_macos')
+    expect(macosGroupsForPlan(plan)).toContain('regressions')
+  }
+)
+
 it.each([
   'src/main/new-native-helper.ts',
   'src/main/permission-grants/registry.ts',
