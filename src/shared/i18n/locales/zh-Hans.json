@@ -45,6 +45,9 @@
     "Import Session package": "导入会话包"
   },
   "native": {
+    "Credential storage needs recovery": "凭据存储需要恢复",
+    "Silent credential identity checks are not supported by this system credential backend. Startup has stopped to preserve existing encrypted data.": "此系统凭据后端不支持静默身份检查。为保留现有加密数据，启动已停止。",
+    "Open-Science could not safely access existing encrypted data. Unlock the system credential store or restore the original key and profile, then restart. Existing credentials have not been replaced.": "Open-Science 无法安全访问现有加密数据。请解锁系统凭据存储，或恢复原始密钥和配置文件，然后重新启动。现有凭据未被替换。",
     "Conversation export is too large. Select fewer conversation turns.": "对话导出内容过大。请选择较少的对话轮次。",
     "Conversation PDF export timed out. Select fewer conversation turns.": "对话 PDF 导出超时。请选择较少的对话轮次。",
     "Open Web UI": "打开 Web 界面",

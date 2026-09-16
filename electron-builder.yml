@@ -51,6 +51,7 @@ files:
   - '!node_modules/pdfjs-dist/**/*.map'
 asarUnpack:
   - resources/**
+  - node_modules/@aipoch/credential-identity-probe-native/build/Release/credential_*
   - node_modules/@aipoch/process-tree-native/build/Release/*.node
   - node_modules/@aipoch/safe-file-publisher-native/build/Release/*.node
   # sharp loads its platform N-API binding and libvips shared libraries by physical path.

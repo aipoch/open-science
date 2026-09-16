@@ -1,3 +1,11 @@
+vi.mock('./credential-identity/bootstrap', () => ({
+  selectStartupCredentialIdentity: () => ({
+    backend: 'mac-keychain',
+    appName: 'Open-Science (DEV)',
+    exists: true
+  }),
+  prepareCredentialValidation: () => () => {}
+}))
 vi.mock('./storage/electron-profile', () => ({
   resolveBootstrapConfigRoot: () => '/isolated-test',
   resolveElectronProfile: () => '/isolated-test/profile',
@@ -26,6 +34,7 @@ const mocks = vi.hoisted(() => {
   }
   const app = {
     isPackaged: false,
+    whenReady: async () => {},
     setName: vi.fn(),
     setPath: vi.fn(),
     setAppLogsPath: vi.fn(),

@@ -45,6 +45,9 @@
     "Import Session package": "세션 패키지 가져오기"
   },
   "native": {
+    "Credential storage needs recovery": "자격 증명 저장소를 복구해야 합니다",
+    "Silent credential identity checks are not supported by this system credential backend. Startup has stopped to preserve existing encrypted data.": "이 시스템 자격 증명 백엔드는 사용자 상호 작용 없는 식별 정보 확인을 지원하지 않습니다. 기존 암호화 데이터를 보존하기 위해 시작을 중단했습니다.",
+    "Open-Science could not safely access existing encrypted data. Unlock the system credential store or restore the original key and profile, then restart. Existing credentials have not been replaced.": "Open-Science가 기존 암호화 데이터에 안전하게 접근할 수 없습니다. 시스템 자격 증명 저장소의 잠금을 해제하거나 원래 키와 프로필을 복원한 후 다시 시작하세요. 기존 자격 증명은 교체되지 않았습니다.",
     "Conversation export is too large. Select fewer conversation turns.": "대화 내보내기 용량이 너무 큽니다. 더 적은 대화 턴을 선택하세요.",
     "Conversation PDF export timed out. Select fewer conversation turns.": "대화 PDF 내보내기 시간이 초과되었습니다. 더 적은 대화 턴을 선택하세요.",
     "Open Web UI": "Web UI 열기",

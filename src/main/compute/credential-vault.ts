@@ -1,9 +1,12 @@
-import { safeStorage } from 'electron'
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import { platform } from 'node:os'
 
 import type { ComputePasswordCapability } from '../../shared/compute'
-import { isSecureStorageAvailable, type SecureStorageCipher } from '../secure-storage'
+import {
+  isSecureStorageAvailable,
+  protectedSafeStorage as safeStorage,
+  type SecureStorageCipher
+} from '../secure-storage'
 import { ComputeConnectionError } from './connection-broker'
 
 const MAX_PASSWORD_BYTES = 16 * 1024

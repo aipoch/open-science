@@ -1,26 +1,20 @@
+import { validateSettingsDocumentShape } from './document-shape'
+import { settingsDocumentReadError } from './document-read-error'
+import {
+  assertCredentialAccessAllowed,
+  credentialAccessInstalled
+} from '../credential-identity/runtime'
 import { renameSync } from 'node:fs'
-import { isAbsolute, join } from 'node:path'
+import { join } from 'node:path'
 
 import { SETTINGS_FILE_VERSION } from '../../shared/settings'
-import {
-  DurableJsonRecoveryBarrierError,
-  readDurableJsonFile,
-  writeDurableJsonFile
-} from '../storage/durable-json-file'
+import { readDurableJsonFile, writeDurableJsonFile } from '../storage/durable-json-file'
 import { sanitizeSettings } from './document-codec'
 import { createEmptySettings, type StoredSettings } from './types'
 import { isRecord } from '../value-guards'
 import { SETTINGS_RESOURCE_LIMITS } from './settings-resource-limits'
 
 const SETTINGS_FILE = 'settings.json'
-
-class UnsupportedSettingsDocumentVersionError extends DurableJsonRecoveryBarrierError {
-  constructor(version: number) {
-    super(
-      `Settings document version ${version} is newer than supported version ${SETTINGS_FILE_VERSION}.`
-    )
-  }
-}
 
 const migrateSettingsDocument = (value: unknown): StoredSettings | undefined => {
   if (!isRecord(value)) return undefined
@@ -39,20 +33,7 @@ const migrateSettingsDocument = (value: unknown): StoredSettings | undefined => 
 
 const decodeSettingsDocument = (contents: string): StoredSettings => {
   const value: unknown = JSON.parse(contents)
-  // A damaged pointer must never sanitize to an unset pointer and start a second empty workspace.
-  if (
-    isRecord(value) &&
-    value.dataRoot !== undefined &&
-    (typeof value.dataRoot !== 'string' || !isAbsolute(value.dataRoot) || !value.dataRoot.trim())
-  ) {
-    throw new DurableJsonRecoveryBarrierError(
-      'The saved data location (dataRoot) is invalid. Restore its absolute path before restarting.'
-    )
-  }
-  const version = isRecord(value) ? value.version : undefined
-  if (Number.isSafeInteger(version) && Number(version) > SETTINGS_FILE_VERSION) {
-    throw new UnsupportedSettingsDocumentVersionError(Number(version))
-  }
+  validateSettingsDocumentShape(value)
   const migrated = migrateSettingsDocument(value)
   if (!migrated) throw new Error('Settings document is corrupt.')
   return migrated
@@ -70,6 +51,7 @@ class SettingsDocumentStore {
   }
 
   async read(): Promise<StoredSettings> {
+    assertCredentialAccessAllowed()
     try {
       const result = await readDurableJsonFile(
         this.path,
@@ -79,13 +61,7 @@ class SettingsDocumentStore {
       )
       return result.status === 'found' ? result.value : createEmptySettings()
     } catch (cause) {
-      const reason = cause instanceof Error ? cause.message : String(cause)
-      const error = new Error(
-        `Cannot read application configuration: ${this.path}\n${reason}\nRestore this file from a verified backup, correct its dataRoot or access permissions, or use an application version that supports it, then restart. Preserve the original file and recovery files; no new configuration or data was initialized.`,
-        { cause }
-      )
-      error.name = 'SettingsDocumentReadError'
-      throw Object.assign(error, { path: this.path })
+      throw settingsDocumentReadError(this.path, cause)
     }
   }
 
@@ -106,6 +82,7 @@ class SettingsDocumentStore {
   }
 
   private async write(settings: StoredSettings, beforePublish?: () => void): Promise<void> {
+    assertCredentialAccessAllowed()
     const contents = `${JSON.stringify(settings, null, 2)}\n`
     if (Buffer.byteLength(contents, 'utf8') > SETTINGS_RESOURCE_LIMITS.documentBytes) {
       throw new Error(
@@ -115,12 +92,13 @@ class SettingsDocumentStore {
     await writeDurableJsonFile(
       this.path,
       contents,
-      beforePublish
+      beforePublish || credentialAccessInstalled()
         ? {
-            // Run after queueing, reading, staging and fsync, on every replacement retry. No JS await
-            // separates the target guard from the atomic rename; aborted writes remove their temp file.
+            // Recheck on every atomic publish retry; a concurrent failed secret read must not allow an
+            // already queued settings rewrite to discard the original encrypted values.
             rename: async (source, destination) => {
-              beforePublish()
+              assertCredentialAccessAllowed()
+              beforePublish?.()
               renameSync(source, destination)
             }
           }

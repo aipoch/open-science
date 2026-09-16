@@ -1,3 +1,11 @@
+vi.mock('./credential-identity/bootstrap', () => ({
+  selectStartupCredentialIdentity: (...args: unknown[]) =>
+    fixture.selectCredentialIdentity(...args),
+  prepareCredentialValidation: (...args: unknown[]) => {
+    fixture.prepareCredentialValidation(...args)
+    return fixture.validateCredentials
+  }
+}))
 vi.mock('./storage/electron-profile', () => ({
   resolveBootstrapConfigRoot: () => '/isolated-test',
   resolveElectronProfile: () => '/isolated-test/profile',
@@ -53,6 +61,18 @@ const fixture = vi.hoisted(() => {
   const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() }
   return {
     log,
+    selectCredentialIdentity: vi.fn((...args: unknown[]) => {
+      void args
+      return {
+        backend: 'mac-keychain',
+        appName: 'Open-Science',
+        exists: true
+      }
+    }),
+    prepareCredentialValidation: vi.fn((...args: unknown[]) => {
+      void args
+    }),
+    validateCredentials: vi.fn(),
     pinLocations: vi.fn(),
     upgradeBrand: vi.fn(() => false),
     prepareLocations: vi.fn(async () => {}),
@@ -137,7 +157,10 @@ vi.mock('./diagnostics/startup', () => ({
   },
   reportApplicationStartupFailure: fixture.startupFailure
 }))
-vi.mock('./settings/credential-store-mode', () => ({ configureCredentialStore: vi.fn() }))
+vi.mock('./settings/credential-store-mode', () => ({
+  configureCredentialStore: vi.fn(),
+  getCredentialStore: () => 'os'
+}))
 vi.mock('./crash-diagnostics', () => ({
   installChildProcessGoneLogging: vi.fn(),
   startLocalCrashReporting: () => ({ enabled: false })
@@ -305,6 +328,9 @@ beforeEach(() => {
     fixture.finishReady = resolve
   })
   fixture.shutdownBackends = undefined
+  fixture.selectCredentialIdentity.mockClear()
+  fixture.prepareCredentialValidation.mockClear()
+  fixture.validateCredentials.mockClear()
   fixture.pinLocations.mockReset()
   fixture.prepareLocations.mockReset().mockResolvedValue()
   fixture.electron.app.requestSingleInstanceLock.mockReset().mockReturnValue(true)
@@ -671,11 +697,14 @@ it.each([
     if (contents === null) await mkdir(path)
     else await writeFile(path, contents)
     try {
-      const { SettingsDocumentStore } = await vi.importActual<
-        typeof import('./settings/document-store')
-      >('./settings/document-store')
-      fixture.prepareLocations.mockImplementation(async () => {
-        await new SettingsDocumentStore(fixtureDir).read()
+      const { readCredentialCiphertexts } = await vi.importActual<
+        typeof import('./credential-identity/ciphertext-inventory')
+      >('./credential-identity/ciphertext-inventory')
+      fixture.prepareCredentialValidation.mockImplementation(() => {
+        readCredentialCiphertexts({
+          configRoot: fixtureDir,
+          profilePath: join(fixtureDir, 'profile')
+        })
       })
       await import('./index')
       await fixture.exited
@@ -686,9 +715,77 @@ it.each([
       expect(fixture.electron.dialog.showErrorBox.mock.calls[0][1]).toMatch(/restore|recover/i)
       expect(fixture.configureDesktop).not.toHaveBeenCalled()
       expect(fixture.initializeDiagnostics).not.toHaveBeenCalled()
+      expect(fixture.pinLocations).not.toHaveBeenCalled()
+      expect(fixture.validateCredentials).not.toHaveBeenCalled()
+      expect(fixture.startupFailure).not.toHaveBeenCalled()
       if (contents !== null) expect(await readFile(path, 'utf8')).toBe(contents)
     } finally {
       await rm(fixtureDir, { recursive: true, force: true })
     }
   }
 )
+
+it('selects and validates the credential identity before any settings writer', async () => {
+  await import('./index')
+  await fixture.exited
+  expect(fixture.selectCredentialIdentity).toHaveBeenCalledOnce()
+  expect(fixture.prepareCredentialValidation).toHaveBeenCalledOnce()
+  expect(fixture.validateCredentials).toHaveBeenCalledOnce()
+  expect(fixture.selectCredentialIdentity.mock.invocationCallOrder[0]).toBeLessThan(
+    fixture.electron.app.setPath.mock.invocationCallOrder[0]
+  )
+  expect(fixture.prepareCredentialValidation.mock.invocationCallOrder[0]).toBeLessThan(
+    fixture.pinLocations.mock.invocationCallOrder[0]
+  )
+  expect(fixture.validateCredentials.mock.invocationCallOrder[0]).toBeLessThan(
+    fixture.prepareLocations.mock.invocationCallOrder[0]
+  )
+})
+
+it('keeps second-instance arguments while credential validation waits for Electron ready', async () => {
+  fixture.failAt = 'none'
+  let release!: () => void
+  const ready = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const readiness = vi.spyOn(fixture.electron.app, 'whenReady').mockReturnValue(ready)
+  try {
+    await import('./index')
+    const listener = fixture.electron.app.on.mock.calls.find(
+      ([event]) => event === 'second-instance'
+    )![1]
+    const argv = ['electron', 'open-science', '--serve', '--port=44123']
+    listener({}, argv, '/isolated-test/cli')
+    expect(fixture.prepareLocations).not.toHaveBeenCalled()
+    expect(fixture.validateCredentials).not.toHaveBeenCalled()
+    release()
+    await fixture.ready
+    await vi.waitFor(() =>
+      expect(fixture.routeSecondInstance).toHaveBeenCalledWith(argv, expect.any(Object))
+    )
+  } finally {
+    readiness.mockRestore()
+    release()
+  }
+})
+
+it('stops synchronously on a failed credential preflight before Electron ready or profile writers', async () => {
+  const { CredentialIdentityError } = await import('./credential-identity/selection')
+  fixture.prepareCredentialValidation.mockImplementationOnce(() => {
+    throw new CredentialIdentityError('windows-profile-key-unavailable')
+  })
+  const readiness = vi.spyOn(fixture.electron.app, 'whenReady')
+  try {
+    await import('./index')
+    await fixture.exited
+    expect(readiness).not.toHaveBeenCalled()
+    expect(fixture.pinLocations).not.toHaveBeenCalled()
+    expect(fixture.prepareLocations).not.toHaveBeenCalled()
+    expect(fixture.electron.dialog.showErrorBox).toHaveBeenCalledWith(
+      'Open-Science',
+      expect.stringContaining('windows-profile-key-unavailable')
+    )
+  } finally {
+    readiness.mockRestore()
+  }
+})

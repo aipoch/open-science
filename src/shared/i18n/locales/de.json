@@ -45,6 +45,9 @@
     "Import Session package": "Sitzungspaket importieren"
   },
   "native": {
+    "Credential storage needs recovery": "Der Anmeldedatenspeicher muss wiederhergestellt werden",
+    "Silent credential identity checks are not supported by this system credential backend. Startup has stopped to preserve existing encrypted data.": "Dieses System-Backend für Anmeldedaten unterstützt keine stille Identitätsprüfung. Zum Schutz vorhandener verschlüsselter Daten wurde der Start angehalten.",
+    "Open-Science could not safely access existing encrypted data. Unlock the system credential store or restore the original key and profile, then restart. Existing credentials have not been replaced.": "Open-Science konnte nicht sicher auf vorhandene verschlüsselte Daten zugreifen. Entsperren Sie den Anmeldedatenspeicher des Systems oder stellen Sie den ursprünglichen Schlüssel und das Profil wieder her. Starten Sie dann neu. Vorhandene Anmeldedaten wurden nicht ersetzt.",
     "Conversation export is too large. Select fewer conversation turns.": "Der Konversationsexport ist zu groß. Wählen Sie weniger Konversationsrunden aus.",
     "Conversation PDF export timed out. Select fewer conversation turns.": "Beim PDF-Export der Konversation wurde das Zeitlimit überschritten. Wählen Sie weniger Konversationsrunden aus.",
     "Open Web UI": "Web-UI öffnen",

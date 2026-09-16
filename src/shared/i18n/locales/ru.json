@@ -45,6 +45,9 @@
     "Import Session package": "Импортировать пакет сеанса"
   },
   "native": {
+    "Credential storage needs recovery": "Необходимо восстановить хранилище учётных данных",
+    "Silent credential identity checks are not supported by this system credential backend. Startup has stopped to preserve existing encrypted data.": "Этот механизм хранения системных учётных данных не поддерживает проверку идентификатора без взаимодействия с пользователем. Запуск остановлен для сохранения существующих зашифрованных данных.",
+    "Open-Science could not safely access existing encrypted data. Unlock the system credential store or restore the original key and profile, then restart. Existing credentials have not been replaced.": "Open-Science не удалось безопасно получить доступ к существующим зашифрованным данным. Разблокируйте системное хранилище учётных данных или восстановите исходный ключ и профиль, затем перезапустите приложение. Существующие учётные данные не были заменены.",
     "Conversation export is too large. Select fewer conversation turns.": "Экспорт беседы слишком велик. Выберите меньше реплик беседы.",
     "Conversation PDF export timed out. Select fewer conversation turns.": "Время экспорта беседы в PDF истекло. Выберите меньше реплик беседы.",
     "Open Web UI": "Открыть веб-интерфейс",

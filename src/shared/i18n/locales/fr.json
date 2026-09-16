@@ -45,6 +45,9 @@
     "Import Session package": "Importer un paquet de session"
   },
   "native": {
+    "Credential storage needs recovery": "Le stockage des identifiants doit être restauré",
+    "Silent credential identity checks are not supported by this system credential backend. Startup has stopped to preserve existing encrypted data.": "Ce système de stockage des identifiants ne prend pas en charge la vérification silencieuse de leur identité. Le démarrage a été interrompu pour préserver les données chiffrées existantes.",
+    "Open-Science could not safely access existing encrypted data. Unlock the system credential store or restore the original key and profile, then restart. Existing credentials have not been replaced.": "Open-Science n’a pas pu accéder en toute sécurité aux données chiffrées existantes. Déverrouillez le stockage des identifiants du système ou restaurez la clé et le profil d’origine, puis redémarrez. Les identifiants existants n’ont pas été remplacés.",
     "Conversation export is too large. Select fewer conversation turns.": "L’exportation de la conversation est trop volumineuse. Sélectionnez moins de tours de conversation.",
     "Conversation PDF export timed out. Select fewer conversation turns.": "L’exportation PDF de la conversation a expiré. Sélectionnez moins de tours de conversation.",
     "Open Web UI": "Ouvrir l'interface Web",

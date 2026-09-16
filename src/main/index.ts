@@ -1,6 +1,13 @@
 import { NativeBrandUpgradeError } from './brand-upgrade/system-paths'
 import { PackageFileOpenRelay, packagePathsFromArgv } from './session-package/file-open'
-import { configureCredentialStore } from './settings/credential-store-mode'
+import { configureCredentialStore, getCredentialStore } from './settings/credential-store-mode'
+import {
+  selectStartupCredentialIdentity,
+  prepareCredentialValidation
+} from './credential-identity/bootstrap'
+import { CredentialIdentityError } from './credential-identity/selection'
+import { credentialRecoveryMessage } from './credential-identity/recovery'
+import { parseWebModeOptions } from './web-service/options'
 import { createRequire } from 'node:module'
 import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -46,6 +53,8 @@ const shouldRunSkillImportMcpServer = process.argv.includes(SKILL_IMPORT_MCP_SER
 const shouldRunSkillRuntimeMcpServer = process.argv.includes(SKILL_RUNTIME_MCP_SERVER_ARG)
 const shouldRunPlanMcpServer = process.argv.includes(PLAN_MCP_SERVER_ARG)
 const bootstrapLog = createLogger('bootstrap')
+let credentialRecoveryPresented = false
+let electronInitializationStarted = false
 let preparingLocations = false
 let preparingBrandEntries = false
 let startupDiagnostics: DiagnosticOperation | undefined
@@ -99,6 +108,18 @@ if (shouldRunArtifactMcpServer) {
   void startElectronApp(fileURLToPath(import.meta.url)).catch(async (error: unknown) => {
     bootstrapLog.error('application startup failed', diagnosticErrorFields(error))
     const { app, dialog } = createRequire(import.meta.url)('electron') as typeof import('electron')
+    if (error instanceof CredentialIdentityError) {
+      if (!credentialRecoveryPresented) {
+        credentialRecoveryPresented = true
+        dialog.showErrorBox(
+          APP_NAME,
+          credentialRecoveryMessage(error, app.getPreferredSystemLanguages())
+        )
+      }
+      // Do not yield to Electron's profile/key initialization after a failed pre-ready probe.
+      app.exit(1)
+      return
+    }
     // Location/configuration failures happen before file diagnostics and the renderer. Present
     // recovery before awaiting diagnostics; neither message wording nor a working file sink gates it.
     if (preparingLocations || preparingBrandEntries || error instanceof NativeBrandUpgradeError) {
@@ -110,6 +131,11 @@ if (shouldRunArtifactMcpServer) {
         APP_NAME,
         recoveryError instanceof Error ? recoveryError.message : String(recoveryError)
       )
+    }
+    if (!electronInitializationStarted) {
+      // Preflight failures must not yield to OSCrypt initialization, even for a configuration error.
+      app.exit(1)
+      return
     }
     await reportApplicationStartupFailure({
       operation: startupDiagnostics,
@@ -130,7 +156,9 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
     nativeImage,
     nativeTheme,
     powerMonitor,
-    protocol
+    protocol,
+    safeStorage,
+    dialog
   } = createRequire(import.meta.url)('electron') as typeof import('electron')
 
   let reportPackageOverflow = (): void => undefined
@@ -150,10 +178,16 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
   // Establish identity and single-writer ownership before opening main.log. A secondary launch must
   // never rotate or append to the primary process's file sink. These two modules are lightweight; all
   // backend imports remain behind the lock.
-  // Electron initializes macOS/Linux OSCrypt after loading this entry and before ready. Preserve
-  // that credential identity synchronously; only the later display name changes. Never derive
-  // profile/cache/log paths from this legacy technical name for a fresh installation.
-  app.setName(app.isPackaged ? 'Open Science' : 'Open Science (DEV)')
+  // Electron captures the OSCrypt identity immediately after the synchronous main entry. The
+  // metadata probe must finish before the first await, profile initialization, or secret access.
+  const webMode = parseWebModeOptions(process.argv)
+  configureCredentialStore(process.argv, process.platform, webMode.headless)
+  const credentialIdentity = selectStartupCredentialIdentity({
+    platform: process.platform,
+    packaged: app.isPackaged,
+    credentialStore: getCredentialStore()
+  })
+  app.setName(credentialIdentity.appName)
   preparingLocations = true
   const configRoot = resolveBootstrapConfigRoot(app.getPath('home'), app.isPackaged)
   const profilePath = resolveElectronProfile({
@@ -182,12 +216,31 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
     return
   }
   app.on('second-instance', (_event, argv, cwd) => relaySecondInstance(argv, cwd))
+  const validateCredentials = prepareCredentialValidation(credentialIdentity, {
+    configRoot,
+    profilePath
+  })
   pinFreshApplicationLocations({
     configRoot,
     profilePath,
     home: app.getPath('home'),
     packaged: app.isPackaged,
     existingInstallation
+  })
+  // A real secret-read phase may request OS authorization. It is not part of the silent probe.
+  // No settings recovery, database migration, or BrowserWindow can run before it succeeds.
+  electronInitializationStarted = true
+  await app.whenReady()
+  app.setName(app.isPackaged ? APP_NAME : `${APP_NAME} (DEV)`)
+  validateCredentials(safeStorage, (error) => {
+    if (!credentialRecoveryPresented) {
+      credentialRecoveryPresented = true
+      dialog.showErrorBox(
+        APP_NAME,
+        credentialRecoveryMessage(error, app.getPreferredSystemLanguages())
+      )
+    }
+    app.exit(1)
   })
   app.setAppLogsPath(
     process.platform === 'darwin' && !isolated
@@ -203,13 +256,8 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       prepareVisibleStartupRuntime,
       waitForStartupShell
     },
-    { parseWebModeOptions },
     { installSystemLifecycleAdapters }
-  ] = await Promise.all([
-    import('./app-startup'),
-    import('./web-service/options'),
-    import('./system-lifecycle-adapters')
-  ])
+  ] = await Promise.all([import('./app-startup'), import('./system-lifecycle-adapters')])
   const preStartupSecondInstanceRelay = createSecondInstanceRelay()
   relaySecondInstance = (argv, cwd) => {
     for (const path of packagePathsFromArgv(argv, cwd)) packageFiles.receive(path)
@@ -224,15 +272,13 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
     existingInstallation
   })
   preparingLocations = false
-  const webMode = parseWebModeOptions(process.argv)
-  configureCredentialStore(process.argv, process.platform, webMode.headless)
   let bindSystemShutdownWindow = (window: InstanceType<typeof BrowserWindow>): void => {
     void window
   }
   let installPowerMonitorListeners = (): void => {}
 
-  // Initialize the file sink after the primary lock but before assets, the backend graph, and
-  // app.whenReady so packaged startup failures remain locally diagnosable.
+  // Initialize the file sink after credential validation but before assets and the backend graph
+  // so later packaged startup failures remain locally diagnosable.
   const diagnostics = initializeApplicationDiagnostics({
     logDir: app.getPath('logs'),
     version: app.getVersion(),
@@ -360,7 +406,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       startupDiagnostics?.phase('electron-ready')
       await app.whenReady()
       app.setName(app.isPackaged ? APP_NAME : `${APP_NAME} (DEV)`)
-      // Electron created its default menu before ready, while OSCrypt still needed the old name.
+      // Electron created its default menu before ready using the selected credential identity.
       // Rebuild standard roles now so About/Hide/app-menu labels use the display brand as well.
       const { Menu } = createRequire(import.meta.url)('electron') as typeof import('electron')
       if (process.platform === 'darwin')
