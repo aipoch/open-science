@@ -24,7 +24,9 @@ import {
 import { terminateProcessTree } from '../../src/main/process-tree'
 import { createProjectDbClient } from '../../src/main/projects/prisma-client'
 import { RendererFailureGate } from './renderer-failure-gate'
+import type { ConversationSkillImportApprovalRequest } from '../../src/shared/settings'
 import type { PackageOperationSnapshot } from '../../src/shared/session-package'
+import type { UpdateStatus } from '../../src/shared/update'
 
 const APP_ROOT = resolve(process.cwd())
 const FAKE_AGENT_PATH = resolve(APP_ROOT, 'e2e', 'fixtures', 'fake-opencode.mjs')
@@ -304,10 +306,13 @@ type ElectronApp = {
   restartWithPackage: (path: string) => Promise<Page>
   emitPackageFileOpen: (path: string) => Promise<void>
   emitSessionPackageProgress: (snapshot: PackageOperationSnapshot) => Promise<void>
+  emitSkillImportApprovalRequest: (request: ConversationSkillImportApprovalRequest) => Promise<void>
+  emitUpdateStatus: (status: UpdateStatus) => Promise<void>
   enableFakeRemoteIt: () => Promise<Page>
   findOverlayIsVisible: () => Promise<boolean>
   launchSecondInstance: () => Promise<Page>
   mainWindowState: () => Promise<{ minimized: boolean; visible: boolean }>
+  readClipboardText: () => Promise<string>
   markResourceProfilePhase: (phase: string) => Promise<void>
   pressMainWindowShortcut: (key: string, modifiers: ShortcutModifier[]) => Promise<void>
   readFakeAgentPrompts: () => Promise<
@@ -1026,6 +1031,28 @@ class ElectronAppHarness implements ElectronApp {
 
       return { minimized: mainWindow.isMinimized(), visible: mainWindow.isVisible() }
     })
+  }
+
+  async readClipboardText(): Promise<string> {
+    return this.runningApplication.evaluate(({ clipboard }) => clipboard.readText())
+  }
+
+  async emitUpdateStatus(status: UpdateStatus): Promise<void> {
+    await this.runningApplication.evaluate(({ BrowserWindow }, nextStatus) => {
+      const mainWindow = BrowserWindow.getAllWindows()[0]
+      if (!mainWindow) throw new Error('Open Science main window was not found.')
+      mainWindow.webContents.send('update:status', nextStatus)
+    }, status)
+  }
+
+  async emitSkillImportApprovalRequest(
+    request: ConversationSkillImportApprovalRequest
+  ): Promise<void> {
+    await this.runningApplication.evaluate(({ BrowserWindow }, nextRequest) => {
+      const mainWindow = BrowserWindow.getAllWindows()[0]
+      if (!mainWindow) throw new Error('Open Science main window was not found.')
+      mainWindow.webContents.send('skills:conversation-import-request', nextRequest)
+    }, request)
   }
 
   async showMainWindow(): Promise<void> {
