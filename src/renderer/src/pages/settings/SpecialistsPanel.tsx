@@ -1,3 +1,4 @@
+import { InlineNotice } from '@/components/ui/inline-notice'
 import { ErrorNotice } from '@/components/error-notice'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { canImportSpecialistPackage } from '@/lib/specialist-package-upload'
@@ -646,7 +647,7 @@ const InstalledSpecialistsPanel = ({
           </span>
         </div>
         {exportError ? (
-          <ErrorNotice role="alert" tone="amber" description={t(exportError)} />
+          <ErrorNotice inline role="alert" tone="amber" description={t(exportError)} />
         ) : null}
         {exportPreview ? (
           <div className="flex flex-col gap-4">
@@ -707,7 +708,7 @@ const InstalledSpecialistsPanel = ({
                 )
               })}
             </div>
-            <div className="rounded-lg border border-border p-3 text-sm" role="status">
+            <InlineNotice role="status" level="info">
               <strong>{t('What the package carries')}</strong>
               <p className="text-muted-foreground">
                 {t(
@@ -720,7 +721,7 @@ const InstalledSpecialistsPanel = ({
                   ? exportPreview.connectorIds.join(', ')
                   : t('None selected')}
               </p>
-            </div>
+            </InlineNotice>
             <div className="flex justify-between gap-3">
               <Button
                 type="button"
@@ -982,6 +983,7 @@ const InstalledSpecialistsPanel = ({
             </div>
             {templateSaveError ? (
               <ErrorNotice
+                inline
                 role="alert"
                 tone="amber"
                 className="mt-4"
@@ -1217,6 +1219,7 @@ const InstalledSpecialistsPanel = ({
 
             {packagePreview.overwrite?.modifiedSinceImport ? (
               <ErrorNotice
+                inline
                 role="alert"
                 tone="amber"
                 description={t('Local edits will be replaced by this import.')}
@@ -2445,6 +2448,7 @@ const InstalledSpecialistsPanel = ({
               )}
               {deleteError ? (
                 <ErrorNotice
+                  inline
                   role="alert"
                   tone="amber"
                   className="mt-3"

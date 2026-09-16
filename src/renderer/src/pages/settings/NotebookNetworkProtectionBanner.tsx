@@ -99,6 +99,7 @@ const NotebookNetworkProtectionBanner = ({
 
   return (
     <Notice
+      inline
       aria-label={t('Notebook network protection')}
       aria-live="polite"
       role={status.kind === 'error' ? 'alert' : 'status'}

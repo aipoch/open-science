@@ -646,6 +646,7 @@ export function ConnectorsPanel({
         ) : null}
         {operationError ? (
           <ErrorNotice
+            inline
             role="alert"
             description={
               operationError === 'Could not reconnect this Connector.'
@@ -968,6 +969,7 @@ export function ConnectorsPanel({
               ) : null}
               {removalError ? (
                 <ErrorNotice
+                  inline
                   role="alert"
                   tone="amber"
                   className="mt-4"

@@ -749,6 +749,7 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
                   )}
                   {sourceError ? (
                     <ErrorNotice
+                      inline
                       role="alert"
                       tone="amber"
                       className="mt-4"

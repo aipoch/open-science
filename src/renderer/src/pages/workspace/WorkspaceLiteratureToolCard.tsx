@@ -203,7 +203,7 @@ const WorkspaceLiteratureToolCard = ({
           {summary.pdfElements.imageIncluded ? <p>{t('Image delivered')}</p> : null}
           {summary.pdfElements.incomplete ? (
             <ErrorNotice
-              className="border-0 bg-transparent p-0"
+              inline
               icon={TriangleAlert}
               tone="amber"
               description={t(
@@ -270,6 +270,7 @@ const WorkspaceLiteratureToolCard = ({
           ) : null}
           {summary.failedInputIndex !== undefined || summary.cancelled ? (
             <ErrorNotice
+              inline
               icon={TriangleAlert}
               tone="amber"
               description={

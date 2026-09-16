@@ -557,6 +557,7 @@ const ProvidersPanel = ({
         />
         {providerTestError ? (
           <Notice
+            inline
             level="error"
             role="alert"
             className="mt-2"

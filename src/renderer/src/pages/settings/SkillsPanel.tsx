@@ -496,11 +496,11 @@ const SkillsPanel = ({
       </div>
 
       {exportError ? (
-        <ErrorNotice role="alert" tone="amber" className="mb-3" description={exportError} />
+        <ErrorNotice inline role="alert" tone="amber" className="mb-3" description={exportError} />
       ) : null}
 
       {toggleError ? (
-        <ErrorNotice role="alert" tone="amber" className="mb-3" description={toggleError} />
+        <ErrorNotice inline role="alert" tone="amber" className="mb-3" description={toggleError} />
       ) : null}
 
       {catalogState === 'error' && skills.length > 0 ? (
@@ -755,6 +755,7 @@ const SkillsPanel = ({
                           </div>
                           {deleteError?.id === skill.id ? (
                             <ErrorNotice
+                              inline
                               role="alert"
                               tone="amber"
                               className="basis-full"

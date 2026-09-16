@@ -32,6 +32,7 @@ const LanguageSaveError = ({ className }: { className?: string }): React.JSX.Ele
 
   return (
     <Notice
+      inline
       level="error"
       role="alert"
       className={className}

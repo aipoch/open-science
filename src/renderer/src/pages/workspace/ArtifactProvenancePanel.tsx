@@ -2240,17 +2240,14 @@ const ArtifactProvenancePanel = ({
               <>
                 <ExecutionContextDetails value={environment.execution_context} />
                 {captureProblems.length > 0 ? (
-                  <div
-                    role="status"
-                    className="rounded-md border border-status-warning-foreground/20 bg-status-warning-surface/40 px-3 py-2 text-xs text-status-warning-foreground dark:border-status-warning-dark-foreground/20 dark:bg-status-warning-dark-surface/40 dark:text-status-warning-dark-foreground"
-                  >
+                  <InlineNotice role="status" className="text-xs">
                     <p className="font-medium">{t('Partial capture details')}</p>
                     <ul className="mt-1 list-disc space-y-1 pl-4">
                       {captureProblems.map((warning) => (
                         <li key={warning}>{environmentWarningLabel(warning, t)}</li>
                       ))}
                     </ul>
-                  </div>
+                  </InlineNotice>
                 ) : null}
                 <details className="border-b border-border-300/60 pb-3 text-xs">
                   <summary className="w-fit cursor-pointer rounded-sm font-medium text-text-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">

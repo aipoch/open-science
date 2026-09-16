@@ -852,7 +852,7 @@ export function FileBrowserModal({
                 <Notice
                   level="error"
                   role="alert"
-                  className="m-2"
+                  className="m-2 w-auto"
                   title={bookmarksState.summary}
                   description={t('Close the file browser and open it again to retry.')}
                 >
@@ -863,7 +863,7 @@ export function FileBrowserModal({
               {browserState.kind === 'error' && (
                 <ErrorNotice
                   role="alert"
-                  className="m-2"
+                  className="m-2 w-auto"
                   title={t("Couldn't open this path.")}
                   description={browserState.detail}
                 >

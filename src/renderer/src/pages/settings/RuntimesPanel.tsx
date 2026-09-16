@@ -1424,7 +1424,7 @@ const RuntimesPanel = ({
                       <Notice
                         level="error"
                         role="alert"
-                        className="m-3"
+                        className="m-3 w-auto"
                         description={packagesError}
                         primaryButton={{
                           label: t('Retry'),

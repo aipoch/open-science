@@ -1499,6 +1499,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
 
                 {preflightFailed ? (
                   <Notice
+                    inline
                     level="error"
                     role="alert"
                     className="mx-3 mt-3"
@@ -1860,6 +1861,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                         {/* Secret writes fail closed when the OS keychain is unavailable. */}
                         {!encryptionAvailable ? (
                           <ErrorNotice
+                            inline
                             role="alert"
                             tone="amber"
                             className="mb-4"
@@ -1870,6 +1872,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                         ) : null}
                         {providerEditTargetMissing ? (
                           <ErrorNotice
+                            inline
                             role="alert"
                             tone="amber"
                             className="mb-4"

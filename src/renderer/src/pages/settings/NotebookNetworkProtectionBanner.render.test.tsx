@@ -42,8 +42,10 @@ describe('NotebookNetworkProtectionBanner', () => {
       'Notebook allows approved domains and restricted public HTTPS reads. GET and HEAD still send URLs; approved domains allow sending data.'
     )
     expect(
-      container.querySelector('[data-testid="notebook-network-protection-banner"]')?.className
-    ).toContain('bg-card')
+      container
+        .querySelector('[data-testid="notebook-network-protection-banner"]')
+        ?.getAttribute('data-notice-inline')
+    ).toBe('true')
 
     await act(async () => {
       container.querySelector<HTMLButtonElement>('button')?.click()

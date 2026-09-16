@@ -1182,7 +1182,7 @@ const ConversationPanel = ({
                 ) : null}
                 {composerError && composerError !== actionError ? (
                   <div role="alert" className="mb-2">
-                    <ErrorNotice icon={AlertTriangle} tone="red" title={composerError} />
+                    <ErrorNotice inline icon={AlertTriangle} tone="red" title={composerError} />
                   </div>
                 ) : null}
                 {composerError && composerErrorDetail ? (
