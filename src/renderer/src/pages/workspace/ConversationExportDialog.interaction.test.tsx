@@ -7,12 +7,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useSessionStore, type ChatSession } from '@/stores/session-store'
 import { ConversationExportDialog } from './ConversationExportDialog'
-import { materializeSessionConversationGraph } from '../../../../shared/session-persistence'
+import {
+  materializeSessionConversationGraph,
+  SessionRevisionConflictError,
+  type PersistedChatSession
+} from '../../../../shared/session-persistence'
 import {
   createConversationExportDocument,
   hashConversationExportContent
 } from '../../../../shared/conversation-export'
 import {
+  createOrderedSessionPersistence,
+  createStoreSaver,
   saveSessionInOrder,
   resetSessionPersistenceWriteFailuresForTests
 } from '@/lib/session-persistence/session-persistence'
@@ -103,6 +109,89 @@ describe('ConversationExportDialog', () => {
     vi.unstubAllGlobals()
     resetSessionPersistenceWriteFailuresForTests()
   })
+
+  it.each([false, true])(
+    'reconciles a queued CLI save without ending a local follow-up (%s)',
+    async (followUp) => {
+      const initialState = useSessionStore.getState()
+      const running = materializeSessionConversationGraph(
+        createSession({
+          revision: 1,
+          status: 'running',
+          activeRun: { promptMessageId: 'prompt-2', startedAt: 3 }
+        })
+      )
+      let durable: PersistedChatSession = running
+      let release!: () => void
+      const barrier = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const api = {
+        loadAll: vi.fn(),
+        loadOne: async () => durable,
+        saveSession: async (session: PersistedChatSession) => {
+          if (session.revision !== durable.revision) {
+            throw new SessionRevisionConflictError(session.revision ?? 0, durable.revision ?? 0)
+          }
+          durable = { ...session, revision: (durable.revision ?? 0) + 1 }
+          return durable
+        },
+        deleteSession: vi.fn(),
+        saveManifest: async () => barrier
+      }
+      const persistence = createOrderedSessionPersistence(api)
+      try {
+        useSessionStore.getState().hydrateSessions([running])
+        const save = createStoreSaver(api, useSessionStore.getState(), {}, persistence)
+        const blocked = persistence.saveManifest({ lastSessionId: running.id })
+        useSessionStore.getState().setMemoryEnabled(running.id, false)
+        if (followUp) {
+          useSessionStore.getState().finishRun(running.id)
+          useSessionStore.getState().appendUserMessage({
+            sessionId: running.id,
+            content: 'A newer local prompt'
+          })
+        }
+        const queued = save(useSessionStore.getState())
+        durable = materializeSessionConversationGraph(createSession({ revision: 2, updatedAt: 5 }))
+        useSessionStore.getState().upsertPersistedSession(durable)
+        const observed = save(useSessionStore.getState())
+        release()
+        await Promise.all([blocked, queued, observed])
+        expect(useSessionStore.getState().sessions[0].status).toBe(followUp ? 'running' : 'idle')
+        const service = createConversationExportService({
+          loadSession: async () => durable,
+          isSessionActive: () => false,
+          getDownloadsPath: () => '/in-memory',
+          showSaveDialog: async () => ({ canceled: true, filePath: '' })
+        })
+        const exported = service.exportConversation({
+          projectId: durable.projectId,
+          sessionId: durable.id,
+          format: 'markdown',
+          expectedContentHash: await hashConversationExportContent(
+            useSessionStore.getState().sessions[0]!
+          )
+        })
+        if (followUp) {
+          await expect(exported).rejects.toThrow(
+            'Wait for the conversation to finish before exporting it.'
+          )
+          expect(durable.status).toBe('running')
+          expect(durable.messages.at(-1)?.content).toBe('A newer local prompt')
+          expect(durable.activeRun?.promptMessageId).toBe(durable.messages.at(-1)?.id)
+        } else {
+          await expect(exported).resolves.toEqual({ saved: false })
+          expect(durable.status).toBe('idle')
+          expect(durable.activeRun).toBeUndefined()
+        }
+        expect(durable.memoryEnabled).toBe(false)
+      } finally {
+        release()
+        useSessionStore.setState(initialState, true)
+      }
+    }
+  )
 
   it.each(['remote-update', 'save-receipt', 'save-receipt-after-echo'] as const)(
     'exports after a newer durable %s replaces the CLI completion at the same timestamp',

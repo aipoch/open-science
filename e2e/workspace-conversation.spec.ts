@@ -1030,16 +1030,7 @@ test('exports a CLI conversation first opened after completion', async ({ app },
   const dialog = page.getByRole('dialog', { name: 'Export conversation', exact: true })
   await dialog.getByRole('radio', { name: 'Markdown' }).click()
   await dialog.getByTestId('conversation-export-confirm').click()
-  await expect
-    .poll(
-      async () =>
-        !(await dialog.isVisible()) ||
-        (await dialog.textContent())?.includes('The conversation changed.')
-    )
-    .toBeTruthy()
-  if (await dialog.isVisible()) {
-    await dialog.getByRole('button', { name: 'Close', exact: true }).click()
-  }
+  await expect(dialog).toBeHidden()
   // The report retries a freshly reviewed snapshot after two idle minutes.
   await new Promise((resolve) => setTimeout(resolve, 120_000))
   await page.getByRole('button', { name: `Open actions for ${saved!.title}` }).click()
