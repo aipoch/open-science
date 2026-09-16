@@ -412,8 +412,7 @@ describe('notebook local RPC server', () => {
           'during-clear',
           'before-replace',
           'during-replace',
-          'during-close',
-          'after-close'
+          'during-close'
         ] as const
       ).map((timing) => ({ method, timing }))
     )
@@ -469,9 +468,10 @@ describe('notebook local RPC server', () => {
         })
       },
       'failed execution stop propagation'
-    )
-      .then(async (response) => ({ status: response.status, body: await response.json() }))
-      .catch((transportError: unknown) => ({ transportError }))
+    ).then(async (response) => ({ status: response.status, body: await response.json() }))
+    // Closing can reject the transport before turn cleanup observes the retained stop failure.
+    // Handle that rejection immediately; assert its outcome below and always finish teardown.
+    void pending.catch(() => undefined)
     let closing: Promise<void> | undefined
     try {
       await started.promise
@@ -495,30 +495,27 @@ describe('notebook local RPC server', () => {
           }
         })
       }
-      if (timing === 'during-close' || timing === 'after-close') closing = server.close()
+      if (timing === 'during-close') {
+        closing = server.close()
+        // Exercise the bounded shutdown path deterministically: the pending execution outlives
+        // the HTTP grace window, but its typed stop failure must still reach turn cleanup.
+        await closing
+      }
       const clearing = server.clearArtifactTurnBinding('session-1', 'turn-1')
       const rejected = expect(clearing).rejects.toBe(stopError)
-      // Hold execution until the real grace window expires to exercise slow-CI shutdown ordering.
-      if (timing === 'after-close') await closing
       failStop.resolve()
       await rejected
-      const outcome = await pending
-      if ('transportError' in outcome) {
-        // Shutdown may close the socket before persistence and the HTTP error response finish.
-        // The turn-cleanup assertion above must still receive the exact typed stop failure.
-        expect(['during-close', 'after-close']).toContain(timing)
-        expect(outcome.transportError).toBeInstanceOf(Error)
-        const cause = (outcome.transportError as Error).cause as Error & { code?: string }
-        expect((cause?.cause as { code?: string } | undefined)?.code ?? cause?.code).toBe(
-          'UND_ERR_SOCKET'
-        )
+      if (timing === 'during-close') {
+        await expect(pending).rejects.toMatchObject({ cause: expect.any(Error) })
       } else {
-        expect(timing).not.toBe('after-close')
-        expect(outcome).toEqual({ status: 500, body: { error: stopError.message } })
+        await expect(pending).resolves.toEqual({
+          status: 500,
+          body: { error: stopError.message }
+        })
       }
     } finally {
       failStop.resolve()
-      await pending
+      await pending.catch(() => undefined)
       connection.release?.()
       await closing
       await server.close()

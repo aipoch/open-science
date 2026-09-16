@@ -6351,6 +6351,12 @@
     "{{count}} unchanged lines omitted_few": "Пропущены {{count}} неизменённые строки",
     "{{count}} unchanged lines omitted_many": "Пропущено {{count}} неизменённых строк",
     "{{count}} unchanged lines omitted_other": "Пропущено {{count}} неизменённой строки",
-    "No newline at end of file": "Нет перевода строки в конце файла"
+    "No newline at end of file": "Нет перевода строки в конце файла",
+    "Read web pages": "Чтение веб-страниц",
+    "Allow web reading?": "Разрешить чтение веб-страниц?",
+    "Conversation approval allows web reading across websites for this conversation and its subagents.": "Разрешение для этого диалога позволяет читать страницы разных сайтов в этом диалоге и его субагентах.",
+    "This conversation": "Этот диалог",
+    "Remembered for this conversation": "Запомнить для этого диалога",
+    "This conversation or this call": "Этот диалог или этот вызов"
   }
 }

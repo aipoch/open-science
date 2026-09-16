@@ -5878,6 +5878,12 @@
     "If you have already set up a personal package folder in this R, select that folder here.": "如果您已在此 R 中设置了个人软件包文件夹，可在这里选择该文件夹。",
     "No personal package folder was found for this R. Use an app-managed R environment, or set up a personal package folder in this R and click Recheck.": "未找到此 R 的个人软件包文件夹。可以使用应用托管的 R 环境；如需继续使用此 R，请先在 R 中设置个人软件包文件夹，再点击“重新检测”。",
     "{{count}} unchanged lines omitted_other": "已省略 {{count}} 行未修改内容",
-    "No newline at end of file": "文件末尾没有换行"
+    "No newline at end of file": "文件末尾没有换行",
+    "Read web pages": "读取网页",
+    "Allow web reading?": "允许读取网页？",
+    "Conversation approval allows web reading across websites for this conversation and its subagents.": "会话授权允许本会话及其子智能体读取不同网站的网页。",
+    "This conversation": "此对话",
+    "Remembered for this conversation": "在此对话中记住授权",
+    "This conversation or this call": "此对话或仅此调用"
   }
 }

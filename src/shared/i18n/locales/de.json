@@ -6040,6 +6040,12 @@
     "No personal package folder was found for this R. Use an app-managed R environment, or set up a personal package folder in this R and click Recheck.": "Für dieses R wurde kein persönlicher Paketordner gefunden. Verwenden Sie eine von der App verwaltete R-Umgebung oder richten Sie in diesem R einen persönlichen Paketordner ein und klicken Sie auf „Erneut prüfen“.",
     "{{count}} unchanged lines omitted_one": "{{count}} unveränderte Zeile ausgelassen",
     "{{count}} unchanged lines omitted_other": "{{count}} unveränderte Zeilen ausgelassen",
-    "No newline at end of file": "Kein Zeilenumbruch am Dateiende"
+    "No newline at end of file": "Kein Zeilenumbruch am Dateiende",
+    "Read web pages": "Webseiten lesen",
+    "Allow web reading?": "Lesen von Webseiten erlauben?",
+    "Conversation approval allows web reading across websites for this conversation and its subagents.": "Die Freigabe für diese Konversation erlaubt das Lesen von Webseiten auf verschiedenen Websites für diese Konversation und ihre Unteragenten.",
+    "This conversation": "Diese Konversation",
+    "Remembered for this conversation": "Für diese Konversation gespeichert",
+    "This conversation or this call": "Diese Konversation oder dieser Aufruf"
   }
 }

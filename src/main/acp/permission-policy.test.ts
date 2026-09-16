@@ -2,6 +2,8 @@ import type { RequestPermissionRequest, ToolKind } from '@agentclientprotocol/sd
 import { describe, expect, it } from 'vitest'
 
 import {
+  isNativeWebFetchPermission,
+  withTrustedNativeToolIdentity,
   canConservativelyAutoApprove,
   isMcpToolName,
   isWithinWorkspace,
@@ -37,6 +39,74 @@ const createPermissionRequest = (
 })
 
 describe('permission policy', () => {
+  it('recognizes only the supported native web-reading contracts', () => {
+    const raw = createPermissionRequest('fetch', undefined, {
+      rawInput: { url: 'https://example.org/' }
+    })
+    expect(isNativeWebFetchPermission(raw, { profile: 'ask', frameworkId: 'opencode' })).toBe(false)
+    const request = withTrustedNativeToolIdentity(raw, 'opencode/webfetch')
+    expect(isNativeWebFetchPermission(request, { profile: 'auto', frameworkId: 'opencode' })).toBe(
+      true
+    )
+    const claude = {
+      ...request,
+      toolCall: { ...request.toolCall, _meta: { claudeCode: { toolName: 'WebFetch' } } }
+    }
+    expect(
+      isNativeWebFetchPermission(withTrustedNativeToolIdentity(claude, 'claude-code/webfetch'), {
+        profile: 'ask',
+        frameworkId: 'claude-code'
+      })
+    ).toBe(true)
+    // Both Codex execution paths share this framework id; generic fetch is not their native identity.
+    for (const frameworkId of ['codex', 'claude-code', 'codebuddy'] as const) {
+      expect(isNativeWebFetchPermission(request, { profile: 'auto', frameworkId })).toBe(false)
+    }
+    for (const toolName of ['websearch', 'Bash', 'custom_fetch', 'mcp__external__webfetch']) {
+      expect(
+        isNativeWebFetchPermission(
+          { ...request, toolCall: { ...request.toolCall, _meta: { toolName } } },
+          { profile: 'auto', frameworkId: 'opencode' }
+        )
+      ).toBe(false)
+    }
+    expect(
+      isNativeWebFetchPermission(withTrustedMcpToolIdentity(request, 'external/webfetch'), {
+        profile: 'auto',
+        frameworkId: 'opencode'
+      })
+    ).toBe(false)
+    expect(
+      isNativeWebFetchPermission(
+        { ...request, toolCall: { ...request.toolCall, kind: 'other' } },
+        { profile: 'auto', frameworkId: 'opencode' }
+      )
+    ).toBe(false)
+    for (const url of ['invalid', 'file:///private', 'https://user:password@example.org/']) {
+      expect(
+        isNativeWebFetchPermission(
+          { ...request, toolCall: { ...request.toolCall, rawInput: { url } } },
+          { profile: 'auto', frameworkId: 'opencode' }
+        )
+      ).toBe(false)
+    }
+    expect(
+      isNativeWebFetchPermission(
+        {
+          ...request,
+          toolCall: { ...request.toolCall, title: 'https://example.org/', rawInput: undefined }
+        },
+        { profile: 'auto', frameworkId: 'opencode' }
+      )
+    ).toBe(false)
+    expect(
+      resolveAutomaticPermission(request, {
+        profile: 'auto',
+        frameworkId: 'opencode',
+        autoReviewStrategy: 'conservative'
+      })
+    ).toBeUndefined()
+  })
   it('approves only the runtime-verified Codex Skill loader without a redundant permission prompt', () => {
     const request = createPermissionRequest('other', undefined, {
       title: 'mcp__skills__load_skill'

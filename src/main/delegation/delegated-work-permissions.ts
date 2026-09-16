@@ -39,6 +39,9 @@ class RootDelegatePermissionOwner {
       attemptId,
       childTitle,
       action: event.title,
+      providerToolName: event.providerToolName,
+      isMcp: event.isMcp,
+      toolKind: event.toolKind,
       riskScope: this.riskScope(event.options),
       options: event.options.map(({ optionId, name, kind, scope }) => ({
         optionId,

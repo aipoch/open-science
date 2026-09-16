@@ -6210,6 +6210,12 @@
     "{{count}} unchanged lines omitted_one": "{{count}} línea sin cambios omitida",
     "{{count}} unchanged lines omitted_many": "{{count}} líneas sin cambios omitidas",
     "{{count}} unchanged lines omitted_other": "{{count}} líneas sin cambios omitidas",
-    "No newline at end of file": "Sin salto de línea al final del archivo"
+    "No newline at end of file": "Sin salto de línea al final del archivo",
+    "Read web pages": "Leer páginas web",
+    "Allow web reading?": "¿Permitir la lectura de páginas web?",
+    "Conversation approval allows web reading across websites for this conversation and its subagents.": "La autorización para esta conversación permite leer páginas de distintos sitios web en esta conversación y en sus subagentes.",
+    "This conversation": "Esta conversación",
+    "Remembered for this conversation": "Se recuerda para esta conversación",
+    "This conversation or this call": "Esta conversación o esta llamada"
   }
 }

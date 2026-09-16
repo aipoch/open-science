@@ -5876,6 +5876,12 @@
     "If you have already set up a personal package folder in this R, select that folder here.": "이 R에서 개인 패키지 폴더를 이미 설정했다면 여기에서 해당 폴더를 선택하세요.",
     "No personal package folder was found for this R. Use an app-managed R environment, or set up a personal package folder in this R and click Recheck.": "이 R의 개인 패키지 폴더를 찾지 못했습니다. 앱에서 관리하는 R 환경을 사용하거나 이 R에서 개인 패키지 폴더를 설정한 다음 재확인을 클릭하세요.",
     "{{count}} unchanged lines omitted_other": "변경되지 않은 {{count}}개 줄 생략",
-    "No newline at end of file": "파일 끝에 줄 바꿈이 없습니다"
+    "No newline at end of file": "파일 끝에 줄 바꿈이 없습니다",
+    "Read web pages": "웹페이지 읽기",
+    "Allow web reading?": "웹페이지 읽기를 허용하시겠습니까?",
+    "Conversation approval allows web reading across websites for this conversation and its subagents.": "이 대화에 대한 승인은 이 대화와 하위 서브에이전트가 여러 웹사이트의 페이지를 읽을 수 있도록 허용합니다.",
+    "This conversation": "이 대화",
+    "Remembered for this conversation": "이 대화에서 승인 기억",
+    "This conversation or this call": "이 대화 또는 이번 호출"
   }
 }

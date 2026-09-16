@@ -27,6 +27,7 @@ import {
   pkgsCache,
   pythonBin,
   rBin,
+  rScriptBin,
   rLibraryDir,
   readRReadyMarker,
   readReadyMarker,
@@ -106,6 +107,7 @@ const makeDeps = (root: string, overrides: Partial<ProvisionerDeps> = {}): Provi
       const bin = isPython ? pythonBin(prefix, platform) : rBin(prefix, platform)
       mkdirSync(join(bin, '..'), { recursive: true })
       writeFileSync(bin, 'x')
+      if (!isPython && platform === 'win32') writeFileSync(rScriptBin(prefix, platform), 'x')
       created.push(argv[1])
     },
     maintainCache: async () => undefined,
@@ -1080,6 +1082,32 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
 })
 
 describe('DefaultRuntimeProvisioner Windows default-prefix compatibility', () => {
+  it('preserves packages in a valid legacy x64-only R prefix during provisioning', async () => {
+    const root = makeRoot()
+    const legacy = legacyDefaultEnvPrefix(root, DEFAULT_R_ENV)
+    const executable = join(legacy, 'Lib', 'R', 'bin', 'x64', 'R.exe')
+    const userPackage = join(legacy, 'Lib', 'R', 'library', 'user-package', 'DESCRIPTION')
+    mkdirSync(dirname(executable), { recursive: true })
+    writeFileSync(executable, 'fixture')
+    writeFileSync(join(dirname(executable), 'Rscript.exe'), 'fixture')
+    mkdirSync(dirname(userPackage), { recursive: true })
+    writeFileSync(userPackage, 'Package: user-package\nVersion: 1.0\n')
+    mkdirSync(join(root, 'envs', '.r'), { recursive: true })
+    writeRReadyMarker(root, DEFAULT_ENV_VERSION, 'legacy-ready')
+    try {
+      await new DefaultRuntimeProvisioner(makeDeps(root, { platform: 'win32' })).provisionR(
+        () => {}
+      )
+
+      expect(existsSync(userPackage)).toBe(true)
+      expect(readFileSync(userPackage, 'utf8')).toContain('Package: user-package')
+      expect(envPrefix(root, DEFAULT_R_ENV, 'win32')).toBe(legacy)
+      expect(readRReadyMarker(root)?.prefixDirectory).toBe(DEFAULT_R_ENV)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it('keeps a committed legacy default beside a partial short prefix', async () => {
     const originalPlatform = process.platform
     Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
@@ -1118,6 +1146,7 @@ describe('DefaultRuntimeProvisioner Windows default-prefix compatibility', () =>
       const legacy = legacyDefaultEnvPrefix(root, DEFAULT_R_ENV)
       mkdirSync(dirname(rBin(legacy)), { recursive: true })
       writeFileSync(rBin(legacy), 'legacy')
+      writeFileSync(rScriptBin(legacy), 'legacy')
       const short = join(root, 'envs', '.r')
       mkdirSync(short, { recursive: true })
       writeRReadyMarker(root, DEFAULT_ENV_VERSION, 'legacy-ready')

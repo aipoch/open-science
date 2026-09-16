@@ -379,6 +379,61 @@ afterEach(async () => {
   }
 })
 
+it('executes an x64-only managed R through the public kernel boundary', async () => {
+  cwdDir = await mkdtemp(join(tmpdir(), 'os-managed-r-x64-'))
+  const request = baseRequest(cwdDir)
+  const bin = join(envPrefix(request.runtimeRoot, DEFAULT_R_ENV, 'win32'), 'Lib', 'R', 'bin', 'x64')
+  await mkdir(bin, { recursive: true })
+  await writeFile(join(bin, 'R.exe'), 'fixture')
+  await writeFile(join(bin, 'Rscript.exe'), 'fixture')
+  const wrap = vi.fn<NotebookProcessSandbox['wrap']>(async (invocation) => {
+    // The existing OS adapter boundary substitutes a portable protocol child only after validating
+    // the real selected executable. No interpreter override bypasses managed readiness or selection.
+    await stat(invocation.executable)
+    expect(invocation.executable).toBe(join(bin, 'Rscript.exe'))
+    return {
+      executable: process.execPath,
+      args: [
+        '-e',
+        `
+        let input = Buffer.alloc(0)
+        process.stdin.on('data', chunk => {
+          input = Buffer.concat([input, chunk])
+          const newline = input.indexOf(10)
+          if (newline < 0) return
+          const [req_id, size] = input.subarray(0, newline).toString().split(' ')
+          if (input.length < newline + 1 + Number(size)) return
+          input = input.subarray(newline + 1 + Number(size))
+          console.log(JSON.stringify({ req_id, stdout: '2', stderr: '', error: null, figures: [] }))
+        })
+      `
+      ],
+      env: invocation.env,
+      annotateStderr: (stderr) => stderr,
+      cleanup: async (_reason, outcome) => ({
+        processesTerminated: outcome.processesTerminated,
+        networkClosed: true,
+        temporaryResourcesRemoved: true
+      })
+    }
+  })
+  const executor = new NotebookKernelExecutor({ platform: 'win32', processSandbox: { wrap } })
+  try {
+    const result = await executor.execute({
+      ...request,
+      language: 'r',
+      code: '1 + 1',
+      sessionId: 'x64-test',
+      projectId: 'x64-test'
+    })
+    expect(result.status, result.stderr || result.traceback).toBe('completed')
+    expect(result.stdout).toBe('2')
+    expect(wrap).toHaveBeenCalledOnce()
+  } finally {
+    await executor.shutdown()
+  }
+})
+
 describe.skipIf(process.platform === 'win32')('managed R kernel isolation', () => {
   it('ignores user startup files and uses only the managed environment library', async () => {
     cwdDir = await mkdtemp(join(tmpdir(), 'os-managed-r-kernel-home-'))

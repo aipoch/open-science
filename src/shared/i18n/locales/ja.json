@@ -5878,6 +5878,12 @@
     "If you have already set up a personal package folder in this R, select that folder here.": "この R で個人用パッケージフォルダーを設定済みの場合は、そのフォルダーをここで選択してください。",
     "No personal package folder was found for this R. Use an app-managed R environment, or set up a personal package folder in this R and click Recheck.": "この R の個人用パッケージフォルダーが見つかりませんでした。アプリ管理の R 環境を使うか、この R で個人用パッケージフォルダーを設定してから「再確認」をクリックしてください。",
     "{{count}} unchanged lines omitted_other": "変更のない {{count}} 行を省略",
-    "No newline at end of file": "ファイル末尾に改行がありません"
+    "No newline at end of file": "ファイル末尾に改行がありません",
+    "Read web pages": "ウェブページの読み取り",
+    "Allow web reading?": "ウェブページの読み取りを許可しますか？",
+    "Conversation approval allows web reading across websites for this conversation and its subagents.": "この会話への許可により、この会話とそのサブエージェントは複数のウェブサイトのページを読み取れます。",
+    "This conversation": "この会話",
+    "Remembered for this conversation": "この会話で許可を記憶",
+    "This conversation or this call": "この会話または今回の呼び出し"
   }
 }

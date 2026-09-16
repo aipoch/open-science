@@ -48,12 +48,12 @@ import type { GrantedLocalRoot } from '../../shared/local-fs'
 import { kernelExecutableReadRoot } from './kernel-executor'
 import { windowsCondaPrefixForR } from './environment-discovery'
 import { rKernelProtocolProbe } from './r-command'
+import { runtimeChildProcessErrorFields } from './runtime-diagnostics'
 import {
   condaActivatedPath,
   DEFAULT_R_ENV,
   envPrefix,
-  legacyDefaultEnvPrefix,
-  rScriptBin
+  legacyDefaultEnvPrefix
 } from './runtime-paths'
 
 export type NotebookNetworkDecision = 'deny' | 'allowOnce' | 'alwaysAllow' | 'unavailable'
@@ -737,9 +737,17 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     if (request.signal?.aborted)
       throw new NotebookRuntimeAccessCancelledError('R access preparation was cancelled.')
     const key = request.sessionId + '\0' + request.executable.toLowerCase()
+    const operationId = randomUUID()
+    const diagnostic = startDiagnosticOperation(this.log, {
+      operation: 'r-runtime-access',
+      operationId,
+      fields: { source: 'notebook', runtime: 'r', sessionId: request.sessionId }
+    })
+    diagnostic.phase('queued')
     let started = false
     const operation = this.runtimeAccessQueue.then(async () => {
       started = true
+      diagnostic.phase('access-status')
       if (request.signal?.aborted)
         throw new NotebookRuntimeAccessCancelledError('R access preparation was cancelled.')
       const access = await this.getOrCreateSandbox().getWindowsRuntimeAccess(request.executable)
@@ -754,14 +762,16 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         throw new Error(
           'Open Science is moving your data. Wait for the move to finish before running this.'
         )
+      diagnostic.phase('data-root-write-wait')
       const result = await withDataRootWrite(async () => {
+        diagnostic.phase('preflight')
         if (request.signal?.aborted)
           throw new NotebookRuntimeAccessCancelledError('R access preparation was cancelled.')
         if ((await this.status()).kind !== 'ready')
           throw new Error('Enable protected mode before authorizing R access.')
         if (request.signal?.aborted)
           throw new NotebookRuntimeAccessCancelledError('R access preparation was cancelled.')
-        if (await this.verifyWindowsRuntimeAccess(request.executable, true))
+        if (await this.verifyWindowsRuntimeAccess(request.executable, true, undefined, operationId))
           return { cancelled: false }
         if (request.signal?.aborted)
           throw new NotebookRuntimeAccessCancelledError('R access preparation was cancelled.')
@@ -769,7 +779,8 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           throw new Error(
             'R access requires administrator authorization on the local Open Science desktop.'
           )
-        return this.applyWindowsRuntimeAccess(request.executable, true, request.signal)
+        diagnostic.phase('authorize')
+        return this.applyWindowsRuntimeAccess(request.executable, true, request.signal, operationId)
       })
       if (result.cancelled) this.cancelledRuntimeAccess.add(key)
       if (result.cancelled) throw new NotebookRuntimeAccessCancelledError()
@@ -777,17 +788,27 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         throw new NotebookRuntimeAccessCancelledError('R access preparation was cancelled.')
     })
     this.runtimeAccessQueue = operation.catch(() => undefined)
+    const trackedOperation = operation.then(
+      () => diagnostic.complete(),
+      (error) => {
+        if (error instanceof NotebookRuntimeAccessCancelledError) diagnostic.cancel()
+        else diagnostic.fail(error)
+        throw error
+      }
+    )
     const signal = request.signal
-    if (!signal) return operation
+    if (!signal) return trackedOperation
     // A waiting session can stop immediately. Once elevation starts, keep the native owner and
     // writer lease until its journal is settled; cancellation must not abandon persistent grants.
     return new Promise<void>((resolve, reject) => {
       const onAbort = (): void => {
-        if (!started)
+        if (!started) {
+          diagnostic.cancel()
           reject(new NotebookRuntimeAccessCancelledError('R access preparation was cancelled.'))
+        }
       }
       signal.addEventListener('abort', onAbort, { once: true })
-      void operation
+      void trackedOperation
         .then(resolve, reject)
         .finally(() => signal.removeEventListener('abort', onAbort))
     })
@@ -797,8 +818,21 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     executable: string,
     authorized: boolean
   ): Promise<{ cancelled: boolean }> {
+    const operationId = randomUUID()
+    const diagnostic = startDiagnosticOperation(this.log, {
+      operation: 'r-runtime-access',
+      operationId,
+      fields: { source: 'settings', runtime: 'r', authorized }
+    })
+    diagnostic.phase('queued')
     const operation = this.runtimeAccessQueue.then(async () => {
-      const result = await this.applyWindowsRuntimeAccess(executable, authorized)
+      diagnostic.phase(authorized ? 'authorize' : 'revoke')
+      const result = await this.applyWindowsRuntimeAccess(
+        executable,
+        authorized,
+        undefined,
+        operationId
+      )
       if (!result.cancelled) {
         for (const key of this.cancelledRuntimeAccess) {
           if (key.endsWith('\0' + executable.toLowerCase())) this.cancelledRuntimeAccess.delete(key)
@@ -810,17 +844,28 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       () => undefined,
       () => undefined
     )
-    return operation
+    return operation.then(
+      (result) => {
+        if (result.cancelled) diagnostic.cancel()
+        else diagnostic.complete()
+        return result
+      },
+      (error) => {
+        diagnostic.fail(error)
+        throw error
+      }
+    )
   }
 
   private async applyWindowsRuntimeAccess(
     executable: string,
     authorized: boolean,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    parentOperationId?: string
   ): Promise<{ cancelled: boolean }> {
     if (!authorized) return this.getOrCreateSandbox().setWindowsRuntimeAccess(executable, false)
     try {
-      await this.verifyWindowsRuntimeAccess(executable, false, { signal })
+      await this.verifyWindowsRuntimeAccess(executable, false, { signal }, parentOperationId)
       return { cancelled: false }
     } catch (error) {
       if (error instanceof NotebookRuntimeAccessCancelledError) return { cancelled: true }
@@ -831,125 +876,184 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
   private async verifyWindowsRuntimeAccess(
     executable: string,
     pathsOnly = false,
-    authorization?: { signal?: AbortSignal }
+    authorization?: { signal?: AbortSignal },
+    parentOperationId?: string
   ): Promise<boolean> {
-    if ((await this.status()).kind !== 'ready')
-      throw new Error('Enable protected mode before verifying R access.')
-    const prefix = windowsCondaPrefixForR(executable, this.platform)
-    const env = {
-      ...normalizeRProcessLocale(buildNotebookKernelEnvironment(this.platform), this.platform),
-      ...(prefix ? { PATH: condaActivatedPath(prefix, process.env.PATH, this.platform) } : {})
+    const operationId = randomUUID()
+    const fields = {
+      operationId,
+      parentOperationId,
+      pathsOnly,
+      authorizationRequested: Boolean(authorization)
     }
-    const cwd = await mkdtemp(join(tmpdir(), 'open-science-r-access-'))
-    let invocation: NotebookSandboxedSpawn | undefined
-    let endExecution: (() => void) | undefined
-    let probeMayHaveStarted = false
-    let verificationError: unknown
-    let verified = false
-    try {
-      invocation = await this.wrap({
-        executable,
-        args: [
-          '--vanilla',
-          '-e',
-          pathsOnly
-            ? 'paths <- c(.Library, file.path(.Library, "compiler")); failed <- vapply(paths, function(p) inherits(try(normalizePath(p, mustWork=TRUE), silent=TRUE), "try-error"), logical(1)); if (any(failed)) { cat(paste(paths[failed], collapse="\\n")); quit(status=77) }; cat("OPEN_SCIENCE_R_ACCESS_OK")'
-            : 'stopifnot(requireNamespace("jsonlite", quietly=TRUE)); normalizePath(.libPaths(), mustWork=TRUE); cat("OPEN_SCIENCE_R_ACCESS_OK")'
-        ],
-        cwd,
-        // Only the contained path probe suppresses startup packages. Host readiness and full
-        // post-authorization verification must exercise ordinary R startup and dependencies.
-        env: {
-          ...env,
-          ...(pathsOnly ? { R_DEFAULT_PACKAGES: 'NULL', R_ENABLE_JIT: '0' } : {})
-        },
-        commandText: 'Verify selected R runtime',
-        runtime: 'r',
-        sessionId: 'runtime-access-check',
-        projectId: 'runtime-access-check',
-        filesystem: {
-          readOnlyRoots: [kernelExecutableReadRoot(executable, 'r', this.platform)],
-          readWriteRoots: [cwd],
-          deniedReadRoots: [],
-          deniedWriteRoots: []
-        }
-      })
-      endExecution = invocation.beginExecution?.()
-      if (authorization) {
-        probeMayHaveStarted = true
-        const result = await this.getOrCreateSandbox().setWindowsRuntimeAccess(executable, true, {
-          argv: [invocation.executable, ...invocation.args],
-          env: invocation.env,
-          ...(authorization.signal ? { signal: authorization.signal } : {})
-        })
-        if (result.cancelled) {
-          // The adapter reports cancellation only before the contained probe starts. Once the
-          // elevated transaction starts, a failed/aborted verifier is an error requiring cleanup.
-          probeMayHaveStarted = false
-          throw new NotebookRuntimeAccessCancelledError()
-        }
-      } else {
-        probeMayHaveStarted = true
-        const { stdout } = await promisify(execFile)(invocation.executable, [...invocation.args], {
-          cwd,
-          env: invocation.env,
-          // This bounds the native host, including ACL preparation and rollback, rather
-          // than only R execution. Live kernels can make directory propagation exceed 20s.
-          timeout: 60_000,
-          windowsHide: true,
-          maxBuffer: 1024 * 1024
-        })
-        if (!stdout.includes('OPEN_SCIENCE_R_ACCESS_OK'))
-          throw new Error('R runtime verification did not complete.')
+    const diagnostic = startDiagnosticOperation(this.log, {
+      operation: 'r-runtime-verification',
+      operationId,
+      fields
+    })
+    let phase = 'protection-status'
+    const logFailure = (message: string, error: unknown): void => {
+      try {
+        this.log.warn(message, { ...fields, phase, ...runtimeChildProcessErrorFields(error) })
+      } catch {
+        // Diagnostics must not replace the probe error or prevent process and ACL cleanup.
       }
-      verified = true
-    } catch (error) {
-      verificationError = error
-      const failure = error as { code?: number; stdout?: string }
-      if (pathsOnly && failure.code === 77 && failure.stdout?.trim()) {
-        const paths = failure.stdout.trim().split(/\r?\n/)
-        if (paths.length <= 2) {
-          try {
-            // Host readability and protocol readiness distinguish denied access from a broken R.
-            await Promise.all(paths.map((path) => realpath(path)))
-            const runnable = await rKernelProtocolProbe({
-              exec: (args) =>
-                promisify(execFile)(executable, ['--vanilla', ...args], {
-                  cwd,
-                  env,
-                  timeout: 20_000,
-                  windowsHide: true,
-                  maxBuffer: 1024 * 1024
-                })
-            })
-            if (!runnable) throw new Error('The R kernel protocol dependencies failed to load.')
-            verificationError = undefined
-          } catch (hostError) {
-            verificationError = hostError
+    }
+    try {
+      diagnostic.phase(phase)
+      const status = await this.status()
+      if (status.kind !== 'ready')
+        throw new Error('Enable protected mode before verifying R access.')
+      const prefix = windowsCondaPrefixForR(executable, this.platform)
+      const env = {
+        ...normalizeRProcessLocale(buildNotebookKernelEnvironment(this.platform), this.platform),
+        ...(prefix ? { PATH: condaActivatedPath(prefix, process.env.PATH, this.platform) } : {})
+      }
+      const cwd = await mkdtemp(join(tmpdir(), 'open-science-r-access-'))
+      let invocation: NotebookSandboxedSpawn | undefined
+      let endExecution: (() => void) | undefined
+      let probeMayHaveStarted = false
+      let verificationError: unknown
+      let verificationFailurePhase: string | undefined
+      let verified = false
+      try {
+        phase = 'sandbox-prepare'
+        diagnostic.phase(phase, { condaPrefixDetected: Boolean(prefix) })
+        invocation = await this.wrap({
+          executable,
+          args: [
+            '--vanilla',
+            '-e',
+            pathsOnly
+              ? 'paths <- c(.Library, file.path(.Library, "compiler")); failed <- vapply(paths, function(p) inherits(try(normalizePath(p, mustWork=TRUE), silent=TRUE), "try-error"), logical(1)); if (any(failed)) { cat(paste(paths[failed], collapse="\\n")); quit(status=77) }; cat("OPEN_SCIENCE_R_ACCESS_OK")'
+              : 'stopifnot(requireNamespace("jsonlite", quietly=TRUE)); normalizePath(.libPaths(), mustWork=TRUE); cat("OPEN_SCIENCE_R_ACCESS_OK")'
+          ],
+          cwd,
+          // Only the contained path probe suppresses startup packages. Host readiness and full
+          // post-authorization verification must exercise ordinary R startup and dependencies.
+          env: {
+            ...env,
+            ...(pathsOnly ? { R_DEFAULT_PACKAGES: 'NULL', R_ENABLE_JIT: '0' } : {})
+          },
+          commandText: 'Verify selected R runtime',
+          runtime: 'r',
+          sessionId: 'runtime-access-check',
+          projectId: 'runtime-access-check',
+          filesystem: {
+            readOnlyRoots: [kernelExecutableReadRoot(executable, 'r', this.platform)],
+            readWriteRoots: [cwd],
+            deniedReadRoots: [],
+            deniedWriteRoots: []
+          }
+        })
+        endExecution = invocation.beginExecution?.()
+        phase = authorization ? 'authorize' : 'path-probe'
+        diagnostic.phase(phase)
+        if (authorization) {
+          probeMayHaveStarted = true
+          const result = await this.getOrCreateSandbox().setWindowsRuntimeAccess(executable, true, {
+            argv: [invocation.executable, ...invocation.args],
+            env: invocation.env,
+            ...(authorization.signal ? { signal: authorization.signal } : {})
+          })
+          if (result.cancelled) {
+            // The adapter reports cancellation only before the contained probe starts. Once the
+            // elevated transaction starts, a failed/aborted verifier is an error requiring cleanup.
+            probeMayHaveStarted = false
+            throw new NotebookRuntimeAccessCancelledError()
+          }
+        } else {
+          probeMayHaveStarted = true
+          const { stdout } = await promisify(execFile)(
+            invocation.executable,
+            [...invocation.args],
+            {
+              cwd,
+              env: invocation.env,
+              // This bounds the native host, including ACL preparation and rollback, rather
+              // than only R execution. Live kernels can make directory propagation exceed 20s.
+              timeout: 60_000,
+              windowsHide: true,
+              maxBuffer: 1024 * 1024
+            }
+          )
+          if (!stdout.includes('OPEN_SCIENCE_R_ACCESS_OK'))
+            throw new Error('R runtime verification did not complete.')
+        }
+        verified = true
+      } catch (error) {
+        logFailure('R runtime verification probe failed', error)
+        verificationError = error
+        verificationFailurePhase = phase
+        const failure = error as { code?: number; stdout?: string }
+        if (pathsOnly && failure.code === 77 && failure.stdout?.trim()) {
+          const paths = failure.stdout.trim().split(/\r?\n/)
+          if (paths.length <= 2) {
+            try {
+              phase = 'host-probe'
+              diagnostic.phase(phase)
+              // Host readability and protocol readiness distinguish denied access from a broken R.
+              await Promise.all(paths.map((path) => realpath(path)))
+              const runnable = await rKernelProtocolProbe({
+                exec: (args) =>
+                  promisify(execFile)(executable, ['--vanilla', ...args], {
+                    cwd,
+                    env,
+                    timeout: 20_000,
+                    windowsHide: true,
+                    maxBuffer: 1024 * 1024
+                  }).catch((error) => {
+                    // The protocol probe intentionally converts execution errors to false.
+                    logFailure('R runtime verification host process failed', error)
+                    throw error
+                  })
+              })
+              if (!runnable) throw new Error('The R kernel protocol dependencies failed to load.')
+              verificationError = undefined
+              verificationFailurePhase = undefined
+            } catch (hostError) {
+              logFailure('R runtime verification host probe failed', hostError)
+              verificationError = hostError
+              verificationFailurePhase = phase
+            }
           }
         }
+      } finally {
+        endExecution?.()
       }
-    } finally {
-      endExecution?.()
-    }
-    const confirmTermination = invocation?.confirmProcessTreeTermination
-    const processesTerminated =
-      !probeMayHaveStarted || (await confirmTermination?.().catch(() => false)) === true
-    const cleanup = await invocation?.cleanup('exit', {
-      processesTerminated,
-      ...(confirmTermination ? { confirmTermination } : {})
-    })
-    if (cleanup && !cleanupComplete(cleanup)) {
-      throw new Error('R runtime verification cleanup could not be confirmed.', {
-        cause: verificationError
+      phase = 'process-termination'
+      diagnostic.phase(phase)
+      const confirmTermination = invocation?.confirmProcessTreeTermination
+      const processesTerminated =
+        !probeMayHaveStarted || (await confirmTermination?.().catch(() => false)) === true
+      phase = 'sandbox-cleanup'
+      diagnostic.phase(phase, { processesTerminated })
+      const cleanup = await invocation?.cleanup('exit', {
+        processesTerminated,
+        ...(confirmTermination ? { confirmTermination } : {})
       })
+      if (cleanup && !cleanupComplete(cleanup)) {
+        throw new Error('R runtime verification cleanup could not be confirmed.', {
+          cause: verificationError
+        })
+      }
+      // Windows can retain directory handles briefly after the probe's process tree has exited.
+      // Retry only after termination and sandbox cleanup are confirmed; persistent locks still fail.
+      // Node's fs.rm retries omit EACCES, which hosted Windows runners can surface for a live cwd.
+      phase = 'temporary-directory-cleanup'
+      diagnostic.phase(phase)
+      await removeDirectoryAfterWindowsProbeLock(cwd)
+      if (verificationError !== undefined) {
+        phase = verificationFailurePhase ?? phase
+        throw verificationError
+      }
+      diagnostic.complete({ verified })
+      return verified
+    } catch (error) {
+      if (error instanceof NotebookRuntimeAccessCancelledError) diagnostic.cancel()
+      else diagnostic.fail(error, { failurePhase: phase })
+      throw error
     }
-    // Windows can retain directory handles briefly after the probe's process tree has exited.
-    // Retry only after termination and sandbox cleanup are confirmed; persistent locks still fail.
-    // Node's fs.rm retries omit EACCES, which hosted Windows runners can surface for a live cwd.
-    await removeDirectoryAfterWindowsProbeLock(cwd)
-    if (verificationError !== undefined) throw verificationError
-    return verified
   }
 
   // The caller has stopped the affected kernels and holds repair/migration admission. Revoke while
@@ -963,11 +1067,16 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       legacyDefaultEnvPrefix(runtimeRoot, DEFAULT_R_ENV)
     ])
     for (const prefix of prefixes) {
-      const result = await this.setWindowsRuntimeAccess(rScriptBin(prefix, this.platform), false)
-      if (result.cancelled) {
-        throw new Error(
-          'R permission removal was cancelled; the existing runtime must be preserved.'
-        )
+      // Receipts retain exact executable paths even after a binary disappears or its layout changes.
+      // Ask the native owner about both known layouts; it removes only matching owned records.
+      for (const architecture of ['', 'x64']) {
+        const executable = join(prefix, 'Lib', 'R', 'bin', architecture, 'Rscript.exe')
+        const result = await this.setWindowsRuntimeAccess(executable, false)
+        if (result.cancelled) {
+          throw new Error(
+            'R permission removal was cancelled; the existing runtime must be preserved.'
+          )
+        }
       }
     }
   }

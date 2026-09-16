@@ -1,5 +1,7 @@
 # Keep the existing install/update/uninstall lifecycle independent of license presentation.
-!include "${BUILD_RESOURCES_DIR}/installer.nsh"
+# Backslash separators only: NSIS does not treat a forward-slash path as absolute for !include,
+# so the mixed form resolves through the include search path and fails the Windows package build.
+!include "${BUILD_RESOURCES_DIR}\installer.nsh"
 
 # electron-builder inserts this hook immediately before its license page, and skips that page
 # during updates. Override all agreement copy; Next only advances the informational page.
