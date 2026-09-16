@@ -1,5 +1,7 @@
 import { rebaseTaskSessionBinding, rebaseTaskTurnOntoLatestSession } from './task-admission'
 import { createHash, randomUUID } from 'node:crypto'
+import { isDeepStrictEqual } from 'node:util'
+import { projectsCommittedTaskRun } from '../../shared/session-rebase'
 
 import { resolveActiveConversationMessages } from '../../shared/conversation-graph'
 import type { PersistedConversationGraph } from '../../shared/conversation-graph'
@@ -748,7 +750,28 @@ class SessionPersistenceStateOwner {
               message.responseToMessageId === command.promptMessageId
           )
         : undefined
-    const messageIds = new Set(session.messages.map(({ id }) => id))
+    const messages = session.messages.map((message) => structuredClone(message))
+    for (const incoming of [
+      ...(command.precedingMessages ?? []),
+      ...(command.message ? [command.message] : [])
+    ]) {
+      const index = messages.findIndex((message) => message.id === incoming.id)
+      if (index >= 0) {
+        const current = messages[index]
+        messages[index] = {
+          ...current,
+          ...structuredClone(incoming),
+          eventIds: [...new Set([...current.eventIds, ...incoming.eventIds])],
+          artifactIds: [
+            ...new Set([...(current.artifactIds ?? []), ...(incoming.artifactIds ?? [])])
+          ],
+          createdAt: Math.min(current.createdAt, incoming.createdAt),
+          updatedAt: Math.max(current.updatedAt, incoming.updatedAt)
+        }
+      } else if (!rendererSettledMessage) {
+        messages.push(structuredClone(incoming))
+      }
+    }
     const activities = (session.activities ?? []).map((activity) => structuredClone(activity))
     const activityById = new Map(activities.map((activity) => [activity.id, activity]))
     for (const activity of command.activities) {
@@ -765,12 +788,21 @@ class SessionPersistenceStateOwner {
         activityById.set(next.id, next)
       }
     }
+    const messageById = new Map(messages.map((message) => [message.id, message]))
     const candidate = materializeSessionConversationGraph({
       ...session,
-      messages:
-        command.message && !rendererSettledMessage && !messageIds.has(command.message.id)
-          ? [...session.messages, structuredClone(command.message)]
-          : session.messages,
+      ...(session.conversationGraph
+        ? {
+            conversationGraph: {
+              ...session.conversationGraph,
+              messages: session.conversationGraph.messages.map((message) => {
+                const updated = messageById.get(message.id)
+                return updated ? { ...message, ...updated } : message
+              })
+            }
+          }
+        : {}),
+      messages,
       activities,
       ...(command.clearPendingHistoryReplay ? { pendingHistoryReplay: undefined } : {}),
       updatedAt: Math.max(session.updatedAt + 1, command.updatedAt)
@@ -858,9 +890,18 @@ class SessionPersistenceStateOwner {
     command: SettleTaskSessionCompletionRequest,
     terminal: Pick<PersistedChatSession, 'status' | 'error' | 'errorReportable'>
   ): Promise<PersistedChatSession> {
-    const newArtifacts = command.artifacts.filter(
-      ({ id }) => !session.artifacts?.some((artifact) => artifact.id === id)
+    const artifactById = new Map(
+      (session.artifacts ?? []).map((artifact) => [artifact.id, artifact])
     )
+    for (const artifact of command.artifacts) {
+      const previous = artifactById.get(artifact.id)
+      artifactById.set(artifact.id, {
+        ...previous,
+        ...structuredClone(artifact)
+      })
+    }
+    const artifacts = [...artifactById.values()]
+    const artifactsChanged = !isDeepStrictEqual(session.artifacts ?? [], artifacts)
     const artifactIds = command.artifacts.map(({ id }) => id)
     const messages = session.messages.map((message) =>
       message.id === command.messageId && artifactIds.length > 0
@@ -879,13 +920,25 @@ class SessionPersistenceStateOwner {
       ...terminal,
       activeRun: undefined,
       taskRunCommitId: command.taskRunCommitId,
+      taskRunCommitRun:
+        session.activeRun ??
+        (session.taskRunCommitId === command.taskRunCommitId
+          ? session.taskRunCommitRun
+          : undefined),
+      ...(session.conversationGraph
+        ? {
+            conversationGraph: {
+              ...session.conversationGraph,
+              messages: session.conversationGraph.messages.map((message) => {
+                const updated = messages.find((candidate) => candidate.id === message.id)
+                return updated ? { ...message, ...updated } : message
+              })
+            }
+          }
+        : {}),
       messages,
-      artifacts: [
-        ...(session.artifacts ?? []),
-        ...newArtifacts.map((artifact) => structuredClone(artifact))
-      ],
-      filesRevision:
-        newArtifacts.length > 0 ? (session.filesRevision ?? 0) + 1 : session.filesRevision,
+      artifacts,
+      filesRevision: artifactsChanged ? (session.filesRevision ?? 0) + 1 : session.filesRevision,
       updatedAt: Math.max(session.updatedAt + 1, command.updatedAt)
     })
     const validation = await validateFinalizedArtifactBindings(
@@ -965,6 +1018,7 @@ class SessionPersistenceStateOwner {
     // This witness participates in Task's cross-file commit protocol. Whole-Session saves from
     // renderer/web surfaces may preserve it, but only the Task surface may advance it.
     delete rendererOwnedSession.taskRunCommitId
+    delete rendererOwnedSession.taskRunCommitRun
     const specialistBindingOwnedByCaller =
       options.conflictRebaseFields?.includes('specialistId') === true &&
       options.conflictRebaseFields.includes('specialistBindingPending')
@@ -1019,7 +1073,17 @@ class SessionPersistenceStateOwner {
       ...(authority?.planHistoryProjections
         ? { planHistoryProjections: authority.planHistoryProjections }
         : {}),
-      ...(taskRunCommitId ? { taskRunCommitId } : {}),
+      ...(taskRunCommitId
+        ? { taskRunCommitId, taskRunCommitRun: authority?.taskRunCommitRun }
+        : {}),
+      ...(authority && projectsCommittedTaskRun(submittedSession, authority)
+        ? {
+            activeRun: undefined,
+            status: authority.status,
+            error: authority.error,
+            errorReportable: authority.errorReportable
+          }
+        : {}),
       ...(authority && !specialistBindingOwnedByCaller
         ? {
             specialistId: authority.specialistId,

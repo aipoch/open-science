@@ -1,3 +1,4 @@
+import { createRuntimeAgentMessageId } from '../../shared/runtime-message-identity'
 import {
   rebaseTaskSessionBinding,
   rebaseTaskTurnOntoLatestSession
@@ -165,7 +166,11 @@ const createRunner = (overrides: TaskRunnerOverrides = {}): TaskRunner => {
       const current = loadSession(request.sessionId)
       const candidate: PersistedChatSession = {
         ...current,
-        messages: request.message ? [...current.messages, request.message] : current.messages,
+        messages: [
+          ...current.messages,
+          ...(request.precedingMessages ?? []),
+          ...(request.message ? [request.message] : [])
+        ],
         activities: [...(current.activities ?? []), ...request.activities],
         updatedAt: request.updatedAt
       }
@@ -1670,6 +1675,60 @@ describe('TaskRunner', () => {
     expect(savedSessions.at(-1)?.cwd).toBe(existingCwd)
   })
 
+  it('persists distinct streams using the renderer identity and ignores replayed events', async () => {
+    let emit: ((event: AcpRuntimeEvent) => void) | undefined
+    let saved: PersistedChatSession | undefined
+    const runner = createRunner({
+      sessions: {
+        list: async () => [session],
+        save: async (value) => {
+          saved = value
+        }
+      },
+      runtimeEvents: {
+        subscribe: (listener) => {
+          emit = listener
+          return () => undefined
+        }
+      },
+      agent: {
+        prompt: async (request, observer) => {
+          await observer?.onPromptAdmitted?.()
+          for (const [id, messageId, text] of [
+            ['event-a', 'stream-a', 'Working.'],
+            ['event-a', 'stream-a', 'Working.'],
+            ['event-b', 'stream-b', 'Done'],
+            ['event-c', 'stream-b', '.']
+          ])
+            emit?.({
+              id,
+              messageId,
+              text,
+              sessionId: request.sessionId,
+              timestamp: 5,
+              kind: 'message',
+              role: 'assistant',
+              level: 'info'
+            })
+        }
+      }
+    })
+    const run = await runner.startRun({
+      project: project.id,
+      sessionId: session.id,
+      prompt: 'Compute'
+    })
+    const result = await runner.waitForRun(run.id)
+    expect(result.output).toBe('Working.Done.')
+    const messages = saved!.messages.filter((message) => message.streamId)
+    expect(messages.map((message) => message.content)).toEqual(['Working.', 'Done.'])
+    for (const message of messages)
+      expect(message.id).toBe(
+        createRuntimeAgentMessageId(session.id, message.streamId!, message.responseToMessageId)
+      )
+    expect(messages[1].eventIds).toEqual(['event-b', 'event-c'])
+  })
+
   it('runs a prompt in a new durable session and returns the assistant output', async () => {
     const requestedCwd = await mkdtemp(join(tmpdir(), 'open-science-task-cwd-'))
     temporaryRoots.push(requestedCwd)
@@ -1784,7 +1843,7 @@ describe('TaskRunner', () => {
       messages: [
         { id: 'user-message-1', role: 'user', content: 'Review these papers.' },
         {
-          id: 'assistant-message-1',
+          id: createRuntimeAgentMessageId('session-1', 'event-1', 'user-message-1'),
           role: 'agent',
           content: 'Research complete.',
           turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14, turnCount: 1 },
@@ -1911,12 +1970,15 @@ describe('TaskRunner', () => {
       delegationPolicy: 'deny',
       messages: [
         expect.objectContaining({ id: 'user-controlled', turnIntent: 'plan-first' }),
-        expect.objectContaining({ id: 'assistant-controlled', content: 'Controlled output.' })
+        expect.objectContaining({
+          id: createRuntimeAgentMessageId('session-controlled', 'message-event', 'user-controlled'),
+          content: 'Controlled output.'
+        })
       ]
     })
     expect(review).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'session-controlled' }),
-      'assistant-controlled',
+      createRuntimeAgentMessageId('session-controlled', 'message-event', 'user-controlled'),
       expect.any(AbortSignal)
     )
     expect(completed.review).toEqual({
@@ -3463,7 +3525,7 @@ describe('TaskRunner', () => {
       artifacts: [{ id: 'artifact-file', name: 'result.txt' }]
     })
     expect(savedSessions.at(-1)?.messages.at(-1)).toMatchObject({
-      id: 'artifact-agent',
+      id: createRuntimeAgentMessageId('session-artifact', 'artifact-run', 'artifact-user'),
       role: 'agent',
       content: '',
       turnUsageUnavailable: true,
@@ -3823,7 +3885,7 @@ describe('TaskRunner', () => {
     expect(authoritative.messages.map(({ id }) => id)).toEqual([
       'task-user',
       'concurrent-message',
-      'task-agent'
+      createRuntimeAgentMessageId(session.id, 'task-output-event', 'task-user')
     ])
   })
 

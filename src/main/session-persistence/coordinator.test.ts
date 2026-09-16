@@ -654,6 +654,74 @@ describe('SessionPersistenceCoordinator', () => {
     expect(artifactStorage.prepareProjectReconciliation).not.toHaveBeenCalled()
   })
 
+  it('settles an already streamed Task message without adding another owner while the run is active', async () => {
+    const prompt: PersistedChatMessage = {
+      id: 'prompt',
+      role: 'user',
+      content: 'Compute',
+      status: 'complete',
+      eventIds: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const streamed: PersistedChatMessage = {
+      id: 'shared-stream-id',
+      role: 'agent',
+      content: 'Don',
+      status: 'streaming',
+      responseToMessageId: prompt.id,
+      eventIds: ['a'],
+      artifactIds: ['version'],
+      createdAt: 2,
+      updatedAt: 2
+    }
+    let durable = materializeSessionConversationGraph(
+      createSession({
+        revision: 1,
+        status: 'running',
+        activeRun: { promptMessageId: prompt.id, startedAt: 1 },
+        messages: [prompt, streamed]
+      })
+    )
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: structuredClone(durable)
+      })),
+      saveSession: vi.fn(async (candidate) => {
+        durable = materializeSessionConversationGraph({
+          ...candidate,
+          revision: (durable.revision ?? 0) + 1
+        })
+        return durable
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    const command = {
+      projectId: durable.projectId,
+      sessionId: durable.id,
+      promptMessageId: prompt.id,
+      message: {
+        ...streamed,
+        content: 'Done',
+        status: 'complete' as const,
+        eventIds: ['a', 'b'],
+        artifactIds: undefined
+      },
+      activities: [],
+      updatedAt: 3
+    }
+    await coordinator.stageTaskCompletion(command)
+    await coordinator.stageTaskCompletion(command)
+    expect(durable.messages.map((message) => message.id)).toEqual(['prompt', 'shared-stream-id'])
+    expect(durable.messages[1]).toMatchObject({
+      content: 'Done',
+      status: 'complete',
+      eventIds: ['a', 'b'],
+      artifactIds: ['version']
+    })
+  })
+
   it('stages and settles Task completion from current authority without replacing concurrent state', async () => {
     const prompt: PersistedChatMessage = {
       id: 'task-prompt',
@@ -696,7 +764,10 @@ describe('SessionPersistenceCoordinator', () => {
             updatedAt: 2
           }
         ],
-        artifacts: [{ id: 'concurrent-artifact', kind: 'workspace-file', path: '/concurrent.txt' }]
+        artifacts: [
+          { id: 'concurrent-artifact', kind: 'workspace-file', path: '/concurrent.txt' },
+          { id: 'task-artifact', kind: 'workspace-file', path: '/task.pending.txt' }
+        ]
       })
     )
     const expectedRevisions: number[] = []
@@ -769,6 +840,9 @@ describe('SessionPersistenceCoordinator', () => {
       activeRun: undefined,
       taskRunCommitId: 'task-run'
     })
+    expect(durable.taskRunCommitRun).toEqual({ promptMessageId: prompt.id, startedAt: 1 })
+    expect(durable.artifacts?.find(({ id }) => id === 'task-artifact')?.path).toBe('/task.txt')
+    expect(durable.filesRevision).toBe(2)
     expect(durable.errorReportable).toBeUndefined()
     expect(durable.runtimeContext).toEqual({ version: 1, revision: 2 })
     expect(durable.messages.map(({ id }) => id)).toEqual([
@@ -785,6 +859,22 @@ describe('SessionPersistenceCoordinator', () => {
       'task-activity'
     ])
     expect(durable.artifacts?.map(({ id }) => id)).toEqual(['concurrent-artifact', 'task-artifact'])
+    await coordinator.saveSession({
+      ...structuredClone(durable),
+      status: 'running',
+      activeRun: { promptMessageId: prompt.id, startedAt: 1 },
+      taskRunCommitRun: undefined
+    })
+    expect(durable.status).toBe('idle')
+    expect(durable.activeRun).toBeUndefined()
+    expect(durable.taskRunCommitRun).toEqual({ promptMessageId: prompt.id, startedAt: 1 })
+    await coordinator.saveSession({
+      ...structuredClone(durable),
+      status: 'running',
+      activeRun: { promptMessageId: prompt.id, startedAt: 100 }
+    })
+    expect(durable.status).toBe('running')
+    expect(durable.activeRun?.startedAt).toBe(100)
   })
 
   it('stages and settles Task completion after the renderer projects the completed turn idle', async () => {

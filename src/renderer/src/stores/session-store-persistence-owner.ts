@@ -1065,8 +1065,20 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
           sessionRevision(session) <= sessionRevision(current)
         )
           return state
-        projected =
-          flat.changed || graph?.changed
+        // The source is still current: the receipt can supply the complete settled
+        // transcript. Live text remains in the streaming slice until its terminal event.
+        const adoptDurableTranscript = !current.activeRun
+        const transcript = withTransientSessionState(session, current)
+        projected = adoptDurableTranscript
+          ? {
+              ...authorityProjected,
+              messages: transcript.messages,
+              conversationGraph: transcript.conversationGraph,
+              activities: transcript.activities,
+              activityGroups: transcript.activityGroups,
+              artifacts: transcript.artifacts
+            }
+          : flat.changed || graph?.changed
             ? projectDurablePlanAuthority(withTransientSessionState(session, current), session)
             : authorityProjected
       } else {

@@ -1,3 +1,4 @@
+import { createRuntimeAgentMessageId } from '../../shared/runtime-message-identity'
 import { constants } from 'node:fs'
 import { access, realpath, stat } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
@@ -254,6 +255,16 @@ type TaskRunnerDependencies = {
 type PendingTaskRunActivity = Omit<PersistedToolActivity, 'sortIndex'>
 
 type TaskRunEventAccumulator = {
+  assistantStreams: Map<
+    string,
+    {
+      content: string
+      eventIds: string[]
+      images: PersistedMessageImage[]
+      createdAt: number
+      updatedAt: number
+    }
+  >
   assistantOutput: string
   assistantEventIds: string[]
   images: PersistedMessageImage[]
@@ -263,6 +274,7 @@ type TaskRunEventAccumulator = {
   runtimeError?: Pick<AcpRuntimeEvent, 'text' | 'providerError'>
   activities: Map<string, PendingTaskRunActivity>
   artifactClaimIds: string[]
+  artifactRunId?: string
 }
 
 type MutableTaskRun = TaskRun & {
@@ -327,6 +339,7 @@ const isVisibleProviderEvent = (event: AcpRuntimeEvent): boolean =>
   Boolean(event.text?.trim() || event.title?.trim() || getAcpRuntimeEventImage(event))
 
 const createTaskRunEventAccumulator = (): TaskRunEventAccumulator => ({
+  assistantStreams: new Map(),
   assistantOutput: '',
   assistantEventIds: [],
   images: [],
@@ -374,6 +387,20 @@ const accumulateTaskRunEvent = (
   event: AcpRuntimeEvent
 ): void => {
   if (event.kind === 'message' && event.role === 'assistant') {
+    const streamId = event.messageId ?? event.id
+    const stream = accumulator.assistantStreams.get(streamId) ?? {
+      content: '',
+      eventIds: [],
+      images: [],
+      createdAt: event.timestamp,
+      updatedAt: event.timestamp
+    }
+    // Replayed provider events must not duplicate text or images.
+    if (stream.eventIds.includes(event.id)) return
+    stream.content += getAcpRuntimeEventText(event) ?? ''
+    stream.eventIds.push(event.id)
+    stream.updatedAt = event.timestamp
+    accumulator.assistantStreams.set(streamId, stream)
     accumulator.assistantOutput += getAcpRuntimeEventText(event) ?? ''
     accumulator.assistantEventIds.push(event.id)
     const image = getAcpRuntimeEventImage(event)
@@ -382,6 +409,7 @@ const accumulateTaskRunEvent = (
       accumulator.images.length < MAX_ACP_MESSAGE_IMAGES_PER_MESSAGE &&
       accumulator.imageBytes + image.byteLength <= MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE
     ) {
+      stream.images.push({ id: event.id, ...image })
       accumulator.images.push({ id: event.id, ...image })
       accumulator.imageBytes += image.byteLength
     }
@@ -396,7 +424,9 @@ const accumulateTaskRunEvent = (
     accumulator.runtimeError = { text: event.text, providerError: event.providerError }
   }
   if (event.kind === 'artifact' && event.artifactClaimId) {
-    accumulator.artifactClaimIds.push(event.artifactClaimId)
+    accumulator.artifactRunId ??= event.runId
+    if (!accumulator.artifactClaimIds.includes(event.artifactClaimId))
+      accumulator.artifactClaimIds.push(event.artifactClaimId)
   }
   accumulateToolActivity(accumulator, event)
 }
@@ -2274,15 +2304,34 @@ class TaskRunner {
         : accumulator.assistantOutput
     const images = accumulator.images.map((image) => ({ ...image }))
     const terminalStopEvent = accumulator.terminalStop
-    const assistantMessageId = this.dependencies.createId()
+    const streams = [...accumulator.assistantStreams]
+    const terminalStream = streams.at(-1)
+    const terminalStreamId = terminalStream?.[0]
+    const ownerStreamId = terminalStreamId ?? accumulator.artifactRunId
+    const assistantMessageId = ownerStreamId
+      ? createRuntimeAgentMessageId(session.id, ownerStreamId, session.activeRun?.promptMessageId)
+      : this.dependencies.createId()
     const assistantMessage: PersistedChatMessage = {
       id: assistantMessageId,
       role: 'agent',
-      content: output,
+      content: terminalStream
+        ? session.agentFrameworkId === 'claude-code'
+          ? normalizeClaudeCodeRefusalText(terminalStream[1].content)
+          : terminalStream[1].content
+        : output,
+      ...(ownerStreamId ? { streamId: ownerStreamId } : {}),
       status: 'complete',
       responseToMessageId: session.activeRun?.promptMessageId,
-      eventIds: [...accumulator.assistantEventIds],
-      images: images.length ? images : undefined,
+      eventIds: terminalStreamId
+        ? [...streams.at(-1)![1].eventIds]
+        : [...accumulator.assistantEventIds],
+      images: terminalStream
+        ? terminalStream[1].images.length
+          ? terminalStream[1].images
+          : undefined
+        : images.length
+          ? images
+          : undefined,
       ...(terminalStopEvent?.turnUsage
         ? {
             turnUsage: terminalStopEvent.turnUsage,
@@ -2293,7 +2342,7 @@ class TaskRunner {
         : terminalStopEvent
           ? { turnUsageUnavailable: true as const }
           : {}),
-      createdAt: now,
+      createdAt: terminalStream?.[1].createdAt ?? now,
       updatedAt: now
     }
     const activities = createTaskRunActivities(accumulator, now)
@@ -2305,6 +2354,21 @@ class TaskRunner {
       sessionId: session.id,
       promptMessageId: session.activeRun!.promptMessageId,
       message: hasAssistantMessage ? assistantMessage : undefined,
+      precedingMessages: streams.slice(0, -1).map(([streamId, stream]) => ({
+        id: createRuntimeAgentMessageId(session.id, streamId, session.activeRun?.promptMessageId),
+        role: 'agent',
+        content:
+          session.agentFrameworkId === 'claude-code'
+            ? normalizeClaudeCodeRefusalText(stream.content)
+            : stream.content,
+        status: 'complete',
+        streamId,
+        responseToMessageId: session.activeRun?.promptMessageId,
+        eventIds: stream.eventIds,
+        images: stream.images.length ? stream.images : undefined,
+        createdAt: stream.createdAt,
+        updatedAt: stream.updatedAt
+      })),
       activities,
       ...(clearPendingHistoryReplay ? { clearPendingHistoryReplay: true } : {}),
       updatedAt: now
