@@ -153,6 +153,7 @@ jobs:
           src/main/notebook/windows-repl-termination.integration.test.ts
           src/main/notebook/kernel-startup-retry.integration.test.ts
           src/main/agents/completion-gate.execute-control.integration.test.ts
+          src/main/storage/ipc.test.ts
           scripts/windows-data-reset.test.ts
           packages/notebook-network-sandbox/src/windows-appcontainer.test.ts
           src/main/side-chat/runtime-owner.test.ts
