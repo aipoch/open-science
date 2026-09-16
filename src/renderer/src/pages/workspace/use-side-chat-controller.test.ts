@@ -41,6 +41,35 @@ afterEach(() => {
 })
 
 describe('Side chat renderer controller', () => {
+  it('keeps application children mounted when the first Side chat opens and the last closes', () => {
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    let chat!: ReturnType<typeof useSideChatController>
+    const Harness = (): null => {
+      chat = useSideChatController({ sessionId: 'main-1', projectId: 'project-1' })
+      return null
+    }
+
+    act(() =>
+      root.render(
+        createElement(
+          SideChatProvider,
+          null,
+          createElement('input', { key: 'application', 'aria-label': 'Application state' }),
+          createElement(Harness, { key: 'controller' })
+        )
+      )
+    )
+    const application = container.querySelector('[aria-label="Application state"]')
+    expect(application).not.toBeNull()
+
+    act(() => chat.createDraft!())
+    expect(container.querySelector('[aria-label="Application state"]')).toBe(application)
+
+    act(() => chat.close())
+    expect(container.querySelector('[aria-label="Application state"]')).toBe(application)
+  })
+
   it('opens immediately, merges streamed chunks, and reuses one admitted Session', async () => {
     const started = deferred<{ sideSessionId: string; frameworkId: 'claude-code' }>()
     let eventListener: ((event: never) => void) | undefined

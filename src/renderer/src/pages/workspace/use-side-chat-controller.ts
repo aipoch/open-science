@@ -7,6 +7,7 @@ import {
 } from '@/stores/preview-workbench-store'
 import { SideChatCloseConfirmation } from './SideChatCloseConfirmation'
 import {
+  Fragment,
   createContext,
   createElement,
   useCallback,
@@ -784,9 +785,13 @@ const SideChatProvider = ({ children }: PropsWithChildren): ReactElement => {
   return createElement(
     SideChatContext.Provider,
     { value: runtime },
-    children,
-    ...[...views.keys()].map((sessionId) =>
-      createElement(SideChatCloseConfirmation, { key: sessionId, sessionId })
+    createElement(Fragment, { key: 'provider-children' }, children),
+    createElement(
+      Fragment,
+      { key: 'close-confirmations' },
+      ...[...views.keys()].map((sessionId) =>
+        createElement(SideChatCloseConfirmation, { key: sessionId, sessionId })
+      )
     )
   )
 }
