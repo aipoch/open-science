@@ -1,3 +1,4 @@
+import { rebaseSessionAfterRevisionConflict } from '../../../../shared/session-rebase'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { usePackageOperationStore } from '../../stores/package-operation-store'
 
@@ -53,6 +54,35 @@ const createPersistedSession = (
   createdAt: 1710000000000,
   updatedAt: 1710000000000,
   ...overrides
+})
+
+it('keeps a committed Task attempt terminal while rebasing observer updates, but allows a new attempt', () => {
+  const activeRun = { promptMessageId: 'prompt', startedAt: 10 }
+  const base = createPersistedSession({ revision: 1, status: 'running', activeRun })
+  const latest = createPersistedSession({
+    revision: 2,
+    status: 'idle',
+    taskRunCommitId: 'task-run',
+    taskRunCommitRun: activeRun
+  })
+  const submitted = { ...base, title: 'Local edit' }
+  const recovered = rebaseSessionAfterRevisionConflict(base, submitted, latest)
+  expect(recovered).toMatchObject({
+    status: 'idle',
+    title: 'Local edit',
+    taskRunCommitId: 'task-run'
+  })
+  expect(recovered?.activeRun).toBeUndefined()
+  const next = rebaseSessionAfterRevisionConflict(
+    latest,
+    {
+      ...latest,
+      status: 'running',
+      activeRun: { ...activeRun, startedAt: 20 }
+    },
+    { ...latest, revision: 3 }
+  )
+  expect(next).toMatchObject({ status: 'running', activeRun: { startedAt: 20 } })
 })
 
 const createHistoricalPlan = (
@@ -2727,7 +2757,7 @@ describe('renderer session persistence bridge', () => {
     }
   })
 
-  it('releases acknowledged bodies only after writes settle and retains the revision watermark', async () => {
+  it('rejects a stale write after its acknowledged body has been released', async () => {
     const session = createPersistedSession({ revision: 4 })
     const writing = createDeferred<PersistedChatSession>()
     const saveSession = vi
@@ -2742,8 +2772,10 @@ describe('renderer session persistence bridge', () => {
     await pending
     expect(persistence.releaseAcknowledgedSessionBody(session.id)).toBe(true)
     expect(persistence.getAcknowledgedSession(session.id)).toBeUndefined()
-    await persistence.saveSession({ ...session, revision: 0 })
-    expect(saveSession.mock.calls[1][0].revision).toBe(5)
+    await expect(persistence.saveSession({ ...session, revision: 0 })).rejects.toBeInstanceOf(
+      SessionRevisionConflictError
+    )
+    expect(saveSession).toHaveBeenCalledOnce()
   })
 
   it('retains the acknowledged body while a failed write remains unresolved', async () => {
@@ -4330,7 +4362,46 @@ describe('renderer session persistence bridge', () => {
     expect(durableTitle).toBe('Artifact latest')
   })
 
-  it('stamps an explicit queued save with the last durable revision', async () => {
+  it('preserves a published owner and branch from a receipt in an already queued save', async () => {
+    const source = materializeSessionConversationGraph(createPersistedSession({ revision: 1 }))
+    const completed = materializeSessionConversationGraph({
+      ...source,
+      conversationGraph: undefined,
+      revision: 2,
+      messages: [
+        {
+          id: 'published-owner',
+          role: 'agent',
+          content: 'Complete',
+          status: 'complete',
+          eventIds: ['output-1'],
+          artifactIds: ['version-1'],
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ]
+    })
+    const first = createDeferred<PersistedChatSession>()
+    const api = createApi({
+      saveSession: vi
+        .fn()
+        .mockImplementationOnce(() => first.promise)
+        .mockImplementationOnce(async (candidate) => ({ ...candidate, revision: 3 }))
+    })
+    const persistence = createOrderedSessionPersistence(api)
+    persistence.seedAcknowledgedSessions([source])
+    const publishing = persistence.saveSession(source)
+    const queued = persistence.saveSession({ ...source, title: 'Local title' })
+    first.resolve(completed)
+    await publishing
+    const durable = await queued
+    expect(durable.messages).toEqual(completed.messages)
+    expect(durable.conversationGraph).toEqual(completed.conversationGraph)
+    expect(durable.title).toBe('Local title')
+    expect(vi.mocked(api.saveSession).mock.calls[1][0].revision).toBe(2)
+  })
+
+  it('rebases an explicit queued save with a known source snapshot', async () => {
     const firstSave = createDeferred<PersistedChatSession>()
     const saveSession = vi.fn<SessionPersistenceApi['saveSession']>(async (submitted) => ({
       ...submitted,
@@ -4338,6 +4409,7 @@ describe('renderer session persistence bridge', () => {
     }))
     const persistence = createOrderedSessionPersistence(createApi({ saveSession }))
     const session = createPersistedSession({ revision: 1 })
+    persistence.seedAcknowledgedSessions([session])
 
     const storeSave = persistence.saveLatestSession('session:session-1', () => firstSave.promise)
     const explicitSave = persistence.saveSession({ ...session, title: 'Explicit latest' })

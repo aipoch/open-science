@@ -1,3 +1,4 @@
+import { createRuntimeAgentMessageId } from '../../../shared/runtime-message-identity'
 import { artifactCreatedAtMs, type ArtifactFile } from '../../../shared/artifacts'
 import {
   MAX_ACP_SESSION_IMAGE_BYTES,
@@ -24,23 +25,6 @@ import type {
   ChatSession,
   StreamingMessageContentByMessageId
 } from './session-store-persistence-owner'
-
-// A Session can be projected by more than one renderer. Derive Agent identity from runtime-owned
-// stream identity so both projections choose the same Artifact owner instead of local sequence ids.
-const createRuntimeAgentMessageId = (
-  sessionId: string,
-  streamId: string,
-  responseToMessageId?: string
-): string => {
-  let hash = 0xcbf29ce484222325n
-  for (const byte of new TextEncoder().encode(
-    `${sessionId}\0${responseToMessageId ?? ''}\0${streamId}`
-  )) {
-    hash ^= BigInt(byte)
-    hash = BigInt.asUintN(64, hash * 0x100000001b3n)
-  }
-  return `message-stream-${hash.toString(16).padStart(16, '0')}`
-}
 
 export type AppendAgentMessageChunkInput = {
   sessionId: string

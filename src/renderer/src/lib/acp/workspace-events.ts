@@ -239,6 +239,10 @@ const isNonActionableCodexDiagnostic = (text: string): boolean => {
 }
 
 type WorkspaceRuntimeEventDependencies = {
+  loadSession?: (request: {
+    projectId: string
+    sessionId: string
+  }) => Promise<PersistedChatSession | undefined>
   agentPromptInFlight?: boolean
   finalizeRunArtifacts?: (request: FinalizeRunArtifactsRequest) => Promise<ArtifactFile[]>
   reconcilePendingArtifacts?: (
@@ -296,6 +300,63 @@ const attachArtifactEvent = (
     turnUsageUnavailable: turnUsage?.turnUsageUnavailable,
     modelCallUsage: turnUsage?.modelCallUsage
   })
+
+// Recover through Main's existing proof-checked publication command. This is a
+// bounded replay of the same immutable Versions, never a replay of model/tool work.
+const recoverArtifactPublication = async (
+  event: FinalizableArtifactEvent,
+  messageId: string,
+  dependencies: WorkspaceRuntimeEventDependencies
+): Promise<boolean> => {
+  const versionIds = event.artifacts.flatMap((artifact) =>
+    artifact.versionId ? [artifact.versionId] : []
+  )
+  if (versionIds.length !== event.artifacts.length) return false
+  const source = useSessionStore
+    .getState()
+    .sessions.find((session) => session.id === event.sessionId)
+  if (!source?.projectId) return false
+  try {
+    const reconcile =
+      dependencies.reconcilePendingArtifacts ?? window.api.artifacts.reconcilePendingArtifacts
+    const result = await reconcile({
+      projectId: source.projectId,
+      sessionId: source.id,
+      messageId,
+      pendingPaths: [],
+      artifactVersionIds: versionIds
+    })
+    if (!Array.isArray(result)) return false
+    const recovered = new Set(
+      result.flatMap((artifact) =>
+        artifact.versionId && artifact.isPublished === true ? [artifact.versionId] : []
+      )
+    )
+    if (!versionIds.every((versionId) => recovered.has(versionId))) return false
+    const durable = await (dependencies.loadSession ?? loadPersistedSession)({
+      projectId: source.projectId,
+      sessionId: source.id
+    })
+    if (!durable) return false
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: durable,
+      mode: 'replace-persisted-if-current'
+    })
+    useSessionStore.getState().replaceMessageArtifacts({
+      sessionId: source.id,
+      messageId,
+      artifacts: result,
+      preserveArtifactIds: durable.messages.find((message) => message.id === messageId)?.artifactIds
+    })
+    useSessionStore.getState().clearArtifactError(source.id, event.id)
+    openMoleculePreviews(source.id, result)
+    return true
+  } catch {
+    // Keep the original publication failure when recovery cannot establish success.
+    return false
+  }
+}
 
 const finalizeArtifactEvent = async (
   event: AcpRuntimeEvent,
@@ -389,6 +450,11 @@ const finalizeArtifactEvent = async (
       }
       throw new Error('Artifact reconciliation did not resolve all native Versions.')
     } catch (error) {
+      if (
+        !isArtifactFinalizationProofError(error) &&
+        (await recoverArtifactPublication(event, appliedMessage.id, dependencies))
+      )
+        return true
       useSessionStore
         .getState()
         .recordArtifactError(
@@ -462,6 +528,11 @@ const finalizeArtifactEvent = async (
     await persistLatestSession()
     return true
   } catch (error) {
+    if (
+      !isArtifactFinalizationProofError(error) &&
+      (await recoverArtifactPublication(event, attached.messageId, dependencies))
+    )
+      return true
     if (!artifactsFinalized) {
       store.recordArtifactError(
         event.sessionId,

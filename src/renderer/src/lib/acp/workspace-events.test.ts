@@ -9,7 +9,10 @@ import {
   ARTIFACT_OWNERSHIP_PERSISTENCE_RACE,
   type ArtifactFile
 } from '../../../../shared/artifacts'
-import { SessionRevisionConflictError } from '../../../../shared/session-persistence'
+import {
+  SessionRevisionConflictError,
+  type PersistedChatSession
+} from '../../../../shared/session-persistence'
 import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -2107,6 +2110,73 @@ describe('workspace runtime events', () => {
     expect(session.resumeRecovery).toBeUndefined()
     expect(session.activities?.[0].elicitation?.state).toBe('pending')
   })
+
+  it.each([
+    [true, false],
+    [false, false],
+    [true, true],
+    [false, true]
+  ])(
+    'recovers publication after save conflict (complete proof: %s, already attached: %s)',
+    async (complete, alreadyAttached) => {
+      await applyWorkspaceRuntimeEvent(
+        createEvent({ id: 'answer', role: 'assistant', messageId: 'stream', text: 'Done' })
+      )
+      await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop', kind: 'stop' }))
+      const version = createArtifactFile({
+        id: 'version-1',
+        versionId: 'version-1',
+        isPublished: true
+      })
+      let submitted: PersistedChatSession | undefined
+      const conflict = new Error('Session revision conflict: expected 25, actual 27')
+      const saveSession = vi.fn(async (candidate: PersistedChatSession) => {
+        submitted = candidate
+        throw conflict
+      })
+      const finalizeRunArtifacts = vi.fn()
+      const reconcilePendingArtifacts = vi.fn(async () => (complete ? [version] : []))
+      const loadSession = vi.fn(async () => ({ ...submitted!, revision: 28 }))
+      if (alreadyAttached) {
+        useSessionStore.getState().attachRunArtifacts({
+          sessionId: 'transport-session-1',
+          runId: 'run-1',
+          eventId: 'artifact',
+          artifacts: [{ ...version, isPublished: false }]
+        })
+      }
+      const operation = applyWorkspaceRuntimeEvent(
+        createEvent({
+          id: 'artifact',
+          kind: 'artifact',
+          runId: 'run-1',
+          artifactClaimId: 'claim-1',
+          artifacts: [{ ...version, isPublished: false }]
+        }),
+        { saveSession, finalizeRunArtifacts, reconcilePendingArtifacts, loadSession }
+      )
+      if (complete) {
+        await expect(operation).resolves.toBe(true)
+        expect(useSessionStore.getState().sessions[0].error).toBeUndefined()
+        expect(useSessionStore.getState().sessions[0].revision).toBe(28)
+        expect(useSessionStore.getState().sessions[0].artifacts?.[0]?.isPublished).toBe(true)
+      } else {
+        await expect(operation).rejects.toBe(conflict)
+        expect(useSessionStore.getState().sessions[0].error).toContain('Session revision conflict')
+        expect(loadSession).not.toHaveBeenCalled()
+      }
+      expect(saveSession).toHaveBeenCalledOnce()
+      expect(finalizeRunArtifacts).not.toHaveBeenCalled()
+      expect(reconcilePendingArtifacts).toHaveBeenCalledOnce()
+      expect(reconcilePendingArtifacts).toHaveBeenCalledWith(
+        expect.objectContaining({
+          artifactVersionIds: ['version-1'],
+          pendingPaths: [],
+          messageId: submitted!.messages.at(-1)!.id
+        })
+      )
+    }
+  )
 
   it('attaches artifact events to the current message and finalizes their file paths', async () => {
     const promptMessageId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
