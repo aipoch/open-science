@@ -28,7 +28,7 @@ type Job = {
   'runs-on'?: string
   strategy?: {
     'fail-fast'?: boolean
-    matrix?: { shard?: number[]; group?: string[] }
+    matrix?: { shard?: number[]; group?: string[] | string }
   }
   steps?: Step[]
   'timeout-minutes'?: number
@@ -138,7 +138,15 @@ describe('PR Gate workflow', () => {
           required: false,
           default: 'classified',
           type: 'choice',
-          options: ['classified', 'unit-coverage', 'i18n', 'runtime-bundle', 'windows-e2e', 'e2e']
+          options: [
+            'classified',
+            'unit-coverage',
+            'i18n',
+            'runtime-bundle',
+            'windows-e2e',
+            'e2e',
+            'source-regressions'
+          ]
         }
       }
     })
@@ -1125,12 +1133,9 @@ describe('E2E throughput contracts', () => {
 
   it('partitions macOS groups while preserving the stable aggregate gate', () => {
     const job = workflow.jobs.macos_e2e
-    expect(job.strategy?.matrix?.group).toEqual([
-      'journeys',
-      'presentation',
-      'regressions',
-      'delegation'
-    ])
+    expect(job.strategy?.matrix?.group).toBe(
+      `\${{ fromJSON(needs.preflight.outputs.plan).macosGroups || fromJSON('["journeys","presentation","regressions","delegation"]') }}`
+    )
     for (const [id, group] of [
       ['e2e_functional_macos', 'journeys'],
       ['e2e_workspace_macos', 'journeys'],

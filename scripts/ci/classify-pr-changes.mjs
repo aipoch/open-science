@@ -201,12 +201,29 @@ function escapeHtml(value) {
     .replaceAll("'", '&#039;')
 }
 
+// Derived after module/consumer overlays are resolved. Missing metadata in a trusted old plan
+// is handled conservatively by the workflow, which still runs all four groups.
+export function macosGroupsForPlan(plan) {
+  if (!plan.bundles?.includes('macos_e2e')) return []
+  if (plan.mode === 'full') return ['journeys', 'presentation', 'regressions', 'delegation']
+  const groups = {
+    journeys: ['build', 'e2e_functional_macos', 'e2e_workspace_macos'],
+    presentation: ['e2e_accessibility_macos', 'e2e_visual_macos'],
+    regressions: ['e2e_regressions_macos'],
+    delegation: ['e2e_delegation_macos']
+  }
+  return Object.entries(groups)
+    .filter(([, lanes]) => lanes.some((lane) => plan.lanes.includes(lane)))
+    .map(([group]) => group)
+}
+
 export function toGitHubOutputPlan(plan) {
   const output = {
     schemaVersion: plan.schemaVersion,
     mode: plan.mode,
     roots: [...plan.roots],
-    lanes: [...plan.lanes]
+    lanes: [...plan.lanes],
+    macosGroups: macosGroupsForPlan(plan)
   }
   if (Array.isArray(plan.bundles)) output.bundles = [...plan.bundles]
   return output
