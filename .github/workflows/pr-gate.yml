@@ -1091,7 +1091,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        # Browser-only plans need the complete browser suite on shard 1, not idle native shards.
+        shard: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_browser_windows') && !contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_functional_windows') && !contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_workspace_windows') && fromJSON('[1]') || fromJSON('[1,2,3]') }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1197,6 +1198,7 @@ jobs:
         if: ${{ always() }}
         shell: bash
         env:
+          E2E_SHARD: ${{ matrix.shard }}
           RENDERER_LAYOUT_OUTCOME: ${{ steps.renderer_layout.outcome }}
           SETUP_OUTCOME: ${{ steps.setup.outcome }}
           E2E_ACCESSIBILITY_OUTCOME: ${{ steps.e2e_accessibility_windows.outcome }}
@@ -1212,6 +1214,10 @@ jobs:
             fi
           }
           check renderer_layout "$RENDERER_LAYOUT_OUTCOME"
+          if [[ "$E2E_SHARD" == "1" && "$RENDERER_LAYOUT_OUTCOME" != "success" ]]; then
+            echo "Required Windows browser suite did not succeed" >&2
+            failed=1
+          fi
           check setup "$SETUP_OUTCOME"
           check e2e_functional_windows "$E2E_FUNCTIONAL_OUTCOME"
           check e2e_workspace_windows "$E2E_WORKSPACE_OUTCOME"

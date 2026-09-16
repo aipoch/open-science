@@ -28,7 +28,7 @@ type Job = {
   'runs-on'?: string
   strategy?: {
     'fail-fast'?: boolean
-    matrix?: { shard?: number[]; group?: string[] | string }
+    matrix?: { shard?: number[] | string; group?: string[] | string }
   }
   steps?: Step[]
   'timeout-minutes'?: number
@@ -708,7 +708,10 @@ describe('PR Gate workflow', () => {
 
   it('shards every selected Windows journey without cancelling siblings or colliding artifacts', () => {
     const job = workflow.jobs.windows_e2e
-    expect(job.strategy).toEqual({ 'fail-fast': false, matrix: { shard: [1, 2, 3] } })
+    expect(job.strategy?.['fail-fast']).toBe(false)
+    expect(job.strategy?.matrix?.shard).toBe(
+      "${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_browser_windows') && !contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_functional_windows') && !contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_workspace_windows') && fromJSON('[1]') || fromJSON('[1,2,3]') }}"
+    )
     expect(job.name).toBe('Windows E2E (shard ${{ matrix.shard }}/3)')
     for (const lane of ['e2e_functional_windows', 'e2e_workspace_windows']) {
       const step = job.steps?.find(({ id }) => id === lane)

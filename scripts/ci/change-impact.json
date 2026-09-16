@@ -24,7 +24,8 @@
     "e2e_accessibility_macos",
     "e2e_visual_macos",
     "e2e_regressions_macos",
-    "e2e_delegation_macos"
+    "e2e_delegation_macos",
+    "e2e_browser_windows"
   ],
   "bundleOrder": [
     "policy",
@@ -58,7 +59,8 @@
     "e2e_accessibility_macos": "macos_e2e",
     "e2e_visual_macos": "macos_e2e",
     "e2e_regressions_macos": "macos_e2e",
-    "e2e_delegation_macos": "macos_e2e"
+    "e2e_delegation_macos": "macos_e2e",
+    "e2e_browser_windows": "windows_e2e"
   },
   "rules": [
     {
@@ -445,8 +447,7 @@
         "typecheck_node",
         "typecheck_web",
         "e2e_visual_macos",
-        "e2e_functional_windows",
-        "e2e_workspace_windows"
+        "e2e_browser_windows"
       ]
     }
   }

@@ -25,7 +25,7 @@ type Job = {
   'runs-on': string
   'continue-on-error'?: boolean
   steps: Step[]
-  strategy?: { matrix: { group: string } }
+  strategy?: { matrix: { group?: string; shard?: string } }
 }
 type Workflow = {
   on: { schedule?: Array<{ cron: string }>; workflow_dispatch?: unknown }
@@ -74,9 +74,9 @@ describe('trusted supplemental selection', () => {
     expect(plan.mode).toBe('selective')
     // Keep real Windows font, clipboard and browser-startup behavior in the existing bundle.
     expect(plan.bundles).toEqual(['policy', 'static', 'macos_e2e', 'windows_e2e'])
-    expect(plan.lanes).toEqual(
-      expect.arrayContaining(['e2e_functional_windows', 'e2e_workspace_windows'])
-    )
+    expect(plan.lanes).toContain('e2e_browser_windows')
+    expect(plan.lanes).not.toContain('e2e_functional_windows')
+    expect(plan.lanes).not.toContain('e2e_workspace_windows')
     expect(toGitHubOutputPlan(plan).macosGroups).toEqual(['presentation'])
     expect(plan.lanes).toContain('e2e_visual_macos')
     const mixed = resolvePlan([
@@ -86,7 +86,43 @@ describe('trusted supplemental selection', () => {
     expect(mixed.mode).toBe('selective')
     expect(mixed.lanes).toContain('e2e_visual_macos')
     expect(mixed.bundles).toContain('unit')
+    const native = resolvePlan([
+      'e2e/browser/settings-undo.spec.ts',
+      'src/main/notebook/kernel-executor.ts'
+    ])
+    expect(native.lanes).toEqual(
+      expect.arrayContaining(['e2e_functional_windows', 'e2e_workspace_windows'])
+    )
   })
+
+  it.skipIf(process.platform === 'win32')(
+    'requires the Windows browser suite on shard one while allowing idle browser steps on native shards',
+    () => {
+      const enforce = pr.jobs.windows_e2e.steps.find(
+        ({ name }) => name === 'Enforce selected Windows E2E checks'
+      )!
+      expect(enforce.env?.E2E_SHARD).toBe('${{ matrix.shard }}')
+      for (const shard of ['1', '2', '3']) {
+        for (const outcome of ['success', 'failure', 'cancelled', 'skipped', '']) {
+          const result = spawnSync('bash', ['-e', '-c', enforce.run!], {
+            encoding: 'utf8',
+            env: {
+              ...process.env,
+              E2E_SHARD: shard,
+              RENDERER_LAYOUT_OUTCOME: outcome,
+              SETUP_OUTCOME: 'success',
+              E2E_ACCESSIBILITY_OUTCOME: 'skipped',
+              E2E_FUNCTIONAL_OUTCOME: 'skipped',
+              E2E_WORKSPACE_OUTCOME: 'skipped'
+            }
+          })
+          const succeeds =
+            outcome === 'success' || (shard !== '1' && ['skipped', ''].includes(outcome))
+          expect(result.status, result.stderr).toBe(succeeds ? 0 : 1)
+        }
+      }
+    }
+  )
 
   it.each([
     'src/main/artifacts/ro-crate-export.ts',
