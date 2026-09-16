@@ -1082,6 +1082,36 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
 })
 
 describe('DefaultRuntimeProvisioner Windows default-prefix compatibility', () => {
+  it.each(['', 'x64'])(
+    'verifies the installed R executable in %s on the first provisioning attempt',
+    async (layout) => {
+      const root = makeRoot()
+      const prefix = envPrefix(root, DEFAULT_R_ENV, 'win32')
+      const executable = join(prefix, 'Lib', 'R', 'bin', layout, 'R.exe')
+      const verify = vi.fn(async (bin: string) => {
+        readFileSync(bin)
+      })
+      try {
+        const provisioner = new DefaultRuntimeProvisioner(
+          makeDeps(root, {
+            platform: 'win32',
+            runArgv: async () => {
+              mkdirSync(dirname(executable), { recursive: true })
+              writeFileSync(executable, 'fixture')
+              writeFileSync(join(dirname(executable), 'Rscript.exe'), 'fixture')
+            },
+            verify
+          })
+        )
+        await expect(provisioner.provisionR(() => {})).resolves.toBeUndefined()
+        expect(verify).toHaveBeenCalledWith(executable, prefix)
+        expect(readRReadyMarker(root)?.defaultEnvVersion).toBe(DEFAULT_ENV_VERSION)
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    }
+  )
+
   it('preserves packages in a valid legacy x64-only R prefix during provisioning', async () => {
     const root = makeRoot()
     const legacy = legacyDefaultEnvPrefix(root, DEFAULT_R_ENV)
