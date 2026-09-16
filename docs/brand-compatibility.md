@@ -3,6 +3,12 @@
 The product displays **Open-Science** (or **open-science** where lowercase is appropriate).
 Display names are separate from persistent identities and filesystem locations.
 
+Repository-authored name text uses the hyphenated spelling, including labels such as
+**Open-Science Framework** and **Center for Open-Science**. URLs retain their exact remote addresses.
+The configured SignPath test certificate subject is `CN=Test certificate for 'Open-Science [OSS]'`;
+the process inspection CA uses `CN=Open-Science process inspection CA` for both its self-signed root
+and issued leaf certificates. These certificate subjects are not legacy-spelling exceptions.
+
 ## Existing installations
 
 An absolute saved `dataRoot` stays authoritative, including custom paths containing an old brand.
@@ -108,9 +114,7 @@ compilation do not certify Windows taskbar, Linux desktop, signing, or live upda
 | `OpenScienceAPI`, `OpenScienceClient`, `OpenScienceApiError`, exported functions, GraphQL operation names, settings fields | Valid language/API identifiers and persisted contracts; inserting a hyphen would break syntax or consumers.          |
 | `openscience-skills`, marketplace protocols, repository URLs, signing key IDs, content digest prefix                       | Published and signed third-party-facing contracts. Display copy is updated without changing signed bytes.            |
 | `# Open Science:` Codex route markers; old CLI/PATH receipt ownership headers                                              | Exact managed-block/receipt recognition across upgrades. They are technical ownership markers.                       |
-| `CN=Open Science`, `Open Science Local CA`                                                                                 | Certificate subject/identity compatibility.                                                                          |
 | `CHANGELOG.md`, rollback-to-0.7.3 fixtures and old-version paths                                                           | Historical facts and explicit old-version compatibility.                                                             |
-| Center for Open Science / Open Science Framework; external benchmark names                                                 | Third-party names, not this product's brand.                                                                         |
 | `Electron.app` in development tooling                                                                                      | Upstream Electron runtime filename; its development product display metadata is Open-Science (DEV).                  |
 
 NCBI request `tool=OpenScience` remains a stable external client identifier.

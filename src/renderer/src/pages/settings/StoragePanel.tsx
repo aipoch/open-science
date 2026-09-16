@@ -140,7 +140,7 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
   const [isInspecting, setIsInspecting] = useState(false)
   // The classification of `newPath` (a PARENT the user typed/picked), keyed by the exact path it
   // was computed for so a stale response for an already-superseded path never drives the action
-  // buttons. `dataRoot` is the derived `<newPath>/OpenScience` the app will actually use.
+  // buttons. `dataRoot` is the exact resolved destination, normally `<newPath>/Open-Science`.
   const [inspection, setInspection] = useState<(DataRootInspection & { path: string }) | null>(null)
   const [migrationTarget, setMigrationTarget] = useState<{
     path: string
