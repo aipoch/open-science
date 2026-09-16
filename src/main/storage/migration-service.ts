@@ -1,10 +1,11 @@
-import { lstat, mkdir, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises'
-import { existsSync, readFileSync, readdirSync, type Dirent } from 'node:fs'
+import { lstat, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises'
+import { existsSync, mkdirSync, readFileSync, readdirSync, type Dirent } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 
 import type {
   DataRootKind,
+  DataRootSelection,
   DataRootRecoveryStatus,
   DataRootValidationResult,
   MigrationOutcome,
@@ -38,7 +39,7 @@ import { waitForDataRootWriters } from './migration-state'
 import { DEFAULT_MAX_ENV_RELATIVE_PATH, PACK_PATH_BUDGET_FILE } from '../notebook/bundle-manifest'
 import { windowsDefaultEnvPrefixReserve } from '../notebook/runtime-paths'
 import { DATA_ROOT_DIRS, MIGRATABLE_DATA_DIRS } from './data-directories'
-import { directoryHasFiles } from './location-evidence'
+import { directoryHasFiles, hasLegacyResearchData } from './location-evidence'
 import { readManagedWorkspaceOwnership } from './managed-workspace-ownership'
 import { MANAGED_WORKSPACE_OWNERSHIP_DIR } from './managed-workspace-ownership-dir'
 import { validateProvenanceMigrationState } from './provenance-migration-validation'
@@ -47,6 +48,12 @@ import { createLogger, type Logger } from '../logger'
 import { startDiagnosticOperation } from '../diagnostics/operation'
 import { inspectWindowsStoragePath, type WindowsStoragePathCapabilities } from './remote-data-root'
 import { toErrorMessage } from '../error-message'
+import {
+  assertDataRootSelection,
+  dataRootIdentity,
+  dataRootDirectoryIdentity
+} from './data-root-selection'
+import { DATA_ROOT_SELECTION_CHANGED } from '../../shared/storage'
 import type { DataRootCleanupJournal } from './data-root-cleanup'
 
 export { DATA_ROOT_DIRS } from './data-directories'
@@ -155,6 +162,7 @@ export const maxManagedEnvRelativePath = (dataRoot: string): number => {
 // depending on platform-specific filesystem permission semantics (chmod is a POSIX-only no-op on
 // Windows).
 type ClassifyDataRootDeps = {
+  exactTarget?: boolean
   canWrite?: (dir: string) => Promise<boolean>
   inspectPath?: (
     dir: string
@@ -227,7 +235,7 @@ export const classifyDataRoot = async (
   const current = resolve(currentDataRoot)
   let target: string
   try {
-    target = dataRootForPicked(parent)
+    target = deps.exactTarget ? resolve(parent) : dataRootForPicked(parent)
   } catch (error) {
     return { kind: 'invalid', error: error instanceof Error ? error.message : String(error) }
   }
@@ -345,17 +353,8 @@ export const classifyDataRoot = async (
     }
   }
 
-  // Look one level into the existing target to classify it (design §21.5). Classify by USER data
-  // only (MIGRATED_DIRS = artifacts/compute/delegation/notebooks/uploads/workspaces) — `runtime/` is rebuildable,
-  // NOT user data, so it is ignored entirely: it counts neither as "our data" (→ adopt) nor as
-  // foreign content (→ invalid). Without this, a leftover runtime/ (e.g. after a prior move that
-  // excludes runtime) would make a data-less folder look adoptable and silently switch to an empty
-  // workspace.
-  //   - contains any migrated user-data dir -> adopt (looks like our data; recovery/reuse).
-  //     "Any", not "all": a real data folder can lack some (no uploads yet, etc.).
-  //   - empty, OR holds only runtime/ -> move: safe to populate.
-  //   - has other non-data content (foreign files/dirs) -> invalid: a folder that merely shares the
-  //     name; adopting would show an empty workspace and populating would pollute the user's dir.
+  // Adopt only verified application content. Empty scaffolding can receive a move, while
+  // generic files and nonempty runtime residue cannot establish ownership or be overwritten.
   try {
     const targetStat = await stat(target)
     if (!targetStat.isDirectory()) {
@@ -421,16 +420,7 @@ export const classifyDataRoot = async (
       return { kind: 'invalid', error: 'The selected folder is not usable.' }
   }
   const branded = /^Open-?Science(?:-DEV)?$/i.test(basename(target))
-  const looksLikeOurData =
-    ownedWorkspace ||
-    (branded &&
-      entries.some(
-        (entry) =>
-          entry.isDirectory() &&
-          (MIGRATED_DIRS as readonly string[]).includes(entry.name) &&
-          !['models', 'uploads'].includes(entry.name) &&
-          directoryHasFiles(join(target, entry.name))
-      ))
+  const looksLikeOurData = ownedWorkspace || (branded && hasLegacyResearchData(target))
   if (looksLikeOurData) return { kind: 'adopt' }
 
   // Empty application scaffolding can be populated. Nonempty runtime/generic directories with no
@@ -461,9 +451,10 @@ export const classifyDataRoot = async (
 // never copy into a non-empty target, so it keeps its own rejection message here.
 export const validateNewDataRoot = async (
   parent: string,
-  currentDataRoot: string
+  currentDataRoot: string,
+  deps: ClassifyDataRootDeps = {}
 ): Promise<DataRootValidationResult> => {
-  const result = await classifyDataRoot(parent, currentDataRoot)
+  const result = await classifyDataRoot(parent, currentDataRoot, deps)
 
   if (result.kind === 'move') return { ok: true }
   if (result.kind === 'adopt') {
@@ -644,6 +635,7 @@ export const runDataRootMigration = async (
     signal: AbortSignal
     onProgress: (p: MigrationProgress) => void
     onVerified?: (staged: { token: string; target: string }) => void
+    selection?: DataRootSelection
   }
 ): Promise<MigrationResult> => {
   const operation = startDiagnosticOperation(deps.logger ?? createLogger('storage:migration'), {
@@ -651,14 +643,32 @@ export const runDataRootMigration = async (
     fields: { mode: 'move', correlationId: deps.diagnosticCorrelationId }
   })
   operation.phase('validate-target')
-  const validation = await validateNewDataRoot(parent, deps.currentDataRoot)
-
-  if (!validation.ok) {
-    operation.fail(new Error(validation.error))
-    return { ok: false, error: validation.error }
+  let selection: DataRootSelection
+  let target: string
+  let targetWasAbsent: boolean
+  try {
+    target = runOpts.selection?.dataRoot ?? dataRootForPicked(parent)
+    selection = runOpts.selection ?? {
+      pickedPath: parent,
+      dataRoot: target,
+      kind: 'move',
+      identity: dataRootIdentity(target)
+    }
+    assertDataRootSelection(selection)
+    targetWasAbsent = !existsSync(target)
+    const validation = await validateNewDataRoot(target, deps.currentDataRoot, {
+      exactTarget: true
+    })
+    if (!validation.ok) {
+      operation.fail(new Error(validation.error))
+      return validation
+    }
+    if (selection.kind !== 'move') throw new Error(DATA_ROOT_SELECTION_CHANGED)
+    assertDataRootSelection(selection)
+  } catch (error) {
+    operation.fail(error)
+    return { ok: false, error: toErrorMessage(error) }
   }
-
-  const target = dataRootForPicked(parent)
 
   // Stamp a 'copying' marker into the staging dir BEFORE any bytes are copied. Its presence makes a
   // half-copied target unmistakably "not committed": computeDefaultDataRoot skips a marker-bearing
@@ -698,7 +708,12 @@ export const runDataRootMigration = async (
     }
   }
   try {
-    await mkdir(target, { recursive: true })
+    assertDataRootSelection(selection)
+    if (targetWasAbsent) {
+      // Exclusive creation must fail if another actor populated the absent destination.
+      mkdirSync(target)
+      selection = { ...selection, identity: dataRootIdentity(target) }
+    }
     const canonicalValidation = await validateCanonicalTarget(
       deps.currentDataRoot,
       resolve(parent),
@@ -715,7 +730,13 @@ export const runDataRootMigration = async (
     await rm(join(target, RUNTIME_ENVIRONMENT_INVENTORY_DIR), { recursive: true, force: true })
   } catch (err) {
     operation.fail(err)
-    return { ok: false, error: 'Could not prepare the new data location. Please try again.' }
+    return {
+      ok: false,
+      error:
+        err instanceof Error && err.message === DATA_ROOT_SELECTION_CHANGED
+          ? err.message
+          : 'Could not prepare the new data location. Please try again.'
+    }
   }
 
   if (await runtimeTreeContainsData(targetRuntimeRoot)) {
@@ -728,14 +749,48 @@ export const runDataRootMigration = async (
     }
   }
 
+  const stagingIdentity = dataRootDirectoryIdentity(target)
+  const isStagingDirectory = (): boolean => {
+    try {
+      return dataRootDirectoryIdentity(target) === stagingIdentity
+    } catch {
+      return false
+    }
+  }
+  const assertStagingIdentity = (): void => {
+    if (!isStagingDirectory()) throw new Error(DATA_ROOT_SELECTION_CHANGED)
+    const current = JSON.parse(
+      readFileSync(join(target, MIGRATION_MARKER_FILENAME), 'utf8')
+    ) as Partial<MigrationMarker>
+    if (
+      current.token !== marker.token ||
+      current.target !== target ||
+      current.source !== deps.currentDataRoot
+    )
+      throw new Error(DATA_ROOT_SELECTION_CHANGED)
+  }
+  const removeOwnedStaging = async (): Promise<void> => {
+    assertStagingIdentity()
+    await rm(target, { recursive: true, force: true })
+  }
+
   try {
+    const ready = await classifyDataRoot(target, deps.currentDataRoot, { exactTarget: true })
+    if (ready.kind !== 'move') throw new Error(DATA_ROOT_SELECTION_CHANGED)
+    assertDataRootSelection(selection)
     await writeMigrationMarker(target, marker)
   } catch (err) {
     // The target is not staging-owned until its marker is complete. Remove only a possibly partial
     // marker; preserving the target avoids deleting data written by another actor during preparation.
-    await removeMigrationMarker(target).catch(() => undefined)
+    if (isStagingDirectory()) await removeMigrationMarker(target).catch(() => undefined)
     operation.fail(err)
-    return { ok: false, error: 'Could not prepare the new data location. Please try again.' }
+    return {
+      ok: false,
+      error:
+        err instanceof Error && err.message === DATA_ROOT_SELECTION_CHANGED
+          ? err.message
+          : 'Could not prepare the new data location. Please try again.'
+    }
   }
 
   // Freeze in-flight writers before copying. If either interrupt fails we must NOT copy an unfrozen
@@ -744,12 +799,16 @@ export const runDataRootMigration = async (
   operation.phase('pause-writers')
   try {
     await pauseDataRootWriters(deps)
+    assertStagingIdentity()
   } catch (err) {
-    await rm(target, { recursive: true, force: true }).catch(() => undefined)
+    await removeOwnedStaging().catch(() => undefined)
     operation.fail(err)
     return {
       ok: false,
-      error: 'Could not pause running work to copy your data safely. Please try again in a moment.'
+      error:
+        err instanceof Error && err.message === DATA_ROOT_SELECTION_CHANGED
+          ? err.message
+          : 'Could not pause running work to copy your data safely. Please try again in a moment.'
     }
   }
 
@@ -758,7 +817,7 @@ export const runDataRootMigration = async (
   try {
     sourceMetadata = await capturePortableMetadata(deps.currentDataRoot, migrateDirs)
   } catch (error) {
-    await rm(target, { recursive: true, force: true }).catch(() => undefined)
+    await removeOwnedStaging().catch(() => undefined)
     operation.fail(error)
     return { ok: false, error: 'Could not inspect your data before copying it. Please try again.' }
   }
@@ -771,7 +830,7 @@ export const runDataRootMigration = async (
   try {
     await validateProvenanceState(deps.currentDataRoot)
   } catch (error) {
-    await rm(target, { recursive: true, force: true }).catch(() => undefined)
+    await removeOwnedStaging().catch(() => undefined)
     await restoreSourceMetadata().catch(() => undefined)
     operation.fail(error)
     return {
@@ -791,6 +850,7 @@ export const runDataRootMigration = async (
       preservedEnvs = await deps.exportRuntimeLocks(deps.currentDataRoot, target)
     } catch {
       runtimePreservationDegraded = true
+      assertStagingIdentity()
       await rm(join(target, RUNTIME_ENVS_LOCK_DIR), { recursive: true, force: true }).catch(
         () => undefined
       )
@@ -798,7 +858,7 @@ export const runDataRootMigration = async (
   }
   const sourceLinks = await validateMigrationSourceLinks(deps.currentDataRoot, migrateDirs)
   if (!sourceLinks.ok) {
-    await rm(target, { recursive: true, force: true }).catch(() => undefined)
+    await removeOwnedStaging().catch(() => undefined)
     await restoreSourceMetadata().catch(() => undefined)
     operation.fail(new Error(sourceLinks.error))
     return sourceLinks
@@ -827,6 +887,7 @@ export const runDataRootMigration = async (
     }
   }
   try {
+    assertStagingIdentity()
     result = await doCopyAndVerify({
       from: deps.currentDataRoot,
       to: target,
@@ -835,7 +896,7 @@ export const runDataRootMigration = async (
       onProgress: reportProgress
     })
   } catch (err) {
-    await rm(target, { recursive: true, force: true }).catch(() => undefined)
+    await removeOwnedStaging().catch(() => undefined)
     await restoreSourceMetadata().catch(() => undefined)
     operation.fail(err)
     return { ok: false, error: 'Could not copy your data. Please try again.' }
@@ -846,7 +907,7 @@ export const runDataRootMigration = async (
     // half-baked, marker-less folder can never later be mistaken for a committed data root. Safe: a
     // 'move' target only ever holds our copy plus at most a rebuildable runtime/, never user data.
     let stagingCleanupDegraded = false
-    await rm(target, { recursive: true, force: true }).catch(() => {
+    await removeOwnedStaging().catch(() => {
       stagingCleanupDegraded = true
     })
     await restoreSourceMetadata().catch(() => undefined)
@@ -859,7 +920,7 @@ export const runDataRootMigration = async (
   }
 
   if (runOpts.signal.aborted) {
-    await rm(target, { recursive: true, force: true }).catch(() => undefined)
+    await removeOwnedStaging().catch(() => undefined)
     await restoreSourceMetadata().catch(() => undefined)
     operation.cancel({ cancelRequested: true })
     return { ok: false, error: 'migration cancelled', cancelled: true }
@@ -869,7 +930,7 @@ export const runDataRootMigration = async (
   try {
     await validateProvenanceState(target)
   } catch (error) {
-    await rm(target, { recursive: true, force: true }).catch(() => undefined)
+    await removeOwnedStaging().catch(() => undefined)
     await restoreSourceMetadata().catch(() => undefined)
     operation.fail(error)
     return {
@@ -888,6 +949,7 @@ export const runDataRootMigration = async (
     if (!runtimeLockInventory) {
       runtimePreservationDegraded = true
       preservedEnvs = []
+      assertStagingIdentity()
       await rm(join(target, RUNTIME_ENVS_LOCK_DIR), { recursive: true, force: true }).catch(
         () => undefined
       )
@@ -899,13 +961,13 @@ export const runDataRootMigration = async (
   try {
     inventory = await scanInventory(target, migrateDirs)
   } catch (err) {
-    await rm(target, { recursive: true, force: true }).catch(() => undefined)
+    await removeOwnedStaging().catch(() => undefined)
     await restoreSourceMetadata().catch(() => undefined)
     operation.fail(err)
     return { ok: false, error: 'Could not verify the copied data. Please run the move again.' }
   }
   if (runOpts.signal.aborted) {
-    await rm(target, { recursive: true, force: true }).catch(() => undefined)
+    await removeOwnedStaging().catch(() => undefined)
     await restoreSourceMetadata().catch(() => undefined)
     operation.cancel({ cancelRequested: true })
     return { ok: false, error: 'migration cancelled', cancelled: true }
@@ -914,7 +976,7 @@ export const runDataRootMigration = async (
     await restoreSourceMetadata()
     await restorePortableMetadata(target, sourceMetadata)
   } catch (err) {
-    await rm(target, { recursive: true, force: true }).catch(() => undefined)
+    await removeOwnedStaging().catch(() => undefined)
     await restoreSourceMetadata().catch(() => undefined)
     operation.fail(err)
     return {
@@ -923,6 +985,7 @@ export const runDataRootMigration = async (
     }
   }
   try {
+    assertStagingIdentity()
     await writeMigrationMarker(target, {
       ...marker,
       status: 'verified',
@@ -932,7 +995,7 @@ export const runDataRootMigration = async (
     })
     runOpts.onVerified?.({ token: marker.token, target })
   } catch (err) {
-    await rm(target, { recursive: true, force: true }).catch(() => undefined)
+    await removeOwnedStaging().catch(() => undefined)
     operation.fail(err)
     return { ok: false, error: 'Could not finalize the copied data. Please run the move again.' }
   }

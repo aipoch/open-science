@@ -24,7 +24,7 @@ const installApi = (overrides: Partial<MockStorageApi> = {}): MockStorageApi => 
   const api: MockStorageApi = {
     pickDirectory: vi.fn().mockResolvedValue(null),
     // Default: resolving the move destination (from defaultParent) yields the visible OpenScience path.
-    inspectDataRoot: vi.fn().mockResolvedValue({ kind: 'move', dataRoot: '/home/u/OpenScience' }),
+    inspectDataRoot: vi.fn().mockResolvedValue({ kind: 'move', dataRoot: '/home/u/Open-Science' }),
     dismissLegacyMovePrompt: vi.fn().mockResolvedValue(undefined),
     detectActive: vi.fn().mockResolvedValue([]),
     migrate: vi.fn().mockResolvedValue({ ok: true, cleanupPending: false }),
@@ -53,7 +53,7 @@ const renderDialog = async (onDismiss = vi.fn()): Promise<void> => {
     root.render(
       <LegacyDataMoveDialog
         currentDataRoot="/home/u/.open-science"
-        defaultParent="/home/u"
+        defaultDataRoot="/home/u/Open-Science"
         onDismiss={onDismiss}
       />
     )
@@ -83,7 +83,7 @@ describe('LegacyDataMoveDialog', () => {
         <LegacyDataMoveDialog
           active={false}
           currentDataRoot="/home/u/.open-science"
-          defaultParent="/home/u"
+          defaultDataRoot="/home/u/Open-Science"
           onDismiss={vi.fn()}
         />
       )
@@ -132,7 +132,7 @@ describe('LegacyDataMoveDialog', () => {
     await renderDialog()
 
     expect(document.body.textContent).toContain('/home/u/.open-science')
-    expect(document.body.textContent).toContain('/home/u/OpenScience')
+    expect(document.body.textContent).toContain('/home/u/Open-Science')
     for (const label of [
       /Move to Open-Science/,
       /Choose another folder/,
@@ -182,9 +182,9 @@ describe('LegacyDataMoveDialog', () => {
         .mockResolvedValueOnce({
           kind: 'recover',
           recoveryStatus: 'verified',
-          dataRoot: '/home/u/OpenScience'
+          dataRoot: '/home/u/Open-Science'
         })
-        .mockResolvedValue({ kind: 'move', dataRoot: '/home/u/OpenScience' })
+        .mockResolvedValue({ kind: 'move', dataRoot: '/home/u/Open-Science' })
     })
     await renderDialog()
 
@@ -212,7 +212,7 @@ describe('LegacyDataMoveDialog', () => {
       await Promise.resolve()
       await Promise.resolve()
     })
-    expect(api.migrate).toHaveBeenCalledWith('/home/u')
+    expect(api.migrate).toHaveBeenCalledWith('/home/u/Open-Science', undefined)
   })
 
   it('waits for default inspection before enabling the move action', async () => {
@@ -239,7 +239,7 @@ describe('LegacyDataMoveDialog', () => {
       resolveInspection({
         kind: 'recover',
         recoveryStatus: 'verified',
-        dataRoot: '/home/u/OpenScience'
+        dataRoot: '/home/u/Open-Science'
       })
       await Promise.resolve()
     })
@@ -252,7 +252,7 @@ describe('LegacyDataMoveDialog', () => {
       inspectDataRoot: vi
         .fn()
         .mockRejectedValueOnce(new Error('inspection unavailable'))
-        .mockResolvedValueOnce({ kind: 'move', dataRoot: '/home/u/OpenScience' })
+        .mockResolvedValueOnce({ kind: 'move', dataRoot: '/home/u/Open-Science' })
     })
     await renderDialog()
 
@@ -270,7 +270,7 @@ describe('LegacyDataMoveDialog', () => {
     })
 
     expect(api.inspectDataRoot).toHaveBeenCalledTimes(2)
-    expect(document.body.textContent).toContain('/home/u/OpenScience')
+    expect(document.body.textContent).toContain('/home/u/Open-Science')
   })
 
   it('does not dismiss the prompt when persisting the keep-here choice fails', async () => {
@@ -306,7 +306,7 @@ describe('LegacyDataMoveDialog', () => {
       pickDirectory: vi.fn().mockResolvedValue('/mnt/interrupted'),
       inspectDataRoot: vi
         .fn()
-        .mockResolvedValueOnce({ kind: 'move', dataRoot: '/home/u/OpenScience' })
+        .mockResolvedValueOnce({ kind: 'move', dataRoot: '/home/u/Open-Science' })
         .mockResolvedValueOnce({
           kind: 'recover',
           recoveryStatus: 'copying',
@@ -353,7 +353,7 @@ describe('LegacyDataMoveDialog', () => {
       pickDirectory: vi.fn().mockResolvedValue('/mnt/unavailable'),
       inspectDataRoot: vi
         .fn()
-        .mockResolvedValueOnce({ kind: 'move', dataRoot: '/home/u/OpenScience' })
+        .mockResolvedValueOnce({ kind: 'move', dataRoot: '/home/u/Open-Science' })
         .mockRejectedValueOnce(new Error('inspection unavailable'))
     })
     await renderDialog()

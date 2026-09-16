@@ -1,3 +1,4 @@
+import { storageErrorMessage } from '@/lib/storage-error'
 import { AlertDialog } from 'radix-ui'
 import { FolderInput, FolderOpen, RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -15,16 +16,19 @@ import {
 } from '@/components/ui/dialog-chrome'
 import { cn } from '@/lib/utils'
 import { StorageMigrationModal } from '@/pages/settings/StorageMigrationModal'
-import type { DataRootInspection, DataRootRecoveryStatus } from '../../../shared/storage'
+import type {
+  DataRootInspection,
+  DataRootRecoveryStatus,
+  DataRootSelection
+} from '../../../shared/storage'
 
 type LegacyDataMoveDialogProps = {
   // App Shell presentation ownership may temporarily cover this prompt without discarding its state.
   active?: boolean
   // The hidden config root where a legacy install's data currently lives (e.g. ~/.open-science).
   currentDataRoot: string
-  // The parent the "Move to Open-Science" action relocates into; its derived data root (resolved via
-  // inspectDataRoot below) defaults to the visible <parent>/Open-Science folder.
-  defaultParent: string
+  // Exact destination from startup status, independent of any legacy sibling under its parent.
+  defaultDataRoot: string
   // Called after the user declines and the "don't ask again" flag has been persisted.
   onDismiss: () => void
 }
@@ -38,24 +42,25 @@ type LegacyDataMoveDialogProps = {
 const LegacyDataMoveDialog = ({
   active = true,
   currentDataRoot,
-  defaultParent,
+  defaultDataRoot,
   onDismiss
 }: LegacyDataMoveDialogProps): React.JSX.Element => {
   const { t } = useTranslation()
-  // When set, hand off to the shared migration modal targeting this parent; a durable interrupted
+  // When set, hand off to the shared migration modal targeting this exact root; a durable interrupted
   // copy carries its recovery status so the modal resumes instead of recopying.
   const [migrationTarget, setMigrationTarget] = useState<{
     path: string
+    selection?: DataRootSelection
     recoveryStatus?: DataRootRecoveryStatus
   } | null>(null)
   // The exact target "Move to Open-Science" would use, normally <home>/Open-Science. Resolved via
-  // inspectDataRoot(defaultParent) rather than getInfo's dataRoot, which for a legacy install is the
+  // inspectDataRoot(defaultDataRoot) rather than getInfo's dataRoot, which for a legacy install is the
   // hidden config root itself.
   const [defaultInspectionState, setDefaultInspectionState] = useState<
     { parent: string; result: DataRootInspection } | undefined
   >(undefined)
   const defaultInspection =
-    defaultInspectionState?.parent === defaultParent ? defaultInspectionState.result : undefined
+    defaultInspectionState?.parent === defaultDataRoot ? defaultInspectionState.result : undefined
   const defaultInspectionRequestId = useRef(0)
   const [defaultInspectionError, setDefaultInspectionError] = useState<string | undefined>(
     undefined
@@ -67,10 +72,10 @@ const LegacyDataMoveDialog = ({
 
   const requestDefaultInspection = useCallback((): void => {
     const requestId = ++defaultInspectionRequestId.current
-    void window.api.storage.inspectDataRoot(defaultParent).then(
+    void window.api.storage.inspectDataRoot(defaultDataRoot).then(
       (result) => {
         if (defaultInspectionRequestId.current !== requestId) return
-        setDefaultInspectionState({ parent: defaultParent, result })
+        setDefaultInspectionState({ parent: defaultDataRoot, result })
         setDefaultInspectionError(undefined)
       },
       () => {
@@ -78,7 +83,7 @@ const LegacyDataMoveDialog = ({
         setDefaultInspectionError(t('Could not check the data folder. Try again.'))
       }
     )
-  }, [defaultParent, t])
+  }, [defaultDataRoot, t])
 
   useEffect(() => {
     requestDefaultInspection()
@@ -97,7 +102,7 @@ const LegacyDataMoveDialog = ({
   const handleMigrationClose = (): void => {
     const resolvedTarget = migrationTarget
     setMigrationTarget(null)
-    if (resolvedTarget?.path === defaultParent) {
+    if (resolvedTarget?.path === defaultDataRoot) {
       refreshDefaultInspection()
     }
   }
@@ -107,7 +112,8 @@ const LegacyDataMoveDialog = ({
     if (!defaultInspection) return
     if (defaultInspection.kind === 'move' || defaultInspection.kind === 'recover') {
       setMigrationTarget({
-        path: defaultParent,
+        path: defaultInspection.dataRoot,
+        selection: defaultInspection.selection,
         recoveryStatus:
           defaultInspection.kind === 'recover' ? defaultInspection.recoveryStatus : undefined
       })
@@ -118,7 +124,8 @@ const LegacyDataMoveDialog = ({
         ? t(
             'That folder already contains Open-Science data. Pick an empty folder, or use the default location.'
           )
-        : (defaultInspection.error ?? t('That folder can’t be used. Pick another one.'))
+        : (storageErrorMessage(defaultInspection.error, t) ??
+            t('That folder can’t be used. Pick another one.'))
     )
   }
 
@@ -132,7 +139,8 @@ const LegacyDataMoveDialog = ({
       const inspection = await window.api.storage.inspectDataRoot(picked)
       if (inspection.kind === 'move' || inspection.kind === 'recover') {
         setMigrationTarget({
-          path: picked,
+          path: inspection.dataRoot,
+          selection: inspection.selection,
           recoveryStatus: inspection.kind === 'recover' ? inspection.recoveryStatus : undefined
         })
         return
@@ -145,7 +153,8 @@ const LegacyDataMoveDialog = ({
           ? t(
               'That folder already contains Open-Science data. Pick an empty folder, or use the default location.'
             )
-          : (inspection.error ?? t('That folder can’t be used. Pick another one.'))
+          : (storageErrorMessage(inspection.error, t) ??
+              t('That folder can’t be used. Pick another one.'))
       )
     } catch {
       setOperationError(t('Could not check the data folder. Try again.'))
@@ -174,6 +183,7 @@ const LegacyDataMoveDialog = ({
       <StorageMigrationModal
         active={active}
         targetPath={migrationTarget.path}
+        selection={migrationTarget.selection}
         recoveryStatus={migrationTarget.recoveryStatus}
         onClose={handleMigrationClose}
       />

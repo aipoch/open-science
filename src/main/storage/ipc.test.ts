@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs'
+import { existsSync, rmSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -198,6 +198,195 @@ afterEach(async () => {
 })
 
 describe('storage IPC handlers', () => {
+  it.each(['legacy-sibling', 'both-siblings', 'adopt-disappears', 'move-becomes-adopt'])(
+    'requires confirmation again when a preview changes before the command (%s)',
+    async (change) => {
+      initDataRoot(dataRoot)
+      if (change === 'adopt-disappears') {
+        await mkdir(join(target, 'workspaces'), { recursive: true })
+        await writeFile(join(target, 'workspaces/history.json'), '{}')
+      }
+      const deps = fakeDeps()
+      const owner = createStorageCommandOwner(deps)
+      const preview = await owner.inspectDataRoot({ parent: targetParent })
+      expect(preview.selection).toBeDefined()
+      if (change === 'adopt-disappears') await rm(target, { recursive: true })
+      else {
+        const changed = change === 'move-becomes-adopt' ? target : join(targetParent, 'OpenScience')
+        await mkdir(join(changed, 'workspaces'), { recursive: true })
+        await writeFile(join(changed, 'workspaces/history.json'), '{}')
+        if (change === 'both-siblings') {
+          await mkdir(join(target, 'workspaces'), { recursive: true })
+          await writeFile(join(target, 'workspaces/history.json'), '{}')
+        }
+      }
+      const result = await owner.setDataRootAndRelaunch({
+        parent: preview.dataRoot,
+        selection: preview.selection
+      })
+      expect(result.ok).toBe(false)
+      expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
+      expect(deps.prepareDataRootHandoff).not.toHaveBeenCalled()
+      expect(isMigrationPending()).toBe(false)
+    }
+  )
+
+  it('refuses a changed move target after handoff preparation before entering the copy engine', async () => {
+    initDataRoot(dataRoot)
+    const copy = vi.fn()
+    const aborted = vi.fn()
+    const deps = fakeDeps({
+      runDataRootMigration: copy,
+      notifyDataRootHandoffAborted: aborted,
+      prepareDataRootHandoff: async () => {
+        await mkdir(join(targetParent, 'OpenScience/workspaces'), { recursive: true })
+        await writeFile(join(targetParent, 'OpenScience/workspaces/history.json'), '{}')
+        return true
+      }
+    })
+    const owner = createStorageCommandOwner(deps)
+    const preview = await owner.inspectDataRoot({ parent: targetParent })
+    expect(
+      await owner.migrate({ parent: preview.dataRoot, selection: preview.selection })
+    ).toMatchObject({ ok: false })
+    expect(copy).not.toHaveBeenCalled()
+    expect(aborted).toHaveBeenCalledOnce()
+    expect(existsSync(target)).toBe(false)
+    expect(isMigrationPending()).toBe(false)
+  })
+
+  it('does not publish an inspection if the directory changes during the capacity probe', async () => {
+    initDataRoot(dataRoot)
+    const owner = createStorageCommandOwner(
+      fakeDeps({
+        availableBytes: async () => {
+          await mkdir(join(target, 'workspaces'), { recursive: true })
+          await writeFile(join(target, 'workspaces/history.json'), '{}')
+          return 1000
+        }
+      })
+    )
+    expect(await owner.inspectDataRoot({ parent: targetParent })).toMatchObject({ kind: 'invalid' })
+  })
+
+  it('preserves the old pointer when a staged target disappears during queued commit', async () => {
+    const { SettingsRepository } = await import('../settings/repository')
+    const { SettingsPreferencesModule } = await import('../settings/preferences')
+    const repository = new SettingsRepository(join(currentParent, 'isolated-config'))
+    await repository.pinInitialDataRoot(dataRoot, false)
+    const preferences = new SettingsPreferencesModule(repository)
+    initDataRoot(dataRoot)
+    const deps = fakeDeps()
+    deps.settingsService.setDataRoot = async (path, options) => {
+      const pending = preferences.setDataRoot(path, options)
+      rmSync(target, { recursive: true })
+      await pending
+    }
+    const owner = createStorageCommandOwner(deps)
+    expect(await owner.migrate({ parent: targetParent })).toMatchObject({ ok: true })
+    expect(await owner.commitAndRelaunch({ parent: target })).toMatchObject({ ok: false })
+    expect((await repository.getSettings()).dataRoot).toBe(dataRoot)
+    expect(deps.relaunch).not.toHaveBeenCalled()
+  })
+
+  it('rechecks the selection inside the queued settings publication', async () => {
+    const { SettingsRepository } = await import('../settings/repository')
+    const { SettingsPreferencesModule } = await import('../settings/preferences')
+    const repository = new SettingsRepository(join(currentParent, 'isolated-config'))
+    await repository.pinInitialDataRoot(dataRoot, false)
+    const preferences = new SettingsPreferencesModule(repository)
+    initDataRoot(dataRoot)
+    await mkdir(join(target, 'workspaces'), { recursive: true })
+    await writeFile(join(target, 'workspaces/history.json'), '{}')
+    const deps = fakeDeps()
+    deps.settingsService.setDataRoot = async (path, options) => {
+      const pending = preferences.setDataRoot(path, options)
+      rmSync(target, { recursive: true })
+      await pending
+    }
+    const owner = createStorageCommandOwner(deps)
+    expect(await owner.setDataRootAndRelaunch({ parent: target })).toMatchObject({ ok: false })
+    expect((await repository.getSettings()).dataRoot).toBe(dataRoot)
+    expect(isMigrationPending()).toBe(false)
+    expect(deps.relaunch).not.toHaveBeenCalled()
+  })
+
+  it('rejects lost workspace ownership after the final adoption classification', async () => {
+    initDataRoot(dataRoot)
+    const custom = join(targetParent, 'custom-research')
+    const workspace = join(custom, 'workspaces/session')
+    await mkdir(workspace, { recursive: true })
+    const { initializeManagedWorkspaceOwnership } = await import('./managed-workspace-ownership')
+    await initializeManagedWorkspaceOwnership(workspace, 'project', 1, custom)
+    const { classifyDataRoot } = await import('./migration-service')
+    let calls = 0
+    const deps = fakeDeps({
+      classifyDataRoot: async (...args) => {
+        const result = await classifyDataRoot(...args)
+        if (++calls === 2) await rm(workspace, { recursive: true })
+        return result
+      }
+    })
+    const owner = createStorageCommandOwner(deps)
+    expect(await owner.setDataRootAndRelaunch({ parent: custom })).toMatchObject({ ok: false })
+    expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
+  })
+
+  it('does not switch to a legacy sibling that appears while writers are paused', async () => {
+    initDataRoot(dataRoot)
+    const legacy = join(targetParent, 'OpenScience')
+    const deps = fakeDeps({
+      pauseDataRootWriters: async () => {
+        await mkdir(join(legacy, 'workspaces'), { recursive: true })
+        await writeFile(join(legacy, 'workspaces/history.json'), '{}')
+      }
+    })
+    const owner = createStorageCommandOwner(deps)
+    const preview = await owner.inspectDataRoot({ parent: targetParent })
+    expect(preview).toMatchObject({ kind: 'move', dataRoot: target })
+    const result = await owner.setDataRootAndRelaunch({ parent: targetParent })
+    expect(result).toMatchObject({ ok: false })
+    expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
+    expect(existsSync(target)).toBe(false)
+    expect(isMigrationPending()).toBe(false)
+  })
+
+  it('does not recreate an adoption target that disappears during writer pause', async () => {
+    initDataRoot(dataRoot)
+    await mkdir(join(target, 'workspaces'), { recursive: true })
+    await writeFile(join(target, 'workspaces/history.json'), '{}')
+    const deps = fakeDeps({
+      pauseDataRootWriters: async () => {
+        await rm(target, { recursive: true })
+      }
+    })
+    const owner = createStorageCommandOwner(deps)
+    expect(await owner.inspectDataRoot({ parent: target })).toMatchObject({ kind: 'adopt' })
+    expect(await owner.setDataRootAndRelaunch({ parent: target })).toMatchObject({ ok: false })
+    expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
+    expect(existsSync(target)).toBe(false)
+    expect(isMigrationPending()).toBe(false)
+  })
+
+  it('rejects an adoption target removed after final asynchronous validation', async () => {
+    initDataRoot(dataRoot)
+    await mkdir(join(target, 'workspaces'), { recursive: true })
+    await writeFile(join(target, 'workspaces/history.json'), '{}')
+    const { classifyDataRoot } = await import('./migration-service')
+    let calls = 0
+    const deps = fakeDeps({
+      classifyDataRoot: async (...args) => {
+        const result = await classifyDataRoot(...args)
+        if (++calls === 2) await rm(target, { recursive: true })
+        return result
+      }
+    })
+    const owner = createStorageCommandOwner(deps)
+    expect(await owner.setDataRootAndRelaunch({ parent: target })).toMatchObject({ ok: false })
+    expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
+    expect(isMigrationPending()).toBe(false)
+  })
+
   it('shares migration state between legacy IPC and direct owner calls', async () => {
     initDataRoot(dataRoot)
     const deps = fakeDeps()
@@ -214,6 +403,7 @@ describe('storage IPC handlers', () => {
     })
 
     expect(deps.settingsService.setDataRoot).toHaveBeenCalledWith(target, {
+      validateTarget: expect.any(Function),
       previousDataRoot: dataRoot
     })
     expect(deps.runtime.disconnect).toHaveBeenCalledOnce()
@@ -304,6 +494,7 @@ describe('storage IPC handlers', () => {
     })
 
     expect(deps.settingsService.setDataRoot).toHaveBeenCalledWith(target, {
+      validateTarget: expect.any(Function),
       previousDataRoot: dataRoot
     })
     expect(deps.runtime.disconnect).toHaveBeenCalledOnce()
@@ -488,7 +679,7 @@ describe('storage IPC handlers', () => {
       )
       await mkdir(staging, { recursive: true })
       await writeFile(join(staging, 'transfer.part'), 'pending upload')
-      initDataRoot(undefined)
+      initDataRoot(join(home, 'Open-Science'))
       registerStorageIpcHandlers(fakeDeps())
 
       const info = (await invoke('storage:get-info')) as { canAutoSelectDataDrive: boolean }
@@ -496,7 +687,7 @@ describe('storage IPC handlers', () => {
       expect(info.canAutoSelectDataDrive).toBe(false)
     } finally {
       electronHome.path = '/home/user'
-      initDataRoot(undefined)
+      initDataRoot(join(home, 'Open-Science'))
       await rm(home, { recursive: true, force: true })
     }
   })
@@ -1972,6 +2163,7 @@ describe('storage IPC handlers', () => {
       ).resolves.toEqual({ ok: true })
       expect(deps.settingsService.setDataRoot).toHaveBeenCalledWith(dataRootFor(alternateParent), {
         completeOnboarding: false,
+        validateTarget: expect.any(Function),
         previousDataRoot: target
       })
       expect(deps.relaunch).toHaveBeenCalledOnce()
@@ -2144,7 +2336,9 @@ describe('storage IPC handlers', () => {
     initDataRoot(dataRoot)
     registerStorageIpcHandlers(fakeDeps())
 
-    await expect(invoke('storage:inspect-data-root', { parent: targetParent })).resolves.toEqual({
+    await expect(
+      invoke('storage:inspect-data-root', { parent: targetParent })
+    ).resolves.toMatchObject({
       kind: 'move',
       dataRoot: target,
       targetWasAbsent: true,
@@ -2157,7 +2351,9 @@ describe('storage IPC handlers', () => {
     await mkdir(join(target, 'runtime'), { recursive: true })
     registerStorageIpcHandlers(fakeDeps())
 
-    await expect(invoke('storage:inspect-data-root', { parent: targetParent })).resolves.toEqual({
+    await expect(
+      invoke('storage:inspect-data-root', { parent: targetParent })
+    ).resolves.toMatchObject({
       kind: 'move',
       dataRoot: target,
       targetWasAbsent: false,
@@ -2171,7 +2367,9 @@ describe('storage IPC handlers', () => {
     const deps = fakeDeps({ availableBytes })
     registerStorageIpcHandlers(deps)
 
-    await expect(invoke('storage:inspect-data-root', { parent: targetParent })).resolves.toEqual({
+    await expect(
+      invoke('storage:inspect-data-root', { parent: targetParent })
+    ).resolves.toMatchObject({
       kind: 'move',
       dataRoot: target,
       targetWasAbsent: true,
@@ -2180,7 +2378,9 @@ describe('storage IPC handlers', () => {
     expect(availableBytes).toHaveBeenCalledWith(targetParent)
 
     availableBytes.mockRejectedValueOnce(new Error('statfs unavailable'))
-    await expect(invoke('storage:inspect-data-root', { parent: targetParent })).resolves.toEqual({
+    await expect(
+      invoke('storage:inspect-data-root', { parent: targetParent })
+    ).resolves.toMatchObject({
       kind: 'move',
       dataRoot: target,
       targetWasAbsent: true
@@ -2193,7 +2393,9 @@ describe('storage IPC handlers', () => {
     const deps = fakeDeps()
     registerStorageIpcHandlers(deps)
 
-    await expect(invoke('storage:inspect-data-root', { parent: targetParent })).resolves.toEqual({
+    await expect(
+      invoke('storage:inspect-data-root', { parent: targetParent })
+    ).resolves.toMatchObject({
       kind: 'move',
       dataRoot: target,
       targetWasAbsent: true,
@@ -2204,6 +2406,7 @@ describe('storage IPC handlers', () => {
     ).resolves.toEqual({ ok: true })
     expect(deps.settingsService.setDataRoot).toHaveBeenCalledWith(target, {
       completeOnboarding: false,
+      validateTarget: expect.any(Function),
       previousDataRoot: dataRoot
     })
     expect(deps.relaunch).toHaveBeenCalledTimes(1)
@@ -2217,7 +2420,9 @@ describe('storage IPC handlers', () => {
     const deps = fakeDeps({ availableBytes })
     registerStorageIpcHandlers(deps)
 
-    await expect(invoke('storage:inspect-data-root', { parent: targetParent })).resolves.toEqual({
+    await expect(
+      invoke('storage:inspect-data-root', { parent: targetParent })
+    ).resolves.toMatchObject({
       kind: 'adopt',
       dataRoot: target,
       targetAvailableBytes: 654_321
@@ -2257,6 +2462,7 @@ describe('storage IPC handlers', () => {
     ).resolves.toEqual({ ok: true })
     expect(deps.settingsService.setDataRoot).toHaveBeenCalledWith(target, {
       completeOnboarding: false,
+      validateTarget: expect.any(Function),
       previousDataRoot: dataRoot
     })
     expect(deps.relaunch).toHaveBeenCalledTimes(1)
@@ -2279,6 +2485,7 @@ describe('storage IPC handlers', () => {
     expect(existsSync(target)).toBe(true)
     expect(deps.settingsService.setDataRoot).toHaveBeenCalledWith(target, {
       completeOnboarding: true,
+      validateTarget: expect.any(Function),
       previousDataRoot: dataRoot
     })
   })
@@ -2316,6 +2523,7 @@ describe('storage IPC handlers', () => {
     ).resolves.toEqual({ ok: true })
     expect(deps.settingsService.setDataRoot).toHaveBeenCalledWith(target, {
       completeOnboarding: false,
+      validateTarget: expect.any(Function),
       previousDataRoot: dataRoot
     })
     expect(deps.relaunch).toHaveBeenCalledTimes(1)
@@ -2727,6 +2935,7 @@ describe('storage IPC handlers', () => {
 
     expect(deps.settingsService.setDataRoot).toHaveBeenCalledWith(target, {
       completeOnboarding: true,
+      validateTarget: expect.any(Function),
       previousDataRoot: dataRoot
     })
   })
@@ -2743,6 +2952,7 @@ describe('storage IPC handlers', () => {
 
     expect(deps.settingsService.setDataRoot).toHaveBeenCalledWith(target, {
       completeOnboarding: false,
+      validateTarget: expect.any(Function),
       previousDataRoot: dataRoot
     })
   })

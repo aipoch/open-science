@@ -116,6 +116,7 @@
     "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "原包文件不可用，可能已移动、删除或无法读取。请选择其他包文件。"
   },
   "renderer": {
+    "The selected data folder changed. Check the location and confirm it again.": "所选数据文件夹已发生变化。请检查位置并重新确认。",
     "Open-source license": "开源许可证",
     "Old Shell launch records are blocking this update.": "旧的命令行启动记录阻止了本次更新。",
     "Recovery will back up old Shell launch records and retry the update. Project data and settings are preserved.": "恢复操作将备份旧的命令行启动记录，然后重试更新。项目数据和设置将保留。",

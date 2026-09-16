@@ -2,15 +2,13 @@ import { readdirSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
 import { MIGRATABLE_DATA_DIRS } from './data-directories'
 import { hasPendingMigrationMarker } from './migration-marker'
-import { directoryHasFiles } from './location-evidence'
+import { directoryHasFiles, hasLegacyResearchData } from './location-evidence'
 export class DataLocationSelectionError extends Error {
   constructor(message: string) {
     super(message)
     this.name = 'DataLocationSelectionError'
   }
 }
-const hasResearchData = (root: string): boolean =>
-  MIGRATABLE_DATA_DIRS.some((dir) => directoryHasFiles(join(root, dir)))
 
 // Runtime is relevant to explicit adoption/onboarding, but does not prove the active data root:
 // migrations intentionally leave it behind at their source.
@@ -52,13 +50,13 @@ export const selectDefaultDataRoot = (
     ])
   ]
   const candidates = roots.filter(
-    (root) => !hasPendingMigrationMarker(root) && hasResearchData(root)
+    (root) => !hasPendingMigrationMarker(root) && hasLegacyResearchData(root)
   )
   const unrecognized = roots.filter(
     (root) =>
-      root !== configRoot &&
+      (root !== configRoot || hasDataRootContent(root)) &&
       !hasPendingMigrationMarker(root) &&
-      !hasResearchData(root) &&
+      !hasLegacyResearchData(root) &&
       directoryHasFiles(root)
   )
   if (unrecognized.length)

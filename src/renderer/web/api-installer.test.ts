@@ -32,6 +32,32 @@ function surface<Electron, Web>(electron: Electron, web: Web): Surface<Electron,
 }
 
 describe('installWebRendererContracts', () => {
+  it('carries the inspected target and intent across the local Web storage boundary', async () => {
+    const api: Record<string, unknown> = {}
+    const invoke = vi.fn()
+    installWebRendererContracts(api, {
+      availableRpcChannels: new Set(['storage:migrate', 'storage:set-data-root-and-relaunch']),
+      restrictedRpcChannels: new Set(),
+      invoke,
+      subscribe: vi.fn(),
+      nativeAdapters: {}
+    })
+    const selection = {
+      pickedPath: '/picked',
+      dataRoot: '/picked/Open-Science',
+      kind: 'move',
+      identity: 'inspection'
+    }
+    await methodAt(api, 'storage.migrate')!(selection.dataRoot, selection)
+    await methodAt(api, 'storage.setDataRootAndRelaunch')!(selection.dataRoot, false, selection)
+    expect(invoke.mock.calls).toEqual([
+      ['storage:migrate', [{ parent: selection.dataRoot, selection }]],
+      [
+        'storage:set-data-root-and-relaunch',
+        [{ parent: selection.dataRoot, markOnboarding: false, selection }]
+      ]
+    ])
+  })
   it('forwards the private bookmark identity on Web and retains a failed save for retry', async () => {
     const api: Record<string, unknown> = {}
     const invoke = vi.fn().mockRejectedValueOnce(new Error('Bookmark was not saved.'))

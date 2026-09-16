@@ -1,3 +1,4 @@
+import { storageErrorMessage } from '@/lib/storage-error'
 import { ErrorNotice } from '@/components/error-notice'
 import * as Dialog from '@/components/ui/dialog'
 import { Check, RefreshCw, TriangleAlert } from 'lucide-react'
@@ -19,6 +20,7 @@ import {
   hasDelegatedActiveSession,
   type ActiveSessionInfo,
   type DataRootRecoveryStatus,
+  type DataRootSelection,
   type MigrationOutcome,
   type MigrationPhase,
   type MigrationProgress
@@ -29,6 +31,7 @@ type Stage = 'detecting' | 'confirm' | 'migrating' | 'done' | 'committing' | 'er
 type StorageMigrationModalProps = {
   active?: boolean
   targetPath: string
+  selection?: DataRootSelection
   recoveryStatus?: DataRootRecoveryStatus
   targetAvailableBytes?: number
   onClose: () => void
@@ -82,6 +85,7 @@ const formatBytes = (bytes: number): string => {
 const StorageMigrationModal = ({
   active: isPresentationActive = true,
   targetPath,
+  selection,
   recoveryStatus,
   targetAvailableBytes,
   onClose
@@ -165,7 +169,7 @@ const StorageMigrationModal = ({
     })
 
     void window.api.storage
-      .migrate(targetPath)
+      .migrate(targetPath, selection)
       .then((result) => {
         if (!mountedRef.current) return
         setOutcome(result)
@@ -190,7 +194,7 @@ const StorageMigrationModal = ({
       })
 
     return unsubscribe
-  }, [stage, targetPath])
+  }, [stage, targetPath, selection])
 
   // Tick a 1s clock while migrating (cleared on leave/unmount). `startedAt` is stamped by the
   // transition into this stage, not here, so this effect calls no setState synchronously.
@@ -586,7 +590,7 @@ const StorageMigrationModal = ({
                     {ipcError
                       ? t('Something went wrong. Please close and try again.')
                       : outcome && !outcome.ok
-                        ? outcome.error
+                        ? storageErrorMessage(outcome.error, t)
                         : null}
                   </Dialog.Description>
                   {isSwitchover ? (

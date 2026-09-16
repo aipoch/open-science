@@ -1,5 +1,13 @@
 import { readdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { MIGRATABLE_DATA_DIRS } from './data-directories'
+
+// Generic caches and uploads occur in unrelated folders, and runtime survives deliberate moves.
+// These are content to preserve, but cannot establish a legacy application's research location.
+export const hasLegacyResearchData = (root: string): boolean =>
+  MIGRATABLE_DATA_DIRS.some(
+    (dir) => !['models', 'uploads'].includes(dir) && directoryHasFiles(join(root, dir))
+  )
 
 // Empty scaffolding is not evidence. Do not follow symlinks or hide access failures.
 export const directoryHasFiles = (

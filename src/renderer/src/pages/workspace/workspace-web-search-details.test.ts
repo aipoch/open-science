@@ -76,7 +76,7 @@ describe('workspace web search details', () => {
               content: {
                 type: 'text',
                 text: [
-                  '[Open-Science Framework](https://osf.io)',
+                  '[Open Science Framework](https://osf.io)',
                   'Registry result',
                   'https://example.com/registry'
                 ].join('\n')
@@ -90,7 +90,7 @@ describe('workspace web search details', () => {
       resultCount: 2,
       results: [
         {
-          title: 'Open-Science Framework',
+          title: 'Open Science Framework',
           url: 'https://osf.io'
         },
         {
@@ -188,7 +188,7 @@ describe('workspace web search details', () => {
           type: 'content',
           content: {
             type: 'text',
-            text: 'Open-Science Framework (https://osf.io)'
+            text: 'Open Science Framework (https://osf.io)'
           }
         }
       ]
@@ -199,7 +199,7 @@ describe('workspace web search details', () => {
       resultCount: 1,
       results: [
         {
-          title: 'Open-Science Framework',
+          title: 'Open Science Framework',
           url: 'https://osf.io'
         }
       ]

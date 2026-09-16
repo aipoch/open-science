@@ -3,8 +3,11 @@
 The product displays **Open-Science** (or **open-science** where lowercase is appropriate).
 Display names are separate from persistent identities and filesystem locations.
 
-Repository-authored name text uses the hyphenated spelling, including labels such as
-**Open-Science Framework** and **Center for Open-Science**. URLs retain their exact remote addresses.
+Only this project's product name uses the hyphenated spelling. Third-party official names remain
+**Open Science Framework** and **Center for Open Science**, including search results, quotations,
+and test fixtures. URLs retain their exact remote addresses. Historical facts and quoted names
+retain their original spelling. Technical identities and historical storage paths follow the
+compatibility rules below; they are not display copy to mechanically rename.
 The configured SignPath test certificate subject is `CN=Test certificate for 'Open-Science [OSS]'`;
 the process inspection CA uses `CN=Open-Science process inspection CA` for both its self-signed root
 and issued leaf certificates. These certificate subjects are not legacy-spelling exceptions.
@@ -13,7 +16,9 @@ and issued leaf certificates. These certificate subjects are not legacy-spelling
 
 An absolute saved `dataRoot` stays authoritative, including custom paths containing an old brand.
 For a legacy installation that has never completed a recorded selection, startup examines the current and historical default roots and the original
-configuration root for actual research data. Runtime alone is not evidence of the active data root:
+configuration root for actual research data, using the same legacy ownership evidence as manual
+adoption. Generic `models` and `uploads` contents alone cannot establish application ownership.
+Runtime alone is not evidence of the active data root:
 migration can leave it at the old location. Empty scaffolding does not identify an existing installation. A single verified location is recorded before locale, database, or application writers
 start. Uncommitted migration targets are never adopted by inference. Multiple candidates, unreadable
 locations, damaged settings, and lost pointers with remaining configuration require recovery. A pending
@@ -145,3 +150,17 @@ under `Aipoch/OpenScience/notebook-sandbox` stay in place; two populated roots r
 recovery. Isolated runs keep ownership under the configuration root. AppContainer, WFP, mutex and
 named-pipe identifiers such as `Aipoch.OpenScience.Notebook` and `OpenScience.RAccess` are retained
 security identities so upgrades and uninstall can manage the original resources.
+
+## Explicit location changes
+
+Inspection returns the exact target, intended operation and observed directory/ownership identity.
+The renderer carries that selection into adoption or migration instead of resolving the parent again.
+A changed parent, target, ownership receipt or operation requires a fresh inspection and confirmation.
+Adoption never recreates a missing target. Settings recheck the selection after queued writes and
+staging, immediately before atomically publishing the pointer; a failed guard preserves the old
+settings and removes its uncommitted temporary file.
+
+Both default-location actions use `defaultDataRoot`, including the legacy-layout migration prompt.
+Ordinary folder picking still recognizes verified legacy and custom roots. An isolated default nested
+inside the current data root is refused by the same containment guard; explicitly choose a separate
+folder. No upgrade-triggered migration is introduced.

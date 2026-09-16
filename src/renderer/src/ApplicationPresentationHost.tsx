@@ -384,7 +384,7 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
         <LegacyDataMoveDialog
           active={activePresentation === 'legacyDataMove'}
           currentDataRoot={startup.storageRecovery.legacyMove.currentDataRoot}
-          defaultParent={startup.storageRecovery.legacyMove.defaultParent}
+          defaultDataRoot={startup.storageRecovery.legacyMove.defaultDataRoot}
           onDismiss={startup.storageRecovery.dismissLegacyMove}
         />
       ) : null}

@@ -290,7 +290,11 @@ describe('LocationStep', () => {
     await clickButton(/continue/i)
     await clickButton(/^restart$/i)
 
-    expect(window.api.storage.setDataRootAndRelaunch).toHaveBeenCalledWith('/mnt/data', false)
+    expect(window.api.storage.setDataRootAndRelaunch).toHaveBeenCalledWith(
+      '/mnt/data/OpenScience',
+      false,
+      undefined
+    )
     // The shell's full-screen "Setting up" state replaces the wizard while the call is in flight.
     expect(setIsRelaunching).toHaveBeenCalledWith(true)
     // Storage is applied before the remaining onboarding steps, so the main-process command must

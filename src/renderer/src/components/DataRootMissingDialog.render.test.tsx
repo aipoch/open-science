@@ -278,7 +278,11 @@ describe('DataRootMissingDialog', () => {
 
     expect(api.pickDirectory).toHaveBeenCalledTimes(1)
     expect(api.inspectDataRoot).toHaveBeenCalledWith('/mnt/other')
-    expect(api.setDataRootAndRelaunch).toHaveBeenCalledWith('/mnt/other', false)
+    expect(api.setDataRootAndRelaunch).toHaveBeenCalledWith(
+      '/mnt/other/OpenScience',
+      false,
+      undefined
+    )
     const buttons = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
     expect(buttons).toHaveLength(3)
     expect(buttons.every((button) => button.disabled)).toBe(true)
@@ -305,7 +309,11 @@ describe('DataRootMissingDialog', () => {
       await Promise.resolve()
     })
 
-    expect(api.setDataRootAndRelaunch).toHaveBeenCalledWith('/mnt/empty', false)
+    expect(api.setDataRootAndRelaunch).toHaveBeenCalledWith(
+      '/mnt/empty/OpenScience',
+      false,
+      undefined
+    )
   })
 
   it('Choose another location shows an inline error for an invalid target and does not relaunch', async () => {
@@ -402,7 +410,11 @@ describe('DataRootMissingDialog', () => {
     })
 
     const buttons = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
-    expect(api.setDataRootAndRelaunch).toHaveBeenCalledWith('/mnt/other', false)
+    expect(api.setDataRootAndRelaunch).toHaveBeenCalledWith(
+      '/mnt/other/OpenScience',
+      false,
+      undefined
+    )
     expect(buttons).toHaveLength(3)
     expect(buttons.every((button) => !button.disabled)).toBe(true)
     expect(document.body.textContent).toContain('Could not switch to this folder.')

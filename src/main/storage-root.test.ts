@@ -195,13 +195,17 @@ describe('computeDefaultDataRoot', () => {
     await rm(configRoot, { recursive: true, force: true })
   })
 
-  it('checks every relocatable user-data directory as a legacy marker', async () => {
+  it('requires research ownership rather than every migratable directory as a legacy marker', async () => {
     for (const marker of MIGRATABLE_DATA_DIRS) {
       const configRoot = resolveConfigRoot()
       await mkdir(join(configRoot, marker), { recursive: true })
       await writeFile(join(configRoot, marker, 'history.json'), '{}')
 
-      expect(computeDefaultDataRoot()).toBe(configRoot)
+      if (['models', 'uploads'].includes(marker)) {
+        expect(() => computeDefaultDataRoot()).toThrow(/location|recover/i)
+      } else {
+        expect(computeDefaultDataRoot()).toBe(configRoot)
+      }
 
       await rm(configRoot, { recursive: true, force: true })
     }

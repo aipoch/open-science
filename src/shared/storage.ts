@@ -102,7 +102,16 @@ export type DataRootValidationResult = { ok: true } | { ok: false; error: string
 // callers that require a brand-new target must fail closed unless `targetWasAbsent` is true.
 export type DataRootKind = 'move' | 'adopt' | 'recover' | 'invalid'
 export type DataRootRecoveryStatus = 'copying' | 'verified'
-export type DataRootInspection =
+export type DataRootSelection = Readonly<{
+  pickedPath: string
+  dataRoot: string
+  kind: Exclude<DataRootKind, 'invalid'>
+  identity: string
+}>
+export const DATA_ROOT_SELECTION_CHANGED =
+  'The selected data folder changed. Check the location and confirm it again.'
+
+export type DataRootInspection = { selection?: DataRootSelection } & (
   | {
       kind: 'recover'
       dataRoot: string
@@ -131,3 +140,4 @@ export type DataRootInspection =
       recoveryStatus?: never
       error?: string
     }
+)

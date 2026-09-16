@@ -755,7 +755,7 @@ describe('runDataRootMigration (copy phase)', () => {
 
     expect(result).toEqual({
       ok: false,
-      error: 'Choose a location outside the current data folder.'
+      error: 'The selected data folder changed. Check the location and confirm it again.'
     })
     expect(copyAndVerify).not.toHaveBeenCalled()
     expect(await readMigrationMarker(redirectedTarget)).toBeNull()
@@ -869,12 +869,13 @@ describe('runDataRootMigration (copy phase)', () => {
 
         expect(result).toEqual({
           ok: false,
-          error: 'Could not prepare the new data location. Please try again.'
+          error:
+            "Open-Science can't write to this folder. Make sure you have permission to it — on macOS, grant access when prompted, or pick a folder inside your home directory."
         })
         expect(diagnosticRecords(logger)).toContainEqual(
           expect.objectContaining({
             operation: 'data-root-copy',
-            phase: 'prepare-staging',
+            phase: 'validate-target',
             outcome: 'failed'
           })
         )

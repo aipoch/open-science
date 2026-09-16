@@ -91,7 +91,8 @@ const findWindowsStorageDefault = async (
         return {
           chosenParent: drive.path,
           chosenDataRoot: inspection.dataRoot,
-          chosenKind: 'move'
+          chosenKind: 'move',
+          selection: inspection.selection
         }
       }
     } catch {

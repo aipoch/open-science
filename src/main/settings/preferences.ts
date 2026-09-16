@@ -71,11 +71,14 @@ class SettingsPreferencesModule implements SettingsPreferences {
     options: SetDataRootOptions = {}
   ): Promise<SettingsPreferencesSnapshot> {
     return toSettingsPreferencesSnapshot(
-      await this.repository.setDataRoot({
-        dataRoot: path,
-        ...(options.previousDataRoot ? { previousDataRoot: options.previousDataRoot } : {}),
-        ...(options.completeOnboarding ? { onboardingCompletedAt: this.now() } : {})
-      })
+      await this.repository.setDataRoot(
+        {
+          dataRoot: path,
+          ...(options.previousDataRoot ? { previousDataRoot: options.previousDataRoot } : {}),
+          ...(options.completeOnboarding ? { onboardingCompletedAt: this.now() } : {})
+        },
+        options.validateTarget
+      )
     )
   }
 

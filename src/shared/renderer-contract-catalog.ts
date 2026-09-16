@@ -502,6 +502,7 @@ import type { NetworkInfo } from './network'
 import type {
   ActiveSessionInfo,
   DataRootInspection,
+  DataRootSelection,
   DataRootValidationResult,
   DiscardMigratedCopyResult,
   MigrationOutcome,
@@ -2592,11 +2593,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     'storage',
     ['storage:inspect-data-root', LOCAL, STORAGE_PARENT]
   ),
-  'storage.migrate': callable<(parent: string) => Promise<MigrationOutcome>>()('storage', [
-    'storage:migrate',
-    LOCAL,
-    STORAGE_PARENT
-  ]),
+  'storage.migrate': callable<
+    (parent: string, selection?: DataRootSelection) => Promise<MigrationOutcome>
+  >()('storage', ['storage:migrate', LOCAL, STORAGE_PARENT]),
   'storage.onProgress': callable<(listener: AcpListener<MigrationProgress>) => RemoveListener>()(
     'storage',
     ['storage:migrate-progress', EVENT]
@@ -2610,7 +2609,11 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     LOCAL
   ]),
   'storage.setDataRootAndRelaunch': callable<
-    (parent: string, markOnboarding?: boolean) => Promise<DataRootValidationResult>
+    (
+      parent: string,
+      markOnboarding?: boolean,
+      selection?: DataRootSelection
+    ) => Promise<DataRootValidationResult>
   >()('storage', ['storage:set-data-root-and-relaunch', LOCAL, STORAGE_ROOT]),
   'storage.validateDataRoot': callable<(parent: string) => Promise<DataRootValidationResult>>()(
     'storage',

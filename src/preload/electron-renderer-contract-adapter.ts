@@ -104,9 +104,15 @@ const encodeRequestArguments = (
     case 'session-save-optional-argument':
       return args[1] ? args : args.slice(0, 1)
     case 'storage-parent-object':
-      return [{ parent: args[0] }]
+      return [{ parent: args[0], ...(args[1] === undefined ? {} : { selection: args[1] }) }]
     case 'storage-data-root-object':
-      return [{ parent: args[0], markOnboarding: args[1] }]
+      return [
+        {
+          parent: args[0],
+          markOnboarding: args[1],
+          ...(args[2] === undefined ? {} : { selection: args[2] })
+        }
+      ]
     case 'session-package-import-file': {
       if (args[1] === undefined) return args
       const sourcePath = getPathForFile(args[1])

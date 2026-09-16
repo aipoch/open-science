@@ -23,6 +23,7 @@ import {
 import { SettingsDocumentStore } from '../settings/document-store'
 import { SettingsRepository } from '../settings/repository'
 import { initializeDataLocation } from './initialize-location'
+import { pinFreshApplicationLocations } from './electron-profile'
 
 let fixture: string
 beforeEach(async () => {
@@ -48,6 +49,105 @@ const seed = async (root: string): Promise<void> => {
 }
 
 describe('brand location compatibility', () => {
+  it('pins genuine legacy research, but refuses multiple startup candidates', async () => {
+    const old = join(fixture, 'OpenScience')
+    await seed(old)
+    const configRoot = resolveConfigRoot()
+    const options = {
+      configRoot,
+      profilePath: join(fixture, 'profile'),
+      home: fixture,
+      packaged: true,
+      existingInstallation: false
+    }
+    pinFreshApplicationLocations(options)
+    expect(
+      JSON.parse(await readFile(join(configRoot, 'electron-profile.json'), 'utf8'))
+    ).toMatchObject({
+      bootstrap: { dataRoot: old, createDataRoot: false }
+    })
+    await rm(configRoot, { recursive: true })
+    await seed(join(fixture, 'Open-Science'))
+    expect(() => pinFreshApplicationLocations(options)).toThrow(/multiple/i)
+    expect(existsSync(join(configRoot, 'electron-profile.json'))).toBe(false)
+  })
+
+  it.each(['models', 'uploads'])(
+    'does not infer the config root from generic %s content',
+    async (dir) => {
+      const configRoot = resolveConfigRoot()
+      await mkdir(join(configRoot, dir), { recursive: true })
+      await writeFile(join(configRoot, dir, 'unrelated.bin'), 'preserve')
+      expect(() =>
+        pinFreshApplicationLocations({
+          configRoot,
+          profilePath: join(fixture, 'profile'),
+          home: fixture,
+          packaged: true,
+          existingInstallation: false
+        })
+      ).toThrow(/verify|recover/i)
+      expect(existsSync(join(configRoot, 'electron-profile.json'))).toBe(false)
+      expect(existsSync(join(fixture, 'Open-Science'))).toBe(false)
+    }
+  )
+
+  it.each(['settings', 'bootstrap'])(
+    'retains a trusted %s selection even with generic content and competing roots',
+    async (source) => {
+      const selected = join(fixture, 'explicit-research')
+      await mkdir(join(selected, 'models'), { recursive: true })
+      await writeFile(join(selected, 'models/weights.bin'), 'retained model')
+      await seed(join(fixture, 'OpenScience'))
+      await seed(join(fixture, 'Open-Science'))
+      const configRoot = resolveConfigRoot()
+      const repository = new SettingsRepository(configRoot)
+      if (source === 'settings') await repository.pinInitialDataRoot(selected, false)
+      else {
+        await mkdir(configRoot)
+        await writeFile(
+          join(configRoot, 'electron-profile.json'),
+          JSON.stringify({
+            version: 1,
+            path: join(fixture, 'profile'),
+            bootstrap: { dataRoot: selected, createDataRoot: false, createProfile: true }
+          })
+        )
+        pinFreshApplicationLocations({
+          configRoot,
+          profilePath: join(fixture, 'profile'),
+          home: fixture,
+          packaged: true,
+          existingInstallation: false
+        })
+      }
+      await initializeDataLocation(repository)
+      expect((await repository.getSettings()).dataRoot).toBe(selected)
+      expect(resolveDataRoot()).toBe(selected)
+    }
+  )
+
+  it.each(['models', 'uploads'])('does not pin a legacy root containing only %s', async (dir) => {
+    const old = join(fixture, 'OpenScience')
+    await mkdir(join(old, dir), { recursive: true })
+    await writeFile(join(old, dir, 'unrelated.bin'), 'not application ownership')
+    const configRoot = resolveConfigRoot()
+    expect(() =>
+      pinFreshApplicationLocations({
+        configRoot,
+        profilePath: join(fixture, 'profile'),
+        home: fixture,
+        packaged: true,
+        existingInstallation: false
+      })
+    ).toThrow(/verify|recover/i)
+    expect(existsSync(join(configRoot, 'electron-profile.json'))).toBe(false)
+    expect(existsSync(join(fixture, 'Open-Science'))).toBe(false)
+    await expect(initializeDataLocation(new SettingsRepository(configRoot))).rejects.toThrow(
+      /verify|recover/i
+    )
+    expect(existsSync(join(configRoot, 'settings.json'))).toBe(false)
+  })
   it('does not infer an old installation from nested empty scaffolding', async () => {
     await mkdir(join(fixture, 'OpenScience', 'uploads', 'staging', 'empty'), { recursive: true })
     expect(computeDefaultDataRoot()).toBe(join(fixture, 'Open-Science'))

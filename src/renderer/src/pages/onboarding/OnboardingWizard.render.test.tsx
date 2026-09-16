@@ -140,7 +140,11 @@ describe('OnboardingWizard flow', () => {
     await clickButton(/continue/i)
     await clickButton(/^restart$/i)
 
-    expect(window.api.storage.setDataRootAndRelaunch).toHaveBeenCalledWith('D:\\', false)
+    expect(window.api.storage.setDataRootAndRelaunch).toHaveBeenCalledWith(
+      'D:\\OpenScience',
+      false,
+      undefined
+    )
   })
 
   it('skips unusable or existing Windows data roots when choosing the default drive', async () => {

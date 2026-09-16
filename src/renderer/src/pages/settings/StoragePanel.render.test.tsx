@@ -1188,7 +1188,7 @@ describe('StoragePanel', () => {
           api: { storage: { setDataRootAndRelaunch: ReturnType<typeof vi.fn> } }
         }
       ).api.storage.setDataRootAndRelaunch
-    ).toHaveBeenCalledWith('/mnt/existing', false)
+    ).toHaveBeenCalledWith('/mnt/existing/OpenScience', false, undefined)
     // Adopt never touches the migration engine.
     expect(
       (window as unknown as { api: { storage: { migrate: ReturnType<typeof vi.fn> } } }).api.storage
@@ -1377,7 +1377,7 @@ describe('StoragePanel', () => {
       (window as unknown as { api: { storage: { inspectDataRoot: ReturnType<typeof vi.fn> } } }).api
         .storage.inspectDataRoot
     ).toHaveBeenCalledWith('/home/u/Open-Science')
-    expect(window.api.storage.migrate).toHaveBeenCalledWith('/home/u/Open-Science')
+    expect(window.api.storage.migrate).toHaveBeenCalledWith('/home/u/Open-Science', undefined)
     await act(async () => {
       Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
         .find((button) => button.textContent?.trim() === 'Restart now')!
@@ -1425,7 +1425,11 @@ describe('StoragePanel', () => {
             .find((button) => button.textContent?.trim() === 'Use this folder')!
             .click()
         })
-        expect(window.api.storage.setDataRootAndRelaunch).toHaveBeenCalledWith(target, false)
+        expect(window.api.storage.setDataRootAndRelaunch).toHaveBeenCalledWith(
+          target,
+          false,
+          undefined
+        )
         expect(window.api.storage.migrate).not.toHaveBeenCalled()
       } else {
         await act(async () => {

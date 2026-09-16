@@ -1,3 +1,4 @@
+import { storageErrorMessage } from '@/lib/storage-error'
 import { X } from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
 import { ErrorNotice } from '@/components/error-notice'
@@ -17,7 +18,7 @@ import {
   dialogTitleClassName
 } from '@/components/ui/dialog-chrome'
 import { Separator } from '@/components/ui/separator'
-import type { StorageInfo } from '../../../../shared/storage'
+import type { StorageInfo, DataRootSelection } from '../../../../shared/storage'
 import { DataRootWarning } from '@/components/DataRootWarning'
 import { onboardingErrorMessage } from './onboarding-error'
 
@@ -43,6 +44,7 @@ type LocationDraft = {
   chosenParent: string
   chosenDataRoot: string
   chosenKind: 'move' | 'adopt' | null
+  selection?: DataRootSelection
 }
 // Early storage step: pick where large data lives, then either continue with the current default or
 // confirm a restart that activates a custom root before runtime installation. Only `dataRoot` is
@@ -92,14 +94,17 @@ const LocationStep = ({
 
         const result = await window.api.storage.inspectDataRoot(picked)
         if (result.kind !== 'move' && result.kind !== 'adopt') {
-          setLocationError(result.error ?? t('The selected folder is not usable.'))
+          setLocationError(
+            storageErrorMessage(result.error, t) ?? t('The selected folder is not usable.')
+          )
           return
         }
 
         onLocationDraftChange({
           chosenParent: picked,
           chosenDataRoot: result.dataRoot,
-          chosenKind: result.kind
+          chosenKind: result.kind,
+          selection: result.selection
         })
         onRelaunchErrorChange(undefined)
       } catch (error) {
@@ -146,13 +151,19 @@ const LocationStep = ({
       // Onboarding is intentionally still incomplete. The persisted custom dataRoot is the resume
       // signal after relaunch, and the wizard continues at Agent before finishing at Notebook.
       try {
-        const result = await window.api.storage.setDataRootAndRelaunch(chosenParent, false)
+        const result = await window.api.storage.setDataRootAndRelaunch(
+          chosenDataRoot,
+          false,
+          locationDraft.selection
+        )
         if (result.ok) return
 
         // The app is not relaunching; the gate was never flipped, so we're still on the wizard -
         // surface the error here and let the user retry or fall back to Keep default.
         setIsRelaunching(false)
-        onRelaunchErrorChange(result.error ?? 'Could not restart to apply the new location.')
+        onRelaunchErrorChange(
+          storageErrorMessage(result.error, t) ?? 'Could not restart to apply the new location.'
+        )
       } catch (error) {
         setIsRelaunching(false)
         onRelaunchErrorChange(

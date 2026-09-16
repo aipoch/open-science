@@ -61,6 +61,24 @@ afterEach(async () => {
 })
 
 describe('settings document store', () => {
+  it('checks the target after staging and keeps the original document on a failed publication guard', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'guarded-settings-store-'))
+    const store = new SettingsDocumentStore(storageRoot)
+    await store.mutate((settings) => ({ ...settings, dataRoot: '/original/research' }))
+    const original = await readFile(join(storageRoot, 'settings.json'), 'utf8')
+    const guard = vi.fn(() => {
+      throw new Error('target changed')
+    })
+    await expect(
+      store.mutate((settings) => ({ ...settings, dataRoot: '/other/research' }), guard)
+    ).rejects.toThrow('target changed')
+    expect(guard).toHaveBeenCalledOnce()
+    expect(await readFile(join(storageRoot, 'settings.json'), 'utf8')).toBe(original)
+    expect(await readdir(storageRoot)).toEqual(['settings.json'])
+    await store.mutate((settings) => ({ ...settings, notificationsEnabled: false }))
+    expect((await store.read()).dataRoot).toBe('/original/research')
+  })
+
   it('exposes one atomic document owner', async () => {
     expect(Object.keys(await import('./document-store')).sort()).toEqual(['SettingsDocumentStore'])
   })

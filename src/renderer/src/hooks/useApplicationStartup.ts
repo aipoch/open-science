@@ -20,7 +20,7 @@ import { useUpdateStore } from '@/stores/update-store'
 
 type LegacyDataMove = Readonly<{
   currentDataRoot: string
-  defaultParent: string
+  defaultDataRoot: string
 }>
 
 type ApplicationStartupProjection = Readonly<{
@@ -73,7 +73,7 @@ const useApplicationStartup = (): ApplicationStartupProjection => {
     else if (status.legacyDataMovePrompt) {
       setLegacyMove({
         currentDataRoot: status.dataRoot,
-        defaultParent: status.defaultParent
+        defaultDataRoot: status.defaultDataRoot
       })
     }
   }, [])

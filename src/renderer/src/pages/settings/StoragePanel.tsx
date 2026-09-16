@@ -1,3 +1,4 @@
+import { storageErrorMessage } from '@/lib/storage-error'
 import { Notice } from '@/components/notice'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { AlertDialog } from 'radix-ui'
@@ -35,6 +36,7 @@ import { resolveLocalPath } from '../../../../shared/local-fs'
 import type {
   DataRootKind,
   DataRootInspection,
+  DataRootSelection,
   DataRootRecoveryStatus,
   UsageCategoryKey
 } from '../../../../shared/storage'
@@ -144,6 +146,7 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
   const [inspection, setInspection] = useState<(DataRootInspection & { path: string }) | null>(null)
   const [migrationTarget, setMigrationTarget] = useState<{
     path: string
+    selection?: DataRootSelection
     recoveryStatus?: DataRootRecoveryStatus
     targetAvailableBytes?: number
   } | null>(null)
@@ -189,7 +192,9 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
       const result = await window.api.storage.revealAppStorage()
       // Backend-supplied failure text passes through verbatim; the catalog copy is the fallback.
       if (!result.revealed)
-        setRevealError(result.error ?? t('Could not reveal application storage.'))
+        setRevealError(
+          storageErrorMessage(result.error, t) ?? t('Could not reveal application storage.')
+        )
     } catch (error) {
       setRevealError(
         error instanceof Error ? error.message : t('Could not reveal application storage.')
@@ -289,8 +294,8 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
     setMigrationTarget(null)
     // Discarding a recovered copy changes its on-disk classification. Refresh the editor instead of
     // leaving a stale `recover` action that would reopen a modal for a marker that no longer exists.
-    if (resolvedTarget && inspection?.path === resolvedTarget.path) {
-      void inspectPath(resolvedTarget.path)
+    if (resolvedTarget && inspection?.dataRoot === resolvedTarget.path) {
+      void inspectPath(inspection.path)
     }
   }
 
@@ -300,10 +305,14 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
     setAdoptError(undefined)
 
     try {
-      const result = await window.api.storage.setDataRootAndRelaunch(trimmedNewPath, false)
+      const result = await window.api.storage.setDataRootAndRelaunch(
+        inspection!.dataRoot,
+        false,
+        inspection!.selection
+      )
       if (!result.ok) {
         setIsAdopting(false)
-        setAdoptError(result.error ?? t('Could not switch to this folder.'))
+        setAdoptError(storageErrorMessage(result.error, t) ?? t('Could not switch to this folder.'))
       }
     } catch {
       setIsAdopting(false)
@@ -326,7 +335,8 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
       if (inspectRequestRef.current !== requestId) return
       if (result.kind === 'move') {
         setMigrationTarget({
-          path: info.defaultDataRoot,
+          path: result.dataRoot,
+          selection: result.selection,
           targetAvailableBytes: result.targetAvailableBytes
         })
         return
@@ -340,13 +350,16 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
       }
       if (result.kind === 'recover' && result.recoveryStatus) {
         setMigrationTarget({
-          path: info.defaultDataRoot,
+          path: result.dataRoot,
+          selection: result.selection,
           recoveryStatus: result.recoveryStatus,
           targetAvailableBytes: result.targetAvailableBytes
         })
         return
       }
-      setDefaultError(result.error ?? t('The default location is not usable.'))
+      setDefaultError(
+        storageErrorMessage(result.error, t) ?? t('The default location is not usable.')
+      )
     } catch {
       if (inspectRequestRef.current === requestId)
         setDefaultError(t('The default location is not usable.'))
@@ -650,7 +663,8 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
                       type="button"
                       onClick={() =>
                         setMigrationTarget({
-                          path: trimmedNewPath,
+                          path: inspection.dataRoot,
+                          selection: inspection.selection,
                           recoveryStatus: inspection.recoveryStatus,
                           targetAvailableBytes: inspection.targetAvailableBytes
                         })
@@ -665,7 +679,8 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
                       disabled={!canChangeLocation}
                       onClick={() =>
                         setMigrationTarget({
-                          path: trimmedNewPath,
+                          path: inspection!.dataRoot,
+                          selection: inspection!.selection,
                           targetAvailableBytes: inspection?.targetAvailableBytes
                         })
                       }
@@ -960,6 +975,7 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
       {migrationTarget !== null ? (
         <StorageMigrationModal
           targetPath={migrationTarget.path}
+          selection={migrationTarget.selection}
           recoveryStatus={migrationTarget.recoveryStatus}
           targetAvailableBytes={migrationTarget.targetAvailableBytes}
           onClose={handleMigrationClose}

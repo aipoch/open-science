@@ -119,6 +119,7 @@
     "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "Исходный пакет недоступен. Возможно, он перемещён, удалён или больше не читается. Выберите другой пакет."
   },
   "renderer": {
+    "The selected data folder changed. Check the location and confirm it again.": "Выбранная папка данных изменилась. Проверьте расположение и подтвердите его ещё раз.",
     "Open-source license": "Лицензия открытого исходного кода",
     "Old Shell launch records are blocking this update.": "Старые записи запуска командной строки блокируют обновление.",
     "Recovery will back up old Shell launch records and retry the update. Project data and settings are preserved.": "При восстановлении будет создана резервная копия старых записей запуска командной строки, после чего обновление повторится. Данные проекта и настройки сохранятся.",

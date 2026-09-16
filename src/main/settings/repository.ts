@@ -837,8 +837,8 @@ class SettingsRepository {
   // Persists the relocatable data root, optional onboarding marker, and fail-closed managed-runtime
   // disable overrides in one atomic document mutation. Old keys remain for safe retry/rollback;
   // matching new-root keys are additive and idempotent.
-  async setDataRoot(update: DataRootUpdate): Promise<StoredSettings> {
-    return this.mutate((settings) => {
+  async setDataRoot(update: DataRootUpdate, validateTarget?: () => void): Promise<StoredSettings> {
+    return this.store.mutate((settings) => {
       let notebookRuntimeEnablement = settings.notebookRuntimeEnablement
       if (update.previousDataRoot) {
         notebookRuntimeEnablement = relocateManagedRuntimeEnablement({
@@ -857,7 +857,7 @@ class SettingsRepository {
         dataRoot: update.dataRoot,
         dataRootIsInitialDefault: undefined
       }
-    })
+    }, validateTarget)
   }
 
   // Pin the inferred location without invoking relocation or changing any persisted runtime paths.
