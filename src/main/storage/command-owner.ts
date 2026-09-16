@@ -1,7 +1,7 @@
 import { mkdir, readdir } from 'node:fs/promises'
 import type { Dirent } from 'node:fs'
 import { randomUUID } from 'node:crypto'
-import { join, resolve } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import { app, dialog, shell } from 'electron'
 
@@ -928,7 +928,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       if (result.kind === 'invalid') return { ...result, dataRoot }
 
       const targetWasAbsent = result.kind === 'move' ? await isDataRootMissing(dataRoot) : undefined
-      const capacityPath = targetWasAbsent ? resolve(request.parent) : dataRoot
+      const capacityPath = targetWasAbsent ? dirname(dataRoot) : dataRoot
 
       let targetAvailableBytes: number | undefined
       try {

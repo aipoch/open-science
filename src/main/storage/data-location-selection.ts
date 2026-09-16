@@ -1,4 +1,4 @@
-import { realpathSync } from 'node:fs'
+import { readdirSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
 import { MIGRATABLE_DATA_DIRS } from './data-directories'
 import { hasPendingMigrationMarker } from './migration-marker'
@@ -9,6 +9,11 @@ export class DataLocationSelectionError extends Error {
     this.name = 'DataLocationSelectionError'
   }
 }
+const hasResearchData = (root: string): boolean =>
+  MIGRATABLE_DATA_DIRS.some((dir) => directoryHasFiles(join(root, dir)))
+
+// Runtime is relevant to explicit adoption/onboarding, but does not prove the active data root:
+// migrations intentionally leave it behind at their source.
 export const hasDataRootContent = (root: string): boolean =>
   [...MIGRATABLE_DATA_DIRS, 'runtime'].some((dir) => directoryHasFiles(join(root, dir)))
 export const selectDefaultDataRoot = (
@@ -17,6 +22,23 @@ export const selectDefaultDataRoot = (
   packaged: boolean,
   existingInstallation?: boolean
 ): string => {
+  // A cleanup journal may refer to a prepared or committed switch. Without settings there is no
+  // authoritative pointer to disambiguate those states, even if its source still contains data.
+  let entries: string[] = []
+  try {
+    entries = readdirSync(configRoot)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+  if (
+    entries.some(
+      (name) => name === 'data-root-cleanup.json' || name.startsWith('data-root-cleanup.json.')
+    )
+  ) {
+    throw new DataLocationSelectionError(
+      `A data location migration needs recovery. Restore ${join(configRoot, 'settings.json')} with the verified current dataRoot before restarting. Preserve ${join(configRoot, 'data-root-cleanup.json')} for recovery. No new data location was created.`
+    )
+  }
   const folder = packaged ? 'Open-Science' : 'Open-Science-DEV'
   const legacyFolder = packaged ? 'OpenScience' : 'OpenScience-DEV'
   const homeDefault = join(parent, folder)
@@ -30,13 +52,13 @@ export const selectDefaultDataRoot = (
     ])
   ]
   const candidates = roots.filter(
-    (root) => !hasPendingMigrationMarker(root) && hasDataRootContent(root)
+    (root) => !hasPendingMigrationMarker(root) && hasResearchData(root)
   )
   const unrecognized = roots.filter(
     (root) =>
       root !== configRoot &&
       !hasPendingMigrationMarker(root) &&
-      !hasDataRootContent(root) &&
+      !hasResearchData(root) &&
       directoryHasFiles(root)
   )
   if (unrecognized.length)

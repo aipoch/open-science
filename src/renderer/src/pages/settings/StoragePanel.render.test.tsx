@@ -1338,13 +1338,13 @@ describe('StoragePanel', () => {
     expect(container.textContent).not.toContain('move it back to the default location')
   })
 
-  it('return-to-default inspects the default parent and opens the move-back flow', async () => {
+  it('return-to-default inspects the exact default destination and opens the move-back flow', async () => {
     ;(
       window as unknown as { api: { storage: { getInfo: ReturnType<typeof vi.fn> } } }
     ).api.storage.getInfo.mockResolvedValue({
       dataRoot: '/mnt/data/OpenScience',
       isDefault: false,
-      defaultDataRoot: '/home/u/OpenScience',
+      defaultDataRoot: '/home/u/Open-Science',
       defaultParent: '/home/u',
       usage: { categories: [], totalBytes: 12_000_000 },
       availableBytes: 500_000_000_000
@@ -1354,7 +1354,7 @@ describe('StoragePanel', () => {
       window as unknown as { api: { storage: { inspectDataRoot: ReturnType<typeof vi.fn> } } }
     ).api.storage.inspectDataRoot.mockResolvedValue({
       kind: 'move',
-      dataRoot: '/home/u/OpenScience'
+      dataRoot: '/home/u/Open-Science'
     })
 
     await act(async () => {
@@ -1372,15 +1372,69 @@ describe('StoragePanel', () => {
       await Promise.resolve()
     })
 
-    // It classified the default parent, not some browsed path.
+    // The displayed destination is the exact input to inspection and execution.
     expect(
       (window as unknown as { api: { storage: { inspectDataRoot: ReturnType<typeof vi.fn> } } }).api
         .storage.inspectDataRoot
-    ).toHaveBeenCalledWith('/home/u')
+    ).toHaveBeenCalledWith('/home/u/Open-Science')
+    expect(window.api.storage.migrate).toHaveBeenCalledWith('/home/u/Open-Science')
+    await act(async () => {
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent?.trim() === 'Restart now')!
+        .click()
+    })
+    expect(window.api.storage.commitAndRelaunch).toHaveBeenCalledWith('/home/u/Open-Science')
+
     // A 'move' opens the migration modal, which detects running sessions before moving anything.
     expect(
       (window as unknown as { api: { storage: { detectActive: ReturnType<typeof vi.fn> } } }).api
         .storage.detectActive
     ).toHaveBeenCalled()
   })
+  it.each(['adopt', 'recover'] as const)(
+    'uses the displayed default for the %s confirmation',
+    async (kind) => {
+      const target = '/home/u/Open-Science-DEV'
+      vi.mocked(window.api.storage.getInfo).mockResolvedValue({
+        ...richInfo,
+        dataRoot: '/home/u/OpenScience-DEV',
+        isDefault: false,
+        defaultDataRoot: target
+      })
+      vi.mocked(window.api.storage.inspectDataRoot).mockResolvedValue(
+        kind === 'adopt'
+          ? { kind, dataRoot: target }
+          : { kind, dataRoot: target, recoveryStatus: 'verified' }
+      )
+      await act(async () => root.render(<StoragePanel />))
+      await openEditor()
+      await act(async () =>
+        clickButton(
+          (button) => button.textContent?.includes('move it back to the default location') ?? false
+        )
+      )
+      expect(window.api.storage.inspectDataRoot).toHaveBeenCalledWith(target)
+      if (kind === 'adopt') {
+        expect(document.body.textContent).toContain(target)
+        await act(async () => {
+          Array.from(
+            document.body
+              .querySelector('[role="alertdialog"]')!
+              .querySelectorAll<HTMLButtonElement>('button')
+          )
+            .find((button) => button.textContent?.trim() === 'Use this folder')!
+            .click()
+        })
+        expect(window.api.storage.setDataRootAndRelaunch).toHaveBeenCalledWith(target, false)
+        expect(window.api.storage.migrate).not.toHaveBeenCalled()
+      } else {
+        await act(async () => {
+          Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+            .find((button) => button.textContent?.trim() === 'Finish move')!
+            .click()
+        })
+        expect(window.api.storage.commitAndRelaunch).toHaveBeenCalledWith(target)
+      }
+    }
+  )
 })

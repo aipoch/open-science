@@ -31,10 +31,8 @@ export type StorageUsage = { categories: UsageCategory[]; totalBytes: number }
 export type StorageStatus = {
   dataRoot: string
   isDefault: boolean
-  // The default data root and the parent that reproduces it. `defaultParent` is fed to the same
-  // inspect/migrate flow a browsed folder would be; `defaultDataRoot` is the derived destination
-  // shown to the user in Settings' one-click "return to default" affordance (accurate there because
-  // the affordance only appears when the current root is custom, i.e. the default is <home>/Open-Science).
+  // Exact destination for "Use default location". Pass this to inspection and migration;
+  // defaultParent is only the default browsing parent and may contain a separate legacy root.
   defaultDataRoot: string
   defaultParent: string
   // True only when settings.dataRoot is explicitly configured but the resolved directory is gone

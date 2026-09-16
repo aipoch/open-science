@@ -45,6 +45,7 @@ const shouldRunSkillImportMcpServer = process.argv.includes(SKILL_IMPORT_MCP_SER
 const shouldRunSkillRuntimeMcpServer = process.argv.includes(SKILL_RUNTIME_MCP_SERVER_ARG)
 const shouldRunPlanMcpServer = process.argv.includes(PLAN_MCP_SERVER_ARG)
 const bootstrapLog = createLogger('bootstrap')
+let preparingLocations = false
 let startupDiagnostics: DiagnosticOperation | undefined
 let startupFlush: import('./diagnostics/flush').DiagnosticFlush = flushLogs
 
@@ -95,20 +96,20 @@ if (shouldRunArtifactMcpServer) {
 } else {
   void startElectronApp(fileURLToPath(import.meta.url)).catch(async (error: unknown) => {
     bootstrapLog.error('application startup failed', diagnosticErrorFields(error))
+    const { app, dialog } = createRequire(import.meta.url)('electron') as typeof import('electron')
+    // Location/configuration failures happen before file diagnostics and the renderer. Present
+    // recovery before awaiting diagnostics; neither message wording nor a working file sink gates it.
+    if (
+      preparingLocations ||
+      (error instanceof Error && /Application brand upgrade/i.test(error.message))
+    ) {
+      dialog.showErrorBox(APP_NAME, error instanceof Error ? error.message : String(error))
+    }
     await reportApplicationStartupFailure({
       operation: startupDiagnostics,
       error,
       flush: startupFlush
     })
-    const { app } = createRequire(import.meta.url)('electron') as typeof import('electron')
-    // Startup location/configuration errors must be visible even before the renderer can mount.
-    if (
-      error instanceof Error &&
-      /location|profile|dataRoot|settings document|Application brand upgrade/i.test(error.message)
-    ) {
-      const { dialog } = createRequire(import.meta.url)('electron') as typeof import('electron')
-      dialog.showErrorBox(APP_NAME, error.message)
-    }
     app.exit(1)
   })
 }
@@ -147,6 +148,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
   // that credential identity synchronously; only the later display name changes. Never derive
   // profile/cache/log paths from this legacy technical name for a fresh installation.
   app.setName(app.isPackaged ? 'Open Science' : 'Open Science (DEV)')
+  preparingLocations = true
   const configRoot = resolveBootstrapConfigRoot(app.getPath('home'), app.isPackaged)
   const profilePath = resolveElectronProfile({
     appData: app.getPath('appData'),
@@ -215,6 +217,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
     profilePath,
     existingInstallation
   })
+  preparingLocations = false
   const webMode = parseWebModeOptions(process.argv)
   configureCredentialStore(process.argv, process.platform, webMode.headless)
   let bindSystemShutdownWindow = (window: InstanceType<typeof BrowserWindow>): void => {

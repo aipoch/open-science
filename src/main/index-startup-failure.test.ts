@@ -2,14 +2,17 @@ vi.mock('./storage/electron-profile', () => ({
   resolveBootstrapConfigRoot: () => '/isolated-test',
   resolveElectronProfile: () => '/isolated-test/profile',
   profileHasHistory: () => false,
-  pinFreshApplicationLocations: vi.fn()
+  pinFreshApplicationLocations: (...args: unknown[]) => fixture.pinLocations(...args)
 }))
 vi.mock('./storage/location-evidence', () => ({ directoryHasFiles: () => false }))
 vi.mock('./storage/initialize-location', () => ({
-  prepareApplicationLocations: async () => ({
-    settingsStore: {},
-    repository: { getSettings: async () => ({}) }
-  }),
+  prepareApplicationLocations: async () => {
+    await fixture.prepareLocations()
+    return {
+      settingsStore: {},
+      repository: { getSettings: async () => ({}) }
+    }
+  },
   initializeDataLocation: vi.fn()
 }))
 vi.mock('./brand-upgrade/native-paths', () => ({ upgradeNativeBrandEntries: () => false }))
@@ -31,6 +34,11 @@ const fixture = vi.hoisted(() => {
   const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() }
   return {
     log,
+    pinLocations: vi.fn(),
+    prepareLocations: vi.fn(async () => {}),
+    initializeDiagnostics: vi.fn(),
+    routeSecondInstance: vi.fn(),
+    openSessionPackageFile: vi.fn(),
     startupFailure: vi.fn(),
     disposeLocaleIpc: vi.fn(),
     disposeDatabaseGuard: vi.fn(),
@@ -69,6 +77,7 @@ const fixture = vi.hoisted(() => {
         setBadgeCount: vi.fn(),
         isUnityRunning: () => false
       },
+      dialog: { showErrorBox: vi.fn() },
       Menu: { setApplicationMenu: vi.fn(), buildFromTemplate: vi.fn() },
       BrowserWindow: { getAllWindows: () => [] },
       protocol: { registerSchemesAsPrivileged: vi.fn() },
@@ -98,11 +107,14 @@ vi.mock('./logger', () => ({
   writeFatalLogSync: vi.fn()
 }))
 vi.mock('./diagnostics/startup', () => ({
-  initializeApplicationDiagnostics: () => ({
-    log: fixture.log,
-    operation: { phase: vi.fn(), fail: vi.fn(), complete: vi.fn() },
-    flush: vi.fn()
-  }),
+  initializeApplicationDiagnostics: () => {
+    fixture.initializeDiagnostics()
+    return {
+      log: fixture.log,
+      operation: { phase: vi.fn(), fail: vi.fn(), complete: vi.fn() },
+      flush: vi.fn()
+    }
+  },
   reportApplicationStartupFailure: fixture.startupFailure
 }))
 vi.mock('./settings/credential-store-mode', () => ({ configureCredentialStore: vi.fn() }))
@@ -118,9 +130,12 @@ vi.mock('./renderer-diagnostics', () => ({
   createRendererFailureReporter: vi.fn(),
   registerRendererDiagnosticsIpc: vi.fn()
 }))
-vi.mock('./single-instance', () => ({ acquireSingleInstanceLock: () => true }))
 vi.mock('./web-service/options', () => ({
-  parseWebModeOptions: () => ({ headless: fixture.headless, enabled: true, port: 44100 })
+  parseWebModeOptions: (argv: string[]) => ({
+    headless: fixture.headless,
+    enabled: !argv.some((arg) => arg.endsWith('.science')),
+    port: 44100
+  })
 }))
 vi.mock('./system-lifecycle-adapters', () => ({
   installSystemLifecycleAdapters: () => ({
@@ -174,6 +189,7 @@ vi.mock('./settings/repository', () => ({
 vi.mock('./ipc', () => ({
   registerIpcHandlers: async () => ({
     dispose: fixture.disposeRuntime,
+    openSessionPackageFile: fixture.openSessionPackageFile,
     notificationInbox: {
       configureDesktop: fixture.configureDesktop,
       syncViewState: fixture.syncViewState,
@@ -219,7 +235,7 @@ vi.mock('./web-service', () => ({
   }),
   buildAuthenticatedWebUrl: vi.fn()
 }))
-vi.mock('./second-instance-router', () => ({ routeSecondInstance: vi.fn() }))
+vi.mock('./second-instance-router', () => ({ routeSecondInstance: fixture.routeSecondInstance }))
 vi.mock('./window-close-confirm', () => ({ createElectronCloseConfirm: vi.fn() }))
 vi.mock('./session-persistence/renderer-flush', () => ({
   createElectronSessionPersistenceFlush: vi.fn(),
@@ -269,6 +285,10 @@ beforeEach(() => {
     fixture.finishReady = resolve
   })
   fixture.shutdownBackends = undefined
+  fixture.pinLocations.mockReset()
+  fixture.prepareLocations.mockReset().mockResolvedValue()
+  fixture.electron.app.requestSingleInstanceLock.mockReset().mockReturnValue(true)
+  fixture.electron.app.isPackaged = true
   fixture.failAt = 'web'
   fixture.headless = true
   fixture.disposeDatabaseGuard.mockReset()
@@ -284,6 +304,7 @@ beforeEach(() => {
   fixture.disposeRuntime.mockReset().mockResolvedValue()
 })
 afterEach(() => {
+  vi.unstubAllEnvs()
   for (const listener of process.listeners('uncaughtExceptionMonitor')) {
     if (!monitorListeners.includes(listener))
       process.removeListener('uncaughtExceptionMonitor', listener)
@@ -562,3 +583,92 @@ it('reports each IPC cleanup failure and still attempts registry disposal on lif
   )
   expect(errors).toHaveLength(2)
 })
+
+it('a losing second instance never pins locations, prepares stores or opens file logs', async () => {
+  fixture.electron.app.requestSingleInstanceLock.mockReturnValue(false)
+  await import('./index')
+  expect(fixture.electron.app.quit).toHaveBeenCalledOnce()
+  expect(fixture.pinLocations).not.toHaveBeenCalled()
+  expect(fixture.prepareLocations).not.toHaveBeenCalled()
+  expect(fixture.electron.app.setAppLogsPath).not.toHaveBeenCalled()
+  expect(fixture.initializeDiagnostics).not.toHaveBeenCalled()
+})
+
+it.each([false, true])(
+  'allows multiple isolated instances only in development (packaged=%s)',
+  async (packaged) => {
+    vi.stubEnv('OPEN_SCIENCE_ALLOW_MULTI_INSTANCE', '1')
+    fixture.electron.app.isPackaged = packaged
+    fixture.electron.app.requestSingleInstanceLock.mockReturnValue(false)
+    await import('./index')
+    if (packaged) {
+      expect(fixture.electron.app.quit).toHaveBeenCalledOnce()
+      expect(fixture.prepareLocations).not.toHaveBeenCalled()
+    } else {
+      await fixture.exited
+      expect(fixture.electron.app.requestSingleInstanceLock).not.toHaveBeenCalled()
+      expect(fixture.prepareLocations).toHaveBeenCalledOnce()
+    }
+  }
+)
+
+it('forwards second-instance arguments received during synchronous location pinning', async () => {
+  fixture.failAt = 'none'
+  const argv = ['electron', 'open-science', '--serve', '--port=44123']
+  fixture.pinLocations.mockImplementation(() => {
+    const listener = fixture.electron.app.on.mock.calls.find(
+      ([event]) => event === 'second-instance'
+    )![1]
+    listener({}, argv, '/isolated-test/cli')
+    listener({}, ['electron', 'relative.science'], '/isolated-test/packages')
+  })
+  await import('./index')
+  await fixture.ready
+  await vi.waitFor(() =>
+    expect(fixture.routeSecondInstance).toHaveBeenCalledWith(argv, expect.any(Object))
+  )
+  const { resolve } = await import('node:path')
+  await vi.waitFor(() =>
+    expect(fixture.openSessionPackageFile).toHaveBeenCalledWith(
+      resolve('/isolated-test/packages', 'relative.science')
+    )
+  )
+})
+
+it.each([
+  ['invalid JSON', '{invalid'],
+  ['invalid dataRoot', '{"version":2,"dataRoot":"relative"}'],
+  ['unsupported version', '{"version":99,"providers":[]}'],
+  ['unreadable file', null]
+])(
+  'shows a native recovery error for %s before renderer and file logging',
+  async (_name, contents) => {
+    const { mkdtemp, writeFile, mkdir, rm, readFile } = await import('node:fs/promises')
+    const { join } = await import('node:path')
+    const { tmpdir } = await import('node:os')
+    const fixtureDir = await mkdtemp(join(tmpdir(), 'startup-settings-error-'))
+    const path = join(fixtureDir, 'settings.json')
+    if (contents === null) await mkdir(path)
+    else await writeFile(path, contents)
+    try {
+      const { SettingsDocumentStore } = await vi.importActual<
+        typeof import('./settings/document-store')
+      >('./settings/document-store')
+      fixture.prepareLocations.mockImplementation(async () => {
+        await new SettingsDocumentStore(fixtureDir).read()
+      })
+      await import('./index')
+      await fixture.exited
+      expect(fixture.electron.dialog.showErrorBox).toHaveBeenCalledWith(
+        'Open-Science',
+        expect.stringContaining(path)
+      )
+      expect(fixture.electron.dialog.showErrorBox.mock.calls[0][1]).toMatch(/restore|recover/i)
+      expect(fixture.configureDesktop).not.toHaveBeenCalled()
+      expect(fixture.initializeDiagnostics).not.toHaveBeenCalled()
+      if (contents !== null) expect(await readFile(path, 'utf8')).toBe(contents)
+    } finally {
+      await rm(fixtureDir, { recursive: true, force: true })
+    }
+  }
+)

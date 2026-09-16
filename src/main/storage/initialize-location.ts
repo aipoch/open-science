@@ -8,7 +8,11 @@ import {
 } from '../storage-root'
 import { SettingsDocumentStore } from '../settings/document-store'
 import { SettingsRepository } from '../settings/repository'
-import { readElectronProfileRecord, writeElectronProfileRecord } from './electron-profile'
+import {
+  readElectronProfileRecord,
+  validateElectronProfileLocation,
+  writeElectronProfileRecord
+} from './electron-profile'
 
 // All startup writers share the repository returned by prepareApplicationLocations. IPC keeps this
 // idempotent check as a second defense, including resumption of an interrupted first-run commit.
@@ -47,10 +51,10 @@ export const prepareApplicationLocations = async (options: {
     throw new Error(
       `The saved data location is missing or is not a directory: ${settings.dataRoot}. Reconnect it before restarting.`
     )
-  let record = readElectronProfileRecord(options.configRoot)
-  if (record?.bootstrap && record.path !== options.profilePath)
+  let record = validateElectronProfileLocation(options.configRoot, options.profilePath)
+  if (record?.bootstrap && settings.dataRoot && settings.dataRoot !== record.bootstrap.dataRoot)
     throw new Error(
-      'The pending Electron profile location differs from the selected profile. Restore the intended selection before restarting.'
+      'The pending data location differs from settings.dataRoot. Restore the intended location before restarting.'
     )
   if (!record?.bootstrap) {
     initDataRoot(settings.dataRoot, options.existingInstallation)

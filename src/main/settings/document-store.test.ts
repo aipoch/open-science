@@ -163,8 +163,16 @@ describe('settings document store', () => {
     const store = new SettingsDocumentStore(storageRoot)
     const update = vi.fn((settings) => ({ ...settings, notificationsEnabled: false }))
 
-    await expect(store.read()).rejects.toBeInstanceOf(SyntaxError)
-    await expect(store.mutate(update)).rejects.toBeInstanceOf(SyntaxError)
+    await expect(store.read()).rejects.toMatchObject({
+      name: 'SettingsDocumentReadError',
+      path: settingsPath,
+      cause: expect.any(SyntaxError)
+    })
+    await expect(store.mutate(update)).rejects.toMatchObject({
+      name: 'SettingsDocumentReadError',
+      path: settingsPath,
+      cause: expect.any(SyntaxError)
+    })
 
     expect(update).not.toHaveBeenCalled()
     await expect(readFile(settingsPath, 'utf8')).resolves.toBe(corruptContents)
@@ -218,7 +226,11 @@ describe('settings document store', () => {
     })
     faults.failOpenOnceWith = readFailure
 
-    await expect(store.mutate(update)).rejects.toBe(readFailure)
+    await expect(store.mutate(update)).rejects.toMatchObject({
+      name: 'SettingsDocumentReadError',
+      path: settingsPath,
+      cause: readFailure
+    })
     expect(openFile).toHaveBeenCalledWith(settingsPath, 'r')
     expect(update).not.toHaveBeenCalled()
     await expect(readFile(settingsPath, 'utf8')).resolves.toBe(originalContents)
@@ -282,4 +294,23 @@ describe('settings document store', () => {
       now.mockRestore()
     }
   })
+})
+
+it.each([
+  ['invalid JSON', '{invalid', /JSON|property|position/i],
+  ['invalid dataRoot', '{"version":2,"dataRoot":"relative"}', /dataRoot/i],
+  ['unsupported version', '{"version":99,"providers":[]}', /version 99/i]
+])('reports the file, reason and recovery action for %s', async (_name, contents, reason) => {
+  storageRoot = await mkdtemp(join(tmpdir(), 'settings-recovery-'))
+  const path = join(storageRoot, 'settings.json')
+  await writeFile(path, contents as string)
+  const error = await new SettingsDocumentStore(storageRoot).read().catch((error: unknown) => error)
+  expect(error).toMatchObject({
+    name: 'SettingsDocumentReadError',
+    path,
+    message: expect.stringContaining(path)
+  })
+  expect((error as Error).message).toMatch(reason as RegExp)
+  expect((error as Error).message).toMatch(/restore|recover/i)
+  expect(await readFile(path, 'utf8')).toBe(contents)
 })

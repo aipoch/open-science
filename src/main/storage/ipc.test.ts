@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest'
@@ -22,7 +22,7 @@ const appQuit = vi.fn()
 const openPath = vi.fn<(path: string) => Promise<string>>().mockResolvedValue('')
 // Home is mutable so a few tests can point it at a real temp dir (legacy-in-place detection reads
 // the config root under home); it defaults to /home/user so every other test is unaffected.
-const electronHome = { path: '/home/user' }
+const electronHome = { path: '/home/user', packaged: true }
 
 vi.mock('electron', () => ({
   ipcMain: {
@@ -35,7 +35,9 @@ vi.mock('electron', () => ({
   shell: { openPath: (path: string) => openPath(path) },
   app: {
     getPath: () => electronHome.path,
-    isPackaged: true,
+    get isPackaged() {
+      return electronHome.packaged
+    },
     relaunch: appRelaunch,
     exit: appExit,
     quit: appQuit
@@ -180,6 +182,11 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  electronHome.packaged = true
+  electronHome.path = '/home/user'
+  vi.stubEnv('OPEN_SCIENCE_CONFIG_ROOT', '')
+  vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', '')
+  vi.stubEnv('OPEN_SCIENCE_STORAGE_ROOT', '')
   initDataRoot(undefined)
   // migration-state is a module singleton; reset it so a pending write-gate can't leak between tests.
   clearMigrationPending()
@@ -2791,3 +2798,79 @@ describe('storage IPC handlers', () => {
     )
   })
 })
+
+it.each([
+  [true, false],
+  [true, true],
+  [false, false],
+  [false, true]
+])(
+  'uses the exact displayed default through IPC inspection and user-triggered execution (packaged=%s, populated=%s)',
+  async (packaged, populated) => {
+    const { SettingsRepository } = await import('../settings/repository')
+    const { validateNewDataRoot } = await import('./migration-service')
+    const config = join(currentParent, 'config')
+    vi.stubEnv('OPEN_SCIENCE_CONFIG_ROOT', config)
+    electronHome.packaged = packaged
+    electronHome.path = currentParent
+    const old = join(config, packaged ? 'OpenScience' : 'OpenScience-DEV')
+    const expected = join(config, packaged ? 'Open-Science' : 'Open-Science-DEV')
+    await mkdir(join(old, 'workspaces'), { recursive: true })
+    await writeFile(join(old, 'workspaces', 'history.json'), 'original research')
+    if (populated) {
+      await mkdir(join(expected, 'workspaces'), { recursive: true })
+      await writeFile(join(expected, 'workspaces', 'history.json'), 'existing default research')
+    }
+    const repository = new SettingsRepository(config)
+    await repository.pinInitialDataRoot(old, false)
+    initDataRoot(old)
+    const deps = fakeDeps({
+      validateNewDataRoot,
+      settingsService: {
+        getStoredSettings: () => repository.getSettings(),
+        setDataRoot: async (path) => {
+          await repository.setDataRoot({ dataRoot: path })
+        },
+        dismissLegacyDataMovePrompt: async () => {}
+      }
+    })
+    registerStorageIpcHandlers(deps)
+    const status = (await invoke('storage:get-status')) as { defaultDataRoot: string }
+    expect(status.defaultDataRoot).toBe(expected)
+    await expect(
+      invoke('storage:inspect-data-root', { parent: status.defaultDataRoot })
+    ).resolves.toMatchObject({
+      kind: populated ? 'adopt' : 'move',
+      dataRoot: expected
+    })
+    // Inspection is read-only. Only the subsequent explicit command may change the pointer or data.
+    expect((await repository.getSettings()).dataRoot).toBe(old)
+    expect(await readFile(join(old, 'workspaces', 'history.json'), 'utf8')).toBe(
+      'original research'
+    )
+    if (populated) {
+      await expect(
+        invoke('storage:set-data-root-and-relaunch', { parent: status.defaultDataRoot })
+      ).resolves.toMatchObject({ ok: true })
+      expect(await readFile(join(old, 'workspaces', 'history.json'), 'utf8')).toBe(
+        'original research'
+      )
+      expect(await readFile(join(expected, 'workspaces', 'history.json'), 'utf8')).toBe(
+        'existing default research'
+      )
+    } else {
+      expect(existsSync(expected)).toBe(false)
+      await expect(
+        invoke('storage:migrate', { parent: status.defaultDataRoot })
+      ).resolves.toMatchObject({ ok: true })
+      expect((await repository.getSettings()).dataRoot).toBe(old)
+      await expect(
+        invoke('storage:commit-and-relaunch', { parent: status.defaultDataRoot })
+      ).resolves.toMatchObject({ ok: true })
+      expect(await readFile(join(expected, 'workspaces', 'history.json'), 'utf8')).toBe(
+        'original research'
+      )
+    }
+    expect((await repository.getSettings()).dataRoot).toBe(expected)
+  }
+)

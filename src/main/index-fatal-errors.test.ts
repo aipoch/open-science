@@ -61,10 +61,6 @@ vi.mock('node:module', async (importOriginal) => ({
   })
 }))
 
-vi.mock('./single-instance', () => ({
-  acquireSingleInstanceLock: vi.fn(() => true)
-}))
-
 vi.mock('./app-startup', () => ({
   createSecondInstanceRelay: vi.fn(() => ({
     bind: vi.fn(),

@@ -1,12 +1,8 @@
-import { basename, isAbsolute, join, normalize, resolve, sep } from 'node:path'
+import { basename, join, resolve, sep } from 'node:path'
 
 import { app } from 'electron'
 
-import {
-  DEV_SESSION_DIR_NAME,
-  PROD_SESSION_DIR_NAME,
-  getSessionPersistenceDir
-} from './session-persistence/paths'
+import { resolveBootstrapConfigRoot, resolveConfigRootOverride } from './storage/config-root'
 import {
   DataLocationSelectionError,
   hasDataRootContent,
@@ -14,44 +10,9 @@ import {
 } from './storage/data-location-selection'
 export { DataLocationSelectionError } from './storage/data-location-selection'
 
-const resolveE2eStorageRoot = (): string | undefined => {
-  const root = process.env.OPEN_SCIENCE_E2E_STORAGE_ROOT?.trim()
-  if (!root) return undefined
-  if (!isAbsolute(root)) {
-    throw new Error('OPEN_SCIENCE_E2E_STORAGE_ROOT must be an absolute path.')
-  }
-  return normalize(root)
-}
-
-// Fixed, dev-aware config root (DB, sessions, claude, skills, settings live here). Never relocated.
-// A development-only absolute override supports truly isolated onboarding previews without changing
-// HOME — changing HOME breaks the macOS default-keychain lookup and can trigger a dangerous "restore
-// default keychain" dialog. Packaged certification uses its own explicit, disposable E2E root.
-const resolveConfigRoot = (): string => {
-  const e2eRoot = resolveE2eStorageRoot()
-  if (e2eRoot) return e2eRoot
-
-  const explicitRoot = process.env.OPEN_SCIENCE_CONFIG_ROOT?.trim()
-  if (explicitRoot) {
-    if (!isAbsolute(explicitRoot))
-      throw new Error('OPEN_SCIENCE_CONFIG_ROOT must be an absolute path.')
-    return normalize(explicitRoot)
-  }
-  const previewRoot = process.env.OPEN_SCIENCE_STORAGE_ROOT?.trim()
-
-  if (!app.isPackaged && previewRoot) {
-    if (!isAbsolute(previewRoot)) {
-      throw new Error('OPEN_SCIENCE_STORAGE_ROOT must be an absolute path.')
-    }
-
-    return normalize(previewRoot)
-  }
-
-  return getSessionPersistenceDir(
-    app.getPath('home'),
-    app.isPackaged ? PROD_SESSION_DIR_NAME : DEV_SESSION_DIR_NAME
-  )
-}
+// Fixed config root shared with the pre-Electron bootstrap. Never relocated with research data.
+const resolveConfigRoot = (): string =>
+  resolveBootstrapConfigRoot(() => app.getPath('home'), app.isPackaged)
 
 // Legacy alias retained for source compatibility. New production call sites use resolveConfigRoot.
 const resolveStorageRoot = resolveConfigRoot
@@ -67,10 +28,7 @@ const legacyDataFolderName = (): string => (app.isPackaged ? 'OpenScience' : 'Op
 const dataRootForParent = (parent: string): string => join(parent, dataFolderName())
 
 const defaultDataParent = (): string =>
-  resolveE2eStorageRoot() ??
-  (process.env.OPEN_SCIENCE_CONFIG_ROOT?.trim() ||
-    (!app.isPackaged && process.env.OPEN_SCIENCE_STORAGE_ROOT?.trim()) ||
-    app.getPath('home'))
+  resolveConfigRootOverride(app.isPackaged) ?? app.getPath('home')
 
 // Explicitly picked old and custom roots are validated by the migration/adoption owner. Preserve
 // their exact location; selecting a root must not append a second brand directory.
@@ -107,12 +65,6 @@ const computeDefaultDataRoot = (existingInstallation?: boolean): string => {
   )
 }
 
-// The parent directory whose derived data root is the default location. Feeding this back through
-// the parent-based relocation flow (inspect/migrate) reproduces the default `<home>/Open-Science`
-// exactly, which is how Settings offers a one-click "return to default" from a custom root. The
-// only default that is NOT `<parent>/dataFolderName()` is an untouched legacy install (default =
-// config root), and that case never reaches the reset UI — it is already the default, so no reset
-// is offered.
 // Path equality that respects the platform filesystem: case-insensitive on Windows (NTFS paths are
 // case-insensitive), exact elsewhere. Used for the isDefault check and the same/inside-folder
 // guards so a differently-cased path to the SAME folder on Windows isn't mistaken for a different

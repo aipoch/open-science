@@ -408,3 +408,46 @@ describe('resolveConfigRoot', () => {
     expect(resolveStorageRoot()).toBe(resolveConfigRoot())
   })
 })
+
+describe('bootstrap and runtime config root agreement', () => {
+  afterEach(() => vi.unstubAllEnvs())
+  it.each([true, false])(
+    'keeps priority, normalization and defaults aligned (packaged=%s)',
+    async (packaged) => {
+      const { resolveBootstrapConfigRoot } = await import('./storage/electron-profile')
+      appMock.isPackaged = packaged
+      const home = join(tmpdir(), 'config-resolution-home')
+      appMock.getPath.mockReturnValue(home)
+      const keys = [
+        'OPEN_SCIENCE_E2E_STORAGE_ROOT',
+        'OPEN_SCIENCE_CONFIG_ROOT',
+        'OPEN_SCIENCE_STORAGE_ROOT'
+      ]
+      for (let start = 0; start <= keys.length; start++) {
+        for (const [index, key] of keys.entries())
+          vi.stubEnv(
+            key,
+            index < start ? '  ' : `  ${join(home, String(index), '..', 'root-' + index)}  `
+          )
+        const expected =
+          start < 2 || (start === 2 && !packaged)
+            ? join(home, 'root-' + start)
+            : join(home, packaged ? '.open-science' : '.open-science-project')
+        expect(resolveConfigRoot()).toBe(expected)
+        expect(resolveBootstrapConfigRoot(home, packaged)).toBe(expected)
+      }
+    }
+  )
+  it.each([
+    'OPEN_SCIENCE_E2E_STORAGE_ROOT',
+    'OPEN_SCIENCE_CONFIG_ROOT',
+    'OPEN_SCIENCE_STORAGE_ROOT'
+  ])('reports the same invalid %s at both entry points', async (key) => {
+    const { resolveBootstrapConfigRoot } = await import('./storage/electron-profile')
+    appMock.isPackaged = false
+    vi.stubEnv(key, 'relative/path')
+    const message = `${key} must be an absolute path.`
+    expect(() => resolveConfigRoot()).toThrow(message)
+    expect(() => resolveBootstrapConfigRoot('/unused', false)).toThrow(message)
+  })
+})

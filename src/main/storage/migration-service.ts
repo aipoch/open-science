@@ -1,7 +1,7 @@
 import { lstat, mkdir, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { existsSync, readFileSync, readdirSync, type Dirent } from 'node:fs'
 import { randomUUID } from 'node:crypto'
-import { join, relative, resolve } from 'node:path'
+import { dirname, join, relative, resolve } from 'node:path'
 
 import type {
   DataRootKind,
@@ -213,17 +213,20 @@ const validateCanonicalTarget = async (
 }
 
 // Classifies a candidate data root against the current one. `parent` is a directory the user
-// picked; the app derives the data root from it (`dataRootForPicked`) rather than
-// letting the user point directly at the data root itself. Never throws: any unexpected fs error
+// picked, or the exact default destination displayed by Settings. Existing data folders are used
+// directly; ordinary parents are resolved by dataRootForPicked. Any unexpected fs error
 // (missing dir, permission denied) is mapped to an 'invalid' result with a user-facing message.
 export const classifyDataRoot = async (
   parent: string,
   currentDataRoot: string,
   deps: ClassifyDataRootDeps = {}
 ): Promise<ClassifyResult> => {
-  const resolvedParent = resolve(parent)
   const current = resolve(currentDataRoot)
   const target = dataRootForPicked(parent)
+  // An exact branded destination may not exist yet. Validate/probe its existing parent without
+  // resolving that parent as a fresh picker input (which could select a legacy sibling instead).
+  const picked = resolve(parent)
+  const resolvedParent = samePath(picked, target) && !existsSync(target) ? dirname(target) : picked
 
   const inspectPath = deps.inspectPath ?? inspectWindowsStoragePath
   const validateWindowsStoragePath = async (path: string): Promise<ClassifyResult | undefined> => {

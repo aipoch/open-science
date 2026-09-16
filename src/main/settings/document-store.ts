@@ -69,15 +69,23 @@ class SettingsDocumentStore {
   }
 
   async read(): Promise<StoredSettings> {
-    const result = await readDurableJsonFile(
-      this.path,
-      decodeSettingsDocument,
-      {},
-      {
-        maxBytes: SETTINGS_RESOURCE_LIMITS.documentBytes
-      }
-    )
-    return result.status === 'found' ? result.value : createEmptySettings()
+    try {
+      const result = await readDurableJsonFile(
+        this.path,
+        decodeSettingsDocument,
+        {},
+        { maxBytes: SETTINGS_RESOURCE_LIMITS.documentBytes }
+      )
+      return result.status === 'found' ? result.value : createEmptySettings()
+    } catch (cause) {
+      const reason = cause instanceof Error ? cause.message : String(cause)
+      const error = new Error(
+        `Cannot read application configuration: ${this.path}\n${reason}\nRestore this file from a verified backup, correct its dataRoot or access permissions, or use an application version that supports it, then restart. Preserve the original file and recovery files; no new configuration or data was initialized.`,
+        { cause }
+      )
+      error.name = 'SettingsDocumentReadError'
+      throw Object.assign(error, { path: this.path })
+    }
   }
 
   mutate(update: (settings: StoredSettings) => StoredSettings): Promise<StoredSettings> {

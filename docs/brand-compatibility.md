@@ -7,20 +7,24 @@ Display names are separate from persistent identities and filesystem locations.
 
 An absolute saved `dataRoot` stays authoritative, including custom paths containing an old brand.
 Without a saved choice, startup examines the current and historical default roots and the original
-configuration root for actual data or runtime files. Empty scaffolding does not identify an existing
-installation. A single verified location is recorded before locale, database, or application writers
+configuration root for actual research data. Runtime alone is not evidence of the active data root:
+migration can leave it at the old location. Empty scaffolding does not identify an existing installation. A single verified location is recorded before locale, database, or application writers
 start. Uncommitted migration targets are never adopted by inference. Multiple candidates, unreadable
-locations, damaged settings, and lost pointers with remaining configuration require recovery.
+locations, damaged settings, and lost pointers with remaining configuration require recovery. A pending
+migration cleanup journal also blocks inference until the original settings pointer is recovered. A
+verified initial bootstrap record can resume onboarding at its original location, including its runtime.
 
 The Electron profile has a separate `electron-profile.json` selection in the configuration root.
 It retains the original physical profile, session cache, and log location. A missing recorded profile
-is never silently recreated. Losing the record while historical configuration remains requires
+is never silently recreated, even when an environment override resolves to that same path. Losing the record while historical configuration remains requires
 restoring the original choice. The recovery dialog identifies the relevant file and location.
 Restore the original settings/profile record or set its absolute path to the verified existing
 folder; do not delete the remaining configuration to bypass recovery.
 
 No brand upgrade relocates research data or rewrites database/session/attachment/runtime paths.
-Settings still supports an explicit, verified change of data location. Displayed paths are the real
+Settings still supports an explicit, verified change of data location. "Use default location" passes
+the displayed full destination through inspection, confirmation and execution, while ordinary folder
+picking retains legacy/custom-folder adoption. Displayed paths are the real
 paths. The initial empty default is recorded separately so onboarding may still select an appropriate
 local drive, while later onboarding runs cannot replace a populated or missing saved root.
 
@@ -40,7 +44,10 @@ local drive, while later onboarding runs cannot replace a populated or missing s
 `OPEN_SCIENCE_CONFIG_ROOT` and `OPEN_SCIENCE_USER_DATA` explicitly isolate both packaged and development
 runs. `OPEN_SCIENCE_E2E_STORAGE_ROOT` remains supported. The development-only
 `OPEN_SCIENCE_STORAGE_ROOT` alias remains compatible. `OPEN_SCIENCE_ALLOW_MULTI_INSTANCE=1` permits
-parallel development instances. All such paths must be absolute. System-entry repair is disabled for
+parallel development instances; packaged builds still require the single-instance lock. Configuration
+resolution is shared with bootstrap: E2E_STORAGE_ROOT, then CONFIG_ROOT, then development-only
+STORAGE_ROOT, then the development/production default. Blank values are ignored and selected paths
+are normalized. All such paths must be absolute. System-entry repair is disabled for
 explicitly isolated test instances, which must never rewrite the user's real Dock or shortcuts.
 
 Existing Windows tool receipts and owned working caches remain readable at their original paths.
@@ -50,9 +57,16 @@ remain unchanged, including recovery of historical records without a stored work
 files are sourced in place; two definitions with the same name require an explicit resolution.
 
 The first location selection is recorded synchronously under the single-instance lock, before native
-profile writers and logging can run. An interrupted `.bootstrap` record is consumed when recovered;
+profile writers and logging can run. An interrupted `.bootstrap` record is consumed only when valid and consistent with the canonical record;
 completed records cannot recreate a missing data directory. Only known process-lock files are ignored
-when distinguishing an untouched profile from historical state.
+when distinguishing an untouched profile from historical state. Conflicting or damaged profile records
+are preserved for recovery. Selecting a different completed profile requires an explicit
+`OPEN_SCIENCE_USER_DATA`; a config-root override alone cannot redirect a recorded profile.
+
+Invalid JSON, unreadable settings, invalid `dataRoot` and unsupported settings versions show a native
+startup error with the settings file, failure reason and recovery steps before renderer or file
+logging initialization. Restore a verified backup, correct the path/permissions, or use a compatible
+app version; preserve the damaged file and recovery records. Startup never replaces a corrupt primary.
 
 ## Installed application and launcher updates
 

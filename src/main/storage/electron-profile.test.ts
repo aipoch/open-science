@@ -117,3 +117,147 @@ it('consumes an initial temporary intent so it cannot resurrect a completed miss
   await writeFile(join(options.configRoot, 'projects.db'), 'history')
   expect(() => resolveElectronProfile(options)).toThrow(/location|profile/i)
 })
+
+it.each(['OPEN_SCIENCE_USER_DATA', 'OPEN_SCIENCE_CONFIG_ROOT'])(
+  'checks a completed missing profile even with %s',
+  async (key) => {
+    await mkdir(options.configRoot)
+    const path = join(options.configRoot, 'electron-profile')
+    const contents = JSON.stringify({ version: 1, path })
+    await writeFile(join(options.configRoot, 'electron-profile.json'), contents)
+    const env = { [key]: key === 'OPEN_SCIENCE_USER_DATA' ? path : options.configRoot }
+    expect(() => resolveElectronProfile({ ...options, env })).toThrow(/profile.*missing/i)
+    expect(existsSync(path)).toBe(false)
+  }
+)
+
+it('does not hide a corrupt profile record behind an explicit override', async () => {
+  await mkdir(options.configRoot)
+  await writeFile(join(options.configRoot, 'electron-profile.json'), '{invalid')
+  expect(() =>
+    resolveElectronProfile({ ...options, env: { OPEN_SCIENCE_USER_DATA: join(fixture, 'new') } })
+  ).toThrow(/profile.*read/i)
+})
+
+it('preserves contradictory canonical and bootstrap records for recovery', async () => {
+  const path = await profile('current')
+  await mkdir(options.configRoot)
+  await writeFile(
+    join(options.configRoot, 'electron-profile.json'),
+    JSON.stringify({ version: 1, path })
+  )
+  await writeFile(
+    join(options.configRoot, 'electron-profile.json.bootstrap'),
+    JSON.stringify({
+      version: 1,
+      path: join(fixture, 'other'),
+      bootstrap: {
+        dataRoot: join(fixture, 'other-data'),
+        createDataRoot: true,
+        createProfile: true
+      }
+    })
+  )
+  expect(() => resolveElectronProfile(options)).toThrow(/conflict|inconsistent/i)
+  expect(existsSync(join(options.configRoot, 'electron-profile.json.bootstrap'))).toBe(true)
+})
+
+it('allows an explicit different profile without falling back to the missing old profile', async () => {
+  await mkdir(options.configRoot)
+  await writeFile(
+    join(options.configRoot, 'electron-profile.json'),
+    JSON.stringify({ version: 1, path: join(fixture, 'old') })
+  )
+  const replacement = join(fixture, 'new')
+  expect(resolveElectronProfile({ ...options, env: { OPEN_SCIENCE_USER_DATA: replacement } })).toBe(
+    replacement
+  )
+})
+
+it.each(['OPEN_SCIENCE_E2E_STORAGE_ROOT', 'OPEN_SCIENCE_STORAGE_ROOT'])(
+  'checks a completed missing isolated profile with %s in development',
+  async (key) => {
+    const path = join(options.configRoot, 'electron-profile')
+    await mkdir(options.configRoot)
+    await writeFile(
+      join(options.configRoot, 'electron-profile.json'),
+      JSON.stringify({ version: 1, path })
+    )
+    expect(() =>
+      resolveElectronProfile({ ...options, packaged: false, env: { [key]: options.configRoot } })
+    ).toThrow(/profile.*missing/i)
+    expect(existsSync(path)).toBe(false)
+  }
+)
+
+it('does not replace a recorded profile with a config-derived location', async () => {
+  const path = await profile('selected-profile')
+  await mkdir(options.configRoot)
+  await writeFile(
+    join(options.configRoot, 'electron-profile.json'),
+    JSON.stringify({ version: 1, path })
+  )
+  expect(() =>
+    resolveElectronProfile({ ...options, env: { OPEN_SCIENCE_CONFIG_ROOT: options.configRoot } })
+  ).toThrow(/conflict/i)
+  expect(existsSync(join(options.configRoot, 'electron-profile'))).toBe(false)
+})
+
+it.each(['{invalid', JSON.stringify({ version: 1, path: 'relative' })])(
+  'preserves an invalid bootstrap beside a valid record',
+  async (contents) => {
+    const path = await profile('selected-profile')
+    await mkdir(options.configRoot)
+    await writeFile(
+      join(options.configRoot, 'electron-profile.json'),
+      JSON.stringify({ version: 1, path })
+    )
+    const temporary = join(options.configRoot, 'electron-profile.json.bootstrap')
+    await writeFile(temporary, contents)
+    const { pinFreshApplicationLocations } = await import('./electron-profile')
+    expect(() =>
+      pinFreshApplicationLocations({
+        configRoot: options.configRoot,
+        profilePath: path,
+        home: fixture,
+        packaged: true,
+        existingInstallation: true
+      })
+    ).toThrow(/read|invalid/i)
+    const { readFile } = await import('node:fs/promises')
+    expect(await readFile(temporary, 'utf8')).toBe(contents)
+  }
+)
+
+it('uses a pending first creation only at its recorded location', async () => {
+  await mkdir(options.configRoot)
+  const path = join(fixture, 'initial-profile')
+  await writeFile(
+    join(options.configRoot, 'electron-profile.json'),
+    JSON.stringify({
+      version: 1,
+      path,
+      bootstrap: { dataRoot: join(fixture, 'research'), createDataRoot: true, createProfile: true }
+    })
+  )
+  expect(resolveElectronProfile({ ...options, env: { OPEN_SCIENCE_USER_DATA: path } })).toBe(path)
+  expect(() =>
+    resolveElectronProfile({ ...options, env: { OPEN_SCIENCE_USER_DATA: join(fixture, 'other') } })
+  ).toThrow(/conflict/i)
+})
+
+it('does not accept a file in place of the recorded profile, including normalized overrides', async () => {
+  await mkdir(options.configRoot)
+  const path = join(fixture, 'profile-file')
+  await writeFile(path, 'preserve')
+  await writeFile(
+    join(options.configRoot, 'electron-profile.json'),
+    JSON.stringify({ version: 1, path })
+  )
+  expect(() =>
+    resolveElectronProfile({
+      ...options,
+      env: { OPEN_SCIENCE_USER_DATA: `${path}/../profile-file` }
+    })
+  ).toThrow(/not a directory/i)
+})

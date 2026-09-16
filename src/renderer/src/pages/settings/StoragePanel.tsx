@@ -310,11 +310,8 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
     // On success the app relaunches; nothing left to update here.
   }
 
-  // "Use default location": relocate back to the default `<home>/OpenScience` (the reverse of any
-  // other move). The default is reproduced by feeding its parent through the same inspect/migrate
-  // flow a browsed folder uses, so the common case (default folder empty or gone → 'move') just
-  // opens the migration modal, which moves the data back and restarts. Rare fallbacks: the default
-  // folder still holds data ('adopt' → repoint as-is), or it is somehow unusable ('invalid' → error).
+  // Pass the displayed destination itself. A parent can resolve to a populated legacy sibling,
+  // which would make "Use default" silently target a different location from the one shown.
   const handleUseDefault = async (): Promise<void> => {
     if (!info) return
     const requestId = ++inspectRequestRef.current
@@ -323,25 +320,25 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
     setDefaultError(undefined)
     setIsInspecting(true)
     try {
-      const result = await window.api.storage.inspectDataRoot(info.defaultParent)
+      const result = await window.api.storage.inspectDataRoot(info.defaultDataRoot)
       if (inspectRequestRef.current !== requestId) return
       if (result.kind === 'move') {
         setMigrationTarget({
-          path: info.defaultParent,
+          path: info.defaultDataRoot,
           targetAvailableBytes: result.targetAvailableBytes
         })
         return
       }
       if (result.kind === 'adopt') {
-        setNewPath(info.defaultParent)
-        setInspection({ path: info.defaultParent, ...result })
+        setNewPath(info.defaultDataRoot)
+        setInspection({ path: info.defaultDataRoot, ...result })
         setIsEditing(true)
         setAdoptConfirmOpen(true)
         return
       }
       if (result.kind === 'recover' && result.recoveryStatus) {
         setMigrationTarget({
-          path: info.defaultParent,
+          path: info.defaultDataRoot,
           recoveryStatus: result.recoveryStatus,
           targetAvailableBytes: result.targetAvailableBytes
         })
