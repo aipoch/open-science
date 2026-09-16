@@ -8,12 +8,18 @@ const language = new URLSearchParams(location.search).get('lang') === 'zh-Hans' 
 document.documentElement.classList.add('dark')
 window.api = { platform: 'win32' } as typeof window.api
 
+const search = new URLSearchParams(location.search).has('search')
 const request: AcpPermissionRequest = {
-  requestId: 'web-read',
+  requestId: search ? 'web-search' : 'web-read',
   sessionId: 'parent',
   toolCallId: 'child',
-  title: 'https://www.resurchify.com/impact/details/20982',
-  providerToolName: 'WebFetch',
+  title: search
+    ? 'p63 squamous cell carcinoma tumor suppressor oncogene role'
+    : 'https://www.resurchify.com/impact/details/20982',
+  providerToolName: search ? 'WebSearch' : 'WebFetch',
+  ...(search
+    ? { rawInput: { query: 'p63 squamous cell carcinoma tumor suppressor oncogene role' } }
+    : {}),
   toolKind: 'fetch',
   isMcp: false,
   delegated: {

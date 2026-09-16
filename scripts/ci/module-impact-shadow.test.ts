@@ -531,5 +531,5 @@ it('ignores legacy blanket PR deferral when emitting a risk-based plan', () => {
   )
   expect(plan.mode).toBe('full')
   expect(plan.bundles).toContain('macos_e2e')
-  expect(append).toHaveBeenCalledWith('/output', expect.stringContaining('stage=full\n'))
+  expect(append).toHaveBeenCalledWith('/output', expect.not.stringContaining('stage='))
 })

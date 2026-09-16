@@ -1078,6 +1078,13 @@ Active-dialog menus and other foreground child layers retain their own ordering.
   that scope in the approval card body before the user approves. Keep the provider response
   one-shot so application-owned revocation remains effective. This capability does not grant
   shell execution, web search, or arbitrary MCP access, and does not change Auto editing.
+- Native text web search in Claude Code offers **Once** and **This conversation**, separately from
+  web reading. The card explains that conversation approval covers searches by this conversation
+  and its subagents. Verified pending searches and later searches reuse that approval, while every
+  provider receives its own one-shot response. Search grants use `builtin:web_search`, remain
+  revocable through existing permissions, and never expand existing `builtin:web_fetch` grants.
+  OpenCode's generic `other` search events and Codex Responses/Bridge lack this native identity
+  contract and retain their existing permission behavior. Search is not a default global grant.
 - Remembered permission rows identify Connector tools by the current Connector display name,
   public server ID, and exact tool name. The name opens the existing Connector Settings route in
   active, policy-covered, and blocked states. Revoke accessible names also include the scope.

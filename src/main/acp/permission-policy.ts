@@ -202,6 +202,44 @@ const isNativeWebFetchPermission = (
   }
 }
 
+// Claude ACP supplies WebSearch in the preceding tool_call metadata, but can omit it on
+// the root request_permission. OpenCode currently maps websearch to other without native
+// metadata; Codex Responses/Bridge expose no corresponding native approval contract.
+const isNativeWebSearchCandidate = (
+  params: RequestPermissionRequest,
+  context: PermissionPolicyContext | undefined
+): boolean =>
+  context?.frameworkId === 'claude-code' &&
+  !trustedMcpToolIdentity(params) &&
+  !isMcpTool(params, context.mcpServerNames ?? []) &&
+  extractProviderToolName(params.toolCall) === 'WebSearch'
+
+const isNativeWebSearchPermission = (
+  params: RequestPermissionRequest,
+  context: PermissionPolicyContext | undefined
+): boolean => {
+  if (
+    trustedNativeToolIdentity(params) !== 'claude-code/websearch' ||
+    !isNativeWebSearchCandidate(params, context)
+  )
+    return false
+  const input = params.toolCall.rawInput
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return false
+  const values = input as Record<string, unknown>
+  return (
+    typeof values.query === 'string' &&
+    values.query.trim().length > 0 &&
+    Object.keys(values).every((key) =>
+      ['query', 'allowed_domains', 'blocked_domains'].includes(key)
+    ) &&
+    ['allowed_domains', 'blocked_domains'].every(
+      (key) =>
+        values[key] === undefined ||
+        (Array.isArray(values[key]) && values[key].every((domain) => typeof domain === 'string'))
+    )
+  )
+}
+
 // OpenCode's native Skill tool only reads an app-provisioned skill definition into the model's
 // context. It is framework plumbing rather than a user-authorizable side effect. Older OpenCode
 // sessions can still emit request_permission, so the runtime binds that request to a preceding native
@@ -331,6 +369,8 @@ const resolveAutomaticPermission = (
 }
 
 export {
+  isNativeWebSearchCandidate,
+  isNativeWebSearchPermission,
   isNativeWebFetchCandidate,
   isNativeWebFetchPermission,
   canConservativelyAutoApprove,

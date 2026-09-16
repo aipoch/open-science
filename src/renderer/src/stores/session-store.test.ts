@@ -5329,6 +5329,309 @@ describe('session store', () => {
     expect(toPersistedSession(session).activityGroups).toEqual(session.activityGroups)
   })
 
+  it.each(['activity', 'group', 'frame'] as const)(
+    'preserves the path referenced by a retained %s',
+    (dependency) => {
+      const messages: PersistedChatSession['messages'] = [
+        {
+          id: 'old-prompt',
+          role: 'user',
+          content: 'Inspect',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        },
+        {
+          id: 'old-answer',
+          role: 'agent',
+          content: 'Done',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ]
+      const graph = createLinearConversationGraph({
+        sessionId: 'referenced',
+        messages,
+        createdAt: 1,
+        updatedAt: 5
+      })
+      if (dependency === 'activity')
+        graph.activities.push({
+          id: 'retained-tool',
+          kind: 'tool',
+          title: 'Read',
+          status: 'completed',
+          sortIndex: 1,
+          eventIds: [],
+          createdAt: 2,
+          updatedAt: 2,
+          agentFrameId: graph.rootFrameId,
+          messageBranchId: graph.branches[0].id,
+          promptMessageId: 'old-prompt',
+          runtimeSegmentId: graph.runtimeSegments[0].id
+        })
+      else if (dependency === 'group')
+        graph.activityGroups.push({
+          id: 'retained-group',
+          title: 'Inspect',
+          sortIndex: 1,
+          activityIds: [],
+          agentFrameId: graph.rootFrameId,
+          messageBranchId: graph.branches[0].id,
+          promptMessageId: 'old-prompt',
+          createdAt: 2,
+          updatedAt: 2
+        })
+      else {
+        graph.frames.push({
+          id: 'delegate',
+          parentFrameId: graph.rootFrameId,
+          originMessageId: 'old-prompt',
+          originBindingState: 'validated',
+          kind: 'delegate',
+          status: 'completed',
+          activeBranchId: 'delegate-branch',
+          createdAt: 2
+        })
+        graph.branches.push({
+          id: 'delegate-branch',
+          agentFrameId: 'delegate',
+          createdAt: 2,
+          updatedAt: 2
+        })
+      }
+      validateConversationGraph(graph)
+      const session: PersistedChatSession = {
+        id: 'referenced',
+        projectId: 'project-1',
+        title: 'Referenced',
+        cwd: '/workspace',
+        status: 'idle',
+        revision: 4,
+        messages,
+        conversationGraph: graph,
+        createdAt: 1,
+        updatedAt: 5
+      }
+      useSessionStore.getState().hydrateSessions([session])
+      const replacement = messages.map((message) => ({
+        ...message,
+        id: message.id.replace('old-', 'new-')
+      }))
+      useSessionStore.getState().upsertPersistedSession({
+        ...session,
+        revision: 5,
+        messages: replacement,
+        conversationGraph: createLinearConversationGraph({
+          sessionId: session.id,
+          messages: replacement,
+          createdAt: 1,
+          updatedAt: 5
+        })
+      })
+      const projected = useSessionStore.getState().sessions[0]
+      expect(() => validateConversationGraph(projected.conversationGraph!)).not.toThrow()
+      expect(projected.conversationGraph?.activities).toEqual(graph.activities)
+      expect(projected.conversationGraph?.activityGroups).toEqual(graph.activityGroups)
+      expect(projected.conversationGraph?.frames.map(({ id }) => id)).toEqual(
+        graph.frames.map(({ id }) => id)
+      )
+      expect(() =>
+        useSessionStore.getState().appendUserMessage({ sessionId: session.id, content: 'Continue' })
+      ).not.toThrow()
+      expect(() =>
+        validateConversationGraph(
+          toPersistedSession(useSessionStore.getState().sessions[0]).conversationGraph!
+        )
+      ).not.toThrow()
+    }
+  )
+
+  it.each(['root', 'child', 'updated-child'] as const)(
+    'keeps a fork from the old completion valid while %s is selected',
+    (selection) => {
+      const messages: PersistedChatSession['messages'] = [
+        {
+          id: 'prompt',
+          role: 'user',
+          content: 'Inspect',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        },
+        {
+          id: 'old-completion',
+          role: 'agent',
+          content: 'Done',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ]
+      const original = createLinearConversationGraph({
+        sessionId: 'forked',
+        messages,
+        createdAt: 1,
+        updatedAt: 5
+      })
+      const rootBranch = original.branches[0]
+      original.branches.push({
+        id: 'child',
+        agentFrameId: original.rootFrameId,
+        parentBranchId: rootBranch.id,
+        forkMessageId: 'old-completion',
+        headMessageId: 'old-completion',
+        createdAt: 5,
+        updatedAt: 5
+      })
+      original.activities.push({
+        id: 'child-tool',
+        kind: 'tool',
+        title: 'Inspect child',
+        status: 'completed',
+        agentFrameId: original.rootFrameId,
+        messageBranchId: 'child',
+        promptMessageId: 'prompt',
+        runtimeSegmentId: original.runtimeSegments[0].id,
+        activityGroupId: 'child-group',
+        sortIndex: 1,
+        eventIds: [],
+        createdAt: 5,
+        updatedAt: 5
+      })
+      original.activityGroups.push({
+        id: 'child-group',
+        title: 'Child tools',
+        agentFrameId: original.rootFrameId,
+        messageBranchId: 'child',
+        promptMessageId: 'prompt',
+        activityIds: ['child-tool'],
+        sortIndex: 1,
+        createdAt: 5,
+        updatedAt: 5,
+        completedAt: 5
+      })
+      if (selection === 'child') original.frames[0].activeBranchId = 'child'
+      validateConversationGraph(original)
+      const session: PersistedChatSession = {
+        id: 'forked',
+        projectId: 'project-1',
+        title: 'Forked',
+        cwd: '/workspace',
+        status: 'idle',
+        revision: 4,
+        messages,
+        conversationGraph: original,
+        createdAt: 1,
+        updatedAt: 5
+      }
+      useSessionStore.getState().hydrateSessions([session])
+      const replacement = [messages[0], { ...messages[1], id: 'new-completion' }]
+      const incomingGraph = createLinearConversationGraph({
+        sessionId: session.id,
+        messages: replacement,
+        createdAt: 1,
+        updatedAt: 5
+      })
+      if (selection === 'updated-child')
+        incomingGraph.branches.push({
+          ...original.branches[1],
+          forkMessageId: 'new-completion',
+          headMessageId: 'new-completion'
+        })
+      validateConversationGraph(incomingGraph)
+      useSessionStore.getState().upsertPersistedSession({
+        ...session,
+        revision: 5,
+        messages: replacement,
+        conversationGraph: incomingGraph
+      })
+      const projected = useSessionStore.getState().sessions[0]
+      expect(() => validateConversationGraph(projected.conversationGraph!)).not.toThrow()
+      expect(projected.conversationGraph?.activities).toEqual(original.activities)
+      expect(projected.conversationGraph?.activityGroups).toEqual(original.activityGroups)
+      expect(
+        projected.conversationGraph?.branches.find(({ id }) => id === rootBranch.id)?.headMessageId
+      ).toBe(selection === 'updated-child' ? 'new-completion' : 'old-completion')
+      expect(projected.conversationGraph?.frames[0].activeBranchId).toBe(
+        original.frames[0].activeBranchId
+      )
+      expect(() =>
+        useSessionStore
+          .getState()
+          .appendUserMessage({ sessionId: session.id, content: 'Continue this branch' })
+      ).not.toThrow()
+      expect(() =>
+        validateConversationGraph(
+          toPersistedSession(useSessionStore.getState().sessions[0]).conversationGraph!
+        )
+      ).not.toThrow()
+    }
+  )
+
+  it.each([false, true])(
+    'projects tool results and groups from a delayed save receipt (echo first: %s)',
+    (echoFirst) => {
+      const store = useSessionStore.getState()
+      store.appendUserMessage({ sessionId: 'transport-session-1', content: 'Query the connector' })
+      store.beginActivityGroup('transport-session-1', 'group-call-1', 'Query references')
+      store.upsertToolActivity({
+        sessionId: 'transport-session-1',
+        toolCallId: 'tool-connector-1',
+        eventId: 'event-start',
+        toolKind: 'read',
+        status: 'in_progress'
+      })
+      const source = useSessionStore.getState().sessions[0]
+      const pending = toPersistedSession(source)
+      store.upsertToolActivity({
+        sessionId: source.id,
+        toolCallId: 'tool-connector-1',
+        eventId: 'event-end',
+        status: 'completed',
+        rawOutput: { references: ['paper-1'] }
+      })
+      store.completeActivityGroup(source.id)
+      const durable = { ...toPersistedSession(useSessionStore.getState().sessions[0]), revision: 5 }
+      store.hydrateSessions([{ ...pending, revision: 4 }])
+      if (echoFirst)
+        store.applyDurableSessionProjection({
+          source: useSessionStore.getState().sessions[0],
+          session: durable,
+          mode: 'archive-authority'
+        })
+      store.applyDurableSessionProjection({ source, session: durable })
+
+      const projected = useSessionStore.getState().sessions[0]
+      expect(projected.activities).toEqual([
+        expect.objectContaining({
+          id: 'tool-connector-1',
+          activityGroupId: 'group-call-1',
+          status: 'completed',
+          eventIds: ['event-start', 'event-end'],
+          rawOutput: { references: ['paper-1'] }
+        })
+      ])
+      expect(projected.activityGroups).toEqual([
+        expect.objectContaining({
+          id: 'group-call-1',
+          activityIds: ['tool-connector-1'],
+          completedAt: durable.activityGroups![0].completedAt
+        })
+      ])
+      const saved = toPersistedSession(projected)
+      expect(saved.conversationGraph?.activities).toEqual(durable.conversationGraph?.activities)
+      expect(saved.conversationGraph?.activityGroups).toEqual(
+        durable.conversationGraph?.activityGroups
+      )
+    }
+  )
+
   it('keeps grouped activities persistable after a newer Task completion without the group', () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',
@@ -8077,85 +8380,98 @@ describe('truncateSessionFromMessage', () => {
     ).toBeUndefined()
   })
 
-  it('forks immediately before a durable elicitation and preserves the old downstream Branch', () => {
-    const choiceAt = baseTime + 200
-    const choiceSortIndex = 100
-    seedSession({
-      messages: [
-        createMessage('user-1', 'user', baseTime, { sortIndex: 10 }),
-        createMessage('agent-1', 'agent', baseTime + 100, { sortIndex: 20 }),
-        createMessage('user-2', 'user', choiceAt, { sortIndex: 80 }),
-        createMessage('question-preamble', 'agent', choiceAt, { sortIndex: 90 }),
-        createMessage('agent-2', 'agent', choiceAt, { sortIndex: 110 })
-      ],
-      activities: [
-        { ...createActivity('act-before', choiceAt), sortIndex: 95 },
-        {
-          ...createActivity('choice-1', choiceAt),
-          sortIndex: choiceSortIndex,
-          promptMessageId: 'user-2',
-          elicitation: {
-            message: 'Choose a direction',
-            fields: [
-              {
-                id: 'question_0',
-                label: 'Direction',
-                kind: 'single-select',
-                options: [
-                  { value: 'A', label: 'A' },
-                  { value: 'B', label: 'B' }
-                ]
-              }
-            ],
-            state: 'answered',
-            durable: {
-              kind: 'agent-user-choice',
-              requestId: 'choice-request-1',
-              promptMessageId: 'user-2'
-            },
-            answers: [{ fieldId: 'question_0', value: 'A' }]
-          }
-        },
-        { ...createActivity('act-after', choiceAt), sortIndex: 105 }
-      ]
-    })
+  it.each([false, true])(
+    'forks immediately before a durable elicitation and preserves the old downstream Branch (receipt: %s)',
+    (receipt) => {
+      const choiceAt = baseTime + 200
+      const choiceSortIndex = 100
+      seedSession({
+        messages: [
+          createMessage('user-1', 'user', baseTime, { sortIndex: 10 }),
+          createMessage('agent-1', 'agent', baseTime + 100, { sortIndex: 20 }),
+          createMessage('user-2', 'user', choiceAt, { sortIndex: 80 }),
+          createMessage('question-preamble', 'agent', choiceAt, { sortIndex: 90 }),
+          createMessage('agent-2', 'agent', choiceAt, { sortIndex: 110 })
+        ],
+        activities: [
+          { ...createActivity('act-before', choiceAt), sortIndex: 95 },
+          {
+            ...createActivity('choice-1', choiceAt),
+            sortIndex: choiceSortIndex,
+            promptMessageId: 'user-2',
+            elicitation: {
+              message: 'Choose a direction',
+              fields: [
+                {
+                  id: 'question_0',
+                  label: 'Direction',
+                  kind: 'single-select',
+                  options: [
+                    { value: 'A', label: 'A' },
+                    { value: 'B', label: 'B' }
+                  ]
+                }
+              ],
+              state: 'answered',
+              durable: {
+                kind: 'agent-user-choice',
+                requestId: 'choice-request-1',
+                promptMessageId: 'user-2'
+              },
+              answers: [{ fieldId: 'question_0', value: 'A' }]
+            }
+          },
+          { ...createActivity('act-after', choiceAt), sortIndex: 105 }
+        ]
+      })
 
-    const revised = useSessionStore.getState().reviseSessionFromElicitation('session-1', 'choice-1')
+      if (receipt) {
+        const source = useSessionStore.getState().sessions[0]
+        const durable = toPersistedSession(source)
+        useSessionStore.getState().upsertPersistedSession({ ...durable, revision: 4 })
+        useSessionStore
+          .getState()
+          .applyDurableSessionProjection({ source, session: { ...durable, revision: 5 } })
+      }
+      const revised = useSessionStore
+        .getState()
+        .reviseSessionFromElicitation('session-1', 'choice-1')
 
-    expect(revised).toBe(true)
-    const session = useSessionStore.getState().sessions[0]
-    expect(session.messages.map((message) => message.id)).toEqual([
-      'user-1',
-      'agent-1',
-      'user-2',
-      'question-preamble'
-    ])
-    expect(session.activities?.map((activity) => activity.id)).toEqual(['act-before'])
-    expect(session.conversationGraph?.branches).toHaveLength(2)
-    expect(toPersistedSession(session).messages.map((message) => message.id)).toEqual([
-      'user-1',
-      'agent-1',
-      'user-2',
-      'question-preamble'
-    ])
-    expect(toPersistedSession(session).messages.at(-1)).not.toHaveProperty('sortIndex')
-    expect(toPersistedSession(session).activities?.map((activity) => activity.id)).toEqual([
-      'act-before'
-    ])
+      expect(revised).toBe(true)
+      const session = useSessionStore.getState().sessions[0]
+      expect(session.messages.map((message) => message.id)).toEqual([
+        'user-1',
+        'agent-1',
+        'user-2',
+        'question-preamble'
+      ])
+      expect(session.activities?.map((activity) => activity.id)).toEqual(['act-before'])
+      expect(session.conversationGraph?.branches).toHaveLength(2)
+      expect(toPersistedSession(session).messages.map((message) => message.id)).toEqual([
+        'user-1',
+        'agent-1',
+        'user-2',
+        'question-preamble'
+      ])
+      expect(toPersistedSession(session).messages.at(-1)).not.toHaveProperty('sortIndex')
+      expect(toPersistedSession(session).activities?.map((activity) => activity.id)).toEqual([
+        'act-before'
+      ])
 
-    const originalBranchId = session.conversationGraph?.branches[0].id
-    useSessionStore.getState().activateMessageBranch('session-1', originalBranchId ?? '')
-    expect(useSessionStore.getState().sessions[0].messages.map((message) => message.id)).toEqual([
-      'user-1',
-      'agent-1',
-      'user-2',
-      'question-preamble',
-      'agent-2'
-    ])
-    expect(
-      useSessionStore.getState().sessions[0].activities?.map((activity) => activity.id)
-    ).toEqual(['act-before', 'choice-1', 'act-after'])
-  })
+      const originalBranchId = session.conversationGraph?.branches[0].id
+      useSessionStore.getState().activateMessageBranch('session-1', originalBranchId ?? '')
+      expect(useSessionStore.getState().sessions[0].messages.map((message) => message.id)).toEqual([
+        'user-1',
+        'agent-1',
+        'user-2',
+        'question-preamble',
+        'agent-2'
+      ])
+      expect(
+        useSessionStore.getState().sessions[0].activities?.map((activity) => activity.id)
+      ).toEqual(['act-before', 'choice-1', 'act-after'])
+    }
+  )
 
   it('rebuilds renderer ordering for repeated same-timestamp revisions', () => {
     const choiceAt = baseTime + 200

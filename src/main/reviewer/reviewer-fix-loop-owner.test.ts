@@ -34,6 +34,19 @@ vi.mock('../../shared/conversation-graph', () => ({
   resolveActiveConversationMessages: mocks.resolveActiveConversationMessages
 }))
 
+// This suite tests loop dispositions/refresh, while correction-context.test.ts exercises real graphs.
+vi.mock('./correction-context', () => ({
+  ReviewerCorrectionContext: class {
+    resolve(): { promptMessageId: string } {
+      return mocks.getActiveConversationContext({}, 'originating-user')
+    }
+    advance(): void {
+      return undefined
+    }
+  },
+  ReviewerCorrectionContextChangedError: class extends Error {}
+}))
+
 const { runReviewerFixLoop } = await import('./reviewer-fix-loop-owner')
 
 const session = (messages: PersistedChatSession['messages']): PersistedChatSession => ({
@@ -114,6 +127,7 @@ const makeOptions = (
 ): Parameters<typeof runReviewerFixLoop>[0] => ({
   sessionId: 'session-1',
   originalTurnMessageId: 'original-turn',
+  reviewedSession: session([initialMessage]),
   openChecks: [openCheck],
   projectId: 'project-1',
   mainSessionId: 'main-session-1',

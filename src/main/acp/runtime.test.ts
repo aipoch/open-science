@@ -1193,6 +1193,42 @@ afterEach(async () => {
 })
 
 describe('ACP runtime migration write-gate', () => {
+  it('checks application context after admission and before the provider sees the correction', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['s1'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    try {
+      await runtime.createSession({ cwd: '/workspace' })
+      const failure = new Error('Synthetic reviewed context changed')
+      const onPromptAdmitted = vi.fn(async () => {
+        throw failure
+      })
+      await expect(
+        runtime.sendApplicationPrompt(
+          { sessionId: 's1', text: '[Auditor] stale correction' },
+          {
+            kind: 'application',
+            feature: 'reviewer',
+            purpose: 'correction',
+            causeReviewId: 'review'
+          },
+          { onPromptAdmitted }
+        )
+      ).rejects.toBe(failure)
+      expect(onPromptAdmitted).toHaveBeenCalledOnce()
+      expect(fakeAgent.prompts).toHaveLength(0)
+      // Rejection must release execution ownership so a legitimate user can continue.
+      await runtime.sendPrompt({ sessionId: 's1', text: 'New user task' })
+      expect(fakeAgent.prompts).toHaveLength(1)
+    } finally {
+      runtime.shutdown()
+    }
+  })
+
   it('propagates a normalized Codex capacity error through the ACP wire', async () => {
     const root = await mkdtemp(join(tmpdir(), 'acp-codex-capacity-'))
     const capacityError = 'Selected model is at capacity. Please try a different model.'

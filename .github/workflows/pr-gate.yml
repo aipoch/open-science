@@ -21,6 +21,7 @@ on:
           - windows-e2e
           - e2e
           - source-regressions
+          - macos-smoke
 
 permissions:
   contents: read
@@ -40,7 +41,6 @@ jobs:
       head: ${{ steps.revisions.outputs.head }}
       lanes: ${{ steps.classify.outputs.lanes }}
       plan: ${{ steps.classify.outputs.plan }}
-      stage: ${{ steps.classify.outputs.stage || 'full' }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -125,13 +125,18 @@ jobs:
           BASE_SHA: ${{ steps.revisions.outputs.base }}
           DRY_RUN_MODE: ${{ inputs.dry_run || 'classified' }}
           PR_GATE_PLATFORM_POLICY: risk-v1
-          PR_GATE_MERGE_QUEUE_ENABLED: ${{ vars.PR_GATE_MERGE_QUEUE_ENABLED }}
           EVENT_NAME: ${{ github.event_name }}
           HEAD_SHA: ${{ steps.revisions.outputs.head }}
           TRUSTED_CLASSIFIER_DIR: ${{ steps.trusted_classifier.outputs.dir }}
           TRUSTED_CLASSIFIER_SOURCE: ${{ steps.trusted_classifier.outputs.source }}
         run: |
           set -euo pipefail
+          if [[ "$EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN_MODE" == "macos-smoke" ]]; then
+            plan='{"schemaVersion":1,"mode":"selective","roots":["manual:macos-smoke"],"lanes":["policy","build","e2e_smoke_macos"],"bundles":["policy","macos_e2e"],"macosProfile":"smoke","macosGroups":["journeys"],"reasonChains":["focused single-runner macOS smoke"]}'
+            echo "plan=$plan" >> "$GITHUB_OUTPUT"
+            echo 'lanes=["policy","build","e2e_smoke_macos"]' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [[ "$EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN_MODE" == "unit-coverage" ]]; then
             plan='{"schemaVersion":1,"mode":"full","roots":["manual:unit-coverage"],"lanes":["policy","unit_macos"],"bundles":["policy","unit"],"reasonChains":["workflow_dispatch unit-coverage -> focused dry-run"]}'
             echo "plan=$plan" >> "$GITHUB_OUTPUT"
@@ -526,9 +531,9 @@ jobs:
     name: Module tests and coverage
     needs: [preflight, unit_shard]
     if: ${{ always() && needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}
-    # PR feedback runs portable module tests on Ubuntu. Full validation retains affected macOS
-    # coverage in the merge queue and manual runs; old trusted plans keep their existing runner.
-    runs-on: ${{ (needs.unit_shard.result != 'skipped' || needs.preflight.outputs.stage == 'pr' || fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke') && 'ubuntu-latest' || 'macos-14' }}
+    # Ordinary changes use portable coverage; expanded native plans keep the Mac module run.
+    # Full portable shards always merge coverage on Ubuntu.
+    runs-on: ${{ (needs.unit_shard.result != 'skipped' || fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke') && 'ubuntu-latest' || 'macos-14' }}
     timeout-minutes: 15
     steps:
       - name: Checkout
@@ -552,18 +557,12 @@ jobs:
         if: ${{ fromJSON(needs.preflight.outputs.plan).mode == 'selective' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos') }}
         continue-on-error: true
         env:
-          EXECUTION_STAGE: ${{ needs.preflight.outputs.stage }}
-          VITEST_PORTABLE_CI: ${{ (needs.preflight.outputs.stage == 'pr' || fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke') && '1' || '0' }}
+          VITEST_PORTABLE_CI: ${{ fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke' && '1' || '0' }}
           BASE_SHA: ${{ needs.preflight.outputs.base }}
           HEAD_SHA: ${{ needs.preflight.outputs.head }}
         # The module graph selects owner, contract, and consumer tests. Coverage remains scoped to
         # changed sources without handing test discovery back to Vitest's static --changed graph.
-        run: |
-          if [[ "$EXECUTION_STAGE" == "pr" ]]; then
-            npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA"
-          else
-            npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA" --coverage-changed "$BASE_SHA"
-          fi
+        run: npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA" --coverage-changed "$BASE_SHA"
       - name: Download full-suite blob reports
         if: ${{ needs.unit_shard.result != 'skipped' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -581,7 +580,7 @@ jobs:
         # discovering or executing tests again, so coverage thresholds remain authoritative.
         run: npx vitest run --merge-reports=vitest-reports --coverage --passWithNoTests
       - name: Upload Module coverage report
-        if: ${{ always() && ((needs.preflight.outputs.stage != 'pr' && steps.unit_macos_related.outcome != 'skipped') || steps.unit_macos_full.outcome != 'skipped') }}
+        if: ${{ always() && (steps.unit_macos_related.outcome != 'skipped' || steps.unit_macos_full.outcome != 'skipped') }}
         continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -617,7 +616,7 @@ jobs:
   linux_runtime:
     name: Linux Notebook isolation
     needs: preflight
-    if: ${{ needs.preflight.outputs.stage != 'pr' && needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'linux_runtime') }}
+    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'linux_runtime') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -656,48 +655,10 @@ jobs:
           packages/notebook-network-sandbox/src/filesystem-enforcement.integration.test.ts
           packages/notebook-network-sandbox/src/network-enforcement.integration.test.ts
 
-  # The trusted base classifier for the introducing PR still selects this legacy bundle.
-  # It performs no tests and can be deleted after this workflow lands on main.
-  coverage_macos:
-    name: Legacy coverage plan compatibility
-    needs: preflight
-    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'coverage_macos') }}
-    runs-on: macos-14
-    timeout-minutes: 15
-    steps:
-      - name: Checkout coverage-only legacy plan
-        if: ${{ !contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - name: Setup Node for coverage-only legacy plan
-        if: ${{ !contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-        with:
-          node-version: 22
-          cache: npm
-      - name: Install dependencies for coverage-only legacy plan
-        if: ${{ !contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}
-        run: node scripts/ci/npm-ci.mjs
-      - name: Test coverage-only legacy plan
-        if: ${{ !contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}
-        run: npm run test:coverage
-      - name: Upload legacy coverage report
-        if: ${{ always() && !contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: coverage-report
-          path: coverage/
-          retention-days: 5
-          if-no-files-found: warn
-      - name: Confirm coverage consolidated into Module tests
-        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}
-        run: echo "Coverage thresholds are enforced by the macOS Module-test job."
-
   windows_core:
     name: Windows core
     needs: preflight
-    if: ${{ needs.preflight.outputs.stage != 'pr' && needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'windows_core') }}
+    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'windows_core') }}
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
@@ -835,7 +796,7 @@ jobs:
   macos_e2e_setup:
     name: Prepare macOS E2E
     needs: preflight
-    if: ${{ needs.preflight.outputs.stage != 'pr' && needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'macos_e2e') }}
+    if: ${{ fromJSON(needs.preflight.outputs.plan).macosProfile != 'smoke' && needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'macos_e2e') }}
     runs-on: macos-14
     timeout-minutes: 15
     outputs:
@@ -875,7 +836,7 @@ jobs:
   windows_e2e_setup:
     name: Prepare Windows E2E
     needs: preflight
-    if: ${{ needs.preflight.outputs.stage != 'pr' && needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'windows_e2e') }}
+    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'windows_e2e') }}
     runs-on: windows-latest
     timeout-minutes: 15
     outputs:
@@ -914,7 +875,7 @@ jobs:
   macos_e2e:
     name: macOS build and E2E (${{ matrix.group }})
     needs: [preflight, macos_e2e_setup]
-    if: ${{ needs.preflight.outputs.stage != 'pr' && needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'macos_e2e') }}
+    if: ${{ !cancelled() && needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'macos_e2e') && (fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke' || needs.macos_e2e_setup.result == 'success') }}
     runs-on: macos-14
     timeout-minutes: 30
     strategy:
@@ -930,16 +891,26 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: ${{ needs.macos_e2e_setup.outputs.node_version }}
+          node-version: ${{ needs.macos_e2e_setup.outputs.node_version || '22' }}
+          cache: ${{ fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke' && 'npm' || '' }}
           package-manager-cache: false
+      - name: Install short Mac dependencies
+        if: ${{ fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke' }}
+        run: node scripts/ci/npm-ci.mjs
+      - name: Build short Mac application
+        id: smoke_build
+        if: ${{ fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke' }}
+        run: npm run build:e2e
       # Artifact IDs survive failed-job reruns without selecting another producer attempt.
       - name: Download E2E setup
+        if: ${{ fromJSON(needs.preflight.outputs.plan).macosProfile != 'smoke' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           artifact-ids: ${{ needs.macos_e2e_setup.outputs.artifact_id }}
           path: ${{ runner.temp }}/e2e-setup/
           merge-multiple: true
       - name: Restore E2E setup
+        if: ${{ fromJSON(needs.preflight.outputs.plan).macosProfile != 'smoke' }}
         id: setup
         run: node scripts/ci/e2e-setup-snapshot.mjs restore "$RUNNER_TEMP/e2e-setup"
       - name: Test macOS-native behavior
@@ -961,7 +932,7 @@ jobs:
         run: npx vitest run src/main/net/network-info.test.ts src/main/notebook/managed-runtime-guard.test.ts
       - name: Run short macOS core
         id: e2e_smoke_macos
-        if: ${{ matrix.group == 'journeys' && steps.setup.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_smoke_macos') }}
+        if: ${{ matrix.group == 'journeys' && (steps.smoke_build.outcome == 'success' || steps.setup.outcome == 'success') && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_smoke_macos') }}
         continue-on-error: true
         run: >-
           npx playwright test e2e/electron-foundation.spec.ts e2e/settings-persistence.spec.ts e2e/window-presentation.spec.ts
@@ -1125,7 +1096,7 @@ jobs:
   windows_e2e:
     name: Windows E2E (shard ${{ matrix.shard }}/3)
     needs: [preflight, windows_e2e_setup]
-    if: ${{ needs.preflight.outputs.stage != 'pr' && needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'windows_e2e') }}
+    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'windows_e2e') }}
     runs-on: windows-latest
     timeout-minutes: 35
     strategy:
@@ -1305,7 +1276,6 @@ jobs:
       - static
       - unit
       - linux_runtime
-      - coverage_macos
       - windows_core
       - macos_e2e
       - windows_e2e
@@ -1333,12 +1303,10 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           PR_GATE_PLATFORM_POLICY: risk-v1
-          PR_GATE_MERGE_QUEUE_ENABLED: ${{ vars.PR_GATE_MERGE_QUEUE_ENABLED }}
-          PR_GATE_STAGE: ${{ needs.preflight.outputs.stage }}
           PR_GATE_EXECUTION_MODE: bundles
           PR_GATE_PLAN: ${{ needs.preflight.outputs.plan }}
           PREFLIGHT_RESULT: ${{ needs.preflight.result }}
-          PR_GATE_NEEDS: '{"preflight":{"result":"${{ needs.preflight.result }}"},"policy":{"result":"${{ needs.policy.result }}"},"static":{"result":"${{ needs.static.result }}"},"unit":{"result":"${{ needs.unit.result }}"},"linux_runtime":{"result":"${{ needs.linux_runtime.result }}"},"coverage_macos":{"result":"${{ needs.coverage_macos.result }}"},"windows_core":{"result":"${{ needs.windows_core.result }}"},"macos_e2e":{"result":"${{ needs.macos_e2e.result }}"},"windows_e2e":{"result":"${{ needs.windows_e2e.result }}"}}'
+          PR_GATE_NEEDS: '{"preflight":{"result":"${{ needs.preflight.result }}"},"policy":{"result":"${{ needs.policy.result }}"},"static":{"result":"${{ needs.static.result }}"},"unit":{"result":"${{ needs.unit.result }}"},"linux_runtime":{"result":"${{ needs.linux_runtime.result }}"},"windows_core":{"result":"${{ needs.windows_core.result }}"},"macos_e2e":{"result":"${{ needs.macos_e2e.result }}"},"windows_e2e":{"result":"${{ needs.windows_e2e.result }}"}}'
         run: |
           set -euo pipefail
           if [[ "$PREFLIGHT_RESULT" != "success" ]]; then

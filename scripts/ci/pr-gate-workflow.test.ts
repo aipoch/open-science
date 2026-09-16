@@ -145,7 +145,8 @@ describe('PR Gate workflow', () => {
             'runtime-bundle',
             'windows-e2e',
             'e2e',
-            'source-regressions'
+            'source-regressions',
+            'macos-smoke'
           ]
         }
       }
@@ -163,8 +164,7 @@ describe('PR Gate workflow', () => {
       base: '${{ steps.revisions.outputs.base }}',
       head: '${{ steps.revisions.outputs.head }}',
       lanes: '${{ steps.classify.outputs.lanes }}',
-      plan: '${{ steps.classify.outputs.plan }}',
-      stage: "${{ steps.classify.outputs.stage || 'full' }}"
+      plan: '${{ steps.classify.outputs.plan }}'
     })
 
     for (const bundle of manifest.bundleOrder) {
@@ -254,8 +254,7 @@ describe('PR Gate workflow', () => {
       base: '${{ steps.revisions.outputs.base }}',
       head: '${{ steps.revisions.outputs.head }}',
       lanes: '${{ steps.classify.outputs.lanes }}',
-      plan: '${{ steps.classify.outputs.plan }}',
-      stage: "${{ steps.classify.outputs.stage || 'full' }}"
+      plan: '${{ steps.classify.outputs.plan }}'
     })
     expect(prepare?.['continue-on-error']).toBeUndefined()
     expect(prepare?.run).toContain('scripts/ci/module-impact-authority.mjs')
@@ -273,9 +272,7 @@ describe('PR Gate workflow', () => {
 
     expect(gate.name).toBe('PR Gate')
     expect(gate.if).toBe('${{ always() }}')
-    expect(gate.needs).toEqual(
-      expect.arrayContaining(['preflight', ...manifest.bundleOrder, 'coverage_macos'])
-    )
+    expect(gate.needs).toEqual(expect.arrayContaining(['preflight', ...manifest.bundleOrder]))
     expect(gate.env).toBeUndefined()
     expect(gate.steps?.at(0)).toMatchObject({
       name: 'Checkout trusted gate evaluator',
@@ -476,36 +473,12 @@ describe('PR Gate workflow', () => {
     const shardRun = shards.steps?.find(({ name }) => name === 'Test complete suite shard')
     const shardUpload = shards.steps?.find(({ name }) => name === 'Upload full-suite blob report')
 
-    const legacyCoverage = workflow.jobs.coverage_macos
-    const coverageOnly = legacyCoverage.steps?.find(
-      ({ name }) => name === 'Test coverage-only legacy plan'
-    )
-    const consolidated = legacyCoverage.steps?.find(
-      ({ name }) => name === 'Confirm coverage consolidated into Module tests'
-    )
-
-    expect(legacyCoverage).toMatchObject({
-      name: 'Legacy coverage plan compatibility',
-      'runs-on': 'macos-14'
-    })
-    expect(coverageOnly).toMatchObject({
-      if: "${{ !contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}",
-      run: 'npm run test:coverage'
-    })
-    expect(consolidated).toMatchObject({
-      if: "${{ contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}"
-    })
-    expect(legacyCoverage.steps?.filter(({ run }) => run === 'npm run test:coverage')).toHaveLength(
-      1
-    )
-    expect(
-      legacyCoverage.steps?.filter(({ run }) => run === 'node scripts/ci/npm-ci.mjs')
-    ).toHaveLength(1)
+    expect(workflow.jobs.coverage_macos).toBeUndefined()
     expect(unit).toMatchObject({
       name: 'Module tests and coverage',
       needs: ['preflight', 'unit_shard'],
       'runs-on':
-        "${{ (needs.unit_shard.result != 'skipped' || needs.preflight.outputs.stage == 'pr' || fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke') && 'ubuntu-latest' || 'macos-14' }}"
+        "${{ (needs.unit_shard.result != 'skipped' || fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke') && 'ubuntu-latest' || 'macos-14' }}"
     })
     expect(unit.if).toContain('always()')
     expect(unit.env?.VITEST_DEFER_COVERAGE_THRESHOLDS).toBeUndefined()
@@ -584,7 +557,7 @@ describe('PR Gate workflow', () => {
     expect(unit.steps?.some(({ name }) => name === 'Test Renderer (blocking)')).toBe(false)
     expect(unit.steps?.filter(({ run }) => run === 'npm run test:coverage')).toHaveLength(0)
     expect(coverageUpload).toMatchObject({
-      if: "${{ always() && ((needs.preflight.outputs.stage != 'pr' && steps.unit_macos_related.outcome != 'skipped') || steps.unit_macos_full.outcome != 'skipped') }}",
+      if: "${{ always() && (steps.unit_macos_related.outcome != 'skipped' || steps.unit_macos_full.outcome != 'skipped') }}",
       'continue-on-error': true,
       with: {
         name: 'coverage-report',
@@ -603,12 +576,19 @@ describe('PR Gate workflow', () => {
       const producer = workflow.jobs[producerId]
       const consumer = workflow.jobs[bundle]
       expect(producer.needs).toBe('preflight')
-      expect(producer.if).toBe(consumer.if)
+      if (platform === 'windows') expect(producer.if).toBe(consumer.if)
+      else {
+        expect(producer.if).toContain("macosProfile != 'smoke'")
+        expect(consumer.if).toContain(
+          "macosProfile == 'smoke' || needs.macos_e2e_setup.result == 'success'"
+        )
+      }
       expect(producer.strategy).toBeUndefined()
       expect(producer['runs-on']).toBe(consumer['runs-on'])
       expect(consumer.needs).toEqual(['preflight', producerId])
       // Without an always()/!cancelled() override, a failed producer skips its consumers.
-      expect(consumer.if).not.toMatch(/always\(|cancelled\(/)
+      if (platform === 'windows') expect(consumer.if).not.toMatch(/always\(|cancelled\(/)
+      else expect(consumer.if).toContain('!cancelled()')
       expect(producer.outputs).toEqual({
         artifact_id: '${{ steps.upload.outputs.artifact-id }}',
         node_version: '${{ steps.node.outputs.node-version }}'
@@ -628,7 +608,16 @@ describe('PR Gate workflow', () => {
       expect(upload?.with).not.toHaveProperty('overwrite')
       const node = consumer.steps?.find(({ name }) => name === 'Setup Node')
       expect(node?.with).toEqual({
-        'node-version': `\${{ needs.${producerId}.outputs.node_version }}`,
+        'node-version':
+          platform === 'macos'
+            ? "${{ needs.macos_e2e_setup.outputs.node_version || '22' }}"
+            : `\${{ needs.${producerId}.outputs.node_version }}`,
+        ...(platform === 'macos'
+          ? {
+              cache:
+                "${{ fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke' && 'npm' || '' }}"
+            }
+          : {}),
         'package-manager-cache': false
       })
       const download = consumer.steps?.find(({ name }) => name === 'Download E2E setup')
@@ -641,7 +630,11 @@ describe('PR Gate workflow', () => {
       expect(restore?.run).toContain('e2e-setup-snapshot.mjs restore')
       expect(restore?.['continue-on-error']).not.toBe(true)
       expect(
-        consumer.steps?.some(({ run }) => /npm-ci\.mjs|npm ci|npm run build:/.test(run ?? ''))
+        consumer.steps?.some(
+          ({ run, if: condition }) =>
+            /npm-ci\.mjs|npm ci|npm run build:/.test(run ?? '') &&
+            !condition?.includes("macosProfile == 'smoke'")
+        )
       ).toBe(false)
       // The trusted evaluator already rejects a selected bundle skipped by a failed/cancelled setup.
       const lane = `e2e_functional_${platform}`
@@ -682,7 +675,7 @@ describe('PR Gate workflow', () => {
     ])
 
     const macosRuns = workflow.jobs.macos_e2e.steps?.map(({ run }) => run).filter(Boolean)
-    expect(macosRuns?.filter((run) => run === 'npm run build:e2e')).toHaveLength(0)
+    expect(macosRuns?.filter((run) => run === 'npm run build:e2e')).toHaveLength(1)
     expect(macosRuns).toEqual(
       expect.arrayContaining([
         'npm run test:e2e:journey -- --fail-on-flaky-tests --global-timeout=600000',
@@ -972,7 +965,7 @@ describe('PR Gate workflow', () => {
       'timeout-minutes': 10
     })
     expect(workflow.jobs.linux_runtime.if).toBe(
-      "${{ needs.preflight.outputs.stage != 'pr' && needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'linux_runtime') }}"
+      "${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'linux_runtime') }}"
     )
     const linuxDependencies = workflow.jobs.linux_runtime.steps?.find(
       ({ name }) => name === 'Install Linux sandbox dependency'
@@ -1174,28 +1167,78 @@ describe('E2E throughput contracts', () => {
   })
 })
 
-it('defers native runners only through the trusted stage and keeps portable PR tests', () => {
-  for (const name of [
-    'linux_runtime',
-    'windows_core',
-    'macos_e2e_setup',
-    'windows_e2e_setup',
-    'macos_e2e',
-    'windows_e2e'
-  ]) {
-    expect(workflow.jobs[name].if).toContain("needs.preflight.outputs.stage != 'pr'")
-  }
+it('uses one selected plan without rollout stage or separate legacy coverage', () => {
+  const raw = readFileSync('.github/workflows/pr-gate.yml', 'utf8')
+  expect(raw).not.toContain('PR_GATE_MERGE_QUEUE_ENABLED')
+  expect(raw).not.toContain('outputs.stage')
+  expect(raw).not.toContain('coverage_macos')
   const related = workflow.jobs.unit.steps?.find(({ id }) => id === 'unit_macos_related')
-  expect(related?.env?.VITEST_PORTABLE_CI).toContain("needs.preflight.outputs.stage == 'pr'")
-  expect(related?.run).toContain('if [[ "$EXECUTION_STAGE" == "pr" ]]')
-  expect(related?.run).toContain('npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA"\n')
+  expect(related?.env?.VITEST_PORTABLE_CI).toContain("macosProfile == 'smoke'")
   expect(related?.run).toContain('--coverage-changed "$BASE_SHA"')
-  const gate = workflow.jobs.gate.steps?.find(
-    ({ name }) => name === 'Evaluate deterministic gate from trusted base'
-  )
-  expect(gate?.env).toMatchObject({
-    EVENT_NAME: '${{ github.event_name }}',
-    PR_GATE_MERGE_QUEUE_ENABLED: '${{ vars.PR_GATE_MERGE_QUEUE_ENABLED }}',
-    PR_GATE_STAGE: '${{ needs.preflight.outputs.stage }}'
+})
+
+it('runs short Mac setup and tests in one job without web build or snapshot transfer', () => {
+  const mac = workflow.jobs.macos_e2e
+  const install = mac.steps?.find(({ name }) => name === 'Install short Mac dependencies')
+  const build = mac.steps?.find(({ id }) => id === 'smoke_build')
+  expect(install).toMatchObject({
+    if: "${{ fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke' }}",
+    run: 'node scripts/ci/npm-ci.mjs'
   })
+  expect(build).toMatchObject({ if: install?.if, run: 'npm run build:e2e' })
+  expect(mac.steps?.some(({ run }) => run === 'npm run build:web')).toBe(false)
+  for (const name of ['Download E2E setup', 'Restore E2E setup']) {
+    expect(mac.steps?.find((step) => step.name === name)?.if).toContain("macosProfile != 'smoke'")
+  }
+  const core = mac.steps?.find(({ id }) => id === 'e2e_smoke_macos')
+  expect(core?.if).toContain("steps.smoke_build.outcome == 'success'")
+  expect(mac.if).toContain('!cancelled()')
+  expect(mac.if).toContain("needs.preflight.result == 'success'")
+})
+
+it('provides a focused manual plan that exercises the same single-runner Mac job', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'macos-smoke-plan-'))
+  try {
+    const output = join(dir, 'output')
+    const classify = workflow.jobs.preflight.steps?.find(
+      ({ name }) => name === 'Classify change impact'
+    )
+    if (!classify?.run) throw new Error('Missing classifier')
+    const result = spawnSync('bash', ['-c', classify.run], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        EVENT_NAME: 'workflow_dispatch',
+        DRY_RUN_MODE: 'macos-smoke',
+        GITHUB_OUTPUT: output,
+        GITHUB_STEP_SUMMARY: join(dir, 'summary')
+      }
+    })
+    expect(result.status, result.stderr).toBe(0)
+    const line = readFileSync(output, 'utf8')
+      .split('\n')
+      .find((line) => line.startsWith('plan='))!
+    const plan = JSON.parse(line.slice(5))
+    expect(plan).toMatchObject({
+      macosProfile: 'smoke',
+      macosGroups: ['journeys'],
+      bundles: ['policy', 'macos_e2e']
+    })
+    expect(
+      evaluatePrGate(
+        plan,
+        { preflight: 'success', policy: 'success', macos_e2e: 'success' },
+        { executionMode: 'bundles' }
+      ).ok
+    ).toBe(true)
+    expect(
+      evaluatePrGate(
+        plan,
+        { preflight: 'success', policy: 'success', macos_e2e: 'skipped' },
+        { executionMode: 'bundles' }
+      ).ok
+    ).toBe(false)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })

@@ -82,10 +82,11 @@ it.each([0, 7])('preserves layout exit %i after a successful sample', async (cod
   expect(execFile).toHaveBeenCalledOnce()
   expect(execFile).toHaveBeenCalledWith(
     'powershell.exe',
-    expect.any(Array),
+    expect.arrayContaining(['-Command', expect.stringContaining('IPGlobalProperties')]),
     expect.objectContaining({ timeout: 4000, maxBuffer: 1024 * 1024 }),
     expect.any(Function)
   )
+  expect(vi.mocked(execFile).mock.calls[0]?.[1].join(' ')).not.toContain('Get-NetTCPConnection')
   expect(spawn).toHaveBeenCalledWith(
     'pwsh',
     expect.arrayContaining([

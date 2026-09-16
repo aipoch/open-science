@@ -22,10 +22,17 @@ function declaredTests(module) {
 }
 
 function modulesForPath(manifest, path) {
-  return Object.entries(manifest.modules)
+  const explicit = Object.entries(manifest.modules)
     .filter(([, module]) =>
       [...module.ownerPaths, ...module.interfacePaths, ...declaredTests(module)].includes(path)
     )
+    .map(([moduleId]) => moduleId)
+  if (explicit.length > 0 || /\.(test|spec)\.[cm]?[jt]sx?$/.test(path)) return explicit
+  // A declared owner test also identifies its colocated implementation. Consumer tests
+  // cannot establish ownership; unmatched implementations still fall back to full.
+  const ownerTest = path.replace(/(\.[cm]?[jt]sx?)$/, '.test$1')
+  return Object.entries(manifest.modules)
+    .filter(([, module]) => module.testFiles.owner.includes(ownerTest))
     .map(([moduleId]) => moduleId)
 }
 

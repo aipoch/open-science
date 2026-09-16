@@ -674,3 +674,27 @@ describe('module test impact commands', () => {
     expect(packageJson.scripts['test:affected']).toContain('module-test-impact.mjs affected')
   })
 })
+
+it('uses only declared owner tests to recover colocated implementation ownership', () => {
+  const manifest = JSON.parse(readFileSync(resolve('scripts/ci/module-impact.json'), 'utf8'))
+  const graph = { status: 'unavailable-manifest-only', testFiles: [] }
+  const module = manifest.modules.genomes_ensembl_connector
+  const source = 'src/main/connectors/descriptors/new-known-descriptor.ts'
+  const test = source.replace('.ts', '.test.ts')
+  const changes = [{ path: source, status: 'added' }]
+  module.testFiles.consumer.push(test)
+  expect(createAffectedTestPlan(changes, graph, manifest).mode).toBe('full')
+  module.testFiles.consumer.pop()
+  module.testFiles.owner.push(test)
+  const plan = createAffectedTestPlan(changes, graph, manifest)
+  expect(plan.mode).toBe('selective')
+  expect(plan.modules).toContain('genomes_ensembl_connector')
+  expect(plan.testFiles).toContain(test)
+  expect(
+    createAffectedTestPlan(
+      [{ path: source.replace('new-known', 'unknown'), status: 'added' }],
+      graph,
+      manifest
+    ).mode
+  ).toBe('full')
+})

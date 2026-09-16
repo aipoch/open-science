@@ -74,7 +74,7 @@ export function runModuleImpactAuthorityCli(
   const lanesJson = JSON.stringify(plan.lanes)
 
   if (environment.GITHUB_OUTPUT) {
-    append(environment.GITHUB_OUTPUT, `plan=${outputPlanJson}\nlanes=${lanesJson}\nstage=full\n`)
+    append(environment.GITHUB_OUTPUT, `plan=${outputPlanJson}\nlanes=${lanesJson}\n`)
   } else if (write) {
     write(`${planJson}\n`)
   } else {

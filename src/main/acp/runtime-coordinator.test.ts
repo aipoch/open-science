@@ -256,11 +256,12 @@ const createFakeRuntime = (options: {
     promptMessageId: 'prompt-live'
   }))
   const sendApplicationPrompt = vi.fn(
-    (
-      ...[request, _attribution, promptAttemptId]: Parameters<AcpRuntime['sendApplicationPrompt']>
+    async (
+      ...[request, _attribution, admission]: Parameters<AcpRuntime['sendApplicationPrompt']>
     ) => {
       void _attribution
-      return runPrompt(request, promptAttemptId)
+      await admission?.onPromptAdmitted?.()
+      return runPrompt(request, admission?.promptAttemptId)
     }
   )
   const sendAppContinuation = vi.fn(runPrompt)
@@ -5019,6 +5020,51 @@ describe('AcpRuntimeCoordinator', () => {
     expect(newBackendId).toBe('codex:owned')
   })
 
+  it.each(['direct', 'activity'] as const)(
+    'preserves application admission rejection through %s dispatch',
+    async (route) => {
+      let fake!: ReturnType<typeof createFakeRuntime>
+      const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+        fake = createFakeRuntime({ frameworkId: 'codex', sessionIds: ['session-1'], callbacks })
+        return fake.runtime
+      })
+      await coordinator.createSession({ cwd: '/workspace' })
+      const failure = new Error('Reviewed conversation changed before admission')
+      const onPromptAdmitted = vi.fn(async () => {
+        throw failure
+      })
+      const send = (
+        runtime: Pick<AcpRuntime, 'sendApplicationPrompt'>
+      ): ReturnType<AcpRuntime['sendApplicationPrompt']> =>
+        runtime.sendApplicationPrompt(
+          {
+            sessionId: 'session-1',
+            text: '[Auditor] fix',
+            provenanceContext: { promptMessageId: 'correction' }
+          },
+          {
+            kind: 'application',
+            feature: 'reviewer',
+            purpose: 'correction',
+            causeReviewId: 'review'
+          },
+          { onPromptAdmitted }
+        )
+      await expect(
+        route === 'direct' ? send(coordinator) : coordinator.withActivity({}, send)
+      ).rejects.toBe(failure)
+      expect(onPromptAdmitted).toHaveBeenCalledOnce()
+      expect(fake.runtime.sendApplicationPrompt).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.any(Object),
+        expect.objectContaining({
+          promptAttemptId: expect.any(String),
+          onPromptAdmitted: expect.any(Function)
+        })
+      )
+    }
+  )
+
   it('lazily adopts the main session on the pinned runtime only when an activity sends a prompt', async () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
     const coordinator = new AcpRuntimeCoordinator((callbacks) => {
@@ -5090,7 +5136,7 @@ describe('AcpRuntimeCoordinator', () => {
         purpose: 'correction',
         causeReviewId: 'review-1'
       },
-      'prompt-attempt-1'
+      { promptAttemptId: 'prompt-attempt-1', onPromptAdmitted: undefined }
     )
     expect(vi.mocked(created[0].runtime.sendPrompt)).not.toHaveBeenCalled()
   })
