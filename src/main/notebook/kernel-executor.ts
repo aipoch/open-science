@@ -263,6 +263,7 @@ type ProcState = {
   beginSandboxExecution: () => () => void
   stderrTail: string
   annotateStderr: (stderr: string) => string
+  confirmTermination?: () => Promise<boolean>
   cleanupSandbox: (
     reason: NotebookSandboxCleanupReason,
     processOutcome: NotebookSandboxProcessOutcome
@@ -835,6 +836,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
       beginSandboxExecution: spawned.beginSandboxExecution,
       stderrTail: '',
       annotateStderr: spawned.annotateStderr,
+      confirmTermination: spawned.confirmTermination,
       cleanupSandbox: spawned.cleanupSandbox,
       alive: true,
       cwd: spawned.cwd,
@@ -910,6 +912,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
     cwd: string
     beginSandboxExecution: () => () => void
     annotateStderr: (stderr: string) => string
+    confirmTermination?: () => Promise<boolean>
     cleanupSandbox: (
       reason: NotebookSandboxCleanupReason,
       processOutcome: NotebookSandboxProcessOutcome
@@ -1037,7 +1040,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
     // admission retries, and retain a verified result if removing its durable receipt must retry.
     const confirmTermination = nativeTerminationProof
       ? async (): Promise<boolean> => {
-          terminationConfirmed ||= await nativeTerminationProof()
+          if (!terminationConfirmed && (await nativeTerminationProof())) terminationConfirmed = true
           if (terminationConfirmed && ownershipReceipt)
             this.processLifecycle?.complete(ownershipReceipt, true)
           return terminationConfirmed
@@ -1171,6 +1174,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
       cwd: spawnCwd ?? process.cwd(),
       beginSandboxExecution: sandboxed?.beginExecution ?? (() => () => undefined),
       annotateStderr: sandboxed?.annotateStderr ?? ((stderr) => stderr),
+      confirmTermination,
       cleanupSandbox,
       ...(ownershipReceipt ? { ownershipReceipt } : {})
     }
@@ -1630,6 +1634,9 @@ class NotebookKernelExecutor implements NotebookExecutor {
   ): Promise<ProcessTreeKillResult> {
     const done = this.teardownProc(proc)
       .then(async (result) => {
+        if (!result.reaped && (await proc.confirmTermination?.().catch(() => false))) {
+          result = { reaped: true }
+        }
         const cleanup = await this.cleanupProc(proc, reason, { processesTerminated: result.reaped })
         return {
           reaped:
