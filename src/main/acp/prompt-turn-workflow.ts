@@ -206,6 +206,9 @@ type AcpPromptTurnWorkflowOptions = Readonly<{
   finalization: AcpPromptTurnFinalization
   currentCwd: () => string
   resolveProjectId: (sessionId: string) => string
+  prepareContinuationReplay: (
+    request: AcpPromptRequest
+  ) => Promise<AcpPromptRequest['resumeFallback']>
   disconnectForReload: () => Promise<unknown>
   resumeAfterReload: (input: {
     sessionId: string
@@ -258,6 +261,11 @@ class AcpPromptTurnWorkflow {
         this.assertSessionIdle(request.sessionId)
         const snapshot = this.options.registry.lookup(request.sessionId)?.aggregate.snapshot()
         const projectId = this.options.resolveProjectId(request.sessionId)
+        if (mode.kind === 'app-continuation' && !request.resumeFallback) {
+          request.resumeFallback = await this.options.prepareContinuationReplay(request)
+          reservation.signal.throwIfAborted()
+          this.assertSessionIdle(request.sessionId)
+        }
         await this.options.disconnectForReload()
         const resumed = await this.options.resumeAfterReload({
           sessionId: request.sessionId,

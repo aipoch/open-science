@@ -23754,6 +23754,118 @@ describe('ACP runtime skill force-load + nudge', () => {
     }
   )
 
+  it.each([
+    ...RESTORED_CONTINUATION_FRAMEWORKS,
+    ['CodeBuddy', codeBuddyFramework, undefined, undefined] as const
+  ])(
+    'preserves app continuation context when bound Skills reload %s',
+    async (_name, framework, modelRoute) => {
+      const sessionId = '11111111-1111-4111-8111-111111111111'
+      const receivedPrompts: ContentBlock[][] = []
+      const agents: Array<ReturnType<typeof startFakeAgent>> = []
+      const root = await createTemporaryRoot()
+      const uploadRepository = new UploadRepository(root)
+      const staged = await stageUploadFixtures(uploadRepository, {
+        files: [
+          {
+            name: 'experiment.txt',
+            mimeType: 'text/plain',
+            content: Buffer.from('experiment data').toString('base64')
+          }
+        ]
+      })
+      const uploads = await uploadRepository.finalizePendingSessionUploads(sessionId, staged)
+      const saved = createRestoredContinuationSession(
+        'handoff-origin',
+        sessionId,
+        'default-project'
+      )
+      saved.messages[0].uploads = uploads
+      saved.messages[0].content = 'Analyze the original experiment before the handoff.'
+      saved.messages[0].images = [
+        {
+          id: 'experiment-image',
+          mimeType: 'image/png',
+          data: imageBytes.toString('base64'),
+          byteLength: imageBytes.length
+        }
+      ]
+      saved.conversationGraph = createLinearConversationGraph({
+        sessionId,
+        messages: saved.messages,
+        frameworkId: framework.id,
+        createdAt: 1,
+        updatedAt: 1
+      })
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        uploads: { repository: uploadRepository },
+        permissionWait: {
+          sessions: {
+            readSessionRuntimeContext: vi.fn(),
+            patchSessionRuntimeContext: vi.fn(),
+            containsMessageOnActiveBranch: vi.fn(),
+            loadSessionForContinuation: async () => structuredClone(saved)
+          }
+        },
+        resolveBackend: () => ({
+          framework: {
+            ...framework,
+            spawn: () => {
+              const process = new FakeAgentProcess()
+              agents.push(
+                startFakeAgent(process, [sessionId], {
+                  modes: createModes(['read-only', 'agent', 'agent-full-access'], 'read-only'),
+                  onPrompt: ({ prompt }) => {
+                    receivedPrompts.push(prompt)
+                  }
+                })
+              )
+              return asAgentProcess(process)
+            }
+          },
+          modelRoute,
+          supportsImageInput: true,
+          executablePath: '/bin/agent',
+          env: {}
+        }),
+        resolveSpecialistIdentity: resolveForceLoadSpecialistIdentity,
+        resolveSpecialistSkills: resolveForceLoadSpecialistSkills,
+        skills: {
+          needForceLoad: async (ids) => ids.filter((id) => id === 'research'),
+          namesForIds: async (ids) => ids
+        }
+      })
+      try {
+        await runtime.createSession({ cwd: '/workspace', projectId: 'default-project' })
+        await runtime.switchSpecialist(sessionId, 'force-load-specialist')
+        await runtime.sendAppContinuation({
+          sessionId,
+          text: 'Continue the original user task after the approved Specialist handoff.',
+          provenanceContext: { promptMessageId: 'handoff-origin' }
+        })
+        const prompt = agents.at(-1)?.prompts[0].text
+        if (modelRoute === 'codex-bridge') {
+          expect(agents.at(-1)?.newSessions).toHaveLength(1)
+          expect(prompt).toContain('Analyze the original experiment before the handoff.')
+          expect(receivedPrompts[0]).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({ type: 'image', data: imageBytes.toString('base64') }),
+              expect.objectContaining({ type: 'resource_link', name: 'experiment.txt' })
+            ])
+          )
+        } else {
+          expect(agents.at(-1)?.resumedSessions.length).toBeGreaterThan(0)
+          expect(prompt).not.toContain('Analyze the original experiment before the handoff.')
+        }
+        expect(prompt).toContain('Continue the original user task')
+      } finally {
+        await runtime.disconnect()
+      }
+    }
+  )
+
   it('respawns and nudges when a picked skill is disabled, then restores after the turn', async () => {
     const spawner = createFreshAgentSpawner()
     const hooks = createSkillsHooks({ needForceLoad: ['research'] })

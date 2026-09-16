@@ -793,6 +793,22 @@ class AcpRuntime {
     const prompt = composeAcpRuntimePromptOwners(options, base, session, {
       plan: this.sessionPlanWorkflow.prompt,
       reload: {
+        prepareContinuationReplay: async (request) => {
+          const promptMessageId = request.provenanceContext?.promptMessageId
+          if (!promptMessageId) {
+            throw new Error('App continuation history requires its originating Message.')
+          }
+          const continuation = await this.durableContinuationContext.prepare({
+            projectId: this.resolveSessionProjectId(request.sessionId),
+            sessionId: request.sessionId,
+            promptMessageId,
+            replay: {
+              descriptor: this.durableContinuationHistoryReplayDescriptor(),
+              supportsImageInput: await this.supportsDurableContinuationImages()
+            }
+          })
+          return continuation.historyReplay
+        },
         disconnect: () => this.disconnect(false),
         resume: (request) => this.resumeSession(request)
       },
