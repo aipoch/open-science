@@ -632,6 +632,7 @@ const createApplicationModules = async (
   }
   const notebookNetworkSandbox = await modules.add(undefined, () => {
     const capability = new NotebookNetworkSandboxOwner({
+      packaged: app.isPackaged,
       allowRuntimeAccessPrompt: !headless,
       resourceRoot: app.isPackaged
         ? join(process.resourcesPath, 'notebook-network-sandbox')
@@ -1920,6 +1921,8 @@ const createApplicationModules = async (
   // One runner owns Windows integrity/preflight/fallback state for every production micromamba
   // consumer in this main-process generation. Each consumer receives only its narrow resolve seam.
   const micromambaRunner = createProductionMicromambaRunner({
+    packaged: app.isPackaged,
+    configHome: app.getPath('home'),
     home: dirname(dirname(provisioningRoot)),
     resourcesPath: process.resourcesPath
   })
@@ -4232,7 +4235,11 @@ const createApplicationModules = async (
         // Mirror probing never changes the configured enterprise CA bundle, so it is safe to pass
         // through synchronously while channel selection warms in the background.
         caBundle: configuredMirror?.caBundle,
-        micromamba: { resourcesPath: process.resourcesPath },
+        micromamba: {
+          resourcesPath: process.resourcesPath,
+          packaged: app.isPackaged,
+          configHome: app.getPath('home')
+        },
         // Self-guard the provisioner's prefix writes (startup restore/upgrade/repair, named create, lazy
         // materialize) against a prefix crash-recovery could not confirm free of a live orphan — closes
         // the startup-gate path the UI-only assertProvisionAllowed guard did not cover. Reads the live

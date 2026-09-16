@@ -1,5 +1,6 @@
 import { existsSync, statSync } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
+import { join } from 'node:path'
 import {
   hasDataRootContent,
   initDataRoot,
@@ -21,7 +22,9 @@ export const initializeDataLocation = async (
   existingInstallation?: boolean
 ): Promise<void> => {
   const settings = await repository.getSettings()
-  const pending = readElectronProfileRecord(resolveConfigRoot())?.bootstrap
+  const record = readElectronProfileRecord(resolveConfigRoot())
+  const pending = record?.bootstrap
+  assertDataLocationRecorded(settings.dataRoot, record, resolveConfigRoot())
   if (pending && settings.dataRoot && settings.dataRoot !== pending.dataRoot)
     throw new Error(
       'The pending data location differs from settings.dataRoot. Restore the intended location before restarting.'
@@ -34,6 +37,19 @@ export const initializeDataLocation = async (
     else if (!existsSync(root)) throw new Error(`The saved data location is missing: ${root}`)
     await repository.pinInitialDataRoot(root, fresh)
   }
+}
+
+// A completed profile record is written only after settings pinned the chosen data root. If that
+// pointer is now missing, even a unique default containing research may just be an obsolete copy.
+const assertDataLocationRecorded = (
+  dataRoot: string | undefined,
+  record: ReturnType<typeof readElectronProfileRecord>,
+  configRoot: string
+): void => {
+  if (!dataRoot && record && !record.bootstrap)
+    throw new Error(
+      `The completed data location selection is missing from ${join(configRoot, 'settings.json')}. Recover the original settings or restore its verified dataRoot before restarting. Existing research copies cannot identify the current location.`
+    )
 }
 
 export const prepareApplicationLocations = async (options: {
@@ -52,6 +68,7 @@ export const prepareApplicationLocations = async (options: {
       `The saved data location is missing or is not a directory: ${settings.dataRoot}. Reconnect it before restarting.`
     )
   let record = validateElectronProfileLocation(options.configRoot, options.profilePath)
+  assertDataLocationRecorded(settings.dataRoot, record, options.configRoot)
   if (record?.bootstrap && settings.dataRoot && settings.dataRoot !== record.bootstrap.dataRoot)
     throw new Error(
       'The pending data location differs from settings.dataRoot. Restore the intended location before restarting.'

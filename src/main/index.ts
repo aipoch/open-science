@@ -1,3 +1,4 @@
+import { NativeBrandUpgradeError } from './brand-upgrade/system-paths'
 import { PackageFileOpenRelay, packagePathsFromArgv } from './session-package/file-open'
 import { configureCredentialStore } from './settings/credential-store-mode'
 import { createRequire } from 'node:module'
@@ -46,6 +47,7 @@ const shouldRunSkillRuntimeMcpServer = process.argv.includes(SKILL_RUNTIME_MCP_S
 const shouldRunPlanMcpServer = process.argv.includes(PLAN_MCP_SERVER_ARG)
 const bootstrapLog = createLogger('bootstrap')
 let preparingLocations = false
+let preparingBrandEntries = false
 let startupDiagnostics: DiagnosticOperation | undefined
 let startupFlush: import('./diagnostics/flush').DiagnosticFlush = flushLogs
 
@@ -99,11 +101,15 @@ if (shouldRunArtifactMcpServer) {
     const { app, dialog } = createRequire(import.meta.url)('electron') as typeof import('electron')
     // Location/configuration failures happen before file diagnostics and the renderer. Present
     // recovery before awaiting diagnostics; neither message wording nor a working file sink gates it.
-    if (
-      preparingLocations ||
-      (error instanceof Error && /Application brand upgrade/i.test(error.message))
-    ) {
-      dialog.showErrorBox(APP_NAME, error instanceof Error ? error.message : String(error))
+    if (preparingLocations || preparingBrandEntries || error instanceof NativeBrandUpgradeError) {
+      const recoveryError =
+        preparingBrandEntries && !(error instanceof NativeBrandUpgradeError)
+          ? new NativeBrandUpgradeError('native entry repair', process.execPath, error)
+          : error
+      dialog.showErrorBox(
+        APP_NAME,
+        recoveryError instanceof Error ? recoveryError.message : String(recoveryError)
+      )
     }
     await reportApplicationStartupFailure({
       operation: startupDiagnostics,
@@ -368,8 +374,11 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
             { role: 'help', submenu: [] }
           ])
         )
+      preparingBrandEntries = true
       const { upgradeNativeBrandEntries } = await import('./brand-upgrade/native-paths')
-      if (upgradeNativeBrandEntries())
+      const restartingAfterBrandUpgrade = upgradeNativeBrandEntries()
+      preparingBrandEntries = false
+      if (restartingAfterBrandUpgrade)
         throw new Error('Application restarting after brand upgrade.')
       installPowerMonitorListeners()
 

@@ -175,3 +175,34 @@ it('uses the real E2E storage override before config without touching shared own
     }).windowsOwnershipRoot
   ).toBe(config.windowsOwnershipRoot)
 })
+
+it.each([true, false])(
+  'uses normalized shared override priority in mode packaged=%s',
+  (packaged) => {
+    const root = mkdtempSync(join(tmpdir(), 'brand-config-priority-'))
+    temporaryRoots.push(root)
+    const env = {
+      HOME: root,
+      LOCALAPPDATA: join(root, 'local'),
+      OPEN_SCIENCE_E2E_STORAGE_ROOT: ` ${root}/unused/../e2e `,
+      OPEN_SCIENCE_CONFIG_ROOT: ` ${root}/config `,
+      OPEN_SCIENCE_STORAGE_ROOT: ` ${root}/storage `
+    }
+    expect(createRuntimeConfig(createOptions({ packaged }), 'x64', env).windowsOwnershipRoot).toBe(
+      join(root, 'e2e', 'notebook-sandbox', '0f3cd2a44c3d4e4e9f1e2a5b')
+    )
+    env.OPEN_SCIENCE_E2E_STORAGE_ROOT = '   '
+    expect(createRuntimeConfig(createOptions({ packaged }), 'x64', env).windowsOwnershipRoot).toBe(
+      join(root, 'config', 'notebook-sandbox', '0f3cd2a44c3d4e4e9f1e2a5b')
+    )
+  }
+)
+
+it.each(['OPEN_SCIENCE_E2E_STORAGE_ROOT', 'OPEN_SCIENCE_CONFIG_ROOT', 'OPEN_SCIENCE_STORAGE_ROOT'])(
+  'rejects a relative %s before initializing ownership',
+  (key) => {
+    expect(() =>
+      createRuntimeConfig(createOptions({ packaged: false }), 'x64', { [key]: ' relative-path ' })
+    ).toThrow(`${key} must be an absolute path.`)
+  }
+)

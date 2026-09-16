@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const backend = vi.hoisted(() => ({
@@ -763,3 +766,40 @@ describe('NotebookNetworkSandbox', () => {
     )
   })
 })
+
+// Exercise the public sandbox lifecycle; only the OS runtime is replaced.
+it.each([
+  { packaged: false, variable: 'OPEN_SCIENCE_STORAGE_ROOT', suffix: 'override' },
+  { packaged: false, variable: undefined, suffix: '.open-science-project' },
+  { packaged: true, variable: 'OPEN_SCIENCE_STORAGE_ROOT', suffix: 'local/Aipoch/Open-Science' }
+])(
+  'uses the same brand config rules in sandbox initialization ($packaged, $variable)',
+  async ({ packaged, variable, suffix }) => {
+    const root = mkdtempSync(join(tmpdir(), 'brand-sandbox-call-'))
+    const sandbox = new NotebookNetworkSandbox({ ...options(), packaged })
+    try {
+      for (const key of [
+        'OPEN_SCIENCE_E2E_STORAGE_ROOT',
+        'OPEN_SCIENCE_CONFIG_ROOT',
+        'OPEN_SCIENCE_STORAGE_ROOT'
+      ])
+        vi.stubEnv(key, '')
+      vi.stubEnv('HOME', root)
+      vi.stubEnv('USERPROFILE', root)
+      vi.stubEnv('LOCALAPPDATA', join(root, 'local'))
+      if (variable) vi.stubEnv(variable, `  ${root}/ignored/../override  `)
+      vi.spyOn(sandbox, 'status').mockResolvedValue({ kind: 'ready', warnings: [] })
+      await sandbox.initialize()
+      expect(backend.initialize).toHaveBeenCalledWith(
+        expect.objectContaining({
+          windowsOwnershipRoot: join(root, suffix, 'notebook-sandbox', '0f3cd2a44c3d4e4e9f1e2a5b')
+        }),
+        expect.any(Function)
+      )
+    } finally {
+      await sandbox.dispose()
+      vi.unstubAllEnvs()
+      rmSync(root, { recursive: true, force: true })
+    }
+  }
+)

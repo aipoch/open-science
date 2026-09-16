@@ -33,6 +33,7 @@ import { removeMicromambaCacheForRoot } from '../notebook/micromamba-cache'
 import { removeNotebookWorkloadCache } from '../notebook/notebook-workload-cache-paths'
 import { detectActiveSessions } from './detect-active'
 import { hasAnyExistingPath, isDataRootMissing } from './path-presence'
+import { directoryHasFiles } from './location-evidence'
 import {
   acceptMissingDataRoot as acceptMissingDataRootWrite,
   beginMigration,
@@ -256,9 +257,8 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     // Only an explicitly-configured-but-now-gone root counts as "missing"; a fresh install's unset
     // dataRoot (default `~/Open-Science` not created yet) is normal and must never nag the user.
     let dataRootMissing = false
-    // A pre-§20 legacy install still keeps its data in the hidden config root: settings.dataRoot is
-    // unset (using the default), that default resolved to the config root itself, and real user data
-    // lives there. Offer the one-time "move to the visible Open-Science folder" prompt until answered.
+    // Startup pins a pre-§20 config-root layout before this owner runs. The physical legacy layout,
+    // non-fresh selection and unanswered prompt identify it even after dataRoot has been saved.
     let legacyDataMovePrompt = false
     // Fail closed: only the same main-owned filesystem/settings snapshot that identifies an empty,
     // unconfigured root may authorize onboarding's pointer-only default-drive selection.
@@ -290,9 +290,10 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       }
       try {
         const configRoot = resolveConfigRoot()
-        const legacyInPlace = !storedSettings.dataRoot && samePath(dataRoot, configRoot)
-        const hasUserData = await (deps.hasAnyExistingPath ?? hasAnyExistingPath)(
-          MIGRATABLE_DATA_DIRS.map((dir) => join(configRoot, dir))
+        const legacyInPlace =
+          samePath(dataRoot, configRoot) && storedSettings.dataRootIsInitialDefault !== true
+        const hasUserData = MIGRATABLE_DATA_DIRS.some((dir) =>
+          directoryHasFiles(join(configRoot, dir))
         )
         legacyDataMovePrompt =
           legacyInPlace &&

@@ -141,3 +141,51 @@ it('does not redirect an installed deb launcher to a coexisting AppImage', async
   const entry = '[Desktop Entry]\nName=Open Science\nExec="/opt/Open Science/open-science" %U\n'
   expect(upgradeLinuxDesktopEntry(entry, '/home/user/Downloads/Open-Science.AppImage')).toBe(entry)
 })
+
+it.each(['verify', 'rename', 'register', 'updateDock', 'relaunch'] as const)(
+  'reports the actual application path and allows a retry after %s fails',
+  (step) => {
+    const { old, next, deps } = mac()
+    const original = { ...deps }
+    deps[step] = () => {
+      throw new Error(`injected ${step} failure`)
+    }
+    let caught: Error | undefined
+    try {
+      upgradeMacBundle(join(old, 'Contents/MacOS/Open-Science'), deps)
+    } catch (error) {
+      caught = error as Error
+    }
+    expect(caught?.name).toBe('NativeBrandUpgradeError')
+    const actual = ['verify', 'rename'].includes(step) ? old : next
+    expect(caught?.message).toContain(actual)
+    expect(caught?.message).toContain(`injected ${step} failure`)
+    expect(caught?.message).toMatch(/restart|reopen|retry/i)
+    expect(existsSync(actual)).toBe(true)
+    expect(existsSync(actual === old ? next : old)).toBe(false)
+    Object.assign(deps, original)
+    expect(() => upgradeMacBundle(join(actual, 'Contents/MacOS/Open-Science'), deps)).not.toThrow()
+    expect(existsSync(old)).toBe(false)
+    expect(existsSync(next)).toBe(true)
+  }
+)
+
+it.each(['Open Science', 'OpenScience'])(
+  'repairs owned Linux TryExec and Path for %s idempotently',
+  async (oldName) => {
+    const { upgradeLinuxDesktopEntry } = await import('./system-paths')
+    const entry = `[Desktop Entry]\nName=Open Science\nExec="/opt/${oldName}/open-science" --keep %U\nTryExec=/opt/${oldName}/open-science\nPath=/opt/${oldName}\n[Other]\nPath=/opt/${oldName}\n`
+    const expected =
+      '[Desktop Entry]\nName=Open-Science\nExec="/opt/Open-Science/open-science" --keep %U\nTryExec=/opt/Open-Science/open-science\nPath=/opt/Open-Science\n[Other]\nPath=/opt/' +
+      oldName +
+      '\n'
+    const updated = upgradeLinuxDesktopEntry(entry, '/opt/Open-Science/open-science')
+    expect(updated).toBe(expected)
+    expect(upgradeLinuxDesktopEntry(updated, '/opt/Open-Science/open-science')).toBe(expected)
+    const custom =
+      '[Desktop Entry]\nExec="/opt/Open Science/open-science"\nTryExec=/usr/local/bin/custom\nPath=/home/custom\n'
+    expect(upgradeLinuxDesktopEntry(custom, '/opt/Open-Science/open-science')).toContain(
+      'TryExec=/usr/local/bin/custom\nPath=/home/custom'
+    )
+  }
+)

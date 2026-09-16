@@ -237,6 +237,7 @@ describe('classifyDataRoot', () => {
     // adopted directly, not derive <picked>/Open-Science (doubled, empty, not-found).
     const picked = dataRootFor(emptyParent)
     await mkdir(join(picked, 'artifacts'), { recursive: true })
+    await writeFile(join(picked, 'artifacts', 'result.txt'), 'research')
 
     const result = await classifyDataRoot(picked, currentDataRoot)
 
@@ -492,15 +493,17 @@ describe('classifyDataRoot', () => {
 
   it('classifies an Open-Science folder containing a known data subdir as adopt', async () => {
     await mkdir(join(dataRootFor(emptyParent), 'artifacts'), { recursive: true })
+    await writeFile(join(dataRootFor(emptyParent), 'artifacts', 'result.txt'), 'research')
 
     const result = await classifyDataRoot(emptyParent, currentDataRoot)
 
     expect(result).toEqual({ kind: 'adopt' })
   })
 
-  it('adopts on ANY known subdir, not all (a partial data folder still adopts)', async () => {
+  it('adopts a partial branded research folder without requiring all data directories', async () => {
     // Only notebooks/ present — no artifacts/uploads/runtime. A real data folder is often partial.
     await mkdir(join(dataRootFor(emptyParent), 'notebooks'), { recursive: true })
+    await writeFile(join(dataRootFor(emptyParent), 'notebooks', 'research.ipynb'), '{}')
 
     const result = await classifyDataRoot(emptyParent, currentDataRoot)
 
@@ -537,6 +540,7 @@ describe('classifyDataRoot', () => {
 
   it('still adopts when user data is present even if runtime/ sits alongside it', async () => {
     await mkdir(join(dataRootFor(emptyParent), 'artifacts'), { recursive: true })
+    await writeFile(join(dataRootFor(emptyParent), 'artifacts', 'result.txt'), 'research')
     await mkdir(join(dataRootFor(emptyParent), 'runtime'), { recursive: true })
 
     const result = await classifyDataRoot(emptyParent, currentDataRoot)
@@ -648,6 +652,7 @@ describe('validateNewDataRoot', () => {
 
   it('is ok only for move - an Open-Science folder that already holds our data (adopt) is rejected', async () => {
     await mkdir(join(dataRootFor(emptyParent), 'artifacts'), { recursive: true })
+    await writeFile(join(dataRootFor(emptyParent), 'artifacts', 'result.txt'), 'research')
 
     const result = await validateNewDataRoot(emptyParent, currentDataRoot)
 
@@ -1176,15 +1181,6 @@ describe('runDataRootMigration (copy phase)', () => {
     )
 
     const target = dataRootFor(emptyParent)
-    const destinationInventory = join(
-      target,
-      'runtime',
-      'provenance',
-      'environment-inventory',
-      'stale-environment'
-    )
-    await mkdir(destinationInventory, { recursive: true })
-    await writeFile(join(destinationInventory, 'binding.json'), '{"state":"dirty"}\n')
     const result = await runDataRootMigration(
       { currentDataRoot, runtime: deps.runtime, notebook: deps.notebook },
       emptyParent,

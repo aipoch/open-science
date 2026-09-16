@@ -1,3 +1,5 @@
+import { homedir } from 'node:os'
+import { resolveBootstrapConfigRoot, resolveConfigRootOverride } from '../../shared/config-root'
 import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream, existsSync, statSync } from 'node:fs'
@@ -27,6 +29,9 @@ export type MicromambaRunnerResolverOptions = {
 }
 
 export type MicromambaRunnerDeps = MicromambaDeps & {
+  packaged?: boolean
+  // Binary discovery home may follow the data disk; configuration always follows the app home.
+  configHome?: string
   localToolsDir?: string
   preflight?: (path: string) => Promise<void>
 }
@@ -233,10 +238,16 @@ export const createProductionMicromambaRunner = (
   const env = deps.env ?? process.env
   const home = deps.home ?? env.USERPROFILE ?? env.HOME
   const localAppData = env.LOCALAPPDATA ?? (home ? join(home, 'AppData', 'Local') : undefined)
+  const packaged = deps.packaged ?? true
   const isolated =
-    env.OPEN_SCIENCE_E2E_STORAGE_ROOT?.trim() ||
-    env.OPEN_SCIENCE_CONFIG_ROOT?.trim() ||
-    env.OPEN_SCIENCE_STORAGE_ROOT?.trim()
+    resolveConfigRootOverride(packaged, env) ??
+    (!packaged
+      ? resolveBootstrapConfigRoot(
+          deps.configHome ?? env.USERPROFILE ?? env.HOME ?? homedir(),
+          false,
+          env
+        )
+      : undefined)
   const oldTools = localAppData
     ? join(localAppData, 'OpenScience', 'tools', 'micromamba')
     : undefined

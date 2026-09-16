@@ -2212,6 +2212,7 @@ describe('storage IPC handlers', () => {
   it('inspect-data-root returns adopt when the derived target already holds our data', async () => {
     initDataRoot(dataRoot)
     await mkdir(join(target, 'artifacts'), { recursive: true })
+    await writeFile(join(target, 'artifacts', 'research.txt'), 'research')
     const availableBytes = vi.fn().mockResolvedValue(654_321)
     const deps = fakeDeps({ availableBytes })
     registerStorageIpcHandlers(deps)
@@ -2696,6 +2697,7 @@ describe('storage IPC handlers', () => {
   it('diagnoses an adopted data root without retaining its path', async () => {
     initDataRoot(dataRoot)
     await mkdir(join(target, 'artifacts'), { recursive: true })
+    await writeFile(join(target, 'artifacts', 'research.txt'), 'research')
     const logger = fakeDiagnosticLogger()
     registerStorageIpcHandlers(fakeDeps({ logger }))
 
@@ -2799,6 +2801,112 @@ describe('storage IPC handlers', () => {
   })
 })
 
+it('keeps the one-time legacy move prompt after startup pins the config-root layout', async () => {
+  const { SettingsRepository } = await import('../settings/repository')
+  const { initializeDataLocation } = await import('./initialize-location')
+  const config = join(currentParent, 'legacy-config')
+  vi.stubEnv('OPEN_SCIENCE_CONFIG_ROOT', config)
+  await mkdir(join(config, 'workspaces'), { recursive: true })
+  await writeFile(join(config, 'workspaces/history.json'), 'legacy research')
+  const repository = new SettingsRepository(config)
+  await initializeDataLocation(repository, true)
+  expect((await repository.getSettings()).dataRoot).toBe(config)
+  registerStorageIpcHandlers(
+    fakeDeps({
+      settingsService: {
+        getStoredSettings: () => repository.getSettings(),
+        setDataRoot: async (path) => {
+          await repository.setDataRoot({ dataRoot: path })
+        },
+        dismissLegacyDataMovePrompt: async () => {
+          await repository.markLegacyDataMovePromptDismissed(123)
+        }
+      }
+    })
+  )
+  await expect(invoke('storage:get-status')).resolves.toMatchObject({
+    dataRoot: config,
+    legacyDataMovePrompt: true
+  })
+  await invoke('storage:dismiss-legacy-move-prompt')
+  await initializeDataLocation(repository, true)
+  await expect(invoke('storage:get-status')).resolves.toMatchObject({ legacyDataMovePrompt: false })
+  expect(await readFile(join(config, 'workspaces/history.json'), 'utf8')).toBe('legacy research')
+})
+
+it('inspects and adopts the legacy child without adopting unrelated parent models', async () => {
+  const { SettingsRepository } = await import('../settings/repository')
+  const old = join(targetParent, 'OpenScience')
+  await mkdir(join(old, 'workspaces'), { recursive: true })
+  await writeFile(join(old, 'workspaces/history.json'), 'old research')
+  await mkdir(join(targetParent, 'models'))
+  await writeFile(join(targetParent, 'models/weights.bin'), 'unrelated weights')
+  const repository = new SettingsRepository(join(currentParent, 'config'))
+  await repository.setDataRoot({ dataRoot })
+  initDataRoot(dataRoot)
+  registerStorageIpcHandlers(
+    fakeDeps({
+      settingsService: {
+        getStoredSettings: () => repository.getSettings(),
+        setDataRoot: async (path) => {
+          await repository.setDataRoot({ dataRoot: path })
+        },
+        dismissLegacyDataMovePrompt: async () => {}
+      }
+    })
+  )
+  await expect(
+    invoke('storage:inspect-data-root', { parent: targetParent })
+  ).resolves.toMatchObject({ kind: 'adopt', dataRoot: old })
+  await expect(
+    invoke('storage:set-data-root-and-relaunch', { parent: targetParent })
+  ).resolves.toMatchObject({ ok: true })
+  expect((await repository.getSettings()).dataRoot).toBe(old)
+  expect(await readFile(join(targetParent, 'models/weights.bin'), 'utf8')).toBe('unrelated weights')
+  expect(existsSync(join(targetParent, 'workspaces'))).toBe(false)
+})
+
+it.each(['models', 'uploads', 'runtime'])(
+  'does not adopt a branded folder based on unrelated %s content',
+  async (directory) => {
+    const picked = join(targetParent, 'Open-Science')
+    await mkdir(join(picked, directory), { recursive: true })
+    await writeFile(join(picked, directory, 'unrelated.bin'), 'outside data')
+    initDataRoot(dataRoot)
+    registerStorageIpcHandlers(fakeDeps())
+    await expect(invoke('storage:inspect-data-root', { parent: picked })).resolves.toMatchObject({
+      kind: 'invalid'
+    })
+    await expect(
+      invoke('storage:set-data-root-and-relaunch', { parent: picked })
+    ).resolves.toMatchObject({ ok: false })
+    expect(await readFile(join(picked, directory, 'unrelated.bin'), 'utf8')).toBe('outside data')
+  }
+)
+
+it('adopts a custom root with valid workspace ownership and rejects competing branded children', async () => {
+  const { initializeManagedWorkspaceOwnership } = await import('./managed-workspace-ownership')
+  const custom = join(targetParent, 'research')
+  await mkdir(join(custom, 'workspaces/project'), { recursive: true })
+  await initializeManagedWorkspaceOwnership(
+    join(custom, 'workspaces/project'),
+    'project',
+    1,
+    custom
+  )
+  initDataRoot(dataRoot)
+  registerStorageIpcHandlers(fakeDeps())
+  await expect(invoke('storage:inspect-data-root', { parent: custom })).resolves.toMatchObject({
+    kind: 'adopt',
+    dataRoot: custom
+  })
+  await mkdir(join(custom, 'OpenScience/workspaces'), { recursive: true })
+  await writeFile(join(custom, 'OpenScience/workspaces/history.json'), '{}')
+  await expect(invoke('storage:inspect-data-root', { parent: custom })).resolves.toMatchObject({
+    kind: 'invalid'
+  })
+})
+
 it.each([
   [true, false],
   [true, true],
@@ -2872,5 +2980,41 @@ it.each([
       )
     }
     expect((await repository.getSettings()).dataRoot).toBe(expected)
+  }
+)
+
+it.each(['fresh', 'moved', 'empty-legacy'] as const)(
+  'does not prompt for a %s location after real initialization',
+  async (state) => {
+    const { SettingsRepository } = await import('../settings/repository')
+    const { initializeDataLocation } = await import('./initialize-location')
+    const config = join(currentParent, 'prompt-config')
+    vi.stubEnv('OPEN_SCIENCE_CONFIG_ROOT', config)
+    const repository = new SettingsRepository(config)
+    if (state !== 'fresh') {
+      await mkdir(join(config, 'workspaces'), { recursive: true })
+      if (state === 'moved')
+        await writeFile(join(config, 'workspaces/history.json'), 'old research')
+      await repository.setDataRoot({ dataRoot: state === 'moved' ? dataRoot : config })
+    }
+    await initializeDataLocation(repository, state !== 'fresh')
+    // Startup preparation pins settings, then the IPC owner reuses the completed selection.
+    await initializeDataLocation(repository, true)
+    registerStorageIpcHandlers(
+      fakeDeps({
+        settingsService: {
+          getStoredSettings: () => repository.getSettings(),
+          setDataRoot: async (path) => {
+            await repository.setDataRoot({ dataRoot: path })
+          },
+          dismissLegacyDataMovePrompt: async () => {
+            await repository.markLegacyDataMovePromptDismissed(123)
+          }
+        }
+      })
+    )
+    await expect(invoke('storage:get-status')).resolves.toMatchObject({
+      legacyDataMovePrompt: false
+    })
   }
 )

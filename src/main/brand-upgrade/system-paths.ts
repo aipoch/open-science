@@ -10,36 +10,67 @@ export type MacBundleUpgradeDeps = {
   updateDock: (bundle: string, previous: string[]) => void
   relaunch: (executable: string) => void
 }
+export class NativeBrandUpgradeError extends Error {
+  constructor(
+    readonly step: string,
+    readonly actualPath: string,
+    cause: unknown
+  ) {
+    super(
+      `Application brand upgrade failed during ${step}.\nCurrent application: ${actualPath}\n${cause instanceof Error ? cause.message : String(cause)}\nResolve the reported permissions, signature, or duplicate-installation issue, then reopen this application path to retry. If it was renamed, use this current path instead of an old shortcut.`,
+      { cause }
+    )
+    this.name = 'NativeBrandUpgradeError'
+  }
+}
+
 export const upgradeMacBundle = (executable: string, deps: MacBundleUpgradeDeps): boolean => {
   const bundle = dirname(dirname(dirname(executable)))
   const recognized = ['Open Science.app', 'OpenScience.app', 'Open-Science.app']
   if (!recognized.includes(basename(bundle))) return false
-  if (deps.bundleId(bundle) !== BRAND_APP_ID)
-    throw new Error(`Application brand upgrade: unexpected bundle identity at ${bundle}`)
   const destination = join(dirname(bundle), 'Open-Science.app')
   const previous = recognized.slice(0, 2).map((name) => join(dirname(bundle), name))
-  if (bundle !== destination) {
-    if (deps.exists(destination))
-      throw new Error(
-        `Application brand upgrade: two applications exist. Keep the intended installation before restarting:\n${bundle}\n${destination}`
-      )
+  let actualPath = bundle
+  let step = 'installation identity and duplicate checks'
+  try {
+    if (deps.bundleId(bundle) !== BRAND_APP_ID)
+      throw new Error(`Unexpected bundle identity at ${bundle}`)
+    if (bundle !== destination) {
+      if (deps.exists(destination))
+        throw new Error(
+          `Two applications exist. Keep the intended installation:\n${bundle}\n${destination}`
+        )
+    } else {
+      for (const old of previous) {
+        if (deps.exists(old) && deps.bundleId(old) === BRAND_APP_ID)
+          throw new Error(
+            `Duplicate applications exist. Resolve the obsolete bundle:\n${old}\n${bundle}`
+          )
+      }
+    }
+    // A retry from the new path must pass the same identity and signature checks.
+    step = 'signature verification'
     deps.verify(bundle)
-    deps.rename(bundle, destination)
-    // Relaunch uses the renamed physical executable; updater and CLI bootstrap never see a stale path.
+    if (bundle !== destination) {
+      step = 'bundle rename'
+      deps.rename(bundle, destination)
+      actualPath = destination
+    }
+    // After rename, stop on failure and report the real path. Rolling back here could invalidate
+    // entries already registered by an earlier step. Reopening the new bundle retries these steps.
+    step = 'application registration'
     deps.register(destination, previous)
+    step = 'Dock update'
     deps.updateDock(destination, previous)
-    deps.relaunch(join(destination, 'Contents', 'MacOS', basename(executable)))
-    return true
+    if (bundle !== destination) {
+      step = 'application relaunch'
+      deps.relaunch(join(destination, 'Contents', 'MacOS', basename(executable)))
+      return true
+    }
+    return false
+  } catch (error) {
+    throw new NativeBrandUpgradeError(step, actualPath, error)
   }
-  for (const old of previous) {
-    if (deps.exists(old) && deps.bundleId(old) === BRAND_APP_ID)
-      throw new Error(
-        `Application brand upgrade: duplicate applications exist. Remove the obsolete application bundle before restarting:\n${old}\n${bundle}`
-      )
-  }
-  deps.register(destination, previous)
-  deps.updateDock(destination, previous)
-  return false
 }
 
 export type ShortcutDetails = { target: string; appUserModelId?: string; description?: string }
@@ -116,8 +147,19 @@ export const upgradeLinuxDesktopEntry = (contents: string, executable: string): 
   for (let i = start + 1; i < end; i++) {
     if (/^Name(?:\[[^\]]+\])?=(Open Science|OpenScience)$/.test(lines[i]))
       lines[i] = lines[i].replace(/=(?:Open Science|OpenScience)$/, '=Open-Science')
-    if (/^Icon=\/opt\/(?:Open Science|OpenScience)\//.test(lines[i]))
-      lines[i] = lines[i].replace(/\/opt\/(?:Open Science|OpenScience)\//, '/opt/Open-Science/')
+    // Only the installed deb executable proves ownership of these historical installation paths.
+    // An AppImage may coexist with the deb and must not rewrite its references.
+    if (executable === '/opt/Open-Science/open-science') {
+      if (/^TryExec=\/opt\/(?:Open Science|OpenScience)\/open-science$/.test(lines[i]))
+        lines[i] = 'TryExec=/opt/Open-Science/open-science'
+      if (/^Path=\/opt\/(?:Open Science|OpenScience)(?:\/|$)/.test(lines[i]))
+        lines[i] = lines[i].replace(
+          /\/opt\/(?:Open Science|OpenScience)(?=\/|$)/,
+          '/opt/Open-Science'
+        )
+      if (/^Icon=\/opt\/(?:Open Science|OpenScience)\//.test(lines[i]))
+        lines[i] = lines[i].replace(/\/opt\/(?:Open Science|OpenScience)\//, '/opt/Open-Science/')
+    }
   }
   return lines.join('\n')
 }

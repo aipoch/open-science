@@ -150,6 +150,7 @@ const blockedDestinationKey = (sessionId: string, hostname: string): string =>
   `${sessionId}\0${hostname}`
 
 type NotebookNetworkSandboxOwnerOptions = Readonly<{
+  packaged?: boolean
   resourceRoot: string
   allowRuntimeAccessPrompt?: boolean
   getSettings: () => Promise<NotebookNetworkSettings | undefined>
@@ -1282,6 +1283,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     parentProxy: Readonly<{ http?: string; https?: string; noProxy?: string }> | undefined
   ): NotebookNetworkSandbox {
     return new NotebookNetworkSandbox({
+      packaged: this.options.packaged,
       policy: buildNotebookNetworkPolicy(settings),
       resources: { root: this.options.resourceRoot },
       ...(parentProxy ? { parentProxy } : {}),

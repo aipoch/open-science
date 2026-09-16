@@ -124,6 +124,14 @@ describe('brand location compatibility', () => {
   it('accepts a directly picked old or custom data root without appending a new name', async () => {
     const custom = join(fixture, 'Research archive')
     await seed(custom)
+    const { initializeManagedWorkspaceOwnership } = await import('./managed-workspace-ownership')
+    await mkdir(join(custom, 'workspaces/project'))
+    await initializeManagedWorkspaceOwnership(
+      join(custom, 'workspaces/project'),
+      'project',
+      1,
+      custom
+    )
     expect(dataRootForPicked(custom)).toBe(custom)
     expect(dataRootForPicked(join(fixture, 'OpenScience'))).toBe(join(fixture, 'OpenScience'))
   })
@@ -150,6 +158,36 @@ it('does not create a second data root when the saved pointer file was lost', as
   )
   expect(existsSync(join(fixture, 'Open-Science'))).toBe(false)
 })
+
+it.each(['prepare', 'initialize'])(
+  'requires recovery after a completed selection is lost (%s)',
+  async (entry) => {
+    const old = join(fixture, 'OpenScience')
+    const custom = join(fixture, 'selected-research')
+    await seed(old)
+    await seed(custom)
+    const configRoot = resolveConfigRoot()
+    const profilePath = join(fixture, 'profile')
+    await mkdir(profilePath)
+    vi.stubEnv('OPEN_SCIENCE_USER_DATA', profilePath)
+    const repository = new SettingsRepository(configRoot)
+    await repository.setDataRoot({ dataRoot: custom })
+    const { prepareApplicationLocations } = await import('./initialize-location')
+    await prepareApplicationLocations({ configRoot, profilePath, existingInstallation: true })
+    const record = await readFile(join(configRoot, 'electron-profile.json'), 'utf8')
+    await rm(join(configRoot, 'settings.json'))
+    const launch =
+      entry === 'prepare'
+        ? prepareApplicationLocations({ configRoot, profilePath, existingInstallation: true })
+        : initializeDataLocation(new SettingsRepository(configRoot), true)
+    await expect(launch).rejects.toThrow(/settings.json.*recover|recover.*settings.json/i)
+    expect(existsSync(join(configRoot, 'settings.json'))).toBe(false)
+    expect(await readFile(join(configRoot, 'electron-profile.json'), 'utf8')).toBe(record)
+    for (const root of [old, custom]) {
+      expect(await readFile(join(root, 'workspaces/history.json'), 'utf8')).toContain('retained')
+    }
+  }
+)
 
 it('resumes an interrupted initial profile commit at the same recorded data location', async () => {
   const root = join(fixture, 'Open-Science')
@@ -375,3 +413,29 @@ it.each([false, true])(
     expect(existsSync(join(fixture, 'unmounted-target'))).toBe(false)
   }
 )
+
+it('recovers the durable settings selection before examining obsolete research copies', async () => {
+  const old = join(fixture, 'OpenScience')
+  const custom = join(fixture, 'selected-research')
+  await seed(old)
+  await seed(custom)
+  const configRoot = resolveConfigRoot()
+  const profilePath = join(fixture, 'profile')
+  await mkdir(profilePath)
+  vi.stubEnv('OPEN_SCIENCE_USER_DATA', profilePath)
+  const repository = new SettingsRepository(configRoot)
+  await repository.setDataRoot({ dataRoot: custom })
+  const { prepareApplicationLocations } = await import('./initialize-location')
+  await prepareApplicationLocations({ configRoot, profilePath, existingInstallation: true })
+  const saved = await readFile(join(configRoot, 'settings.json'), 'utf8')
+  await rm(join(configRoot, 'settings.json'))
+  await writeFile(join(configRoot, 'settings.json.1700000000000-1.tmp'), saved)
+  const recovered = await prepareApplicationLocations({
+    configRoot,
+    profilePath,
+    existingInstallation: true
+  })
+  expect((await recovered.repository.getSettings()).dataRoot).toBe(custom)
+  expect(resolveDataRoot()).toBe(custom)
+  expect(await readFile(join(old, 'workspaces/history.json'), 'utf8')).toContain('retained')
+})

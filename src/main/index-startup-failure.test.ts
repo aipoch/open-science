@@ -15,8 +15,27 @@ vi.mock('./storage/initialize-location', () => ({
   },
   initializeDataLocation: vi.fn()
 }))
-vi.mock('./brand-upgrade/native-paths', () => ({ upgradeNativeBrandEntries: () => false }))
+vi.mock('./brand-upgrade/native-paths', () => ({
+  upgradeNativeBrandEntries: () => fixture.upgradeBrand()
+}))
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+
+it('shows native recovery when entry repair fails with an unclassified system error', async () => {
+  fixture.failAt = 'none'
+  fixture.headless = false
+  fixture.upgradeBrand.mockImplementationOnce(() => {
+    throw new Error('injected registration EACCES')
+  })
+  await import('./index')
+  await fixture.exited
+  expect(fixture.electron.dialog.showErrorBox).toHaveBeenCalledWith(
+    'Open-Science',
+    expect.stringContaining('injected registration EACCES')
+  )
+  const message = fixture.electron.dialog.showErrorBox.mock.calls[0][1]
+  expect(message).toMatch(/retry|reopen/i)
+  expect(message).toContain(process.execPath)
+})
 
 const { ipcEvents, startupWindow } = await vi.hoisted(async () => {
   const { EventEmitter } = await import('node:events')
@@ -35,6 +54,7 @@ const fixture = vi.hoisted(() => {
   return {
     log,
     pinLocations: vi.fn(),
+    upgradeBrand: vi.fn(() => false),
     prepareLocations: vi.fn(async () => {}),
     initializeDiagnostics: vi.fn(),
     routeSecondInstance: vi.fn(),

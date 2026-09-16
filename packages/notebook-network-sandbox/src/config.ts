@@ -1,6 +1,10 @@
 import { homedir } from 'node:os'
 import { readdirSync } from 'node:fs'
-import { isAbsolute, join } from 'node:path'
+import { join } from 'node:path'
+import {
+  resolveBootstrapConfigRoot,
+  resolveConfigRootOverride
+} from '../../../src/shared/config-root.js'
 import { isIP } from 'node:net'
 import { domainToASCII } from 'node:url'
 
@@ -98,15 +102,13 @@ const containsOwnershipState = (root: string): boolean => {
   }
 }
 
-const resolveWindowsOwnershipRoot = (environment: NodeJS.ProcessEnv): string => {
+const resolveWindowsOwnershipRoot = (environment: NodeJS.ProcessEnv, packaged: boolean): string => {
+  const home = environment.USERPROFILE ?? environment.HOME ?? homedir()
   const isolatedRoot =
-    environment.OPEN_SCIENCE_E2E_STORAGE_ROOT?.trim() ||
-    environment.OPEN_SCIENCE_CONFIG_ROOT?.trim()
-  if (isolatedRoot) {
-    if (!isAbsolute(isolatedRoot)) throw new Error('The config root must be an absolute path.')
-    return join(isolatedRoot, 'notebook-sandbox', WINDOWS_INSTALLATION_ID)
-  }
-  const base = environment.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local')
+    resolveConfigRootOverride(packaged, environment) ??
+    (!packaged ? resolveBootstrapConfigRoot(home, false, environment) : undefined)
+  if (isolatedRoot) return join(isolatedRoot, 'notebook-sandbox', WINDOWS_INSTALLATION_ID)
+  const base = environment.LOCALAPPDATA ?? join(home, 'AppData', 'Local')
   const current = join(base, 'Aipoch', 'Open-Science', 'notebook-sandbox', WINDOWS_INSTALLATION_ID)
   const legacy = join(base, 'Aipoch', 'OpenScience', 'notebook-sandbox', WINDOWS_INSTALLATION_ID)
   const hasLegacy = containsOwnershipState(legacy)
@@ -130,7 +132,7 @@ const createRuntimeConfig = (
   for (const domain of policy.deniedDomains) validateDomainPattern(domain, true)
   const resourceRoot = options.resources.root
   const installationId = WINDOWS_INSTALLATION_ID
-  const windowsOwnershipRoot = resolveWindowsOwnershipRoot(environment)
+  const windowsOwnershipRoot = resolveWindowsOwnershipRoot(environment, options.packaged ?? true)
   return {
     allowedDomains: [...policy.allowedDomains],
     ...(policy.askDomains ? { askDomains: [...policy.askDomains] } : {}),

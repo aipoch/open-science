@@ -1,7 +1,7 @@
 import { lstat, mkdir, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { existsSync, readFileSync, readdirSync, type Dirent } from 'node:fs'
 import { randomUUID } from 'node:crypto'
-import { dirname, join, relative, resolve } from 'node:path'
+import { basename, dirname, join, relative, resolve } from 'node:path'
 
 import type {
   DataRootKind,
@@ -37,7 +37,10 @@ import {
 import { waitForDataRootWriters } from './migration-state'
 import { DEFAULT_MAX_ENV_RELATIVE_PATH, PACK_PATH_BUDGET_FILE } from '../notebook/bundle-manifest'
 import { windowsDefaultEnvPrefixReserve } from '../notebook/runtime-paths'
-import { MIGRATABLE_DATA_DIRS } from './data-directories'
+import { DATA_ROOT_DIRS, MIGRATABLE_DATA_DIRS } from './data-directories'
+import { directoryHasFiles } from './location-evidence'
+import { readManagedWorkspaceOwnership } from './managed-workspace-ownership'
+import { MANAGED_WORKSPACE_OWNERSHIP_DIR } from './managed-workspace-ownership-dir'
 import { validateProvenanceMigrationState } from './provenance-migration-validation'
 import { disconnectProjectDbClient } from '../projects/prisma-client'
 import { createLogger, type Logger } from '../logger'
@@ -222,7 +225,12 @@ export const classifyDataRoot = async (
   deps: ClassifyDataRootDeps = {}
 ): Promise<ClassifyResult> => {
   const current = resolve(currentDataRoot)
-  const target = dataRootForPicked(parent)
+  let target: string
+  try {
+    target = dataRootForPicked(parent)
+  } catch (error) {
+    return { kind: 'invalid', error: error instanceof Error ? error.message : String(error) }
+  }
   // An exact branded destination may not exist yet. Validate/probe its existing parent without
   // resolving that parent as a fresh picker input (which could select a legacy sibling instead).
   const picked = resolve(parent)
@@ -393,14 +401,53 @@ export const classifyDataRoot = async (
     }
   }
 
-  const looksLikeOurData = entries.some(
-    (entry) => entry.isDirectory() && (MIGRATED_DIRS as readonly string[]).includes(entry.name)
-  )
+  // Generic content alone proves no application ownership. Branded legacy layouts need actual
+  // research content; unbranded custom roots need a valid receipt for an existing workspace.
+  let ownedWorkspace = false
+  try {
+    for (const entry of await readdir(
+      join(target, 'workspaces', MANAGED_WORKSPACE_OWNERSHIP_DIR)
+    )) {
+      if (!entry.endsWith('.json')) continue
+      if (
+        await readManagedWorkspaceOwnership(join(target, 'workspaces', entry.slice(0, -5)), target)
+      ) {
+        ownedWorkspace = true
+        break
+      }
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
+      return { kind: 'invalid', error: 'The selected folder is not usable.' }
+  }
+  const branded = /^Open-?Science(?:-DEV)?$/i.test(basename(target))
+  const looksLikeOurData =
+    ownedWorkspace ||
+    (branded &&
+      entries.some(
+        (entry) =>
+          entry.isDirectory() &&
+          (MIGRATED_DIRS as readonly string[]).includes(entry.name) &&
+          !['models', 'uploads'].includes(entry.name) &&
+          directoryHasFiles(join(target, entry.name))
+      ))
   if (looksLikeOurData) return { kind: 'adopt' }
 
-  // runtime/ doesn't count as content: a folder holding only runtime (or nothing) is treated as empty.
-  const meaningfulEntries = entries.filter((entry) => entry.name !== 'runtime')
+  // Empty application scaffolding can be populated. Nonempty runtime/generic directories with no
+  // ownership proof are not empty and must not enter an adoption or migration write boundary.
+  const meaningfulEntries = entries.filter(
+    (entry) =>
+      !entry.isDirectory() ||
+      !(DATA_ROOT_DIRS as readonly string[]).includes(entry.name) ||
+      directoryHasFiles(join(target, entry.name))
+  )
   if (meaningfulEntries.length === 0) return { kind: 'move' }
+  if (meaningfulEntries.some((entry) => entry.name === 'runtime'))
+    return {
+      kind: 'invalid',
+      error:
+        'The new data location contains runtime data that Open-Science cannot safely replace. Choose another location or remove that data first.'
+    }
 
   return {
     kind: 'invalid',

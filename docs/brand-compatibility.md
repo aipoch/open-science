@@ -6,13 +6,16 @@ Display names are separate from persistent identities and filesystem locations.
 ## Existing installations
 
 An absolute saved `dataRoot` stays authoritative, including custom paths containing an old brand.
-Without a saved choice, startup examines the current and historical default roots and the original
+For a legacy installation that has never completed a recorded selection, startup examines the current and historical default roots and the original
 configuration root for actual research data. Runtime alone is not evidence of the active data root:
 migration can leave it at the old location. Empty scaffolding does not identify an existing installation. A single verified location is recorded before locale, database, or application writers
 start. Uncommitted migration targets are never adopted by inference. Multiple candidates, unreadable
 locations, damaged settings, and lost pointers with remaining configuration require recovery. A pending
 migration cleanup journal also blocks inference until the original settings pointer is recovered. A
 verified initial bootstrap record can resume onboarding at its original location, including its runtime.
+A completed `electron-profile.json` proves that settings already pinned a location. If that settings
+pointer is missing, startup first reads its durable recovery records; it never infers the current
+root from a unique old default copy. Restore the verified settings selection before restarting.
 
 The Electron profile has a separate `electron-profile.json` selection in the configuration root.
 It retains the original physical profile, session cache, and log location. A missing recorded profile
@@ -24,9 +27,15 @@ folder; do not delete the remaining configuration to bypass recovery.
 No brand upgrade relocates research data or rewrites database/session/attachment/runtime paths.
 Settings still supports an explicit, verified change of data location. "Use default location" passes
 the displayed full destination through inspection, confirmation and execution, while ordinary folder
-picking retains legacy/custom-folder adoption. Displayed paths are the real
-paths. The initial empty default is recorded separately so onboarding may still select an appropriate
+picking retains legacy/custom-folder adoption. A generic `models`, `uploads` or `runtime` directory
+does not establish ownership of the selected parent. Brand-named children with research content are
+resolved separately; an unbranded custom root needs an application workspace ownership receipt or
+an authoritative saved selection. Ambiguous or unverified content is preserved and requires explicit
+recovery, rather than being adopted or overwritten. Displayed paths are the real paths. The initial empty default is recorded separately so onboarding may still select an appropriate
 local drive, while later onboarding runs cannot replace a populated or missing saved root.
+Pinning an old in-place configuration/data layout does not dismiss its one-time migration suggestion.
+It remains available only while research content is there and the user has neither dismissed it nor
+selected a different root. Showing the suggestion never moves data automatically.
 
 ## Fresh installations and development
 
@@ -47,7 +56,10 @@ runs. `OPEN_SCIENCE_E2E_STORAGE_ROOT` remains supported. The development-only
 parallel development instances; packaged builds still require the single-instance lock. Configuration
 resolution is shared with bootstrap: E2E_STORAGE_ROOT, then CONFIG_ROOT, then development-only
 STORAGE_ROOT, then the development/production default. Blank values are ignored and selected paths
-are normalized. All such paths must be absolute. System-entry repair is disabled for
+are normalized. All such paths must be absolute. The Windows Notebook sandbox and micromamba tool
+writer use that same override parser and receive the actual application mode. Without an override,
+development ownership and tools stay under the development configuration root, independent of the
+research data disk. Production keeps its existing platform-local ownership and tool receipts. System-entry repair is disabled for
 explicitly isolated test instances, which must never rewrite the user's real Dock or shortcuts.
 
 Existing Windows tool receipts and owned working caches remain readable at their original paths.
@@ -75,6 +87,11 @@ app version; preserve the damaged file and recovery records. Startup never repla
   An occupied destination or duplicate bundle blocks repair with a clear recovery message. The app
   registers the new bundle, repairs its exact existing Dock references, and relaunches the new physical
   executable before initializing updater and CLI owners. User-named bundles are not renamed.
+  Failures report the failed step and actual bundle path through a native dialog. Before a rename,
+  the original bundle remains in place. After a rename, startup stops without using old launch
+  references or rolling back already repaired registrations; reopen the reported new bundle to retry
+  registration and Dock repair. Every retry repeats identity, duplicate-installation and signature
+  checks. Restore a valid signed installation or resolve permissions/duplicates as indicated.
   The DMG installation assistant replaces a single old-name physical bundle only after verifying
   its application ID, and restores its original path if installation fails. Coexisting old/new
   bundles or a different application identity stop installation before any replacement.
@@ -90,7 +107,8 @@ app version; preserve the damaged file and recovery records. Startup never repla
 - Linux retains package/desktop identifiers. Package metadata and launchers use the new product path;
   Debian registers the replacement CLI alternative before removing exact historical product targets.
   Unrelated manual alternatives remain untouched. Owned user desktop-entry copies retain their
-  arguments while updating their display and installation references. AppImages only repair their own entries; they do not redirect a coexisting deb installation.
+  `Exec` arguments while updating owned `TryExec`, `Path`, display and icon installation references.
+  Custom working directories, unrelated executables and other desktop-entry groups stay intact. AppImages only repair their own entries; they do not redirect a coexisting deb installation.
 - CLI discovery accepts old/new installation directories crossed with old/new executable names.
   Old managed launcher and Windows PATH-receipt ownership markers remain accepted for repair.
 

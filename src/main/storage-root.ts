@@ -1,6 +1,8 @@
 import { basename, join, resolve, sep } from 'node:path'
 
 import { app } from 'electron'
+import { directoryHasFiles } from './storage/location-evidence'
+import { MANAGED_WORKSPACE_OWNERSHIP_DIR } from './storage/managed-workspace-ownership-dir'
 
 import { resolveBootstrapConfigRoot, resolveConfigRootOverride } from './storage/config-root'
 import {
@@ -41,15 +43,26 @@ const dataRootForPicked = (picked: string): string => {
       ? name.toLowerCase() === candidate.toLowerCase()
       : name === candidate
   )
-  if (isDataFolder || hasDataRootContent(resolved)) return resolved
+  if (isDataFolder) return resolved
   const candidates = [join(resolved, folder), join(resolved, legacyDataFolderName())].filter(
     hasDataRootContent
   )
-  if (candidates.length > 1)
+  // A generic models/uploads/runtime directory is common outside this application. Only saved
+  // choices or application ownership receipts can make an unbranded selection a root itself.
+  // The adoption owner validates receipt contents before allowing a pointer switch.
+  const direct =
+    (configuredDataRoot !== undefined && samePath(resolved, resolve(configuredDataRoot))) ||
+    samePath(resolved, resolveConfigRoot()) ||
+    directoryHasFiles(join(resolved, 'workspaces', MANAGED_WORKSPACE_OWNERSHIP_DIR))
+  if (candidates.length > 1 || (direct && candidates.length))
     throw new DataLocationSelectionError(
-      `Multiple data locations exist. Select the exact data folder:\n${candidates.join('\n')}`
+      `Multiple data locations exist. Select the exact data folder:\n${[...(direct ? [resolved] : []), ...candidates].join('\n')}`
     )
-  return candidates[0] ?? join(resolved, folder)
+  if (!direct && !candidates.length && hasDataRootContent(resolved))
+    throw new DataLocationSelectionError(
+      `Cannot verify existing data locations. Select or recover the original folder before restarting:\n${resolved}`
+    )
+  return direct ? resolved : (candidates[0] ?? join(resolved, folder))
 }
 
 // A saved location is authoritative. Without one, only actual data identifies a prior location;
