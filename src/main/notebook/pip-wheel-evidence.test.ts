@@ -25,9 +25,14 @@ urllib.request.build_opener = lambda *args: Opener()
 `
 
 describe('legacy pip wheel evidence', () => {
-  it.skipIf(!process.env.RUN_KERNEL || !python).each(['bundled', 'current'])(
-    'recovers a real %s pip installation with generated entry points only when their bytes match',
-    async (installer) => {
+  it.skipIf(!process.env.RUN_KERNEL || !python).each([
+    ['bundled', 'normal'],
+    ['bundled', 'deterministic'],
+    ['current', 'normal'],
+    ['current', 'deterministic']
+  ])(
+    'recovers a real %s pip installation with %s generated entry points only when their bytes match',
+    async (installer, metadata) => {
       const root = await mkdtemp(join(tmpdir(), 'wheel-entry-points-'))
       const prefix = join(root, 'env')
       const execute = promisify(execFile)
@@ -79,7 +84,7 @@ describe('legacy pip wheel evidence', () => {
             timeout: 30_000,
             env: {
               ...process.env,
-              SOURCE_DATE_EPOCH: '946684800',
+              SOURCE_DATE_EPOCH: metadata === 'deterministic' ? '946684800' : undefined,
               PIP_CONFIG_FILE: process.platform === 'win32' ? 'nul' : '/dev/null'
             }
           }
