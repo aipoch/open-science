@@ -81,7 +81,7 @@ const createExecuteControlHarness = async (
     dataRoot: root,
     projectId: 'default-project',
     repository: new NotebookRunRepository(root),
-    platform: 'linux'
+    platform: process.platform
   })
   const server = new NotebookLocalRpcServer(service, {
     agentsService: gate.agents,

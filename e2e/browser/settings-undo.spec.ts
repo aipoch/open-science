@@ -108,6 +108,9 @@ for (const reducedMotion of ['reduce', 'no-preference'] as const) {
 }
 
 test('mobile navigation hides Undo until its focus trap closes', async ({ page }) => {
+  // Keep fast Escape/Undo input covered when React's passive effects lag behind the DOM commit.
+  const cdp = await page.context().newCDPSession(page)
+  await cdp.send('Emulation.setCPUThrottlingRate', { rate: 6 })
   await page.setViewportSize({ width: 375, height: 900 })
   await page.goto('/?undo')
   await page.getByRole('button', { name: 'Model settings', exact: true }).focus()
@@ -123,6 +126,8 @@ test('mobile navigation hides Undo until its focus trap closes', async ({ page }
   expect(await navigation.evaluate((el) => el.contains(document.activeElement))).toBe(true)
   await page.keyboard.press('Escape')
   await expect(navigation).toHaveCount(0)
+  // Wait for Settings' close effect to return focus before starting the next keyboard interaction.
+  await expect(page.getByRole('button', { name: 'Open settings navigation' })).toBeFocused()
   await expect(page.getByRole('dialog', { name: 'Settings', exact: true })).toBeVisible()
   await expect(undo).toBeVisible()
   expect(await undo.evaluate((el, previous) => el === previous, original)).toBe(true)
@@ -131,4 +136,5 @@ test('mobile navigation hides Undo until its focus trap closes', async ({ page }
   await expect(undo.getByRole('button', { name: 'Undo', exact: true })).toBeFocused()
   await page.keyboard.press('Enter')
   await expect(undo).toHaveCount(0)
+  await expect(page.getByRole('dialog', { name: 'Settings', exact: true })).toBeVisible()
 })

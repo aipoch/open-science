@@ -37,6 +37,7 @@ type LiteratureToolSummary = Readonly<{
   resultEnd?: number
   requestedStart?: number
   requestedEnd?: number
+  pdfDownloaded?: boolean
   savedCount?: number
   existingItemIds?: readonly string[]
   duplicateCount?: number
@@ -224,6 +225,16 @@ const isLiteratureLibraryLatexTool = (...identities: Array<string | undefined>):
     return (
       normalized === 'open-science-library/prepare-latex-bundle' ||
       normalized === 'open-science-library-prepare-latex-bundle'
+    )
+  })
+
+const isLiteratureLibraryAcquirePdfTool = (...identities: Array<string | undefined>): boolean =>
+  identities.some((identity) => {
+    if (!identity) return false
+    const normalized = normalizeIdentity(identity)
+    return (
+      normalized === 'open-science-library/acquire-pdf' ||
+      normalized === 'open-science-library-acquire-pdf'
     )
   })
 
@@ -575,6 +586,7 @@ const buildLiteratureLibraryToolSummary = (
     ...(action === 'search' && offset !== undefined && limit !== undefined
       ? { requestedEnd: offset + limit }
       : {}),
+    ...(acquired ? { pdfDownloaded: true } : {}),
     ...(saveSummary
       ? {
           savedCount: saveSummary.pendingCount,
@@ -598,6 +610,7 @@ export {
   buildLiteratureLibraryToolSummary,
   buildLiteratureToolSummary,
   getLiteratureLibraryToolAction,
+  isLiteratureLibraryAcquirePdfTool,
   isLiteratureLibraryLatexTool,
   isLiteratureLibraryPdfReadTool,
   isLiteratureReadDocumentTool

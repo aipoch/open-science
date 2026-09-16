@@ -101,6 +101,12 @@ export function createAffectedTestPlan(changes, graph, manifest = defaultManifes
       reasons.push(`${change.path} -> documentation lane -> no module tests`)
       continue
     }
+    // Browser fixtures/specs execute in the complete browser lane, not Vitest. This explicit
+    // owner must remain selected in mixed diffs; unknown E2E helpers still fall back to full.
+    if (pathPlan.roots.includes('renderer_browser_e2e') && !pathPlan.bundles.includes('unit')) {
+      reasons.push(`${change.path} -> renderer browser E2E lane -> no module tests`)
+      continue
+    }
     for (const path of [change.path, change.previousPath].filter(Boolean)) {
       const matchedModules = modulesForPath(manifest, path)
       if (matchedModules.length === 0) return fullPlan(`${path} -> unknown module owner -> full`)

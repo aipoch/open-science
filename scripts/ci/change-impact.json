@@ -22,7 +22,10 @@
     "e2e_workspace_macos",
     "e2e_workspace_windows",
     "e2e_accessibility_macos",
-    "e2e_visual_macos"
+    "e2e_visual_macos",
+    "e2e_regressions_macos",
+    "e2e_delegation_macos",
+    "e2e_browser_windows"
   ],
   "bundleOrder": [
     "policy",
@@ -54,7 +57,10 @@
     "e2e_workspace_macos": "macos_e2e",
     "e2e_workspace_windows": "windows_e2e",
     "e2e_accessibility_macos": "macos_e2e",
-    "e2e_visual_macos": "macos_e2e"
+    "e2e_visual_macos": "macos_e2e",
+    "e2e_regressions_macos": "macos_e2e",
+    "e2e_delegation_macos": "macos_e2e",
+    "e2e_browser_windows": "windows_e2e"
   },
   "rules": [
     {
@@ -70,7 +76,10 @@
         "playwright.config.*",
         "electron-builder.yml",
         "scripts/ci/**",
-        ".github/workflows/pr-gate.yml"
+        ".github/workflows/pr-gate.yml",
+        "playwright.browser.config.*",
+        ".github/actions/source-regression/**",
+        ".github/workflows/source-regression.yml"
       ],
       "mode": "full",
       "capabilities": []
@@ -290,6 +299,12 @@
         ".github/workflows/stage-runtime-bundle.yml"
       ],
       "capabilities": ["runtime_bundle"]
+    },
+    {
+      "id": "renderer_browser_e2e",
+      "role": "owner",
+      "paths": ["e2e/browser/**"],
+      "capabilities": ["renderer_browser_e2e"]
     }
   ],
   "capabilities": {
@@ -302,7 +317,7 @@
       "lanes": ["docs"]
     },
     "shared_contract": {
-      "consumers": ["preload_adapter", "i18n_catalog"],
+      "consumers": ["preload_adapter", "i18n_catalog", "e2e_regressions", "e2e_delegation"],
       "lanes": [
         "format",
         "lint",
@@ -313,7 +328,7 @@
       ]
     },
     "preload_contract": {
-      "consumers": [],
+      "consumers": ["e2e_regressions", "e2e_delegation"],
       "lanes": [
         "format",
         "lint",
@@ -325,11 +340,11 @@
       ]
     },
     "main_runtime": {
-      "consumers": ["renderer_runtime", "i18n_catalog"],
+      "consumers": ["renderer_runtime", "i18n_catalog", "e2e_regressions", "e2e_delegation"],
       "lanes": ["format", "lint", "typecheck_node", "interface_contracts", "unit_macos"]
     },
     "notebook_network_sandbox": {
-      "consumers": [],
+      "consumers": ["e2e_regressions", "e2e_delegation"],
       "lanes": [
         "format",
         "lint",
@@ -356,7 +371,13 @@
       ]
     },
     "renderer_view": {
-      "consumers": ["e2e_functional", "e2e_accessibility", "e2e_visual", "i18n_catalog"],
+      "consumers": [
+        "e2e_functional",
+        "e2e_accessibility",
+        "e2e_visual",
+        "i18n_catalog",
+        "e2e_regressions"
+      ],
       "lanes": ["format", "lint", "typecheck_web", "unit_macos", "build"]
     },
     "i18n_catalog": {
@@ -368,7 +389,7 @@
       "lanes": ["runtime_bundle"]
     },
     "renderer_state": {
-      "consumers": ["e2e_workspace"],
+      "consumers": ["e2e_workspace", "e2e_regressions", "e2e_delegation"],
       "lanes": []
     },
     "cli_sdk": {
@@ -384,7 +405,14 @@
       "lanes": ["typecheck_web", "build"]
     },
     "renderer_settings": {
-      "consumers": ["e2e_functional", "e2e_workspace", "e2e_accessibility", "e2e_visual"],
+      "consumers": [
+        "e2e_functional",
+        "e2e_workspace",
+        "e2e_accessibility",
+        "e2e_visual",
+        "e2e_regressions",
+        "e2e_delegation"
+      ],
       "lanes": ["unit_macos"]
     },
     "e2e_functional": {
@@ -402,6 +430,25 @@
     "e2e_visual": {
       "consumers": [],
       "lanes": ["e2e_visual_macos"]
+    },
+    "e2e_regressions": {
+      "consumers": [],
+      "lanes": ["e2e_regressions_macos"]
+    },
+    "e2e_delegation": {
+      "consumers": [],
+      "lanes": ["e2e_delegation_macos"]
+    },
+    "renderer_browser_e2e": {
+      "consumers": [],
+      "lanes": [
+        "format",
+        "lint",
+        "typecheck_node",
+        "typecheck_web",
+        "e2e_visual_macos",
+        "e2e_browser_windows"
+      ]
     }
   }
 }

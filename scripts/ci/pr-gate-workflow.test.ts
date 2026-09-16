@@ -28,7 +28,7 @@ type Job = {
   'runs-on'?: string
   strategy?: {
     'fail-fast'?: boolean
-    matrix?: { shard?: number[]; group?: string[] }
+    matrix?: { shard?: number[] | string; group?: string[] | string }
   }
   steps?: Step[]
   'timeout-minutes'?: number
@@ -138,7 +138,15 @@ describe('PR Gate workflow', () => {
           required: false,
           default: 'classified',
           type: 'choice',
-          options: ['classified', 'unit-coverage', 'i18n', 'runtime-bundle', 'windows-e2e', 'e2e']
+          options: [
+            'classified',
+            'unit-coverage',
+            'i18n',
+            'runtime-bundle',
+            'windows-e2e',
+            'e2e',
+            'source-regressions'
+          ]
         }
       }
     })
@@ -700,7 +708,10 @@ describe('PR Gate workflow', () => {
 
   it('shards every selected Windows journey without cancelling siblings or colliding artifacts', () => {
     const job = workflow.jobs.windows_e2e
-    expect(job.strategy).toEqual({ 'fail-fast': false, matrix: { shard: [1, 2, 3] } })
+    expect(job.strategy?.['fail-fast']).toBe(false)
+    expect(job.strategy?.matrix?.shard).toBe(
+      "${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_browser_windows') && !contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_functional_windows') && !contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_workspace_windows') && fromJSON('[1]') || fromJSON('[1,2,3]') }}"
+    )
     expect(job.name).toBe('Windows E2E (shard ${{ matrix.shard }}/3)')
     for (const lane of ['e2e_functional_windows', 'e2e_workspace_windows']) {
       const step = job.steps?.find(({ id }) => id === lane)
@@ -1125,12 +1136,9 @@ describe('E2E throughput contracts', () => {
 
   it('partitions macOS groups while preserving the stable aggregate gate', () => {
     const job = workflow.jobs.macos_e2e
-    expect(job.strategy?.matrix?.group).toEqual([
-      'journeys',
-      'presentation',
-      'regressions',
-      'delegation'
-    ])
+    expect(job.strategy?.matrix?.group).toBe(
+      `\${{ fromJSON(needs.preflight.outputs.plan).macosGroups || fromJSON('["journeys","presentation","regressions","delegation"]') }}`
+    )
     for (const [id, group] of [
       ['e2e_functional_macos', 'journeys'],
       ['e2e_workspace_macos', 'journeys'],

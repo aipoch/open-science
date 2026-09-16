@@ -326,8 +326,13 @@ ci(review): unify automated AI reviews
 - After the pull request checks pass, merge it directly using **squash merge only**. Do not update the
   branch only because `main` advanced; update it when it has merge conflicts or a maintainer requests
   it. The squash commit subject must keep the pull request title's Conventional Commit format.
-- Non-documentation changes merged into `main` trigger the [Nightly workflow](.github/workflows/nightly.yml),
-  which runs post-merge verification and cross-platform package certification on the resulting commit.
+- The [Nightly workflow](.github/workflows/nightly.yml) batches unpublished `main` changes hourly
+  for post-merge verification and cross-platform package certification. Independent
+  [source regression](.github/workflows/source-regression.yml) runs the complete supplemental
+  regression and delegation suites every six hours, without waiting for package builds. Unchanged
+  successful revisions are skipped; manual runs always execute. PR Gate selects supplemental groups
+  from the trusted impact plan and keeps all groups for unknown/global changes or legacy plans.
+  Scheduled failures remain visible failures, but cannot retroactively block an already merged PR.
 
 ## Reporting Issues
 

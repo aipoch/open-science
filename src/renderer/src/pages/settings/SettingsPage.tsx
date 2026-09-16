@@ -1219,7 +1219,14 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
               event.preventDefault()
               return
             }
-            if (!isMobileNavOpen) return
+            // Radix refreshes this callback in a passive effect. Read the committed drawer state
+            // so Escape immediately after opening it cannot dismiss Settings through a stale closure.
+            if (
+              !mobileNavRef.current?.closest(
+                '[data-slot="mobile-settings-navigation"][role="dialog"]'
+              )
+            )
+              return
             event.preventDefault()
             setIsMobileNavOpen(false)
           }}

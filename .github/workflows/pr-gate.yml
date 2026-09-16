@@ -20,6 +20,7 @@ on:
           - runtime-bundle
           - windows-e2e
           - e2e
+          - source-regressions
 
 permissions:
   contents: read
@@ -177,6 +178,12 @@ jobs:
               '' \
               '- `workflow_dispatch runtime-bundle -> focused dry-run`' \
               >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [[ "$EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN_MODE" == "source-regressions" ]]; then
+            plan='{"schemaVersion":1,"mode":"selective","roots":["manual:source-regressions"],"lanes":["policy","e2e_regressions_macos","e2e_delegation_macos"],"bundles":["policy","macos_e2e"],"macosGroups":["regressions","delegation"]}'
+            echo "plan=$plan" >> "$GITHUB_OUTPUT"
+            echo 'lanes=["policy","e2e_regressions_macos","e2e_delegation_macos"]' >> "$GITHUB_OUTPUT"
             exit 0
           fi
           if [[ "$EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN_MODE" == "e2e" ]]; then
@@ -893,7 +900,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: [journeys, presentation, regressions, delegation]
+        # Trusted pre-migration plans have no group selection: retain their full legacy matrix.
+        group: ${{ fromJSON(needs.preflight.outputs.plan).macosGroups || fromJSON('["journeys","presentation","regressions","delegation"]') }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -965,24 +973,22 @@ jobs:
           retention-days: 5
           if-no-files-found: warn
       - name: Install headless Chromium
-        if: ${{ matrix.group == 'presentation' || matrix.group == 'regressions' }}
+        if: ${{ matrix.group == 'presentation' }}
         run: npx playwright install chromium --only-shell
       - name: Run supplemental regressions
         id: e2e_regressions_macos
         if: ${{ matrix.group == 'regressions' && steps.setup.outcome == 'success' }}
         continue-on-error: true
-        env:
-          PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/regressions_macos
-          PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/regressions_macos.json
-        run: npm run test:e2e:regressions -- --fail-on-flaky-tests --global-timeout=1200000
+        uses: ./.github/actions/source-regression
+        with:
+          group: regressions
       - name: Run supplemental delegation
         id: e2e_delegation_macos
         if: ${{ matrix.group == 'delegation' && steps.setup.outcome == 'success' }}
         continue-on-error: true
-        env:
-          PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/delegation_macos
-          PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/delegation_macos.json
-        run: npm run test:e2e:delegation -- --fail-on-flaky-tests --global-timeout=1200000
+        uses: ./.github/actions/source-regression
+        with:
+          group: delegation
       - name: Run renderer layout pilot
         id: renderer_layout
         if: ${{ matrix.group == 'presentation' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_visual_macos') }}
@@ -1085,7 +1091,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        # Browser-only plans need the complete browser suite on shard 1, not idle native shards.
+        shard: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_browser_windows') && !contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_functional_windows') && !contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_workspace_windows') && fromJSON('[1]') || fromJSON('[1,2,3]') }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1191,6 +1198,7 @@ jobs:
         if: ${{ always() }}
         shell: bash
         env:
+          E2E_SHARD: ${{ matrix.shard }}
           RENDERER_LAYOUT_OUTCOME: ${{ steps.renderer_layout.outcome }}
           SETUP_OUTCOME: ${{ steps.setup.outcome }}
           E2E_ACCESSIBILITY_OUTCOME: ${{ steps.e2e_accessibility_windows.outcome }}
@@ -1206,6 +1214,10 @@ jobs:
             fi
           }
           check renderer_layout "$RENDERER_LAYOUT_OUTCOME"
+          if [[ "$E2E_SHARD" == "1" && "$RENDERER_LAYOUT_OUTCOME" != "success" ]]; then
+            echo "Required Windows browser suite did not succeed" >&2
+            failed=1
+          fi
           check setup "$SETUP_OUTCOME"
           check e2e_functional_windows "$E2E_FUNCTIONAL_OUTCOME"
           check e2e_workspace_windows "$E2E_WORKSPACE_OUTCOME"

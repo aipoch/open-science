@@ -4,6 +4,8 @@ import { appendFileSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { macosGroupsForPlan } from './classify-pr-changes.mjs'
+
 const gateManifest = JSON.parse(
   readFileSync(new URL('./change-impact.json', import.meta.url), 'utf8')
 )
@@ -24,6 +26,18 @@ function expectedBundlesForLanes(lanes) {
 
 export function evaluatePrGate(plan, conclusions, { executionMode = 'lanes' } = {}) {
   const failures = []
+  // Old trusted plans omit this field and execute the complete legacy matrix. New plans must
+  // not be able to omit a selected group while the aggregate matrix job still reports success.
+  if (
+    plan.macosGroups !== undefined &&
+    JSON.stringify(plan.macosGroups) !== JSON.stringify(macosGroupsForPlan(plan))
+  ) {
+    failures.push({
+      lane: 'preflight',
+      conclusion: 'invalid',
+      reason: 'macOS groups do not match selected lanes'
+    })
+  }
   const hasBundlePlan = Array.isArray(plan.bundles)
   const expectedBundles = expectedBundlesForLanes(plan.lanes)
   const hasValidBundlePlan =
