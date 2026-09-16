@@ -3,7 +3,7 @@ name: Source Regression
 # Batch supplemental source coverage independently of package certification/publication.
 on:
   schedule:
-    - cron: '37 20 * * *' # UTC; overnight in Asia/Ho_Chi_Minh
+    - cron: '37 19 * * *' # UTC; overnight in Asia/Singapore
   workflow_dispatch:
 
 permissions:

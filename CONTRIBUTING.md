@@ -332,12 +332,14 @@ ci(review): unify automated AI reviews
   Selected native-platform and Electron E2E checks run before merge in the queue. Selective changed
   coverage is enforced with the native module run in the queue; portable PR module feedback does
   not claim native coverage. Focused manual E2E runs remain available during development.
-- The [CI execution policy](docs/ci-execution-policy.md) documents the safe rollout and rollback,
-  stage boundaries, and daily schedules. Until rollout is enabled, PR Gate retains all existing
-  selected checks. CodeQL default setup and AI review continue to run for PR updates independently
+- Until the repository requires merge queue and `PR_GATE_MERGE_QUEUE_ENABLED=true` is enabled,
+  PR Gate retains all existing selected checks. Enable queue enforcement and verify a real queue
+  group before enabling PR deferral; for rollback, restore full PR checks before removing queue
+  enforcement. CodeQL default setup and AI review continue to run for PR updates independently
   of PR Gate staging.
 - Nightly packaging, Windows Full Test, supplemental Source Regression, and Runtime Resource Soak
-  run daily on `main`, at staggered overnight times. Unchanged successful revisions are skipped;
+  run daily on `main`, at 01:17, 02:47, 03:37, and 05:23 respectively in Singapore time
+  (Asia/Singapore, UTC+8). Unchanged successful revisions are skipped;
   manual runs always execute. Formal release certification and post-release Windows Upgrade Smoke
   retain their existing gates/triggers. Scheduled failures remain visible failures and cannot
   retroactively block an already merged PR.

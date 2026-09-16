@@ -2,7 +2,7 @@ name: Runtime Resource Soak
 
 on:
   schedule:
-    - cron: '23 22 * * *' # UTC; overnight in Asia/Ho_Chi_Minh
+    - cron: '23 21 * * *' # UTC; overnight in Asia/Singapore
   workflow_dispatch:
     inputs:
       mode:
