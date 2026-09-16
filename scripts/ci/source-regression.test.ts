@@ -186,13 +186,13 @@ describe('trusted supplemental selection', () => {
 
 describe('independent source regression', () => {
   it('batches main on a read-only schedule with one native runner and no package prerequisite', () => {
-    expect(scheduled.on.schedule).toEqual([{ cron: '37 */6 * * *' }])
+    expect(scheduled.on.schedule).toEqual([{ cron: '37 20 * * *' }])
     expect(scheduled.on).toHaveProperty('workflow_dispatch')
     expect(scheduled.on).not.toHaveProperty('push')
     expect(scheduled.permissions).toEqual({ actions: 'read', contents: 'read' })
     expect(scheduled.jobs.plan.if).toContain("github.ref == 'refs/heads/main'")
     expect(scheduled.concurrency).toEqual({
-      group: 'source-regression-${{ github.ref }}',
+      group: 'source-regression-${{ github.event_name }}-${{ github.ref }}',
       'cancel-in-progress': true
     })
     expect(Object.keys(scheduled.jobs)).toEqual(['plan', 'regression'])

@@ -515,3 +515,16 @@ describe('module impact shadow', () => {
     expect(summary).not.toContain('<unsafe>')
   })
 })
+
+it('emits the PR stage only from explicitly enabled event context without trimming impact', () => {
+  const execute = vi.fn().mockReturnValue(Buffer.from('M\0package.json\0'))
+  const append = vi.fn()
+  const { plan } = runModuleImpactAuthorityCli(
+    ['--base', '1'.repeat(40), '--head', '2'.repeat(40)],
+    { EVENT_NAME: 'pull_request', PR_GATE_MERGE_QUEUE_ENABLED: 'true', GITHUB_OUTPUT: '/output' },
+    { cwd: '/repo', execute, append }
+  )
+  expect(plan.mode).toBe('full')
+  expect(plan.bundles).toContain('macos_e2e')
+  expect(append).toHaveBeenCalledWith('/output', expect.stringContaining('stage=pr\n'))
+})

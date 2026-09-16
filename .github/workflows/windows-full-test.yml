@@ -5,7 +5,7 @@ name: Windows Full Test
 # sharded suite, and remains available as a focused workflow dry-run.
 on:
   schedule:
-    - cron: '47 * * * *'
+    - cron: '47 19 * * *' # UTC; overnight in Asia/Ho_Chi_Minh
   workflow_dispatch:
     inputs:
       mode:
@@ -29,7 +29,7 @@ permissions:
 
 # A newer batch or manual run on the same ref supersedes stale advisory coverage.
 concurrency:
-  group: windows-full-test-${{ github.ref }}
+  group: windows-full-test-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

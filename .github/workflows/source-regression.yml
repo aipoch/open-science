@@ -3,7 +3,7 @@ name: Source Regression
 # Batch supplemental source coverage independently of package certification/publication.
 on:
   schedule:
-    - cron: '37 */6 * * *'
+    - cron: '37 20 * * *' # UTC; overnight in Asia/Ho_Chi_Minh
   workflow_dispatch:
 
 permissions:
@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: source-regression-${{ github.ref }}
+  group: source-regression-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

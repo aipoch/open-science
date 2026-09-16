@@ -163,7 +163,8 @@ describe('PR Gate workflow', () => {
       base: '${{ steps.revisions.outputs.base }}',
       head: '${{ steps.revisions.outputs.head }}',
       lanes: '${{ steps.classify.outputs.lanes }}',
-      plan: '${{ steps.classify.outputs.plan }}'
+      plan: '${{ steps.classify.outputs.plan }}',
+      stage: "${{ steps.classify.outputs.stage || 'full' }}"
     })
 
     for (const bundle of manifest.bundleOrder) {
@@ -253,7 +254,8 @@ describe('PR Gate workflow', () => {
       base: '${{ steps.revisions.outputs.base }}',
       head: '${{ steps.revisions.outputs.head }}',
       lanes: '${{ steps.classify.outputs.lanes }}',
-      plan: '${{ steps.classify.outputs.plan }}'
+      plan: '${{ steps.classify.outputs.plan }}',
+      stage: "${{ steps.classify.outputs.stage || 'full' }}"
     })
     expect(prepare?.['continue-on-error']).toBeUndefined()
     expect(prepare?.run).toContain('scripts/ci/module-impact-authority.mjs')
@@ -502,7 +504,8 @@ describe('PR Gate workflow', () => {
     expect(unit).toMatchObject({
       name: 'Module tests and coverage',
       needs: ['preflight', 'unit_shard'],
-      'runs-on': "${{ needs.unit_shard.result != 'skipped' && 'ubuntu-latest' || 'macos-14' }}"
+      'runs-on':
+        "${{ (needs.unit_shard.result != 'skipped' || needs.preflight.outputs.stage == 'pr') && 'ubuntu-latest' || 'macos-14' }}"
     })
     expect(unit.if).toContain('always()')
     expect(unit.env?.VITEST_DEFER_COVERAGE_THRESHOLDS).toBeUndefined()
@@ -550,7 +553,9 @@ describe('PR Gate workflow', () => {
         BASE_SHA: '${{ needs.preflight.outputs.base }}',
         HEAD_SHA: '${{ needs.preflight.outputs.head }}'
       },
-      run: 'npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA" --coverage-changed "$BASE_SHA"'
+      run: expect.stringContaining(
+        'npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA" --coverage-changed "$BASE_SHA"'
+      )
     })
     expect(related?.run).not.toMatch(/(?:^|\s)--changed(?:\s|$)/)
     expect(related?.if).toContain("fromJSON(needs.preflight.outputs.plan).mode == 'selective'")
@@ -579,7 +584,7 @@ describe('PR Gate workflow', () => {
     expect(unit.steps?.some(({ name }) => name === 'Test Renderer (blocking)')).toBe(false)
     expect(unit.steps?.filter(({ run }) => run === 'npm run test:coverage')).toHaveLength(0)
     expect(coverageUpload).toMatchObject({
-      if: "${{ always() && (steps.unit_macos_related.outcome != 'skipped' || steps.unit_macos_full.outcome != 'skipped') }}",
+      if: "${{ always() && ((needs.preflight.outputs.stage != 'pr' && steps.unit_macos_related.outcome != 'skipped') || steps.unit_macos_full.outcome != 'skipped') }}",
       'continue-on-error': true,
       with: {
         name: 'coverage-report',
@@ -967,7 +972,7 @@ describe('PR Gate workflow', () => {
       'timeout-minutes': 10
     })
     expect(workflow.jobs.linux_runtime.if).toBe(
-      "${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'linux_runtime') }}"
+      "${{ needs.preflight.outputs.stage != 'pr' && needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'linux_runtime') }}"
     )
     const linuxDependencies = workflow.jobs.linux_runtime.steps?.find(
       ({ name }) => name === 'Install Linux sandbox dependency'
@@ -1156,5 +1161,31 @@ describe('E2E throughput contracts', () => {
     })
     expect(run.status).toBe(1)
     expect(run.stderr).toContain('renderer_layout ended with failure')
+  })
+})
+
+it('defers native runners only through the trusted stage and keeps portable PR tests', () => {
+  for (const name of [
+    'linux_runtime',
+    'windows_core',
+    'macos_e2e_setup',
+    'windows_e2e_setup',
+    'macos_e2e',
+    'windows_e2e'
+  ]) {
+    expect(workflow.jobs[name].if).toContain("needs.preflight.outputs.stage != 'pr'")
+  }
+  const related = workflow.jobs.unit.steps?.find(({ id }) => id === 'unit_macos_related')
+  expect(related?.env?.VITEST_PORTABLE_CI).toContain("needs.preflight.outputs.stage == 'pr'")
+  expect(related?.run).toContain('if [[ "$EXECUTION_STAGE" == "pr" ]]')
+  expect(related?.run).toContain('npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA"\n')
+  expect(related?.run).toContain('--coverage-changed "$BASE_SHA"')
+  const gate = workflow.jobs.gate.steps?.find(
+    ({ name }) => name === 'Evaluate deterministic gate from trusted base'
+  )
+  expect(gate?.env).toMatchObject({
+    EVENT_NAME: '${{ github.event_name }}',
+    PR_GATE_MERGE_QUEUE_ENABLED: '${{ vars.PR_GATE_MERGE_QUEUE_ENABLED }}',
+    PR_GATE_STAGE: '${{ needs.preflight.outputs.stage }}'
   })
 })

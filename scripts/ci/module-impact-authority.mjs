@@ -9,6 +9,7 @@ import {
   classifyChanges,
   formatPlanSummary,
   parseNameStatus,
+  prGateStage,
   toGitHubOutputPlan
 } from './classify-pr-changes.mjs'
 import {
@@ -70,7 +71,10 @@ export function runModuleImpactAuthorityCli(
   const lanesJson = JSON.stringify(plan.lanes)
 
   if (environment.GITHUB_OUTPUT) {
-    append(environment.GITHUB_OUTPUT, `plan=${outputPlanJson}\nlanes=${lanesJson}\n`)
+    append(
+      environment.GITHUB_OUTPUT,
+      `plan=${outputPlanJson}\nlanes=${lanesJson}\nstage=${prGateStage(environment)}\n`
+    )
   } else if (write) {
     write(`${planJson}\n`)
   } else {

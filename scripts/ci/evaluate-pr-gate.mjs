@@ -4,7 +4,7 @@ import { appendFileSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { macosGroupsForPlan } from './classify-pr-changes.mjs'
+import { deferredPrGateBundles, macosGroupsForPlan, prGateStage } from './classify-pr-changes.mjs'
 
 const gateManifest = JSON.parse(
   readFileSync(new URL('./change-impact.json', import.meta.url), 'utf8')
@@ -24,7 +24,11 @@ function expectedBundlesForLanes(lanes) {
   return gateManifest.bundleOrder.filter((bundle) => selected.has(bundle))
 }
 
-export function evaluatePrGate(plan, conclusions, { executionMode = 'lanes' } = {}) {
+export function evaluatePrGate(
+  plan,
+  conclusions,
+  { executionMode = 'lanes', executionStage = 'full' } = {}
+) {
   const failures = []
   // Old trusted plans omit this field and execute the complete legacy matrix. New plans must
   // not be able to omit a selected group while the aggregate matrix job still reports success.
@@ -45,8 +49,28 @@ export function evaluatePrGate(plan, conclusions, { executionMode = 'lanes' } = 
     expectedBundles !== undefined &&
     plan.bundles.length === expectedBundles.length &&
     plan.bundles.every((bundle, index) => bundle === expectedBundles[index])
-  const selectedExecutions =
+  const plannedExecutions =
     executionMode === 'bundles' ? (hasValidBundlePlan ? plan.bundles : []) : plan.lanes
+
+  const deferredBundles = deferredPrGateBundles(executionStage)
+  const deferredExecutions = plannedExecutions.filter((execution) =>
+    deferredBundles.includes(
+      executionMode === 'bundles' ? execution : gateManifest.laneBundles[execution]
+    )
+  )
+  const selectedExecutions = plannedExecutions.filter(
+    (execution) => !deferredExecutions.includes(execution)
+  )
+  // Only deliberately deferred work may skip. Missing conclusions are never proof of a skip.
+  for (const execution of deferredExecutions) {
+    if (!['skipped', 'success'].includes(conclusions[execution])) {
+      failures.push({
+        lane: execution,
+        conclusion: conclusions[execution] ?? 'missing',
+        reason: 'deferred execution must report skipped or success'
+      })
+    }
+  }
 
   if (executionMode !== 'lanes' && executionMode !== 'bundles') {
     failures.push({
@@ -116,6 +140,8 @@ export function evaluatePrGate(plan, conclusions, { executionMode = 'lanes' } = 
   }
 
   return {
+    executionStage,
+    deferredExecutions,
     ok: failures.length === 0,
     failures,
     selectedLanes: [...plan.lanes],
@@ -149,6 +175,9 @@ export function formatPrGateSummary(result) {
 
   return `## PR Gate
 
+Stage: **${result.executionStage ?? 'full'}**${result.executionStage === 'pr' ? ' (portable PR feedback; native and desktop validation required in merge queue)' : ''}
+Deferred to merge queue: ${result.deferredExecutions?.map(escapeHtml).join(', ') || '_none_'}
+
 Result: **${result.ok ? 'pass' : 'fail'}**
 
 - Selected lanes: ${result.selectedLanes.map(escapeHtml).join(', ') || '_none_'}${bundles}
@@ -168,7 +197,12 @@ export function runPrGateCli(environment = process.env) {
   const conclusions = Object.fromEntries(
     Object.entries(needs).map(([lane, value]) => [lane, value?.result ?? 'missing'])
   )
+  const executionStage = environment.PR_GATE_STAGE || 'full'
+  if (executionStage !== 'full' && executionStage !== prGateStage(environment)) {
+    throw new Error('PR deferral is not enabled for this event')
+  }
   const result = evaluatePrGate(plan, conclusions, {
+    executionStage,
     executionMode: environment.PR_GATE_EXECUTION_MODE ?? 'lanes'
   })
   const summary = formatPrGateSummary(result)

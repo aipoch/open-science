@@ -323,16 +323,24 @@ ci(review): unify automated AI reviews
   checks ran after the last material edit, and call out uncovered risks.
 - Keep PRs reasonably small and scoped so they are easy to review.
 - Ensure the final Test Impact Set, or the full fallback when required, passes.
-- After the pull request checks pass, merge it directly using **squash merge only**. Do not update the
-  branch only because `main` advanced; update it when it has merge conflicts or a maintainer requests
-  it. The squash commit subject must keep the pull request title's Conventional Commit format.
-- The [Nightly workflow](.github/workflows/nightly.yml) batches unpublished `main` changes hourly
-  for post-merge verification and cross-platform package certification. Independent
-  [source regression](.github/workflows/source-regression.yml) runs the complete supplemental
-  regression and delegation suites every six hours, without waiting for package builds. Unchanged
-  successful revisions are skipped; manual runs always execute. PR Gate selects supplemental groups
-  from the trusted impact plan and keeps all groups for unknown/global changes or legacy plans.
-  Scheduled failures remain visible failures, but cannot retroactively block an already merged PR.
+- After required PR checks and review pass, add the pull request to the native merge queue once
+  the queue rollout is enabled. The queue validates the combined revision before **squash merge**;
+  its squash subject must retain the PR title's Conventional Commit format. Do not update a branch
+  merely because `main` advanced; update it for conflicts or a maintainer request.
+- PR commits retain policy/CI Integrity, CodeQL and AI review, relevant static checks, and portable
+  module tests on Ubuntu. Unknown/global changes retain complete portable tests and coverage.
+  Selected native-platform and Electron E2E checks run before merge in the queue. Selective changed
+  coverage is enforced with the native module run in the queue; portable PR module feedback does
+  not claim native coverage. Focused manual E2E runs remain available during development.
+- The [CI execution policy](docs/ci-execution-policy.md) documents the safe rollout and rollback,
+  stage boundaries, and daily schedules. Until rollout is enabled, PR Gate retains all existing
+  selected checks. CodeQL default setup and AI review continue to run for PR updates independently
+  of PR Gate staging.
+- Nightly packaging, Windows Full Test, supplemental Source Regression, and Runtime Resource Soak
+  run daily on `main`, at staggered overnight times. Unchanged successful revisions are skipped;
+  manual runs always execute. Formal release certification and post-release Windows Upgrade Smoke
+  retain their existing gates/triggers. Scheduled failures remain visible failures and cannot
+  retroactively block an already merged PR.
 
 ## Reporting Issues
 

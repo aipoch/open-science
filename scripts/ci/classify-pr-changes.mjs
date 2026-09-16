@@ -217,6 +217,21 @@ export function macosGroupsForPlan(plan) {
     .map(([group]) => group)
 }
 
+// Roll out PR deferral only after the repository requires merge queue. Missing/old trusted
+// classifiers retain full execution. Queue and manual events always validate every selected bundle.
+export function prGateStage(environment = {}) {
+  return environment.EVENT_NAME === 'pull_request' &&
+    environment.PR_GATE_MERGE_QUEUE_ENABLED === 'true'
+    ? 'pr'
+    : 'full'
+}
+
+export function deferredPrGateBundles(stage) {
+  if (stage === 'full') return []
+  if (stage !== 'pr') throw new Error(`Unsupported PR Gate stage: ${stage}`)
+  return ['linux_runtime', 'windows_core', 'macos_e2e', 'windows_e2e']
+}
+
 export function toGitHubOutputPlan(plan) {
   const output = {
     schemaVersion: plan.schemaVersion,
