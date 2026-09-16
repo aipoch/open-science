@@ -118,15 +118,6 @@ const stableChecks = {
   '.github/workflows/ci-integrity.yml': { jobId: 'integrity', name: 'CI Integrity' }
 }
 
-const protectedControlPlanePaths = new Set([
-  ...Object.keys(stableChecks),
-  'scripts/ci/check-ci-integrity.mjs',
-  'scripts/ci/check-pr-policy.mjs',
-  'scripts/ci/classify-pr-changes.mjs',
-  'scripts/ci/change-impact.json',
-  'scripts/ci/evaluate-pr-gate.mjs'
-])
-
 function isWorkflowPath(path) {
   return /^\.github\/workflows\/.*\.ya?ml$/i.test(path)
 }
@@ -265,17 +256,7 @@ export function checkCiIntegrityChanges(files) {
     }
 
     const stableCheck = stableChecks[file.path] ?? stableChecks[file.previousPath]
-    const protectedPath = [file.path, file.previousPath]
-      .filter(Boolean)
-      .find((path) => protectedControlPlanePaths.has(path))
-    const movedProtectedPath = file.previousPath && file.path !== file.previousPath
-    if (protectedPath && file.baseText && (headText !== file.baseText || movedProtectedPath)) {
-      violations.push({
-        path: file.path,
-        rule: 'protected-gate-control-plane',
-        message: `Established gate control-plane file ${protectedPath} may change only through an explicit maintainer ruleset bypass`
-      })
-    }
+    // CODEOWNERS review authorizes control-plane edits; Integrity validates their safety.
     if (stableCheck && !hasStableJobName(document, stableCheck)) {
       violations.push({
         path: file.path,

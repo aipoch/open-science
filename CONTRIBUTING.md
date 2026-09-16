@@ -377,27 +377,22 @@ regression suite while forty-session resource profiling runs in Source Regressio
 scrolling/find correctness stays in the gate. Focused manual Source Regression runs include capacity
 profiling, and callers without an explicit capacity input retain complete coverage.
 
-### CI control-plane approval rollout
+### CI control-plane approval
 
 CI workflows, local actions, CI scripts, Dependabot configuration and CODEOWNERS itself have
-the `@aipoch/ci-maintainers` team as owner in `.github/CODEOWNERS`. Maintain its membership in
-GitHub instead of editing individual usernames in the file. The team must be visible and have
-explicit repository write access. The intended normal path is an approval from one team member
-other than the PR author, followed by passing Integrity and PR Gate checks and the merge
-queue. Additional commits invalidate stale approval when the main ruleset enforces that policy.
-Ordinary application files have no CODEOWNERS entry.
+`@aipoch/ci-maintainers` as owner in `.github/CODEOWNERS`. Maintain membership in GitHub instead
+of editing individual usernames in the file. The team must be visible and have explicit repository
+write access. The main ruleset requires approval from one owner other than the PR author and
+dismisses stale approvals after new commits. Ordinary application files have no CODEOWNERS entry.
 
-Roll this policy out in order:
+Owner review authorizes control-plane changes; CI Integrity still validates unsafe workflow
+execution, mutable action references, expanded target-workflow permissions and spoofed or missing
+required checks. It runs for both PR admission and merge-group validation. Passing required checks
+and owner approval precede normal merge-queue admission. Never remove the Integrity `merge_group`
+trigger while its check is required.
 
-1. Merge the CI ownership file while retaining the existing protected-control-plane guard.
-2. Enable required code-owner review and stale-approval dismissal in the main ruleset, preserving
-   the required checks, queue and existing bypass configuration. Verify the live ruleset.
-3. Only then replace the unconditional protected-file rejection with native owner authorization;
-   retain Integrity checks for unsafe workflow execution, mutable action references, expanded
-   permissions and spoofed or missing required checks. Verify both PR admission and merge-group
-   validation before considering the migration complete.
-
-Until step 3 lands, editing established protected gate files still requires an explicitly authorized
-maintainer ruleset bypass. GitHub's bypass directly merges the PR; it does not attach an approval to
-carry into a later queue run. Do not enqueue a PR with a known failing required check and expect the
-queue to waive it. Never remove the Integrity `merge_group` trigger while its check is required.
+Keep required code-owner review and stale-approval dismissal enabled while relying on this policy.
+The migration PR that removes the former unconditional protected-file rejection still encounters
+the old guard from its base revision. Any bootstrap ruleset bypass requires explicit maintainer
+authorization and directly merges the PR; it does not carry approval into a later queue run. Do not
+enqueue a PR with a known failing required check and expect the queue to waive it.
