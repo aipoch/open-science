@@ -4592,3 +4592,72 @@ const flushMicrotasks = async (): Promise<void> => {
   await Promise.resolve()
   await Promise.resolve()
 }
+
+describe('passive plan projection hydration', () => {
+  it('does not save the conversation merely to display its existing plan', async () => {
+    const base = createPersistedSession({ revision: 42 })
+    useSessionStore.getState().hydrateSessions([base])
+    const api = createApi()
+    const save = createStoreSaver(api, useSessionStore.getState())
+    useSessionStore.getState().setActivePlanProjection(base.id, createHistoricalPlan('plan-a', 1))
+    await save(useSessionStore.getState())
+    expect(api.saveSession).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions[0].updatedAt).toBe(base.updatedAt)
+    expect(useSessionStore.getState().sessions[0].activePlanProjection?.artifactVersionId).toBe(
+      'plan-a'
+    )
+    useSessionStore
+      .getState()
+      .invalidateActivePlanProjection(base.id, { artifactVersionId: 'plan-a', revision: 1 })
+    await save(useSessionStore.getState())
+    useSessionStore.getState().setActivePlanProjection(base.id, createHistoricalPlan('plan-a', 1))
+    await save(useSessionStore.getState())
+    expect(api.saveSession).not.toHaveBeenCalled()
+  })
+
+  it('still saves a real local title edit after displaying a plan', async () => {
+    const base = createPersistedSession({ revision: 42 })
+    useSessionStore.getState().hydrateSessions([base])
+    const api = createApi()
+    const save = createStoreSaver(api, useSessionStore.getState())
+    useSessionStore.getState().setActivePlanProjection(base.id, createHistoricalPlan('plan-a', 1))
+    useSessionStore.getState().renameSession(base.id, 'Edited title')
+    await save(useSessionStore.getState())
+    expect(api.saveSession).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Edited title' }),
+      { conflictRebaseFields: ['title'] }
+    )
+  })
+})
+
+describe('passive summary hydration', () => {
+  it('does not read and rewrite full sessions when the project list is hydrated', async () => {
+    const base = createPersistedSession({ revision: 42 })
+    const api = createApi({ loadOne: vi.fn().mockResolvedValue(base) })
+    const save = createStoreSaver(api, useSessionStore.getState())
+    const summary: SessionSummary = {
+      number: 1,
+      id: base.id,
+      projectId: base.projectId,
+      title: base.title,
+      status: 'idle',
+      presentedStatus: 'idle',
+      revision: 42,
+      pinned: false,
+      activeMessageCount: 0,
+      artifactCount: 0,
+      filesRevision: 0,
+      createdAt: base.createdAt,
+      updatedAt: base.updatedAt,
+      needsStartupRecovery: false
+    }
+    useSessionStore.getState().hydrateSessionSummaries([summary], undefined)
+    await save(useSessionStore.getState())
+    expect(api.saveSession).not.toHaveBeenCalled()
+    expect(api.loadOne).not.toHaveBeenCalled()
+    useSessionStore.getState().hydrateSessionSummaries([{ ...summary }], undefined)
+    await save(useSessionStore.getState())
+    expect(api.saveSession).not.toHaveBeenCalled()
+    expect(api.loadOne).not.toHaveBeenCalled()
+  })
+})

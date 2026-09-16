@@ -1,3 +1,4 @@
+import { InlineNotice } from '@/components/ui/inline-notice'
 import { useFileCredentialNotice } from './use-file-credential-notice'
 import { useEffect, useRef, useState } from 'react'
 import { AlertDialog } from 'radix-ui'
@@ -200,17 +201,19 @@ const ClaudeIsolatedSignInModalBody = ({
                     onClick={() => void copyCommand()}
                     aria-label={t('Copy command')}
                   >
-                    {copied ? (
-                      <>
-                        <Check className="size-3.5" aria-hidden="true" />
-                        {t('Copied')}
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="size-3.5" aria-hidden="true" />
-                        {t('Copy')}
-                      </>
-                    )}
+                    <span key={String(copied)} className="button-feedback">
+                      {copied ? (
+                        <>
+                          <Check className="size-3.5" aria-hidden="true" />
+                          {t('Copied')}
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="size-3.5" aria-hidden="true" />
+                          {t('Copy')}
+                        </>
+                      )}
+                    </span>
                   </Button>
                 </div>
               </div>
@@ -235,9 +238,9 @@ const ClaudeIsolatedSignInModalBody = ({
             </div>
 
             {submitError ? (
-              <p className="text-xs text-destructive" role="alert">
+              <InlineNotice level="error" role="alert">
                 {submitError}
-              </p>
+              </InlineNotice>
             ) : null}
           </div>
         </div>

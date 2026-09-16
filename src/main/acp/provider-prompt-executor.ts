@@ -31,6 +31,7 @@ type ProviderPromptExecutionInput = Readonly<{
   isCurrent: () => boolean
   beforeDispatch: () => Promise<'active' | 'cancelled'>
   captureStop: () => boolean
+  onDispatched?: () => void
   onAccepted: () => void | Promise<void>
   routeNotification: (notification: SessionNotification) => void
   reportBestEffortFailure?: (stage: ProviderPromptObservationStage, error: unknown) => void
@@ -257,6 +258,7 @@ class AcpProviderPromptExecutor {
       let promptRequest: Promise<unknown>
       try {
         promptRequest = input.session.prompt(input.content)
+        input.onDispatched?.()
       } catch (error) {
         await cancelProbe()
         throw error

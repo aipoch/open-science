@@ -1,3 +1,4 @@
+import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
@@ -149,6 +150,7 @@ type NotebookExecutionOwnerOptions = {
 }
 
 const errorToExecutionResult = (error: unknown, cwd: string): NotebookSessionExecutionResult => {
+  if (error instanceof NotebookExecutionStopError) throw error
   const message = error instanceof Error ? error.message : String(error)
 
   return {
@@ -426,6 +428,7 @@ class NotebookExecutionOwner {
     {
       fingerprint: string
       admitted: Promise<NotebookRunRecord>
+      executionSettled: Promise<unknown>
       promise: Promise<NotebookControlResult>
     }
   >()
@@ -706,7 +709,7 @@ class NotebookExecutionOwner {
       kernelEpoch,
       helperModuleScope
     )
-    const helperPlan = await this.options.helperModules.plan(kernelEpoch, helperRequest)
+    await this.options.helperModules.plan(kernelEpoch, helperRequest)
     const queuedRun: NotebookRunRecord = {
       runId,
       executionMode: request.background ? 'background' : 'foreground',
@@ -774,11 +777,26 @@ class NotebookExecutionOwner {
       return await session.enqueueExecution(
         processKey,
         async () => {
+          // Admission freezes the target and inputs, not the process or directory that survives
+          // preceding executions. Resolve those facts again on this process's serialized turn.
+          const cwdBefore = session.cwd
+          const kernelStatusBefore = session.kernelStatus(processKey)
           const kernelWasTerminated =
-            kernelWasTerminatedAtAdmission ||
             session.isKernelTerminated(processKey) ||
             session.kernelStatus(processKey) === 'terminated' ||
             session.hasDurableKernelTermination(processKey)
+          const kernelEpoch = session.kernelEpoch(
+            processKey,
+            kernelWasTerminated,
+            notebookInterpreterIdentity(resolvedInterpreter)
+          )
+          const kernelEpochId = kernelEpoch.id
+          const executionRun = {
+            ...durableAdmission.run,
+            inputFiles: queuedRun.inputFiles,
+            cwdBefore,
+            kernelEpochId
+          }
           const kernelMarkedRunning = admission.rejection === undefined
           let executedOnLiveKernel = true
           let reachedExecutor = false
@@ -786,7 +804,7 @@ class NotebookExecutionOwner {
             session,
             // Admission freezes the exact Version identities. The request-owned copies retain only
             // the monotonic access association gathered while that frozen Version is resolved.
-            queuedRun: { ...durableAdmission.run, inputFiles: queuedRun.inputFiles },
+            queuedRun: executionRun,
             startLive: () => {
               session.markCellRunning(cell.id, runId, executionCount)
               if (kernelMarkedRunning) {
@@ -818,9 +836,13 @@ class NotebookExecutionOwner {
                     executedOnLiveKernel = false
                     return errorToExecutionResult(error, cwdBefore)
                   }
+                  const helperPlan = await this.options.helperModules.plan(
+                    kernelEpoch,
+                    helperRequest
+                  )
                   reachedExecutor = true
                   const sourceFileAccessContext = await this.options
-                    .sourceFileAccessContext?.(session, durableAdmission.run)
+                    .sourceFileAccessContext?.(session, executionRun)
                     .catch(() => undefined)
                   let executionResult = await session
                     .execute({
@@ -853,6 +875,7 @@ class NotebookExecutionOwner {
                       ...(sourceFileAccessContext ? { sourceFileAccessContext } : {})
                     })
                     .catch((error: unknown) => {
+                      if (error instanceof NotebookExecutionStopError) throw error
                       executedOnLiveKernel = false
                       const fallback =
                         session.consumeForceStopped(processKey) || signal?.aborted
@@ -957,7 +980,7 @@ class NotebookExecutionOwner {
         signal
       )
     } catch (error) {
-      if (!signal?.aborted) throw error
+      if (error instanceof NotebookExecutionStopError || !signal?.aborted) throw error
       const run = await this.options.runTerminalization.cancelQueued(
         session,
         durableAdmission.run,
@@ -979,7 +1002,8 @@ class NotebookExecutionOwner {
     session: NotebookSessionAggregate,
     request: ExecuteNotebookControlRequest,
     signal?: AbortSignal,
-    onAdmitted?: (run: NotebookRunRecord) => void
+    onAdmitted?: (run: NotebookRunRecord) => void,
+    onExecutionSettled?: (error?: unknown) => void
   ): Promise<NotebookControlResult> {
     const submissionFingerprint = controlRunFingerprint(session, request)
     const initialIdentity = request.executionInvocationId
@@ -994,6 +1018,7 @@ class NotebookExecutionOwner {
         throw new NotebookRunSubmissionConflictError(submissionIdentity)
       }
       if (onAdmitted) void active.admitted.then(onAdmitted, () => undefined)
+      if (onExecutionSettled) void active.executionSettled.then(onExecutionSettled)
       return active.promise
     }
     const completed = this.completedControlSubmissions.get(laneKey)
@@ -1005,6 +1030,7 @@ class NotebookExecutionOwner {
       if (completed.fingerprint !== submissionFingerprint) {
         throw new NotebookRunSubmissionConflictError(submissionIdentity)
       }
+      onExecutionSettled?.()
       return completed.result
     }
 
@@ -1015,6 +1041,11 @@ class NotebookExecutionOwner {
       rejectAdmitted = reject
     })
     void admitted.catch(() => undefined)
+    let resolveExecutionSettled!: (error?: unknown) => void
+    const executionSettled = new Promise<unknown>((resolve) => {
+      resolveExecutionSettled = resolve
+    })
+    if (onExecutionSettled) void executionSettled.then(onExecutionSettled)
     const promise = (async () => {
       if (request.executionInvocationId) {
         const existing = await this.options.runTerminalization.findSubmission(
@@ -1042,13 +1073,14 @@ class NotebookExecutionOwner {
         (run) => {
           resolveAdmitted(run)
           onAdmitted?.(run)
-        }
+        },
+        resolveExecutionSettled
       )
     })().catch((error) => {
       rejectAdmitted(error)
       throw error
     })
-    const entry = { fingerprint: submissionFingerprint, admitted, promise }
+    const entry = { fingerprint: submissionFingerprint, admitted, executionSettled, promise }
     this.activeControlSubmissions.set(submissionKey, entry)
     try {
       const result = await promise
@@ -1061,6 +1093,7 @@ class NotebookExecutionOwner {
       }
       return result
     } finally {
+      resolveExecutionSettled()
       if (this.activeControlSubmissions.get(submissionKey) === entry) {
         this.activeControlSubmissions.delete(submissionKey)
       }
@@ -1075,7 +1108,8 @@ class NotebookExecutionOwner {
     submissionIdentity: string,
     submissionFingerprint: string,
     signal?: AbortSignal,
-    onAdmitted?: (run: NotebookRunRecord) => void
+    onAdmitted?: (run: NotebookRunRecord) => void,
+    onExecutionSettled?: (error?: unknown) => void
   ): Promise<NotebookControlResult> {
     const admittedAt = Date.now()
     const replWasTerminated =
@@ -1159,7 +1193,17 @@ class NotebookExecutionOwner {
         )
         return controlResultFromRun(run)
       }
-    })()
+    })().then(
+      (result) => {
+        // Release the execution drain before handoff, which may itself wait for turn cleanup.
+        onExecutionSettled?.()
+        return result
+      },
+      (error: unknown) => {
+        onExecutionSettled?.(error)
+        throw error
+      }
+    )
 
     try {
       // The completion gate deliberately stays outside enqueueControl: an approved continuation may
@@ -1603,18 +1647,17 @@ class NotebookExecutionOwner {
               ownedTreeReaped =
                 shellResult.ownedTreeReaped !== false &&
                 shellResult.errorCode !== 'shell-cleanup-incomplete'
-              const status: NotebookRunStatus =
-                shellResult.errorCode === 'shell-cleanup-incomplete'
-                  ? 'failed'
-                  : shellResult.cancelled
-                    ? 'cancelled'
-                    : shellResult.runtimeStatus === 'unavailable'
-                      ? 'failed'
-                      : shellResult.exitCode === 0
-                        ? 'completed'
-                        : shellResult.exitCode === null
-                          ? 'timeout'
-                          : 'failed'
+              const status: NotebookRunStatus = !ownedTreeReaped
+                ? 'failed'
+                : shellResult.cancelled
+                  ? 'cancelled'
+                  : shellResult.runtimeStatus === 'unavailable'
+                    ? 'failed'
+                    : shellResult.exitCode === 0
+                      ? 'completed'
+                      : shellResult.exitCode === null
+                        ? 'timeout'
+                        : 'failed'
               this.options.logger.info?.('shell execution completed', {
                 executionId: runId,
                 runtime: runtimeBinding.kind,
@@ -1666,6 +1709,9 @@ class NotebookExecutionOwner {
               }
             }
           })
+          // Cancellation must report an unconfirmed stop to its owning turn. Ordinary launch/exit
+          // cleanup failures retain the existing result and recovery instructions for their caller.
+          if (!ownedTreeReaped && lifecycleSignal.aborted) throw new NotebookExecutionStopError()
           const result = terminalized.result
           if (!result) {
             return publicShellResult(terminalized.run)

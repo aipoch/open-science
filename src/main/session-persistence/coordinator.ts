@@ -14,6 +14,8 @@ import {
   type SaveSessionManifestRequest,
   type FailTaskSessionRunRequest,
   type SettleTaskSessionCompletionRequest,
+  type BindTaskSessionRequest,
+  type AdmitTaskSessionTurnRequest,
   type StageTaskSessionCompletionRequest,
   type UpdateSessionArchiveRequest,
   type SessionRuntimeContext,
@@ -126,6 +128,10 @@ type SessionMutationRepository = {
     session: PersistedChatSession,
     expectedRevision?: number
   ): Promise<PersistedChatSession>
+  saveSessionWithBindingRepair?(
+    session: PersistedChatSession,
+    expectedRevision: number
+  ): Promise<PersistedChatSession>
   saveCommittedProjectSession(session: PersistedChatSession): Promise<void>
   deleteSession(projectId: string, sessionId: string): Promise<void>
   deleteProjectSessions(projectId: string): Promise<void>
@@ -153,6 +159,9 @@ type SessionFileIndex = {
 }
 
 type SessionProvenancePersistence = {
+  recoverLegacySessionGraph?(
+    session: PersistedChatSession
+  ): Promise<PersistedChatSession | undefined>
   validateFinalizedMessageBindings(session: PersistedChatSession): Promise<void>
   captureFinalizedMessages(session: PersistedChatSession): Promise<void>
   reconcileSessionDeletions(activeSessions: PersistedChatSession[]): Promise<void>
@@ -229,7 +238,8 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     })
     this.sideChatOwner = new SessionSideChatPersistenceOwner({
       repository,
-      assertMutable: (projectId, sessionId) => this.assertMutable(projectId, sessionId, 'mutate'),
+      assertMutable: (projectId, sessionId, projectionOnly) =>
+        this.assertMutable(projectId, sessionId, 'mutate', projectionOnly),
       recordSession: (session) => this.stateOwner.recordSession(session),
       notifySessionUpdated: (session) => publishSessionUpdate(session, 'runtime-context')
     })
@@ -621,6 +631,18 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
   ): Promise<SessionRuntimeContext> {
     return this.operationScheduler.runSession(command.projectId, command.sessionId, () =>
       this.stateOwner.patchRuntimeContext(command)
+    )
+  }
+
+  bindTaskSession(command: BindTaskSessionRequest): Promise<PersistedChatSession> {
+    return this.operationScheduler.runSession(command.session.projectId, command.session.id, () =>
+      this.stateOwner.bindTaskSession(command)
+    )
+  }
+
+  admitTaskTurn(command: AdmitTaskSessionTurnRequest): Promise<PersistedChatSession> {
+    return this.operationScheduler.runSession(command.session.projectId, command.session.id, () =>
+      this.stateOwner.admitTaskTurn(command)
     )
   }
 
@@ -1146,8 +1168,13 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     )
   }
 
-  private assertMutable(projectId: string, sessionId: string, operation: 'save' | 'mutate'): void {
-    if (this.exportingSessions.has(sessionKey(projectId, sessionId)))
+  private assertMutable(
+    projectId: string,
+    sessionId: string,
+    operation: 'save' | 'mutate',
+    projectionOnly = false
+  ): void {
+    if (!projectionOnly && this.exportingSessions.has(sessionKey(projectId, sessionId)))
       throw new Error('This Session is locked while its research package is being exported.')
     if (this.deletedProjects.has(projectId)) {
       throw new Error(`Cannot ${operation} a session whose project has been deleted.`)

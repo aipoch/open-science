@@ -263,3 +263,136 @@ it('joins a repeated header with explicitly named statistics in the first record
     expect(groupPdfFigureSelections([invalid, following])).toHaveLength(2)
   }
 })
+
+it('joins numeric records with native superscript footnotes while preserving their display and copy', () => {
+  const first = batch(5),
+    second = batch(6)
+  const cell = first.elements[0].table!.cells[4]
+  cell.text = '44c'
+  cell.textRuns = [
+    { text: '44', position: 'normal' },
+    { text: 'c', position: 'superscript' }
+  ]
+  const original = structuredClone([first, second])
+  const entries = groupPdfFigureSelections([first, second])
+  expect(entries).toHaveLength(1)
+  expect(entries[0].combinedTable!.cells[4]).toEqual(cell)
+  expect(copyPdfTable(entries[0].combinedTable!, 'html', '')).toContain('44<sup>c</sup>')
+  expect([first, second]).toEqual(original)
+  delete cell.textRuns
+  expect(groupPdfFigureSelections([first, second])).toHaveLength(2)
+  cell.textRuns = [
+    { text: '44', position: 'normal' },
+    { text: 'c', position: 'subscript' }
+  ]
+  expect(groupPdfFigureSelections([first, second])).toHaveLength(2)
+})
+
+it('joins source-backed multilevel continuations while preserving sections and source regions', async () => {
+  const { resolve } = await import('node:path')
+  const { readPdfFixture } =
+    await import('../../../../../../main/literature/pdf-structure/read-fixture')
+  const f = readPdfFixture(
+    resolve('src/main/literature/pdf-structure/fixtures/rotated-outcome-table-continuation.jsonl')
+  )
+  const a = batch(5),
+    b = batch(6)
+  a.elements[0].table = f.start
+  b.elements[0].table = f.continued
+  a.elements[0].caption!.text =
+    'Table 4 Mean and Range T 1 (Baseline). T 2 (1 week after) and T 3 (5 week after); Mean Differences. t-distribution. and p values of T 1 - T 2 and T1 - T 3 for within-group change scores in Patient-Reported Outcomes'
+  b.elements[0].caption!.text =
+    'Table 4 Mean and Range T 1 (Baseline). T 2 (1 week after) and T 3 (5 week after); Mean Differences. t-distribution. and p values of T 1 - T 2 and T1 - T 3 for within-group change scores in Patient-Reported Outcomes (Continued)'
+  const original = structuredClone([a, b])
+  const joined = groupPdfFigureSelections([a, b])
+  expect(joined).toHaveLength(1)
+  expect(joined[0].combinedTable?.rowCount).toBe(f.start.rowCount + f.continued.rowCount - 2)
+  expect(joined[0].combinedTable?.cells.find((c) => c.text === 'Insomnia')?.regions[0].page).toBe(
+    12
+  )
+  expect(joined[0].combinedTable?.cells.find((c) => c.text === 'POMS')?.columnSpan).toBe(15)
+  expect([a, b]).toEqual(original)
+  for (const mode of [
+    'changed-caption',
+    'changed-parent',
+    'overlap',
+    'missing-leaf',
+    'unassigned'
+  ]) {
+    const next = structuredClone(b),
+      table = next.elements[0].table!
+    if (mode === 'changed-caption')
+      next.elements[0].caption!.text = 'Table 4. Independent outcomes. (Continued)'
+    if (mode === 'changed-parent')
+      table.cells.find((c) => c.row === 0 && c.column === 1)!.text = 'Other cohort'
+    if (mode === 'overlap') table.cells.push(structuredClone(table.cells[0]))
+    if (mode === 'missing-leaf')
+      table.cells = table.cells.filter((c) => !(c.row === 1 && c.column === 1))
+    if (mode === 'unassigned') table.unassignedText.push({ text: 'Unowned value', regions: [] })
+    expect(groupPdfFigureSelections([a, next]), mode).toHaveLength(2)
+  }
+})
+
+it('joins native assessment schedules and unheaded quotations without dropping body rows', async () => {
+  const { readPdfFixture } =
+    await import('../../../../../../main/literature/pdf-structure/read-fixture')
+  const { resolve } = await import('node:path')
+  const cases = readPdfFixture(
+    resolve('src/main/literature/pdf-structure/fixtures/native-table-continuations.jsonl')
+  )
+  for (const [name, rows] of [
+    ['schedules', 30],
+    ['quotations', 9]
+  ] as const) {
+    const results = cases[name] as PdfStructureResult[]
+    const original = structuredClone(results),
+      grouped = groupPdfFigureSelections(results)
+    expect(grouped).toHaveLength(1)
+    expect(grouped[0].combinedTable?.rowCount).toBe(rows)
+    expect(grouped[0].continuations).toHaveLength(1)
+    expect(results).toEqual(original)
+    if (name === 'quotations') {
+      expect(grouped[0].combinedTable?.cells.map((c) => c.text)).toEqual(
+        results.flatMap((r) => r.elements[0].table!.cells.map((c) => c.text))
+      )
+      expect(copyPdfTable(grouped[0].combinedTable!, 'tsv', '')).toContain('3.1 a “And I agree')
+    }
+  }
+})
+it.each([
+  'no-caption',
+  'different-number',
+  'different-columns',
+  'ordinary-prose',
+  'unassigned',
+  'different-source',
+  'nonadjacent'
+])('leaves a narrative continuation separate with %s evidence', async (variant) => {
+  const { readPdfFixture } =
+    await import('../../../../../../main/literature/pdf-structure/read-fixture')
+  const { resolve } = await import('node:path')
+  const { quotations } = readPdfFixture(
+    resolve('src/main/literature/pdf-structure/fixtures/native-table-continuations.jsonl')
+  )
+  const next = quotations[1] as PdfStructureResult,
+    element = next.elements[0],
+    table = element.table!
+  if (variant === 'no-caption') delete element.caption
+  if (variant === 'different-number') element.caption!.text = 'Table 2 (continued)'
+  if (variant === 'different-columns')
+    table.cells
+      .filter((c) => c.column === 1)
+      .forEach((c) =>
+        c.regions.forEach((r) => {
+          r.x += 0.04
+        })
+      )
+  if (variant === 'ordinary-prose')
+    table.cells.forEach((c) => {
+      c.text = c.text.replace(/^\d.*?[“"]/, '')
+    })
+  if (variant === 'unassigned') table.unassignedText = [{ text: 'Unplaced content', regions: [] }]
+  if (variant === 'different-source') next.sourceChecksum = 'd'.repeat(64)
+  if (variant === 'nonadjacent') element.regions[0].page += 1
+  expect(groupPdfFigureSelections(quotations)).toHaveLength(2)
+})

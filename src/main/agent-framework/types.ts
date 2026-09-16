@@ -326,6 +326,9 @@ export type ResolvedAgentBackend = {
   executablePath: string
   env: Record<string, string>
   args?: string[]
+  // Process-local snapshot of app-generated OpenCode config/plugin/instruction files. Delegated
+  // Attempts materialize this admission's files rather than rereading mutable global config.
+  opencodeConfigFiles?: readonly Readonly<AgentConfigFile>[]
   proxyEnvironmentMode?: ProxyEnvironmentMode
   // Framework-native session options retained by the runtime and passed through buildSessionSetup.
   sessionOptions?: Record<string, unknown>

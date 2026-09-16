@@ -761,6 +761,9 @@ describe('ACP delegate execution production adapter', () => {
       sessionId: 'provider-two',
       toolCallId: 'tool-two',
       title: 'second only',
+      providerToolName: 'WebFetch',
+      toolKind: 'fetch',
+      isMcp: false,
       options: [{ optionId: 'allow', name: 'Allow', kind: 'allow_always', scope: 'session' }]
     })
     await second.respondToPermission({ requestId: 'permission-two', optionId: 'allow' })
@@ -785,6 +788,9 @@ describe('ACP delegate execution production adapter', () => {
     expect(firstEvents.join('\n')).not.toContain('second only')
     expect(secondEvents.join('\n')).toContain('permission-two')
     expect(secondEvents.join('\n')).toContain('"scope":"session"')
+    expect(secondEvents.join('\n')).toContain('"providerToolName":"WebFetch"')
+    expect(secondEvents.join('\n')).toContain('"isMcp":false')
+    expect(secondEvents.join('\n')).toContain('"toolKind":"fetch"')
     expect(controls.get('two')?.responses).toEqual([
       { requestId: 'permission-two', optionId: 'allow' }
     ])

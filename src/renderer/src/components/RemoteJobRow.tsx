@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { Zap, ChevronRight } from 'lucide-react'
 
 import type { JobSummary } from '../../../shared/compute'
-import { formatDuration, jobElapsedMs } from './remote-job-badge-utils'
+import { formatDuration, isJobElapsedLive, jobElapsedMs } from './remote-job-badge-utils'
 
 // RemoteJobRow appears at the bottom of the repl_execute tool-call block that submitted a job.
 // Design: design.md §5a — ⚡ host alias | intent | running · elapsed ›
@@ -19,13 +19,14 @@ type RemoteJobRowProps = {
 export function RemoteJobRow({ job, onOpen }: RemoteJobRowProps): React.JSX.Element {
   const { t } = useTranslation()
   const [now, setNow] = useState(() => Date.now())
+  const hasLiveElapsed = isJobElapsedLive(job)
 
   // Tick every second while the job is still running so elapsed time stays fresh.
   useEffect(() => {
-    if (job.status !== 'running' && job.status !== 'submitted') return
+    if (!hasLiveElapsed) return
     const id = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(id)
-  }, [job.status])
+  }, [hasLiveElapsed])
 
   const elapsedMs = jobElapsedMs(job, now)
   const elapsedStr = formatDuration(elapsedMs)

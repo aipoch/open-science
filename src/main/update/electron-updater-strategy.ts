@@ -4,9 +4,16 @@ import { autoUpdater, CancellationToken, AppImageUpdater, DebUpdater } from 'ele
 
 import { APP } from '../../shared/app-config'
 import { isCurrentInFlight } from '../../shared/in-flight-promise'
-import { isNewer, type UpdateApplyOptions, type UpdateStatus } from '../../shared/update'
+import {
+  isNewer,
+  UPDATE_INSTALLATION_REQUIRED,
+  type UpdateApplyOptions,
+  type UpdateDownloadOptions,
+  type UpdateStatus
+} from '../../shared/update'
 import { startDiagnosticOperation, type DiagnosticOperation } from '../diagnostics/operation'
 import type { Logger } from '../logger'
+import { createMacInstallationGuard, isMacReadOnlyUpdaterError } from '../mac-installation'
 import { fetchManifest } from './manifest'
 import {
   canStartUpdateDownload,
@@ -50,6 +57,7 @@ export interface MinimalAutoUpdater {
 }
 
 export type ElectronUpdaterDeps = {
+  installationGuard?: (interactive: boolean, knownReadOnly?: boolean) => boolean
   updater?: MinimalAutoUpdater
   currentVersion?: string
   platform?: NodeJS.Platform
@@ -217,6 +225,8 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   private installerStarted = false
   private pendingInstallRollback?: () => void
   // Pre-install backend-shutdown gate, owned immutably for the strategy lifetime.
+  private readOnlyInstallerFailure = false
+  private readonly installationGuard: (interactive: boolean, knownReadOnly?: boolean) => boolean
   private readonly installGate?: InstallGate
   private readonly releaseInstallHandoff: () => void
   private readonly markUpdateShutdown: () => () => void
@@ -245,6 +255,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     this.manifestUrl = deps.manifestUrl ?? APP.update.manifestUrl
     this.log = deps.log ?? NOOP_LOGGER
     this.createCancellationToken = deps.createCancellationToken ?? (() => new CancellationToken())
+    this.installationGuard = deps.installationGuard ?? createMacInstallationGuard()
     this.installGate = deps.installGate
     this.releaseInstallHandoff = deps.releaseInstallHandoff ?? (() => undefined)
     this.markUpdateShutdown =
@@ -357,12 +368,17 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
         operation.phase('handoff')
         operation.fail(err, { result: 'error' })
       }
+      this.readOnlyInstallerFailure ||= isMacReadOnlyUpdaterError(err, this.platform)
       this.applying = false
       this.installerStarted = false
       this.setStatus({
         ...this.status,
         state: 'error',
-        error: err instanceof Error ? err.message : 'Update error'
+        error: isMacReadOnlyUpdaterError(err, this.platform)
+          ? UPDATE_INSTALLATION_REQUIRED
+          : err instanceof Error
+            ? err.message
+            : 'Update error'
       })
     })
   }
@@ -386,6 +402,13 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       applyKind: 'restart'
     }
     this.broadcast('update:status', this.status)
+  }
+
+  private blockForInstallation(interactive: boolean): boolean {
+    if (!this.installationGuard(interactive, this.readOnlyInstallerFailure)) return false
+    this.setStatus({ ...this.status, state: 'error', error: UPDATE_INSTALLATION_REQUIRED })
+    this.log.warn('update requires installation', { reason: 'read-only-volume' })
+    return true
   }
 
   getStatus(): UpdateStatus {
@@ -467,7 +490,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     }
   }
 
-  async download(): Promise<UpdateStatus> {
+  async download(options: UpdateDownloadOptions = {}): Promise<UpdateStatus> {
     // An active download is in flight; ignore repeat clicks / concurrent renderers. Starting a second
     // would overwrite downloadToken and orphan the first (cancel() could no longer stop it). This guard
     // and the token claim below are synchronous so a racing download()/cancel() sees a consistent slot.
@@ -488,6 +511,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     }
     if (this.applying || this.downloadToken) return this.status
     if (!canStartUpdateDownload(this.status)) return this.status
+    if (this.blockForInstallation(!options.nonInteractive)) return this.status
 
     const operation = startDiagnosticOperation(this.log, {
       operation: 'update-download',
@@ -582,6 +606,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     // second teardown/install. The broadcast also gives the renderer immediate feedback during the
     // shutdown gate, which can take up to 15 seconds on Windows.
     if (this.status.state !== 'ready' || this.applying) return this.status
+    if (this.blockForInstallation(options.relaunch !== false)) return this.status
     this.applying = true
     this.installerStarted = false
     this.setStatus({

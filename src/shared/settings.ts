@@ -5,6 +5,7 @@
 // only while the user is actively typing one in.
 
 import type { OfficialVendorId } from './provider-registry'
+import { customProviderRequiresKey } from './provider-base-url'
 import type { PermissionProfileId } from './permission-profiles'
 import type {
   CustomReasoningEffortTransport,
@@ -133,6 +134,15 @@ export const selectClaudeSubscriptionProvider = <T extends { id: string; type: P
 // A provider advertises the explicit set of endpoints it serves; a framework supports a set too.
 export type ChatApiEndpoint = 'anthropic' | 'openai' | 'responses'
 
+// Route path each chat endpoint speaks. Raw API paths are literal and identical in every locale
+// (they must match a gateway's own documentation); only the surrounding copy is localized per
+// surface. Main and renderer share this one map so no surface keeps a private copy.
+export const ENDPOINT_PATHS: Record<ChatApiEndpoint, string> = {
+  anthropic: '/v1/messages',
+  openai: '/v1/chat/completions',
+  responses: '/v1/responses'
+}
+
 // The endpoints a provider offers. Absent/empty ⇒ treat as ['anthropic'] (every legacy provider, and
 // the migration target for the removed 'both' apiType, which mapped to ['anthropic','openai']).
 export const providerEndpoints = (provider: {
@@ -149,10 +159,15 @@ export const canUseClaudeProviderTransport = (provider: {
   type: ProviderType
   apiEndpoints?: readonly ChatApiEndpoint[]
   key?: string
+  baseUrl?: string
 }): boolean =>
   usesAppProviderTransport(provider.type) &&
   providerEndpoints(provider).includes('anthropic') &&
-  (provider.type !== 'custom' || Boolean(provider.key))
+  // A custom gateway needs credentials unless it is a loopback local model server, which serves the
+  // Anthropic route without one; the transport adapters already treat the key as optional.
+  (provider.type !== 'custom' ||
+    Boolean(provider.key) ||
+    !customProviderRequiresKey(provider.baseUrl))
 
 // A provider's endpoints are compatible with a framework only when they share at least one endpoint.
 // Codex's Responses-compatible bridge is a separate local gateway: it does not change the provider's
@@ -371,6 +386,9 @@ export const providerValidationFailed = (
   target?: ProviderValidationTarget
 ): boolean =>
   provider.lastValidationFailure !== undefined &&
+  // A legacy 'incompatible' verdict is a derivable (provider, framework) relationship, not endpoint
+  // health; validation no longer records it, and stored copies must not hide the provider either.
+  provider.lastValidationFailure.category !== 'incompatible' &&
   (provider.lastValidationFailure.target === undefined ||
     (target !== undefined &&
       providerValidationTargetMatches(provider.lastValidationFailure.target, target))) &&
@@ -790,6 +808,11 @@ export type ValidateProviderResult = {
   // Set when the user explicitly cancelled a browser sign-in. Distinct from applied:false (provider
   // changed): the login was intentionally stopped, not invalidated by a concurrent edit.
   cancelled?: boolean
+  // True when the endpoint itself was probed (ok carries endpoint health) but the active agent
+  // framework cannot drive this provider. A derivable (provider, framework) relationship surfaced
+  // for immediate UI feedback — never persisted as a validation failure, because it goes stale the
+  // moment the framework changes.
+  frameworkIncompatible?: boolean
 }
 
 // Request to refresh a saved provider's model list from the vendor's live API (fills the bundled

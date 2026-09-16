@@ -415,6 +415,7 @@ export type PersistedSideChat = Readonly<{
   providerSessionId?: string
   providerContinuityToken?: string
   model?: string
+  reasoningEffort?: ReasoningEffort
   historyPreamble: string
   entries: readonly SideChatEntry[]
   createdAt: number
@@ -903,6 +904,29 @@ export type PersistedChatSession = {
   createdAt: number
   updatedAt: number
 }
+
+// Internal Task admission command; not part of the persisted Session format.
+export type BindTaskSessionRequest = Readonly<{
+  session: Pick<
+    PersistedChatSession,
+    | 'id'
+    | 'projectId'
+    | 'cwd'
+    | 'permissionProfile'
+    | 'agentFrameworkId'
+    | 'agentBackendId'
+    | 'providerSessionId'
+    | 'providerContinuityToken'
+    | 'agentConfiguration'
+    | 'updatedAt'
+  >
+  contextReset: boolean
+}>
+
+export type AdmitTaskSessionTurnRequest = Readonly<{
+  session: PersistedChatSession
+  contextReset: boolean
+}>
 
 export type StageTaskSessionCompletionRequest = Readonly<{
   projectId: string
@@ -1436,6 +1460,7 @@ const sanitizePersistedSideChatWithLegacyRelays = (
       'providerSessionId',
       'providerContinuityToken',
       'model',
+      'reasoningEffort',
       'historyPreamble',
       'entries',
       'pendingRelays',
@@ -1513,6 +1538,7 @@ const sanitizePersistedSideChatWithLegacyRelays = (
     ...(providerSessionId !== undefined ? { providerSessionId } : {}),
     ...(providerContinuityToken !== undefined ? { providerContinuityToken } : {}),
     ...(model !== undefined ? { model } : {}),
+    ...(isReasoningEffort(value.reasoningEffort) ? { reasoningEffort: value.reasoningEffort } : {}),
     historyPreamble,
     entries: entries as SideChatEntry[],
     createdAt,

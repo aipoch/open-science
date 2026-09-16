@@ -510,24 +510,27 @@ export const LiteratureFullTextLookup = ({
                       (retryAfter[new URL(candidate.url).origin] ?? 0) > now
                     }
                     onClick={() => void attach(candidate)}
+                    aria-busy={Boolean(adding === candidate.id)}
                   >
-                    {adding === candidate.id ? (
-                      <LoaderCircle
-                        className="size-4 animate-spin motion-reduce:animate-none"
-                        aria-hidden="true"
-                      />
-                    ) : (
-                      <Download className="size-4" aria-hidden="true" />
-                    )}
-                    {adding === candidate.id
-                      ? t('Adding PDF…')
-                      : (retryAfter[new URL(candidate.url).origin] ?? 0) > now
-                        ? t('Retry in {{seconds}}s', {
-                            seconds: Math.ceil(
-                              (retryAfter[new URL(candidate.url).origin]! - now) / 1000
-                            )
-                          })
-                        : t('Add attachment')}
+                    <span key={String(adding === candidate.id)} className="button-feedback">
+                      {adding === candidate.id ? (
+                        <LoaderCircle
+                          className="size-4 animate-spin motion-reduce:animate-none"
+                          aria-hidden="true"
+                        />
+                      ) : (
+                        <Download className="size-4" aria-hidden="true" />
+                      )}
+                      {adding === candidate.id
+                        ? t('Adding PDF…')
+                        : (retryAfter[new URL(candidate.url).origin] ?? 0) > now
+                          ? t('Retry in {{seconds}}s', {
+                              seconds: Math.ceil(
+                                (retryAfter[new URL(candidate.url).origin]! - now) / 1000
+                              )
+                            })
+                          : t('Add attachment')}
+                    </span>
                   </Button>
                   <Button asChild variant="ghost" size="sm">
                     <a

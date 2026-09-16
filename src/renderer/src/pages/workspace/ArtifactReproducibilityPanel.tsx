@@ -2180,21 +2180,23 @@ export const ArtifactReproducibilityPanel = ({
                     aria-busy={starting || restoringSummary}
                     onClick={() => void startCheck()}
                   >
-                    {starting ? (
-                      <LoaderCircle
-                        className="animate-spin motion-reduce:animate-none"
-                        aria-hidden="true"
-                      />
-                    ) : null}
-                    {starting
-                      ? t('Starting…')
-                      : restoringSummary
-                        ? t('Loading…')
-                        : summaryStatus === 'failed'
-                          ? t('Retry check')
-                          : checkState || latestReceipt
-                            ? t('Check again')
-                            : t('Check reproducibility')}
+                    <span key={String(starting)} className="button-feedback">
+                      {starting ? (
+                        <LoaderCircle
+                          className="animate-spin motion-reduce:animate-none"
+                          aria-hidden="true"
+                        />
+                      ) : null}
+                      {starting
+                        ? t('Starting…')
+                        : restoringSummary
+                          ? t('Loading…')
+                          : summaryStatus === 'failed'
+                            ? t('Retry check')
+                            : checkState || latestReceipt
+                              ? t('Check again')
+                              : t('Check reproducibility')}
+                    </span>
                   </Button>
                 )
                 return action
@@ -2859,18 +2861,28 @@ export const ArtifactReproducibilityPanel = ({
                                       'Includes the report, logs, and retained differing outputs. Source data is not included.'
                                     )}
                                     onClick={() => void exportReceipt(receipt)}
-                                  >
-                                    {exportingReceiptChecksum === receipt.receiptChecksum ? (
-                                      <LoaderCircle
-                                        className="animate-spin motion-reduce:animate-none"
-                                        aria-hidden="true"
-                                      />
-                                    ) : (
-                                      <Download aria-hidden="true" />
+                                    aria-busy={Boolean(
+                                      exportingReceiptChecksum === receipt.receiptChecksum
                                     )}
-                                    {exportingReceiptChecksum === receipt.receiptChecksum
-                                      ? t('Exporting…')
-                                      : t('Export verification record')}
+                                  >
+                                    <span
+                                      key={String(
+                                        exportingReceiptChecksum === receipt.receiptChecksum
+                                      )}
+                                      className="button-feedback"
+                                    >
+                                      {exportingReceiptChecksum === receipt.receiptChecksum ? (
+                                        <LoaderCircle
+                                          className="animate-spin motion-reduce:animate-none"
+                                          aria-hidden="true"
+                                        />
+                                      ) : (
+                                        <Download aria-hidden="true" />
+                                      )}
+                                      {exportingReceiptChecksum === receipt.receiptChecksum
+                                        ? t('Exporting…')
+                                        : t('Export verification record')}
+                                    </span>
                                   </Button>
                                 ) : null}
                               </div>
@@ -2889,14 +2901,17 @@ export const ArtifactReproducibilityPanel = ({
                     className="m-3.5"
                     disabled={receiptHistory.loadingMore}
                     onClick={() => void loadMoreReceipts()}
+                    aria-busy={Boolean(receiptHistory.loadingMore)}
                   >
-                    {receiptHistory.loadingMore ? (
-                      <LoaderCircle
-                        className="animate-spin motion-reduce:animate-none"
-                        aria-hidden="true"
-                      />
-                    ) : null}
-                    {receiptHistory.loadingMore ? t('Loading…') : t('Load more')}
+                    <span key={String(receiptHistory.loadingMore)} className="button-feedback">
+                      {receiptHistory.loadingMore ? (
+                        <LoaderCircle
+                          className="animate-spin motion-reduce:animate-none"
+                          aria-hidden="true"
+                        />
+                      ) : null}
+                      {receiptHistory.loadingMore ? t('Loading…') : t('Load more')}
+                    </span>
                   </Button>
                 ) : null}
               </ReproducibilityOutputStorage>

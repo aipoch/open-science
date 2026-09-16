@@ -1511,6 +1511,8 @@ const hasStagedUploads = (session: ChatSession): boolean =>
 const withoutMainOwnedOrTransientSessionMetadata = (session: ChatSession): ChatSession => ({
   ...session,
   branchSwitchBlocked: undefined,
+  activePlanProjection: undefined,
+  interactionState: undefined,
   agentPromptInFlight: undefined,
   awaitingFirstAgentOutput: undefined,
   revision: undefined,
@@ -1631,6 +1633,8 @@ const createStoreSaver = (
             ...(options?.conflictRebaseFieldsByTarget?.get(target) ?? [])
           ])
         ].filter((field): field is 'title' | 'pinned' => field === 'title' || field === 'pinned')
+        // Catalog hydration changes object identity without introducing a local metadata edit.
+        if (!isForced && conflictRebaseFields.length === 0) continue
         const saveOptions = conflictRebaseFields.length > 0 ? { conflictRebaseFields } : undefined
         tasks.push({
           target,

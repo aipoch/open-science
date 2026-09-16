@@ -261,13 +261,9 @@ describe('notebook local RPC adapter', () => {
       const methodRequest = requestByMethod[method]
       const handler = resolveNotebookLocalRpcHandler(capability, method, methodRequest)
       const cancellation = new AbortController()
+      const executionSettled = vi.fn()
 
-      await (
-        handler as unknown as (
-          request: Record<string, unknown>,
-          signal: AbortSignal
-        ) => Promise<unknown>
-      )(methodRequest, cancellation.signal)
+      await handler(methodRequest, cancellation.signal, executionSettled)
 
       if (method === 'execute') {
         expect(capability.executeBackground).toHaveBeenCalledWith(
@@ -280,7 +276,11 @@ describe('notebook local RPC adapter', () => {
       } else if (method === 'runCell') {
         expect(capability.runCell).toHaveBeenCalledWith(methodRequest, cancellation.signal)
       } else {
-        expect(capability.executeControl).toHaveBeenCalledWith(methodRequest, cancellation.signal)
+        expect(capability.executeControl).toHaveBeenCalledWith(
+          methodRequest,
+          cancellation.signal,
+          executionSettled
+        )
       }
     }
   )

@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import { act, forwardRef, useCallback, useEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { waitFor } from '@testing-library/react'
+import { fireEvent, waitFor } from '@testing-library/react'
+import { literatureItemInputSchema } from '../../../../shared/literature'
+import { BookmarksProvider } from './bookmarks/BookmarksProvider'
 import type { PropsWithChildren } from 'react'
 import {
   useSessionStore,
@@ -472,6 +474,62 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     vi.unstubAllGlobals()
     container.remove()
   })
+
+  it.each([false, true])(
+    'opens Literature metadata with package=%s independently of bookmark scope',
+    async (packaged) => {
+      const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+      const getLiteratureItem = vi.fn().mockResolvedValue(undefined)
+      Object.assign(window.api, { literature: { get: getLiteratureItem } })
+      const title = 'Saved Literature paper'
+      const session = createSession({
+        status: 'idle',
+        messages: [
+          createMessage({
+            parts: [
+              {
+                type: 'literature',
+                itemId: 'item-1',
+                metadataRevision: 1,
+                item: literatureItemInputSchema.parse({ itemType: 'journalArticle', title })
+              }
+            ]
+          })
+        ],
+        ...(packaged
+          ? {
+              packageOrigin: {
+                importId: 'import-1',
+                sourceProjectId: 'source-project',
+                sourceSessionId: 'source-session',
+                importedAt: 1,
+                manifestChecksum: 'a'.repeat(64)
+              }
+            }
+          : {})
+      })
+      root = createRoot(container)
+      await act(async () => {
+        root.render(
+          // Imported packages deliberately have no bookmark scope in WorkspacePage.
+          <BookmarksProvider>
+            <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+          </BookmarksProvider>
+        )
+      })
+      await act(async () => {
+        fireEvent.click(container.querySelector(`[aria-label="Open ${title}"]`)!)
+      })
+      const dialog = document.body.querySelector('[role="dialog"]')
+      expect(dialog?.textContent).toContain(title)
+      if (packaged) {
+        expect(dialog?.textContent).toContain('Saved reference metadata from the Session package.')
+        expect(getLiteratureItem).not.toHaveBeenCalled()
+      } else {
+        expect(getLiteratureItem).toHaveBeenCalledWith('item-1')
+      }
+    }
+  )
 
   it('keeps every transcript row a direct MessageScrollerItem child of the content element', async () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')

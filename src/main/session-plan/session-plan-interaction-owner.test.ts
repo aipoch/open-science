@@ -1,8 +1,34 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { SessionPlanInteractionOwner } from './session-plan-interaction-owner'
 
 describe('SessionPlanInteractionOwner', () => {
+  it('keeps pause ownership after a decision and ignores stale Provider stops', async () => {
+    const owner = new SessionPlanInteractionOwner()
+    const approval = owner.parkApproval('session-1', 'prompt-1')
+    const dispose = vi.fn()
+    owner.suspendProvider('session-1', 7, approval, () => dispose)
+    const pause = owner.providerPauseFor('session-1', 7)!
+    owner.resolveApproval(
+      'session-1',
+      { decision: 'approved' },
+      owner.approvalTokenFor('session-1')
+    )
+    expect(owner.providerPauseFor('session-1', 7)).toBe(pause)
+    expect(owner.observeProviderStop('session-1', 6)).toBeUndefined()
+    expect(dispose).not.toHaveBeenCalled()
+    owner.observeProviderStop('session-1', 7)
+    await expect(pause.response).resolves.toEqual({ decision: 'approved' })
+    expect(dispose).toHaveBeenCalledOnce()
+    expect(owner.releaseProviderPause('session-1', pause)).toBe(true)
+    const replacement = owner.parkApproval('session-1', 'prompt-1')
+    void replacement.catch(() => undefined)
+    owner.suspendProvider('session-1', 8, replacement, () => vi.fn())
+    expect(owner.releaseProviderPause('session-1', pause)).toBe(false)
+    owner.clearAll('closed')
+    expect(owner.providerPauseFor('session-1')).toBeUndefined()
+  })
+
   it('resolves only the current Artifact Version interaction', () => {
     const owner = new SessionPlanInteractionOwner()
 

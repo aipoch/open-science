@@ -12,7 +12,6 @@ import {
 } from '../../shared/permission-profiles'
 import {
   releaseResolvedAgentBackendLeases,
-  type AgentModelConfig,
   type ResolvedAgentBackend,
   type SessionSetup
 } from '../agent-framework'
@@ -22,6 +21,10 @@ import type { NotebookRpcConnection } from '../notebook/mcp-server'
 import type { SessionKey } from './session-records'
 import type { AcpDelegateExecutionCallbacks, PreparedDelegateExecution } from './acp-execution'
 import type { DelegateExecutionInput } from './execution-port'
+import {
+  prepareOpenCodeRuntime,
+  type PreparedOpenCodeRuntime
+} from './opencode-runtime-preparation'
 import {
   createProductionDelegatedFrameworks,
   type PreparedProductionFrameworkScope,
@@ -59,16 +62,6 @@ const withDelegatedChildContext = (backend: ResolvedAgentBackend): ResolvedAgent
   systemPromptAppends: [
     ...(backend.systemPromptAppends ?? []),
     DELEGATED_CHILD_SYSTEM_PROMPT_APPEND
-  ]
-})
-
-const openCodeModelConfig = (backend: ResolvedAgentBackend): AgentModelConfig => ({
-  env: { ...backend.env },
-  configFiles: [
-    {
-      path: 'opencode.json',
-      content: backend.env.OPENCODE_CONFIG_CONTENT ?? '{}'
-    }
   ]
 })
 
@@ -127,6 +120,7 @@ const createProductionDelegatedFrameworkRuntime = (
           'runtime',
           input.attemptId
         )
+        let openCodeRuntime: PreparedOpenCodeRuntime | undefined
         try {
           await mkdir(runtimeHome, { recursive: true, mode: 0o700 })
           const durable = await options.readSession(input.session)
@@ -138,6 +132,9 @@ const createProductionDelegatedFrameworkRuntime = (
           )
           if (!durable || !graph || !frame || !branch || !prompt) {
             throw new Error('Delegated Attempt has no durable Frame provenance.')
+          }
+          if (frameworkId === 'opencode') {
+            openCodeRuntime = await prepareOpenCodeRuntime(backend, runtimeHome)
           }
           const capability = await options.notebookRpcServer().issueDelegatedNotebookConnection({
             projectId: input.session.projectId,
@@ -158,7 +155,7 @@ const createProductionDelegatedFrameworkRuntime = (
             }
           })
           preparedAttempts.set(input.attemptId, {
-            backend,
+            backend: openCodeRuntime?.backend ?? backend,
             connection: capability,
             releaseBackend: releaseResolvedBackend
           })
@@ -184,6 +181,7 @@ const createProductionDelegatedFrameworkRuntime = (
               ? { artifactCurrentRunFile: input.artifactCurrentRunFile }
               : {}),
             async disposeResources() {
+              openCodeRuntime?.dispose()
               const owned = preparedAttempts.get(input.attemptId)
               preparedAttempts.delete(input.attemptId)
               if (owned?.releaseBackend) await releaseResolvedAgentBackendLeases(owned.backend)
@@ -199,12 +197,13 @@ const createProductionDelegatedFrameworkRuntime = (
             return { ...base, sessionSetup: sessionSetup(backend) }
           }
           if (frameworkId === 'opencode') {
-            return { ...base, modelConfig: openCodeModelConfig(backend) }
+            return { ...base, modelConfig: openCodeRuntime!.modelConfig }
           }
           throw new Error(
             `Delegated-work framework ${frameworkId} does not prepare an execution scope.`
           )
         } catch (error) {
+          openCodeRuntime?.dispose()
           preparedAttempts.delete(input.attemptId)
           if (releaseResolvedBackend) await releaseResolvedAgentBackendLeases(backend)
           await rm(runtimeHome, { recursive: true, force: true }).catch(() => undefined)

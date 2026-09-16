@@ -359,14 +359,20 @@ export const CollectionEditorDialog = forwardRef<
               >
                 {t('Cancel')}
               </Button>
-              <Button type="submit" disabled={!name.trim() || saving || conflict}>
-                {saving ? (
-                  <LoaderCircle
-                    className="size-4 animate-spin motion-reduce:animate-none"
-                    aria-hidden="true"
-                  />
-                ) : null}
-                {mode === 'create' ? t('Create collection') : t('Save changes')}
+              <Button
+                type="submit"
+                disabled={!name.trim() || saving || conflict}
+                aria-busy={Boolean(saving)}
+              >
+                <span key={String(saving)} className="button-feedback">
+                  {saving ? (
+                    <LoaderCircle
+                      className="size-4 animate-spin motion-reduce:animate-none"
+                      aria-hidden="true"
+                    />
+                  ) : null}
+                  {mode === 'create' ? t('Create collection') : t('Save changes')}
+                </span>
               </Button>
             </div>
           </form>

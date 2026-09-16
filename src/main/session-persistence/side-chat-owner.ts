@@ -59,7 +59,7 @@ type SideChatStateRepository = Readonly<{
 
 type SessionSideChatPersistenceOwnerOptions = Readonly<{
   repository: SideChatStateRepository
-  assertMutable(projectId: string, sessionId: string): void
+  assertMutable(projectId: string, sessionId: string, projectionOnly: boolean): void
   recordSession(session: PersistedChatSession): void
   notifySessionUpdated(session: PersistedChatSession): void
 }>
@@ -107,7 +107,7 @@ class SessionSideChatPersistenceOwner {
   }
 
   async saveProjection(command: SaveSideChatProjectionCommand): Promise<PersistedSideChat> {
-    const session = await this.loadMutable(command.projectId, command.sessionId)
+    const session = await this.loadMutable(command.projectId, command.sessionId, true)
     const current = session.runtimeContext ?? emptyRuntimeContext()
     const chats = [...getPersistedSideChats(current)]
     const index = chats.findIndex((chat) => chat.id === command.sideChat.id)
@@ -220,8 +220,12 @@ class SessionSideChatPersistenceOwner {
     return true
   }
 
-  private async loadMutable(projectId: string, sessionId: string): Promise<PersistedChatSession> {
-    this.options.assertMutable(projectId, sessionId)
+  private async loadMutable(
+    projectId: string,
+    sessionId: string,
+    projectionOnly = false
+  ): Promise<PersistedChatSession> {
+    this.options.assertMutable(projectId, sessionId, projectionOnly)
     const loaded = await loadSessionMutationAuthority(this.options.repository, projectId, sessionId)
     if (loaded.status === 'unreadable') {
       throw new Error('Cannot mutate Side chat because its parent Session JSON is unreadable.')

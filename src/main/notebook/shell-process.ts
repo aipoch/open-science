@@ -368,9 +368,14 @@ const prepareShellLaunchOptions = async (
                 ? []
                 : [
                     dirname(invocation.executable),
-                    ...environmentPathRoots(baseEnv, runtimePlatform)
+                    ...(runtimePlatform === 'win32'
+                      ? []
+                      : environmentPathRoots(baseEnv, runtimePlatform))
                   ])
             ],
+            ...(runtimePlatform === 'win32'
+              ? { optionalReadOnlyRoots: environmentPathRoots(baseEnv, runtimePlatform) }
+              : {}),
             readWriteRoots: [
               options.notebookSessionRoot ?? options.cwd,
               options.cwd,

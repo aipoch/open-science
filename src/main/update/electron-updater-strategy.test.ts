@@ -1,3 +1,4 @@
+import { UPDATE_INSTALLATION_REQUIRED } from '../../shared/update'
 import { EventEmitter } from 'node:events'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -1524,5 +1525,82 @@ describe('ElectronUpdaterStrategy', () => {
     // The retry's progress event should report fresh transferred, not stale bytes.
     expect(retry.downloadedBytes).toBe(5500)
     await first
+  })
+})
+
+describe('read-only installation update admission', () => {
+  it('blocks repeated downloads without starting a transfer and publishes actionable status', async () => {
+    const updater = new FakeUpdater()
+    const broadcast = vi.fn()
+    const installationGuard = vi.fn(() => true)
+    const strategy = createStrategy({
+      updater,
+      installationGuard,
+      broadcast,
+      fetchImpl: offlineFetch()
+    })
+    updater.emit('update-available', { version: '0.3.0' })
+    for (let attempt = 0; attempt < 3; attempt++) {
+      expect(await strategy.download({ nonInteractive: true })).toMatchObject({
+        state: 'error',
+        error: UPDATE_INSTALLATION_REQUIRED,
+        latest: '0.3.0'
+      })
+    }
+    expect(updater.downloadUpdate).not.toHaveBeenCalled()
+    expect(installationGuard).toHaveBeenLastCalledWith(false, false)
+    expect(broadcast).toHaveBeenLastCalledWith(
+      'update:status',
+      expect.objectContaining({ error: UPDATE_INSTALLATION_REQUIRED })
+    )
+    installationGuard.mockReturnValue(false)
+    expect((await strategy.download()).state).toBe('ready')
+    expect(updater.downloadUpdate).toHaveBeenCalledOnce()
+  })
+
+  it('rechecks before apply and force cannot stop work or launch the installer on read-only media', async () => {
+    const updater = new FakeUpdater()
+    const installationGuard = vi.fn(() => false)
+    const installGate = vi.fn(async () => ({ completed: true, reaped: true }))
+    const strategy = createStrategy({
+      updater,
+      installationGuard,
+      installGate,
+      broadcast: () => {}
+    })
+    await markUpdateReady(strategy, updater)
+    installationGuard.mockReturnValue(true)
+    expect(await strategy.apply({ force: true, relaunch: false })).toMatchObject({
+      state: 'error',
+      error: UPDATE_INSTALLATION_REQUIRED
+    })
+    expect(installationGuard).toHaveBeenLastCalledWith(false, false)
+    expect(installGate).not.toHaveBeenCalled()
+    expect(updater.quitAndInstall).not.toHaveBeenCalled()
+  })
+
+  it('normalizes a native read-only handoff error at the broadcast boundary', async () => {
+    const updater = new FakeUpdater()
+    const broadcast = vi.fn()
+    const releaseInstallHandoff = vi.fn()
+    const strategy = createStrategy({
+      updater,
+      installationGuard: () => false,
+      broadcast,
+      releaseInstallHandoff
+    })
+    await markUpdateReady(strategy, updater)
+    await strategy.apply()
+    updater.emit(
+      'error',
+      Object.assign(new Error('Cannot update while running on a read-only volume. detail'), {
+        code: 8
+      })
+    )
+    expect(releaseInstallHandoff).toHaveBeenCalledOnce()
+    expect(broadcast).toHaveBeenLastCalledWith(
+      'update:status',
+      expect.objectContaining({ state: 'error', error: UPDATE_INSTALLATION_REQUIRED })
+    )
   })
 })

@@ -51,8 +51,10 @@ const harness = (resolved: 'terminal' | 'not-ready' | 'missing' = 'terminal') =>
       transitioned: true
     })),
     recoverExpiredClaims: vi.fn(async () => 0),
-    listPendingSessionIds: vi.fn(async () => []),
-    listOwnership: vi.fn(async () => []),
+    listPendingSessionIds: vi.fn(async (): Promise<string[]> => []),
+    listOwnership: vi.fn(
+      async (): Promise<Pick<BackgroundResultDelivery, 'id' | 'projectId' | 'sessionId'>[]> => []
+    ),
     deleteIds: vi.fn(async () => 0),
     listSessionIdsForProject: vi.fn(async () => []),
     deleteSession: vi.fn(async () => 0),
@@ -66,7 +68,12 @@ const harness = (resolved: 'terminal' | 'not-ready' | 'missing' = 'terminal') =>
     failClaim: vi.fn(async () => 'pending' as const)
   }
   const waitForAuthoritiesReady = vi.fn(async (): Promise<void> => undefined)
-  const loadSessionCatalog = vi.fn(async () => ({ complete: false, sessions: [] }))
+  const loadSessionCatalog = vi.fn(
+    async (): Promise<{
+      complete: boolean
+      sessions: { projectId: string; sessionId: string }[]
+    }> => ({ complete: false, sessions: [] })
+  )
   const resolveSources = vi.fn(async () =>
     rows.map((row) => ({
       delivery: row,
@@ -317,11 +324,11 @@ describe('BackgroundResultDeliveryOwner', () => {
     const order: string[] = []
     repository.listOwnership.mockImplementationOnce(async () => {
       order.push('ownership')
-      return []
+      return [delivery('run-1')]
     })
     loadSessionCatalog.mockImplementationOnce(async () => {
       order.push('catalog')
-      return { complete: true, sessions: [] }
+      return { complete: true, sessions: [{ projectId: 'project-1', sessionId: 'session-1' }] }
     })
 
     await owner.recover()
@@ -330,6 +337,44 @@ describe('BackgroundResultDeliveryOwner', () => {
     expect(repository.deleteIds).toHaveBeenCalledWith([])
     owner.dispose()
   })
+
+  it('skips empty ownership catalog scans while recovering and draining newly pending results', async () => {
+    vi.useFakeTimers()
+    const { owner, repository, loadSessionCatalog } = harness()
+    const drain = vi.spyOn(owner, 'drainSession').mockResolvedValue('idle')
+    repository.listPendingSessionIds.mockResolvedValue(['session-1'])
+    try {
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(repository.listOwnership).toHaveBeenCalledTimes(2)
+      expect(loadSessionCatalog).not.toHaveBeenCalled()
+      expect(repository.deleteIds).not.toHaveBeenCalled()
+      expect(repository.recoverExpiredClaims).toHaveBeenCalledTimes(2)
+      expect(drain).toHaveBeenCalledTimes(2)
+      expect(drain).toHaveBeenCalledWith('session-1')
+    } finally {
+      owner.dispose()
+      vi.useRealTimers()
+    }
+  })
+
+  it.each([false, true])(
+    'reconciles later ownership only against a complete catalog (%s)',
+    async (complete) => {
+      const { owner, repository, loadSessionCatalog } = harness()
+      try {
+        await owner.recover()
+        repository.listOwnership.mockResolvedValue([delivery('orphan')])
+        loadSessionCatalog.mockResolvedValue({ complete, sessions: [] })
+        await owner.recover()
+        expect(loadSessionCatalog).toHaveBeenCalledOnce()
+        if (complete) expect(repository.deleteIds).toHaveBeenCalledWith(['local-run:orphan'])
+        else expect(repository.deleteIds).not.toHaveBeenCalled()
+        expect(repository.recoverExpiredClaims).toHaveBeenCalledTimes(2)
+      } finally {
+        owner.dispose()
+      }
+    }
+  )
 
   it('settles a complete saved batch before direct observation can split its membership', async () => {
     const { owner, repository, isContinuationSaved } = harness()

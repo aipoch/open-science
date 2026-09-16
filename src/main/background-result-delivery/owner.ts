@@ -274,18 +274,24 @@ class BackgroundResultDeliveryOwner {
     if (this.options.loadSessionCatalog) {
       const ownership = await this.options.repository.listOwnership()
       if (this.disposed) return
-      const catalog = await this.options.loadSessionCatalog()
-      if (this.disposed) return
-      if (catalog.complete) {
-        const sessions = new Set(
-          catalog.sessions.map(({ projectId, sessionId }) => this.sessionKey(projectId, sessionId))
-        )
-        const orphanIds = ownership
-          .filter(
-            ({ projectId, sessionId }) => !sessions.has(this.sessionKey(projectId, sessionId))
+      // There is nothing to reconcile against the on-disk Session catalog without owned rows.
+      // Keep lease recovery and pending delivery below live for concurrent admissions.
+      if (ownership.length > 0) {
+        const catalog = await this.options.loadSessionCatalog()
+        if (this.disposed) return
+        if (catalog.complete) {
+          const sessions = new Set(
+            catalog.sessions.map(({ projectId, sessionId }) =>
+              this.sessionKey(projectId, sessionId)
+            )
           )
-          .map(({ id }) => id)
-        await this.options.repository.deleteIds(orphanIds)
+          const orphanIds = ownership
+            .filter(
+              ({ projectId, sessionId }) => !sessions.has(this.sessionKey(projectId, sessionId))
+            )
+            .map(({ id }) => id)
+          await this.options.repository.deleteIds(orphanIds)
+        }
       }
     }
     if (this.disposed) return

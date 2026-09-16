@@ -4,6 +4,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { useSessionStore } from '@/stores/session-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { usePreviewWorkbenchStore, type PreviewToolItem } from '@/stores/preview-workbench-store'
+import { ComposerModelPicker } from './ComposerModelPicker'
 import { SideChatPanel } from './SideChatPanel'
 import { useSideChatController } from './use-side-chat-controller'
 
@@ -54,6 +55,22 @@ export function SideChatWorkbenchContent({
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>
+      }
+      controls={
+        <ComposerModelPicker
+          configuration={
+            chat.view.modelSelection
+              ? {
+                  ...chat.view.modelSelection,
+                  reasoningEffort: chat.view.modelSelection.reasoningEffort ?? 'default'
+                }
+              : undefined
+          }
+          unavailable={!chat.view.modelSelection}
+          includeAllClaudeSubscriptions
+          alwaysShow
+          onChange={chat.setModelSelection}
+        />
       }
       onSend={chat.send}
       onDraftChange={chat.setDraft}

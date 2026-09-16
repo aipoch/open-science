@@ -122,7 +122,6 @@ type WorkspaceConversationControllerOptions = {
   runtime: WorkspaceConversationRuntime
   sideChat?: Readonly<{ start: (text: string) => Promise<boolean> }>
   sideChatOpen: boolean
-  setAutoReviewEnabled: (sessionId: string, enabled: boolean) => void
   resetNewConversationSettings: () => void
   abortFixLoop: (request: { projectId: string; appSessionId: string }) => Promise<unknown>
   getSession: (sessionId: string) => ChatSession | undefined
@@ -518,6 +517,7 @@ const useWorkspaceConversationController = (
             permissionProfile: current.permissionProfile,
             agentConfiguration: current.agentConfiguration,
             memoryEnabled,
+            ...(wasNewConversation ? { autoReviewEnabled } : {}),
             delegationPolicy: resolveDelegationPolicyForSend(
               branchInNewSession,
               activeSession,
@@ -547,9 +547,6 @@ const useWorkspaceConversationController = (
             }
             if (snapshot.annotations.length > 0) {
               composer.lifecycle.clearDraft(snapshot.draftKey, snapshot.version)
-            }
-            if (wasNewConversation && autoReviewEnabled) {
-              current.setAutoReviewEnabled(result.sessionId, true)
             }
             current.resetNewConversationSettings()
             session.actions.resetNewConversationSpecialist()

@@ -1491,6 +1491,7 @@ const WorkspaceMessageScrollerImpl = ({
             onRevealed={handleMessageScrollerScroll}
           />
           <WorkspaceRunMarks
+            key={currentPresentationScopeId}
             items={presentedConversationItems}
             viewport={messageScrollerViewport}
             onRevealMessage={
@@ -1620,6 +1621,7 @@ const WorkspaceMessageScrollerImpl = ({
                   const messageItemProps: EditableWorkspaceMessageItemProps = {
                     message: item.message,
                     projectId: currentProjectId,
+                    isPackageSession: Boolean(activeSession?.packageOrigin),
                     onPreviewArtifact,
                     onPreviewArtifactModal,
                     onPreviewUploadAttachment,
@@ -1966,6 +1968,7 @@ const WorkspaceMessageScrollerImpl = ({
               {optimisticMessage ? (
                 <WorkspaceMessageItem
                   message={optimisticMessage}
+                  isPackageSession={Boolean(activeSession?.packageOrigin)}
                   disableScrollAnchor={windowFindOpen}
                   projectId={currentProjectId}
                   onPreviewArtifact={onPreviewArtifact}

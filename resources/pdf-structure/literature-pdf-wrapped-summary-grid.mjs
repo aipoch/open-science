@@ -1,12 +1,19 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { captionKind } from './literature-pdf-caption-group.mjs'
 import { union } from './literature-pdf-table-geometry.mjs'
-import { tableSourceItems, hasUniqueRecordTokens } from './literature-pdf-source-records.mjs'
+import {
+  tableSourceItems,
+  hasUniqueRecordTokens,
+  readSourceRow,
+  groupSourceRowsWithScripts
+} from './literature-pdf-source-records.mjs'
 
 // Narrow manuscript columns can wrap both count headings and parenthesized SDs.
 // Use repeated complete mean/SD records to establish columns and row extents;
 // never join an incomplete numeric expression or infer its missing characters.
 export function recoverWrappedSummaryGrid(table, items, captions, rules) {
+  const counts = recoverCountRateContrasts(table, items, captions, rules)
+  if (counts) return counts
   if (!captions.some((c) => captionKind(c.lines[0]) === 'table')) return
   const [left, top, right, bottom] = table.cropRect
   const source = tableSourceItems(items, table.cropRect)
@@ -722,5 +729,150 @@ export function recoverCurrencySummaryGrid(table, items, captions) {
     spans: [],
     completeSpans: true,
     repair: 'currency-summary-grid-recovered'
+  }
+}
+
+// Repeated count/rate/contrast triplets own a following standard-error line.
+// Recover their native hierarchy together so an error cannot drift to the next
+// treatment, or a population title become a percentage-column label.
+function recoverCountRateContrasts(table, items, captions, rules) {
+  if (!captions.some((c) => captionKind(c.lines[0]) === 'table')) return
+  const [left, top, right, bottom] = table.cropRect
+  const columns = table.structure.objects
+    .filter((o) => o.label === 'table column')
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  for (let n = columns.length - 1; n > 0; n--) {
+    const a = columns[n - 1].rect,
+      b = columns[n].rect
+    if ((Math.min(a[2], b[2]) - Math.max(a[0], b[0])) / Math.min(a[2] - a[0], b[2] - b[0]) > 0.8)
+      columns.splice(n, 1)
+  }
+  if (![4, 7, 10].includes(columns.length)) return
+  const count = (columns.length - 1) / 3
+  const borders = rules.filter(
+    (r) =>
+      r[1] === r[3] &&
+      Math.abs(r[0] - left) < 20 &&
+      Math.abs(r[2] - right) < Math.max(20, (right - left) * 0.15)
+  )
+  const footer = borders.filter((r) => Math.abs(r[1] - bottom) < 20).sort((a, b) => b[1] - a[1])[0]
+  if (!footer || !borders.some((r) => Math.abs(r[1] - top) < 20)) return
+  const source = tableSourceItems(items, [left, top, right, Math.min(bottom, footer[1])])
+  const titles = source.filter((i) => i.text === 'T-C')
+  if (!titles.length || titles.length % count) return
+  const height = titles[0].height
+  const groups = groupSourceRowsWithScripts(source, height, 0.3)
+  if (!groups || groups.length < 9) return
+  const cuts = [
+    left,
+    ...columns.slice(1).map((c, n) => left + (c.rect[0] + columns[n].rect[2]) / 2),
+    right
+  ]
+  const parent = (g) =>
+    count > 1 &&
+    g.length === count &&
+    g.every((i) => /\p{L}/u.test(i.text) && !/\d/.test(i.text) && i.rect[0] > cuts[1])
+  const section = (g) => g.length === 1 && /\p{L}/u.test(g[0].text) && g[0].rect[2] > cuts[1]
+  const col = (i) => cuts.slice(1).findIndex((x) => (i.rect[0] + i.rect[2]) / 2 < x)
+  const body = groups.filter((g) => !parent(g) && !section(g)).flat()
+  const parts = cuts.slice(1).map((_, c) => body.filter((i) => col(i) === c))
+  if (parts.some((g) => !g.length)) return
+  for (let c = 1; c < cuts.length - 1; c++) {
+    const a = Math.max(...parts[c - 1].map((i) => i.rect[2])),
+      b = Math.min(...parts[c].map((i) => i.rect[0]))
+    if (a >= b) return
+    cuts[c] = Math.max(a + 0.01, Math.min(b - 0.01, cuts[c]))
+  }
+  const records = [],
+    spans = [],
+    headerRows = []
+  let dataRows = 0,
+    leaves = 0
+  for (let n = 0; n < groups.length; n++) {
+    const g = groups[n],
+      row = records.length
+    if (parent(g)) {
+      const ordered = [...g].sort((a, b) => a.rect[0] - b.rect[0])
+      if (!ordered.every((i, c) => i.rect[0] >= cuts[1 + c * 3] && i.rect[2] <= cuts[4 + c * 3]))
+        return
+      for (let c = 1; c < columns.length; c += 3)
+        spans.push({ row, column: c, rowSpan: 1, colSpan: 3 })
+      if (!dataRows) headerRows.push(row)
+      records.push([...g])
+      continue
+    }
+    if (section(g)) {
+      spans.push({ row, column: 0, rowSpan: 1, colSpan: columns.length })
+      records.push([...g])
+      continue
+    }
+    const v = readSourceRow(g, cuts)
+    if (!v) return
+    if (
+      !v[0] &&
+      v
+        .slice(1)
+        .every((x, c) =>
+          c % 3 === 0 ? x === 'N' : c % 3 === 1 ? /^%[\p{L}]+$/u.test(x) : x === 'T-C'
+        )
+    ) {
+      leaves++
+      if (!dataRows) headerRows.push(row)
+      records.push([...g])
+      continue
+    }
+    if (
+      !v[0] &&
+      v.slice(1).every((x, c) => /^\(\d+\)$/.test(x) && Number(x.slice(1, -1)) === c + 1)
+    ) {
+      if (dataRows) return
+      headerRows.push(row)
+      records.push([...g])
+      continue
+    }
+    if (!/\p{L}/u.test(v[0]) || !leaves) return
+    if (
+      !v
+        .slice(1)
+        .every((x, c) =>
+          c % 3 === 0
+            ? /^\d[\d,]*$/.test(x)
+            : c % 3 === 1
+              ? /^\d+(?:\.\d+)?$/.test(x)
+              : !x || /^[−–+-]?\d+(?:\.\d+)?\*{0,3}$/.test(x)
+        )
+    )
+      return
+    const next = groups[n + 1] && readSourceRow(groups[n + 1], cuts)
+    const errors =
+      next &&
+      !next[0] &&
+      next
+        .slice(1)
+        .every((x, c) => (c % 3 === 2 ? (v[c + 1] ? /^\(\d+(?:\.\d+)?\)$/.test(x) : !x) : !x))
+    const members = [...g]
+    if (v.slice(1).some((x, c) => c % 3 === 2 && x)) {
+      if (
+        !errors ||
+        union(groups[n + 1])[1] - union(g)[3] > height ||
+        union(g)[3] >= union(groups[n + 1])[1]
+      )
+        return
+      members.push(...groups[++n])
+    }
+    dataRows++
+    records.push(members)
+  }
+  if (dataRows < 6 || !leaves || !hasUniqueRecordTokens(source, records)) return
+  return {
+    rows: records.map((g) => {
+      const r = union(g)
+      return [left, r[1], right, r[3]]
+    }),
+    columns: cuts.slice(1).map((x, c) => [cuts[c], top, x, bottom]),
+    headerRows,
+    spans,
+    completeSpans: true,
+    ownedTokens: new Set(source)
   }
 }

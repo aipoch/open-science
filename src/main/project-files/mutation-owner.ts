@@ -22,6 +22,10 @@ import {
 
 const log = createLogger('project-files')
 
+// Share the upload publication wait budget on the single SQLite connection.
+// Keep the transaction execution deadline and rollback behavior unchanged.
+const FILE_INDEX_TRANSACTION_OPTIONS = { maxWait: 10_000 } as const
+
 // Valid persisted revisions are non-negative. A collision loser stores this sentinel so it cannot
 // take the revision fast path and can claim the canonical row after its current owner is deleted.
 const RETRYABLE_COLLISION_REVISION = -1
@@ -251,7 +255,7 @@ class ProjectFilesMutationOwner {
         })
 
         return transactionChangedSources
-      })
+      }, FILE_INDEX_TRANSACTION_OPTIONS)
 
       const key = sessionKey(session.projectId, session.id)
       if (hasIncompleteFiles) {
@@ -560,7 +564,7 @@ class ProjectFilesMutationOwner {
           deleteOperationId: null
         }
       })
-    })
+    }, FILE_INDEX_TRANSACTION_OPTIONS)
   }
 
   markReconciliationIncomplete(projectId?: string): void {

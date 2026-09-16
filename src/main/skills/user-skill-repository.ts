@@ -19,7 +19,11 @@ import {
 } from './skill-package-transaction-owner'
 import type { ImportOutcome, ParsedSkillPreview } from './user-skill-import-contracts'
 import type { MarketplacePackage } from './marketplace-package'
-import type { SkillMarketplaceInstallation } from '../../shared/skill-marketplace'
+import type {
+  SkillMarketplaceInstallation,
+  SkillMarketplaceUpdateImpact,
+  SkillMarketplaceUpdatePreview
+} from '../../shared/skill-marketplace'
 import { UserSkillCompatibilityIndex } from './user-skill-compatibility-index'
 import {
   SAFE_SKILL_DIRECTORY_NAME,
@@ -169,17 +173,36 @@ class UserSkillRepository {
   marketplaceInstallation(
     id: string,
     version: string,
-    reservedNames: readonly string[]
+    reservedNames: readonly string[],
+    localSkills?: readonly BundledSkill[]
   ): Promise<SkillMarketplaceInstallation> {
-    return this.bundleImports.marketplaceInstallation(id, version, reservedNames)
+    return this.bundleImports.marketplaceInstallation(id, version, reservedNames, localSkills)
   }
 
   installMarketplace(
     pkg: MarketplacePackage,
     expectedVersion: string | null,
-    reservedNames: readonly string[]
+    reservedNames: readonly string[],
+    updateToken?: string,
+    impact?: (id: string) => Promise<SkillMarketplaceUpdateImpact>,
+    withImpactLock?: <T>(operation: () => Promise<T>) => Promise<T>
   ): Promise<ImportOutcome> {
-    return this.bundleImports.installMarketplace(pkg, expectedVersion, reservedNames)
+    return this.bundleImports.installMarketplace(
+      pkg,
+      expectedVersion,
+      reservedNames,
+      updateToken,
+      impact,
+      withImpactLock
+    )
+  }
+
+  previewMarketplaceUpdate(
+    pkg: MarketplacePackage,
+    reservedNames: readonly string[],
+    impact?: (id: string) => Promise<SkillMarketplaceUpdateImpact>
+  ): Promise<SkillMarketplaceUpdatePreview> {
+    return this.bundleImports.previewMarketplaceUpdate(pkg, reservedNames, impact)
   }
 
   async importFromZip(

@@ -1,5 +1,5 @@
 import { ErrorNotice } from '@/components/error-notice'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Download, ExternalLink, RefreshCw, X } from 'lucide-react'
 import * as Dialog from '@/components/ui/dialog'
 import { Trans, useTranslation } from 'react-i18next'
@@ -26,7 +26,7 @@ import { cn } from '@/lib/utils'
 import { useUpdateStore } from '@/stores/update-store'
 import { APP } from '../../../shared/app-config'
 import { isLocale } from '../../../shared/locale'
-import { formatBytes } from '../../../shared/update'
+import { formatBytes, UPDATE_INSTALLATION_REQUIRED } from '../../../shared/update'
 
 const UPDATE_BACKGROUND_PROCESS_ERROR =
   'Could not stop background processes before updating. Please try again.'
@@ -56,16 +56,35 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
     }
   }, [open, dialogStatus?.error])
   const releaseUrl = `${APP.links.githubReleases}/tag/v${dialogStatus?.latest ?? ''}`
+  const isInstallationRequired = dialogStatus?.error === UPDATE_INSTALLATION_REQUIRED
   const isDownloading = dialogStatus?.state === 'downloading'
   const isReady = dialogStatus?.state === 'ready'
   const isApplying = dialogStatus?.state === 'applying'
   const legacyRecovery = dialogStatus?.legacyShellRecovery
+  // Synchronous mirror of the confirmation state, set in the click handler and cleared wherever
+  // the token clears: the Dialog root's onOpenChange below must not close the update dialog while
+  // the recovery confirmation is modal on top, even when Radix's nested-layer listener races route
+  // the Escape there before the onEscapeKeyDown guard's closure has caught up.
+  const recoveryOpenRef = useRef(false)
+  const closeRecoveryConfirmation = (): void => {
+    recoveryOpenRef.current = false
+    setRecoveryToken(undefined)
+  }
   const recoverUpdate = (): void => {
-    if (legacyRecovery) setRecoveryToken(legacyRecovery.token)
+    if (legacyRecovery) {
+      recoveryOpenRef.current = true
+      setRecoveryToken(legacyRecovery.token)
+    }
   }
   const recoveryConfirmationOpen = Boolean(
     open && isReady && recoveryToken && recoveryToken === legacyRecovery?.token
   )
+  // Radix can retain the initial Escape callback through forwardRef (facebook/react#34818).
+  // Keep its guard current before the confirmation's autofocus and listener handoff.
+  const recoveryConfirmationOpenRef = useRef(recoveryConfirmationOpen)
+  useLayoutEffect(() => {
+    recoveryConfirmationOpenRef.current = recoveryConfirmationOpen
+  }, [recoveryConfirmationOpen])
   const isInstallerUnavailable =
     dialogStatus?.state === 'available' &&
     dialogStatus.applyKind === 'installer' &&
@@ -98,9 +117,18 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
     <Dialog.Root
       open={open}
       onOpenChange={(open) => {
+        if (!open && recoveryOpenRef.current) {
+          // A dismissal while the recovery confirmation is open is the confirmation being escaped
+          // (the nested layer's listener can lose the race that routes Escape to this root): close
+          // only the confirmation and keep the update dialog open.
+          closeRecoveryConfirmation()
+          return
+        }
         if (!open && !isApplying) {
           setRecoveryToken(undefined)
-          closeDialog()
+          // Radix's document Escape listener can still see the previous render immediately
+          // after reopening confirmation. Recheck ownership at the controlled state boundary.
+          if (!recoveryConfirmationOpen) closeDialog()
         }
       }}
     >
@@ -111,9 +139,9 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
             onInteractOutside={(event) => event.preventDefault()}
             onEscapeKeyDown={(event) => {
               // The nested layer may not have registered its Escape listener yet.
-              if (recoveryConfirmationOpen) {
+              if (recoveryConfirmationOpenRef.current) {
                 event.preventDefault()
-                setRecoveryToken(undefined)
+                closeRecoveryConfirmation()
               }
             }}
             className={dialogPanelClassName(
@@ -164,36 +192,40 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
                           : undefined
                       }
                       description={
-                        legacyRecovery
-                          ? t('Old Shell launch records are blocking this update.')
-                          : dialogStatus.error === UPDATE_BACKGROUND_PROCESS_ERROR
-                            ? t(
-                                'Could not stop background processes before updating. Please try again.'
-                              )
-                            : dialogStatus.error === UPDATE_BACKGROUND_PROCESS_DEGRADED_ERROR
+                        isInstallationRequired
+                          ? t(
+                              'Open Science is running on a read-only disk. Drag it to Applications, quit this copy, and reopen it from Applications before updating.'
+                            )
+                          : legacyRecovery
+                            ? t('Old Shell launch records are blocking this update.')
+                            : dialogStatus.error === UPDATE_BACKGROUND_PROCESS_ERROR
                               ? t(
-                                  'Could not fully stop background processes before updating. Please try again.'
+                                  'Could not stop background processes before updating. Please try again.'
                                 )
-                              : dialogStatus.error === UPDATE_SETTINGS_INSTALL_ERROR
+                              : dialogStatus.error === UPDATE_BACKGROUND_PROCESS_DEGRADED_ERROR
                                 ? t(
-                                    'An Agent Runtime is still installing. Wait for it to finish before restarting to update.'
+                                    'Could not fully stop background processes before updating. Please try again.'
                                   )
-                                : dialogStatus.error ===
-                                    'Research work is still running. Stop it before restarting to update.'
+                                : dialogStatus.error === UPDATE_SETTINGS_INSTALL_ERROR
                                   ? t(
-                                      'Research work is still running. Stop it before restarting to update.'
+                                      'An Agent Runtime is still installing. Wait for it to finish before restarting to update.'
                                     )
                                   : dialogStatus.error ===
-                                      'Subagents are still running. Return to their tasks and stop them before restarting to update.'
+                                      'Research work is still running. Stop it before restarting to update.'
                                     ? t(
-                                        'Subagents are still running. Return to their tasks and stop them before restarting to update.'
+                                        'Research work is still running. Stop it before restarting to update.'
                                       )
                                     : dialogStatus.error ===
-                                        'The installer is missing or has changed. Download the update again.'
+                                        'Subagents are still running. Return to their tasks and stop them before restarting to update.'
                                       ? t(
-                                          'The installer is missing or has changed. Download the update again.'
+                                          'Subagents are still running. Return to their tasks and stop them before restarting to update.'
                                         )
-                                      : (dialogStatus.error ?? t('Update failed'))
+                                      : dialogStatus.error ===
+                                          'The installer is missing or has changed. Download the update again.'
+                                        ? t(
+                                            'The installer is missing or has changed. Download the update again.'
+                                          )
+                                        : (dialogStatus.error ?? t('Update failed'))
                       }
                     >
                       {legacyRecovery ? (
@@ -317,6 +349,15 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
                     ? t('Verifying installer…')
                     : t('Preparing update…')}
                 </button>
+              ) : isInstallationRequired ? (
+                <button
+                  type="button"
+                  onClick={() => void download()}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+                >
+                  <ExternalLink className="size-4" aria-hidden="true" />
+                  {t('Show installation steps')}
+                </button>
               ) : isReady ? (
                 <button
                   type="button"
@@ -369,10 +410,10 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
         cancelLabel={t('Cancel')}
         confirmLabel={t('Back up records and retry')}
         destructive
-        onCancel={() => setRecoveryToken(undefined)}
+        onCancel={closeRecoveryConfirmation}
         onConfirm={() => {
           if (!recoveryConfirmationOpen) return
-          setRecoveryToken(undefined)
+          closeRecoveryConfirmation()
           void apply({ legacyShellRecoveryToken: recoveryToken })
         }}
         onCloseAutoFocus={(event) => {

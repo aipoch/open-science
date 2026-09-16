@@ -1,3 +1,4 @@
+import { PDF_CLEANUP_PENDING } from '../../../shared/pdf-structure'
 import { createHash, randomUUID } from 'node:crypto'
 import { lstat, mkdir, mkdtemp, rmdir } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -108,8 +109,20 @@ export const createPdfStructureOwner = (dependencies: Dependencies): PdfStructur
   const admit = (): void => {
     if (closed) throw new Error('PDF structure owner is closed.')
     if (clearing) throw new Error('PDF structure cache is being cleared.')
-    if (retained.size)
-      throw new Error('PDF worker cleanup must finish before more parsing can start.')
+    if (retained.size) throw new Error(PDF_CLEANUP_PENDING)
+  }
+  let recovering: Promise<void> | undefined
+  const retryCleanup = (): Promise<void> => {
+    recovering ??= (async () => {
+      const failures = await Promise.allSettled([...retained].map((cleanup) => cleanup()))
+      const errors = failures.flatMap((result) =>
+        result.status === 'rejected' ? [result.reason] : []
+      )
+      if (errors.length) throw new AggregateError(errors, 'PDF worker cleanup is incomplete.')
+    })().finally(() => {
+      recovering = undefined
+    })
+    return recovering
   }
   const withWriter = async <T>(operation: () => Promise<T>): Promise<T> => {
     const release = acquireWriter()
@@ -269,7 +282,7 @@ export const createPdfStructureOwner = (dependencies: Dependencies): PdfStructur
       else
         await cleanup().catch((error: unknown) => {
           retained.add(cleanup)
-          throw error
+          throw new Error(PDF_CLEANUP_PENDING, { cause: error })
         })
     }
   }
@@ -280,7 +293,7 @@ export const createPdfStructureOwner = (dependencies: Dependencies): PdfStructur
       while (queue.length) {
         const job = queue.shift()!
         try {
-          if (retained.size) throw new Error('PDF worker cleanup is pending.')
+          if (retained.size) throw new Error(PDF_CLEANUP_PENDING)
           job.controller.signal.throwIfAborted()
           job.progress = { ...job.progress, state: 'running' }
           for (const consumer of job.consumers) notify(consumer, job.progress)
@@ -320,6 +333,13 @@ export const createPdfStructureOwner = (dependencies: Dependencies): PdfStructur
     options.signal?.addEventListener('abort', release, { once: true })
     if (options.signal?.aborted) release()
     const operation = (async (): Promise<PdfStructureResult> => {
+      controller.signal.throwIfAborted()
+      // Retry only owned cleanup, once per new request; concurrent requests join it.
+      if (retained.size && !closed && !clearing) {
+        await retryCleanup().catch((cause: unknown) => {
+          throw new Error(PDF_CLEANUP_PENDING, { cause })
+        })
+      }
       admit()
       controller.signal.throwIfAborted()
       if (
@@ -453,11 +473,7 @@ export const createPdfStructureOwner = (dependencies: Dependencies): PdfStructur
         ...reads,
         ...[...jobs.values()].map(({ settled }) => settled)
       ])
-      const failures = await Promise.allSettled([...retained].map((cleanup) => cleanup()))
-      const errors = failures.flatMap((result) =>
-        result.status === 'rejected' ? [result.reason] : []
-      )
-      if (errors.length) throw new AggregateError(errors, 'PDF worker cleanup is incomplete.')
+      await retryCleanup()
     })().finally(() => {
       draining = undefined
     })

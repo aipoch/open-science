@@ -16,6 +16,7 @@ export function recoverBinaryComparisonGrid(table, items, captions) {
     if ((Math.min(a[2], b[2]) - Math.max(a[0], b[0])) / Math.min(a[2] - a[0], b[2] - b[0]) > 0.7)
       predicted.splice(n - 1, 1)
   }
+  if (predicted.length === 8) return recoverPairedBinaryIntervals(table, items, predicted)
   if (![3, 6].includes(predicted.length)) return
   const source = items.filter(
     (i) =>
@@ -128,6 +129,116 @@ export function recoverBinaryComparisonGrid(table, items, captions) {
     rows,
     columns: cuts.slice(1).map((x, c) => [cuts[c], top, x, bottom]),
     spans,
+    completeSpans: true
+  }
+}
+
+// Binary count columns can share one diagnostic interval per cohort below.
+// Keep those intervals together only when all three repeated negative/positive
+// headers, both count records and every complete interval are present.
+function recoverPairedBinaryIntervals(table, items, columns) {
+  const [left, top, right, bottom] = table.cropRect
+  const cuts = [
+    left,
+    ...columns.slice(1).map((c, n) => left + (columns[n].rect[2] + c.rect[0]) / 2),
+    right
+  ]
+  const col = (i) => cuts.slice(1).findIndex((x) => (i.rect[0] + i.rect[2]) / 2 < x)
+  const source = items.filter(
+    (i) =>
+      i.horizontal &&
+      i.rect[0] >= left &&
+      i.rect[2] <= right &&
+      i.rect[1] >= top &&
+      i.rect[3] <= bottom
+  )
+  const child = source
+    .filter((i) => /^SR (?:negative|positive)$/.test(i.text))
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  if (
+    child.length !== 6 ||
+    child.some(
+      (i, n) =>
+        col(i) !== n + 2 ||
+        i.text !== `SR ${n % 2 ? 'positive' : 'negative'}` ||
+        Math.abs(i.baseline - child[0].baseline) > 1
+    )
+  )
+    return
+  const height = child[0].height
+  const parents = source.filter((i) => i.baseline < child[0].rect[1])
+  const body = source.filter((i) => i.rect[1] > child[0].baseline)
+  const labelLines = []
+  for (const i of body
+    .filter((i) => col(i) <= 1)
+    .sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])) {
+    const g = labelLines.find(
+      (g) => col(g[0]) === col(i) && Math.abs(g[0].baseline - i.baseline) < height * 0.3
+    )
+    if (g) g.push(i)
+    else labelLines.push([i])
+  }
+  const labels = labelLines
+    .map((g) => ({ ...g[0], rect: union(g), text: g.map((i) => i.text).join('') }))
+    .filter((i) =>
+      /^(?:Free margins|Involved margins|Sensitivity|Specificity|PPV|NPV|Accuracy)\b/.test(i.text)
+    )
+    .sort((a, b) => a.baseline - b.baseline)
+  if (
+    labels.length !== 7 ||
+    !/^Free margins/.test(labels[0].text) ||
+    !/^Involved margins/.test(labels[1].text)
+  )
+    return
+  const edges = [
+    child[0].baseline + height * 0.1,
+    ...labels.slice(1).map((i, n) => (labels[n].baseline + i.rect[1]) / 2),
+    bottom
+  ]
+  const groups = labels.map((_, n) =>
+    body.filter(
+      (i) => (i.rect[1] + i.rect[3]) / 2 >= edges[n] && (i.rect[1] + i.rect[3]) / 2 < edges[n + 1]
+    )
+  )
+  const text = (g, start, end) =>
+    g
+      .filter((i) => col(i) >= start && col(i) < end)
+      .sort((a, b) => a.rect[0] - b.rect[0])
+      .map((i) => i.text)
+      .join('')
+      .replace(/\s/g, '')
+  if ([0, 1].some((n) => [2, 3, 4, 5, 6, 7].some((c) => !/^\d+$/.test(text(groups[n], c, c + 1)))))
+    return
+  if (
+    groups
+      .slice(2)
+      .some((g) =>
+        [2, 4, 6].some(
+          (c) => !/^\d+(?:\.\d+)?\(\d+(?:\.\d+)?[–-]\d+(?:\.\d+)?\)$/.test(text(g, c, c + 2))
+        )
+      )
+  )
+    return
+  if (
+    [2, 4, 6].some((c) => !/^.+\(n=\d+\)$/.test(text(parents, c, c + 2))) ||
+    body.some((i) => !groups.some((g) => g.includes(i)))
+  )
+    return
+  const spans = [
+    { row: 2, column: 0, rowSpan: 2, colSpan: 1 },
+    ...[2, 4, 6].map((column) => ({ row: 0, column, rowSpan: 1, colSpan: 2 }))
+  ]
+  for (let n = 2; n < groups.length; n++)
+    for (const column of [0, 2, 4, 6]) spans.push({ row: n + 2, column, rowSpan: 1, colSpan: 2 })
+  return {
+    rows: [
+      [left, union(parents)[1], right, child[0].rect[1] - 0.1],
+      [left, child[0].rect[1] - 0.1, right, edges[0]],
+      ...groups.map((_, n) => [left, edges[n], right, edges[n + 1]])
+    ],
+    columns: cuts.slice(1).map((x, c) => [cuts[c], top, x, bottom]),
+    spans,
+    headerRows: [0, 1],
     completeSpans: true
   }
 }

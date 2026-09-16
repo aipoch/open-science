@@ -1,3 +1,4 @@
+import { fieldErrorClassName } from '@/components/ui/notice-chrome'
 /* Hallmark · component: named credential editor · genre: modern-minimal · theme: Open Science
  * states: default · hover · focus · active · disabled · loading · error · success
  * contrast: project semantic tokens
@@ -285,14 +286,14 @@ function ConnectorNamedCredentialEditor({
       ) : null}
 
       {displayedInvalidLines.map((line) => (
-        <p key={line} className="text-xs text-status-failure" role="alert">
+        <p key={line} className={fieldErrorClassName} role="alert">
           {kind === 'environment'
             ? t('Line {{line}}: use KEY=.', { line })
             : t('Line {{line}}: use Name: Value.', { line })}
         </p>
       ))}
       {parsed.duplicateLines.map(({ line, name }) => (
-        <p key={`${line}-${name}`} className="text-xs text-status-failure" role="alert">
+        <p key={`${line}-${name}`} className={fieldErrorClassName} role="alert">
           {t('Line {{line}}: {{name}} is duplicated.', { line, name })}
         </p>
       ))}

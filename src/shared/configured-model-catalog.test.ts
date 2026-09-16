@@ -67,6 +67,31 @@ describe('configured model catalog', () => {
     ])
   })
 
+  it('grays out a verified local model instead of hiding it when the framework cannot drive it', () => {
+    // The framework-agnostic probe records its target against the provider's own route, so a
+    // verified-but-incompatible entry must stay in the catalog (grayed, with its reason) rather
+    // than being filtered out as unvalidated.
+    const entries = buildConfiguredModelCatalog({
+      providers: [
+        provider('ollama', ['qwen3:14b'], {
+          lastValidatedAt: 20,
+          lastValidatedTarget: { model: 'qwen3:14b', endpoint: 'openai' }
+        })
+      ],
+      frameworkId: 'claude-code',
+      frameworkEndpoints: ['anthropic']
+    })
+
+    expect(
+      entries.map((entry) => [
+        entry.providerId,
+        entry.model,
+        entry.selectable,
+        entry.unavailableReason
+      ])
+    ).toEqual([['ollama', 'qwen3:14b', false, 'framework-incompatible']])
+  })
+
   it('excludes only the model target whose validation reported it missing', () => {
     const failedTargetProvider = provider('multi-model', ['model-a', 'model-b'], {
       lastValidationFailure: {

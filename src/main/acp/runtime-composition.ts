@@ -372,6 +372,17 @@ const createAcpRuntime = ({
         auxiliaryUsage,
         // Packaged macOS apps often start with cwd at "/" or the app bundle; use home instead.
         defaultCwd,
+        ...(delegatedNotebookConnection && fixedBackend?.framework.id === 'opencode'
+          ? {
+              additionalProtectedReadRoots: [
+                fixedBackend.env.XDG_CONFIG_HOME,
+                fixedBackend.env.XDG_DATA_HOME,
+                fixedBackend.env.XDG_CACHE_HOME,
+                fixedBackend.env.XDG_STATE_HOME,
+                fixedBackend.env.OPENCODE_TEST_HOME
+              ].filter((path): path is string => Boolean(path))
+            }
+          : {}),
         resolveBackend: async (context) =>
           fixedBackend ??
           (target

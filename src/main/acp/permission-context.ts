@@ -33,6 +33,7 @@ import {
 } from './permission-broker'
 import type { PermissionPolicyContext } from './permission-policy'
 import {
+  isNativeWebFetchCandidate,
   isMcpToolName,
   trustedMcpToolIdentity,
   withTrustedMcpToolIdentity,
@@ -368,6 +369,7 @@ class AcpPermissionContext {
   private readonly notebookExecutionInputs = new Map<string, Map<string, Record<string, unknown>>>()
   private readonly nativeNotebookExecutionAuthorizations = new Map<string, Set<string>>()
   private readonly opencodeNativeSkillToolCalls = new Map<string, Map<string, true>>()
+  private readonly nativeWebToolCalls = new Map<string, Map<string, string>>()
   private readonly opencodeMcpToolInputWaiters = new Map<
     string,
     Map<string, Set<OpenCodePermissionContextWaiter>>
@@ -772,6 +774,27 @@ class AcpPermissionContext {
     }
 
     if (notification.update.sessionUpdate === 'tool_call') {
+      const calls = this.nativeWebToolCalls.get(sessionId) ?? new Map()
+      calls.delete(event.toolCallId)
+      if (
+        isNativeWebFetchCandidate(
+          { sessionId, toolCall: notification.update, options: [] },
+          {
+            profile: 'ask',
+            frameworkId: framework,
+            mcpServerNames
+          }
+        )
+      ) {
+        this.setBounded(
+          calls,
+          event.toolCallId,
+          framework,
+          MAX_OPENCODE_MCP_TOOL_INPUTS_PER_SESSION
+        )
+      }
+      if (calls.size) this.nativeWebToolCalls.set(sessionId, calls)
+      else this.nativeWebToolCalls.delete(sessionId)
       this.matchRestoredNotebookPresentationUpdate(
         routed,
         event as AcpRuntimeEvent & Readonly<{ kind: 'tool'; toolCallId: string }>,
@@ -912,6 +935,31 @@ class AcpPermissionContext {
     context: PermissionRestoreContext
   ): Promise<RequestPermissionRequest | undefined> {
     const { sessionId, framework, mcpServerNames } = context
+    const webCalls = this.nativeWebToolCalls.get(sessionId)
+    const webCall = webCalls?.get(params.toolCall.toolCallId)
+    webCalls?.delete(params.toolCall.toolCallId)
+    if (webCalls?.size === 0) this.nativeWebToolCalls.delete(sessionId)
+    if (webCall && webCall === framework) {
+      // Claude's root request can omit the tool name; restore it only from the matching call.
+      const restored =
+        framework === 'claude-code' && !extractProviderToolName(params.toolCall)
+          ? {
+              ...params,
+              toolCall: {
+                ...params.toolCall,
+                _meta: { ...params.toolCall._meta, toolName: 'WebFetch' }
+              }
+            }
+          : params
+      if (
+        isNativeWebFetchCandidate(restored, {
+          profile: 'ask',
+          frameworkId: framework as AgentFrameworkId,
+          mcpServerNames
+        })
+      )
+        return withTrustedNativeToolIdentity(restored, `${framework}/webfetch`)
+    }
     if (framework === 'claude-code') {
       return this.restoreClaudeCodeMcpToolInput(params, sessionId, mcpServerNames)
     }
@@ -1024,6 +1072,7 @@ class AcpPermissionContext {
   }
 
   clearCorrelationsForSession(sessionId: string): void {
+    this.nativeWebToolCalls.delete(sessionId)
     this.codexMcpToolIdentities.delete(sessionId)
     this.claudeCodeMcpToolInputs.delete(sessionId)
     this.opencodeMcpToolInputs.delete(sessionId)
@@ -1046,6 +1095,7 @@ class AcpPermissionContext {
     this.broker.abandonAllPending()
     this.humanOnlyRequestIds.clear()
     const sessionIds = new Set([
+      ...this.nativeWebToolCalls.keys(),
       ...this.codexMcpToolIdentities.keys(),
       ...this.claudeCodeMcpToolInputs.keys(),
       ...this.opencodeMcpToolInputs.keys(),
@@ -1489,6 +1539,9 @@ class AcpPermissionContext {
       this.nativeNotebookExecutionAuthorizations.delete(sessionId)
     }
     const opencodeNativeSkills = this.opencodeNativeSkillToolCalls.get(sessionId)
+    const nativeWebCalls = this.nativeWebToolCalls.get(sessionId)
+    nativeWebCalls?.delete(toolCallId)
+    if (nativeWebCalls?.size === 0) this.nativeWebToolCalls.delete(sessionId)
     opencodeNativeSkills?.delete(toolCallId)
     if (opencodeNativeSkills?.size === 0) this.opencodeNativeSkillToolCalls.delete(sessionId)
     if (framework === 'opencode') {
@@ -1504,6 +1557,7 @@ class AcpPermissionContext {
       this.codexMcpToolIdentities,
       this.claudeCodeMcpToolInputs,
       this.opencodeMcpToolInputs,
+      this.nativeWebToolCalls,
       this.opencodeNativeSkillToolCalls
     ] as const
     for (const sessions of contexts) {

@@ -20,6 +20,8 @@ export type NotebookTrustBundle = Readonly<{
 export type NotebookFilesystemPolicy = Readonly<{
   privateRoot?: string
   readOnlyRoots: readonly string[]
+  /** Incidental Windows PATH directories; inability to grant them must not block the workload. */
+  optionalReadOnlyRoots?: readonly string[]
   readWriteRoots: readonly string[]
   deniedReadRoots: readonly string[]
   deniedWriteRoots: readonly string[]

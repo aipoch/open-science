@@ -228,6 +228,14 @@ const linuxLaunch = async (request: LinuxLaunchRequest): Promise<LinuxLaunch> =>
     }
   }
   for (const root of layout.deniedReadRoots) {
+    // Sealed sensitive roots already hide ungranted paths. Creating another mask there can
+    // require a mount target beneath a read-only parent, even when the host path exists.
+    const alreadyHidden =
+      sensitiveReadRoots.some((sensitiveRoot) => contains(sensitiveRoot, root)) &&
+      [...layout.readOnlyRoots, ...layout.readWriteRoots].every(
+        (grantedRoot) => !contains(grantedRoot, root) && !contains(root, grantedRoot)
+      )
+    if (alreadyHidden) continue
     if (pathIsDirectory(root)) argumentsList.push('--tmpfs', root)
     else argumentsList.push('--ro-bind', '/dev/null', root)
   }

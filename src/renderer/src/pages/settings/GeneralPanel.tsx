@@ -1,3 +1,5 @@
+import { Notice } from '@/components/notice'
+import { InlineNotice } from '@/components/ui/inline-notice'
 import { ExternalLink, FolderOpen, Globe, Terminal } from 'lucide-react'
 import type { TFunction } from 'i18next'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -459,38 +461,39 @@ const GeneralPanel = (): React.JSX.Element => {
         ) : null}
 
         {logStatusError !== undefined ? (
-          <div className="mt-2 space-y-2">
-            <p className="text-xs text-destructive" role="alert">
-              {t('Could not check the log file.')}
-            </p>
+          <Notice
+            level="error"
+            role="alert"
+            className="mt-2"
+            description={t('Could not check the log file.')}
+            primaryButton={{
+              label: isCheckingLog ? t('Loading…') : t('Check again'),
+              disabled: isCheckingLog,
+              onClick: () => void refreshLogStatus()
+            }}
+          >
             <DiagnosticDetails detail={logStatusError} />
-            <Button
-              type="button"
-              variant="outline"
-              disabled={isCheckingLog}
-              onClick={() => void refreshLogStatus()}
-            >
-              {isCheckingLog ? t('Loading…') : t('Check again')}
-            </Button>
-          </div>
+          </Notice>
         ) : null}
 
         {logStatus && (logStatus.lastWriteSucceeded === false || logStatus.lastFailureCategory) ? (
-          <p className="mt-2 text-xs text-destructive" role="status">
+          <InlineNotice level="error" className="mt-2" role="status">
             {logStatus.lastWriteSucceeded === false
               ? t('The app could not write to the log file during its most recent attempt.')
               : null}{' '}
             {logFailureCopy(logStatus.lastFailureCategory, t)}
-          </p>
+          </InlineNotice>
         ) : null}
 
         {message ? (
-          <div className="mt-2">
-            <p className="text-xs text-destructive" role="alert">
-              {generalActionErrorCopy(message, t)}
-            </p>
+          <Notice
+            level="error"
+            role="alert"
+            className="mt-2"
+            description={generalActionErrorCopy(message, t)}
+          >
             <DiagnosticDetails detail={message.detail} />
-          </div>
+          </Notice>
         ) : null}
 
         <p className="mt-3 text-xs text-muted-foreground">
@@ -551,24 +554,23 @@ const GeneralPanel = (): React.JSX.Element => {
         ) : null}
 
         {cliError ? (
-          <div className="mt-2">
-            <p className="text-xs text-destructive" role="alert">
-              {generalActionErrorCopy(cliError, t)}
-            </p>
+          <Notice
+            level="error"
+            role="alert"
+            className="mt-2"
+            description={generalActionErrorCopy(cliError, t)}
+            primaryButton={
+              cliError.action === 'cli-status'
+                ? {
+                    label: isUpdatingCli ? t('Checking…') : t('Check again'),
+                    disabled: isUpdatingCli,
+                    onClick: () => void checkCliStatus()
+                  }
+                : undefined
+            }
+          >
             <DiagnosticDetails detail={cliError.detail} />
-            {cliError.action === 'cli-status' ? (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="mt-2"
-                disabled={isUpdatingCli}
-                onClick={() => void checkCliStatus()}
-              >
-                {isUpdatingCli ? t('Checking…') : t('Check again')}
-              </Button>
-            ) : null}
-          </div>
+          </Notice>
         ) : null}
 
         <p className="mt-3 text-xs text-muted-foreground">

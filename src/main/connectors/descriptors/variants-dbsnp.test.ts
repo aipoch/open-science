@@ -142,6 +142,92 @@ const rs7412Payload = {
 }
 
 describe('dbsnp_get_rsids', () => {
+  it.each([
+    { rsid: '121913421', ref: 'GGAATTAAGAGAAGC', positions: [55174771, 55242464] },
+    { rsid: '121913426', ref: 'GAATTAAGAGAAGCAACA', positions: [55174772, 55242465] }
+  ])(
+    'retains empty deletion alleles in both assembly summaries: rs$rsid',
+    async ({ rsid, ref, positions }) => {
+      // Minimal fixtures retain the chromosome SPDIs from real RefSNP responses.
+      const placements = ['NC_000007.14', 'NC_000007.13'].map((seqId, i) => ({
+        seq_id: seqId,
+        is_ptlp: i === 0,
+        placement_annot: {
+          seq_id_traits_by_assembly: [
+            { is_chromosome: true, assembly_name: i === 0 ? 'GRCh38.p14' : 'GRCh37.p13' }
+          ]
+        },
+        alleles: [ref, ''].map((inserted) => ({
+          allele: {
+            spdi: {
+              seq_id: seqId,
+              position: positions[i],
+              deleted_sequence: ref,
+              inserted_sequence: inserted
+            }
+          }
+        }))
+      }))
+      const payload = {
+        refsnp_id: rsid,
+        primary_snapshot_data: { placements_with_allele: placements }
+      }
+      const out = (await new ParserEngine({
+        fetchImpl: vi.fn().mockResolvedValueOnce(jsonRes(payload))
+      }).call(getRsids, { rsids: [`rs${rsid}`] }, { ncbiEmail: 'x@y.org' })) as {
+        records: Array<{
+          placements: Array<{ seq_id: string; position: number; ref: string; alts: string[] }>
+          alleles: Array<{ allele: string; ref: string; spdi: string }>
+        }>
+      }
+      const record = out.records[0]
+      expect(record.placements).toHaveLength(2)
+      record.placements.forEach((placement, i) => {
+        expect(placement).toMatchObject({
+          seq_id: placements[i].seq_id,
+          position: positions[i] + 1,
+          ref,
+          alts: ['']
+        })
+        expect(placement.alts.filter((alt) => alt.length < placement.ref.length)).toHaveLength(1)
+      })
+      expect(record.alleles).toHaveLength(1)
+      expect(record.alleles[0]).toMatchObject({
+        allele: '',
+        ref,
+        spdi: `NC_000007.14:${positions[0]}:${ref}:`
+      })
+    }
+  )
+
+  it('keeps deletion and substitution alternatives while excluding missing sequences and duplicates', async () => {
+    // Synthetic mixed placement checks empty-string semantics independently of real records.
+    const original = rs7412Payload.primary_snapshot_data.placements_with_allele[0]
+    const placement = {
+      ...original,
+      alleles: ['C', '', 'T', '', undefined, null].map((inserted) => ({
+        allele: {
+          spdi: {
+            seq_id: original.seq_id,
+            position: 44908821,
+            deleted_sequence: 'C',
+            inserted_sequence: inserted
+          }
+        }
+      }))
+    }
+    const payload = {
+      refsnp_id: '7412',
+      primary_snapshot_data: { placements_with_allele: [placement] }
+    }
+    const out = (await new ParserEngine({
+      fetchImpl: vi.fn().mockResolvedValueOnce(jsonRes(payload))
+    }).call(getRsids, { rsids: ['rs7412'] }, { ncbiEmail: 'x@y.org' })) as {
+      records: Array<{ placements: Array<{ alts: string[] }> }>
+    }
+    expect(out.records[0].placements[0].alts).toEqual(['', 'T'])
+  })
+
   it('distills a live RefSNP record: placements, alleles, frequencies, clinvar, genes', async () => {
     const fetchImpl = vi.fn().mockResolvedValueOnce(jsonRes(rs7412Payload))
     const out = (await new ParserEngine({ fetchImpl }).call(

@@ -1,3 +1,4 @@
+import { PackageLiteratureReader } from './session-package/literature-reader'
 import { PdfElementAgentReader } from './literature/pdf-structure/agent-reader'
 import { transactLiterature } from './literature/transact'
 import { createPdfStructureOwner } from './literature/pdf-structure/owner'
@@ -341,7 +342,7 @@ import { MarketplaceRepository } from './specialist/marketplace/repository'
 import { MarketplaceService } from './specialist/marketplace/service'
 import { MarketplaceOperationCoordinator } from './specialist/marketplace/operation-coordinator'
 import { UserSkillSpecialistPackageAdapter } from './skills/specialist-package-adapter'
-import { netFetchStandard } from './skills/net-fetch'
+import { netFetchStandard, netFetchWithManualRedirect } from './skills/net-fetch'
 import { AgentsService } from './agents/agents-service'
 import {
   CompletionGateCoordinator,
@@ -731,6 +732,15 @@ const createApplicationModules = async (
         await networkProxyRuntime.apply(settings)
         await notebookNetworkSandbox.updateParentProxy()
       },
+      readMarketplaceSpecialists: async (): Promise<
+        import('../shared/specialist').SpecialistListItem[]
+      > => {
+        const snapshot = await specialistService.listForSettingsSnapshot()
+        if (snapshot.integrity.status !== 'ok')
+          throw new Error('Specialist impact inspection is unavailable.')
+        return snapshot.items
+      },
+      withMarketplaceImpactLock: (operation) => specialistRepository.withReadLock(operation),
       withUserSkillRecoveryBarrier: (operation) =>
         specialistPackageRecovery.current?.(operation) ?? operation(),
       applyNotebookNetwork: async (settings) => notebookNetworkSandbox.applySettings(settings),
@@ -1130,7 +1140,7 @@ const createApplicationModules = async (
       storageRoot: resolveDataRoot(),
       getClient: () => getProjectDbClient(resolveConfigRoot()),
       isSessionActive: (projectId, sessionId) =>
-        detectArchiveBlockingSessions().some(
+        detectSessionExportBlockingSessions().some(
           (item) => item.projectId === projectId && item.sessionId === sessionId
         )
     })
@@ -1209,7 +1219,12 @@ const createApplicationModules = async (
   })
   const literatureAttachmentAuthority = new LiteratureAttachmentAuthority({
     getClient: () => getProjectDbClient(resolveConfigRoot()),
-    content: contentRepository
+    content: contentRepository,
+    packages: new PackageLiteratureReader({
+      storageRoot: resolveDataRoot(),
+      getClient: () => getProjectDbClient(resolveConfigRoot()),
+      files: managedFileVersionService
+    })
   })
   const sessionPdfSourceResolver = new SessionPdfSourceResolver({
     inputs: immutableInputAuthority,
@@ -1410,6 +1425,9 @@ const createApplicationModules = async (
   const delegatedActivity = createDelegatedActivityProjection()
   const getActiveDelegatedSessions = (): { projectId: string; sessionId: string }[] =>
     delegatedActivity.getActiveDelegatedSessions()
+  // Side Chat prompts remain activity for disruptive archive, migration and shutdown operations.
+  // Package export uses a narrower projection because auxiliary transcripts are excluded; delivered
+  // relays already live in the main conversation graph independently of this activity projection.
   const getActiveSideChatSessions = (): { projectId: string; sessionId: string }[] =>
     (sideChatOwnerRef.current?.list().chats ?? [])
       .filter((chat) => chat.running)
@@ -1644,18 +1662,26 @@ const createApplicationModules = async (
     },
     applicationEvents
   )
-  const detectArchiveBlockingSessions = (): ReturnType<typeof detectActiveSessions> =>
+  const detectBlockingSessions = (
+    includeSideChat: boolean
+  ): ReturnType<typeof detectActiveSessions> =>
     detectActiveSessions({
       runtime: {
         getActivePromptSessions: () => runtimeRef.current?.getActivePromptSessions() ?? []
       },
-      sideChat: { getActivePromptSessions: getActiveSideChatSessions },
+      sideChat: {
+        getActivePromptSessions: () => (includeSideChat ? getActiveSideChatSessions() : [])
+      },
       delegated: { getActiveDelegatedSessions },
       notebook: {
         getActiveNotebookSessions: () =>
           notebookActivityRef.current?.getActiveNotebookSessions() ?? []
       }
     })
+  const detectArchiveBlockingSessions = (): ReturnType<typeof detectActiveSessions> =>
+    detectBlockingSessions(true)
+  const detectSessionExportBlockingSessions = (): ReturnType<typeof detectActiveSessions> =>
+    detectBlockingSessions(false)
   const archiveCoordinator = new ArchiveCoordinator(
     projectRepository,
     sessionPersistenceCoordinator,
@@ -1669,6 +1695,17 @@ const createApplicationModules = async (
           jobs > 0 ||
           sideChatOwnerRef.current?.hasForParent(sessionId) === true ||
           detectArchiveBlockingSessions().some(
+            (session) => session.projectId === projectId && session.sessionId === sessionId
+          )
+        )
+      },
+      isSessionExportBusy: async (projectId, sessionId) => {
+        const computeJobs = computeJobActivityRef.current
+        if (!computeJobs) throw new Error('Compute Job activity is not initialized.')
+        const jobs = await computeJobs.countNonTerminalBySession(sessionId)
+        return (
+          jobs > 0 ||
+          detectSessionExportBlockingSessions().some(
             (session) => session.projectId === projectId && session.sessionId === sessionId
           )
         )
@@ -2170,7 +2207,7 @@ const createApplicationModules = async (
     repository: marketplaceRepository,
     operationCoordinator: marketplaceOperationCoordinator,
     packages: specialistPackageService,
-    fetch: netFetchStandard,
+    fetch: netFetchWithManualRedirect,
     officialSource: OFFICIAL_MARKETPLACE_SOURCE,
     getDisabledSkillIds: async () =>
       (await settingsRepository.getSettings()).disabledSkillIds ?? [],
@@ -3351,7 +3388,18 @@ const createApplicationModules = async (
     {
       appVersion: app.getVersion(),
       configRoot,
-      captureTarget: () => settingsService.captureActiveExplicitAgentBackendTarget(),
+      captureTarget: async (selection) => {
+        if (!selection) return settingsService.captureActiveExplicitAgentBackendTarget()
+        const { frameworkId } = await settingsService.captureActiveAgentBackendSelection()
+        return {
+          frameworkId,
+          providerId: selection.providerId,
+          model: selection.model
+            ? { kind: 'required', id: selection.model }
+            : { kind: 'provider-default' },
+          reasoningEffort: selection.reasoningEffort ?? 'default'
+        }
+      },
       resolveTarget: (target, context) =>
         settingsService.resolveExplicitAgentBackend(target, context),
       relay: sideChatRelay,
@@ -4868,6 +4916,8 @@ const createApplicationModules = async (
           return context
         },
         editDetails: (request) => sessionDetailsOwner.edit(request),
+        bindTaskSession: (request) => sessionPersistenceCoordinator.bindTaskSession(request),
+        admitTaskTurn: (request) => sessionPersistenceCoordinator.admitTaskTurn(request),
         stageTaskCompletion: (request) =>
           sessionPersistenceCoordinator.stageTaskCompletion(request),
         settleTaskCompletion: (request) =>

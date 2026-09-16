@@ -120,6 +120,7 @@ type ReviewerCorrectionState = 'waiting' | 'responding' | 'completed' | 'failed'
 type WorkspaceMessageItemProps = {
   message: ChatMessage
   projectId?: string
+  isPackageSession?: boolean
   onPreviewArtifact: (artifact: MessageArtifact) => void
   onPreviewArtifactModal?: (artifact: MessageArtifact) => void
   onPreviewUploadAttachment: (attachment: MessageUploadAttachment) => void
@@ -528,11 +529,13 @@ const WorkspaceAssistantTurnCompletion = ({
                 aria-label={copied ? t('Copied') : t('Copy message')}
                 onClick={handleCopyMessage}
               >
-                {copied ? (
-                  <Check className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                ) : (
-                  <Copy className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                )}
+                <span key={String(copied)} className="button-feedback">
+                  {copied ? (
+                    <Check className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                  ) : (
+                    <Copy className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                  )}
+                </span>
               </button>
             </UserMessageActionTooltip>
             <UserMessageActionTooltip label={t('Branch in new session')}>
@@ -1332,6 +1335,7 @@ const MessagePartsContent = ({
 const WorkspaceMessageItemImpl = ({
   message,
   projectId,
+  isPackageSession = false,
   onPreviewArtifact,
   onPreviewArtifactModal = onPreviewArtifact,
   onPreviewUploadAttachment,
@@ -1776,11 +1780,13 @@ const WorkspaceMessageItemImpl = ({
                             aria-label={copied ? t('Copied') : t('Copy message')}
                             onClick={handleCopyMessage}
                           >
-                            {copied ? (
-                              <Check className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                            ) : (
-                              <Copy className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                            )}
+                            <span key={String(copied)} className="button-feedback">
+                              {copied ? (
+                                <Check className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                              ) : (
+                                <Copy className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                              )}
+                            </span>
                           </button>
                         </UserMessageActionTooltip>
                         <UserMessageActionTooltip label={t('Edit message')}>
@@ -1839,7 +1845,7 @@ const WorkspaceMessageItemImpl = ({
                     {message.interrupted ? (
                       <span
                         data-slot="user-message-interrupted"
-                        className="italic text-amber-600 dark:text-amber-400"
+                        className="italic text-status-warning-foreground dark:text-status-warning-dark-foreground"
                       >
                         {t('This turn was interrupted.')}
                       </span>
@@ -1977,6 +1983,7 @@ const WorkspaceMessageItemImpl = ({
         />
         {selectedLiteratureReference ? (
           <ArtifactLiteratureDetailDialog
+            snapshotOnly={isPackageSession}
             reference={selectedLiteratureReference}
             onOpenChange={(open) => {
               if (!open) setSelectedLiteratureReference(undefined)
@@ -2065,6 +2072,7 @@ const areWorkspaceMessageItemPropsEqual = (
 ): boolean =>
   previous.message === next.message &&
   previous.projectId === next.projectId &&
+  (previous.isPackageSession ?? false) === (next.isPackageSession ?? false) &&
   previous.onPreviewArtifact === next.onPreviewArtifact &&
   previous.onPreviewArtifactModal === next.onPreviewArtifactModal &&
   previous.onPreviewUploadAttachment === next.onPreviewUploadAttachment &&

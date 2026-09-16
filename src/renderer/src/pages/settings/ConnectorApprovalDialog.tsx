@@ -106,7 +106,10 @@ export function ConnectorApprovalDialog({
           )}
         >
           <div className={cn(dialogHeaderClassName, 'items-start justify-start')}>
-            <ShieldAlert className="mt-0.5 size-5 shrink-0 text-amber-500" aria-hidden="true" />
+            <ShieldAlert
+              className="mt-0.5 size-5 shrink-0 text-status-warning-foreground dark:text-status-warning-dark-foreground"
+              aria-hidden="true"
+            />
             <div className="min-w-0">
               <Dialog.Title className={dialogTitleClassName}>
                 {t('Allow external request?')}

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useSettingsStore } from '@/stores/settings-store'
 import { i18next } from '@/i18n'
+import type { AgentFrameworkView } from '../../../../shared/settings'
 import { ProviderForm } from './ProviderForm'
 import { getApiKeySecurityCopyKeys } from './provider-key-security'
 import {
@@ -38,7 +39,8 @@ const render = (
     supportedModels,
     hasStoredKey = false,
     showCodexSubscriptions = false,
-    showClaudeIsolated = false
+    showClaudeIsolated = false,
+    framework
   }: {
     onChange?: () => void
     supportedModels?: string[]
@@ -46,6 +48,7 @@ const render = (
     hasStoredKey?: boolean
     showCodexSubscriptions?: boolean
     showClaudeIsolated?: boolean
+    framework?: AgentFrameworkView
   } = {}
 ): void => {
   act(() => {
@@ -58,12 +61,76 @@ const render = (
         hasStoredKey={hasStoredKey}
         showCodexSubscriptions={showCodexSubscriptions}
         showClaudeIsolated={showClaudeIsolated}
+        framework={framework}
       />
     )
   })
 }
 
 describe('ProviderForm field switching', () => {
+  it('quick-fills a local model preset into the draft on tap', () => {
+    // The seed/revert patch semantics are pinned as unit tests on localModelPresetPatch; this
+    // smoke test only wires the preset buttons to onChange.
+    const onChange = vi.fn()
+    render(createEmptyProviderFormValue({ type: 'custom' }), { onChange })
+
+    const ollama = [...container.querySelectorAll<HTMLButtonElement>('button[type="button"]')].find(
+      (button) => button.textContent?.includes('Ollama')
+    )
+    act(() => ollama?.click())
+
+    expect(onChange).toHaveBeenCalledWith({
+      baseUrl: 'http://localhost:11434',
+      apiEndpoint: 'openai',
+      name: 'Ollama'
+    })
+  })
+
+  it('marks the API key optional for a loopback custom gateway', () => {
+    render(
+      createEmptyProviderFormValue({
+        type: 'custom',
+        baseUrl: 'http://localhost:11434',
+        model: 'qwen3:14b'
+      })
+    )
+
+    const keyLabel = container.querySelector('label[for="provider-key"]')
+    expect(keyLabel?.textContent).toContain('(optional)')
+    expect(container.querySelector('#provider-key')?.getAttribute('aria-required')).toBeNull()
+  })
+
+  it('explains a framework the draft cannot drive while keeping the save unblocked', () => {
+    const value = createEmptyProviderFormValue({
+      type: 'custom',
+      baseUrl: 'http://localhost:11434',
+      model: 'qwen3:14b',
+      apiEndpoint: 'openai'
+    })
+    render(value, {
+      framework: {
+        id: 'claude-code',
+        displayName: 'Claude Code',
+        supportedApiTypes: ['anthropic'],
+        supportsSkills: true
+      }
+    })
+
+    expect(container.textContent).toContain('Not usable with Claude Code')
+    expect(container.textContent).toContain('/v1/messages')
+
+    // The same draft under a framework that speaks its format shows no warning.
+    render(value, {
+      framework: {
+        id: 'opencode',
+        displayName: 'OpenCode',
+        supportedApiTypes: ['anthropic', 'openai'],
+        supportsSkills: true
+      }
+    })
+    expect(container.textContent).not.toContain('Not usable with')
+  })
+
   it('shows the expanded SenseNova chat catalog and links directly to API keys', () => {
     render(createEmptyProviderFormValue({ type: 'official', vendorId: 'sensenova' }))
 

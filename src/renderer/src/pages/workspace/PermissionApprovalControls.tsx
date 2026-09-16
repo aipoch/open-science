@@ -976,7 +976,11 @@ const PermissionApprovalCard = ({
         <div className="flex flex-col gap-1 text-xs">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="font-semibold text-foreground">{request.delegated.childTitle}</span>
-            <span className="text-muted-foreground">{request.delegated.riskScope}</span>
+            <span className="text-muted-foreground">
+              {sourcePresentation.categoryLabel === 'Read web pages'
+                ? t('This conversation or this call')
+                : request.delegated.riskScope}
+            </span>
           </div>
           <span className="break-words text-muted-foreground">
             {literatureSummary ? presentation.description : request.title}
@@ -1005,6 +1009,10 @@ const PermissionApprovalCard = ({
           scopeDescription={scopeDescription}
         />
       </div>
+
+      {sourcePresentation.categoryLabel === 'Read web pages' ? (
+        <p className="text-muted-foreground">{presentation.description}</p>
+      ) : null}
 
       {/* Affected file targets — the canonical location field, shown so read/edit/delete
           prompts always reveal the path being authorized. Wraps to keep full values readable. */}

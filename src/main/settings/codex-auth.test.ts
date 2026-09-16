@@ -389,6 +389,37 @@ describe('importCodexAuthentication', () => {
     }
   })
 
+  it('names the credential-store boundary when the required import finds no auth.json', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-auth-import-missing-'))
+    const source = join(root, 'source')
+    const destination = join(root, 'destination')
+    try {
+      await mkdir(source, { recursive: true })
+
+      await expect(importCodexAuthentication(source, destination)).rejects.toThrow(
+        'Open Science could not find a file-backed Codex credential to import. Your existing Codex sign-in may be stored in the system credential store, which Open Science cannot import from. Continue with the Open Science Codex sign-in instead.'
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps the generic import failure for a present-but-unreadable auth.json', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-auth-import-invalid-'))
+    const source = join(root, 'source')
+    const destination = join(root, 'destination')
+    try {
+      await mkdir(source, { recursive: true })
+      await writeFile(join(source, 'auth.json'), '"not-an-object"')
+
+      await expect(importCodexAuthentication(source, destination)).rejects.toThrow(
+        'The selected Codex profile does not contain importable authentication.'
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('projects only a validated provider route from app-owned configuration', () => {
     expect(
       projectSafeCodexProviderRoute(

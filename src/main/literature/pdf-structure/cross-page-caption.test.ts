@@ -206,3 +206,36 @@ it('selects the main legend before supplemental legends on a manuscript legend p
   const secondMain = { ...supplement, lines: ['FIGURE 2: Other main results'] }
   expect(associateAdjacentFigure(target, [source, target], [main, secondMain])).toEqual([])
 })
+
+it('allows table notes on a read continuation page without extending table-body coverage', () => {
+  const value = result()
+  const element = value.elements[0]
+  element.kind = 'table'
+  element.table = {
+    rowCount: 1,
+    columnCount: 1,
+    cells: [
+      {
+        row: 0,
+        column: 0,
+        rowSpan: 1,
+        columnSpan: 1,
+        text: 'Value',
+        regions: [{ ...element.regions[0] }]
+      }
+    ],
+    unassignedText: [],
+    issues: [],
+    notes: [
+      { text: 'a Source note.', regions: [{ page: 3, x: 0.1, y: 0.1, width: 0.8, height: 0.1 }] }
+    ]
+  }
+  expect(parsePdfStructureResult(value, value).processedPages).toEqual([2])
+  for (const page of [1, 4]) {
+    element.table.notes![0].regions[0].page = page
+    expect(() => parsePdfStructureResult(value, value)).toThrow('table note')
+  }
+  element.table.notes![0].regions[0].page = 3
+  element.table.cells[0].regions[0].page = 3
+  expect(() => parsePdfStructureResult(value, value)).toThrow('unprocessed page')
+})

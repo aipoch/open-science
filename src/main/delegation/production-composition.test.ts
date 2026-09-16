@@ -2459,6 +2459,9 @@ describe('production delegated-work composition', () => {
       awaiting: true,
       requestId: 'provider-permission-1',
       title: 'Read evidence',
+      providerToolName: 'WebFetch',
+      isMcp: false,
+      toolKind: 'fetch',
       options: [
         { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once', scope: 'once' },
         { optionId: 'allow', name: 'This session', kind: 'allow_always', scope: 'session' },
@@ -2469,6 +2472,9 @@ describe('production delegated-work composition', () => {
     const projected = harness.composition.root.pendingPermissions()[0]
     expect(projected).toMatchObject({
       sessionId: harness.session.id,
+      providerToolName: 'WebFetch',
+      isMcp: false,
+      toolKind: 'fetch',
       delegated: {
         frameId: receipt.children[0].frameId,
         attemptId: receipt.children[0].attemptId,

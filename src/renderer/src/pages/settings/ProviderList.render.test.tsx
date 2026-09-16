@@ -70,6 +70,7 @@ const renderList = (
     activeModel?: string
     agentFrameworkId?: AgentFrameworkId
     frameworkEndpoints?: readonly ChatApiEndpoint[]
+    frameworkName?: string
   } = {}
 ): void => {
   act(() => {
@@ -80,6 +81,7 @@ const renderList = (
         activeModel={callbacks.activeModel}
         agentFrameworkId={callbacks.agentFrameworkId}
         frameworkEndpoints={callbacks.frameworkEndpoints}
+        frameworkName={callbacks.frameworkName}
         busyProviderId={busyId}
         onEdit={noop}
         onDelete={noop}
@@ -177,6 +179,34 @@ describe('ProviderList', () => {
     renderList([provider({ needsKey: true })])
 
     expect(container.textContent).toContain('Key needs re-entry')
+  })
+
+  it('tags a provider the active framework cannot drive while keeping the card visible', () => {
+    renderList(
+      [provider({ apiEndpoints: ['openai'], model: 'qwen3:14b', models: ['qwen3:14b'] })],
+      undefined,
+      undefined,
+      {
+        agentFrameworkId: 'claude-code',
+        frameworkEndpoints: ['anthropic'],
+        frameworkName: 'Claude Code'
+      }
+    )
+
+    expect(container.textContent).toContain('Not usable with Claude Code')
+
+    // A pairing the framework can drive carries no tag.
+    renderList(
+      [provider({ apiEndpoints: ['openai'], model: 'qwen3:14b', models: ['qwen3:14b'] })],
+      undefined,
+      undefined,
+      {
+        agentFrameworkId: 'opencode',
+        frameworkEndpoints: ['anthropic', 'openai'],
+        frameworkName: 'OpenCode'
+      }
+    )
+    expect(container.textContent).not.toContain('Not usable with')
   })
 
   it('flags a provider whose last test failed with the reason', () => {

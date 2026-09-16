@@ -217,6 +217,7 @@ export const createSessionMessageGraphOwner = <
     agentModel,
     agentConfiguration,
     memoryEnabled,
+    autoReviewEnabled,
     delegationPolicy,
     isPending,
     specialistId,
@@ -369,6 +370,7 @@ export const createSessionMessageGraphOwner = <
         agentModel: normalizedAgentModel,
         ...(agentConfiguration ? { agentConfiguration } : {}),
         memoryEnabled: memoryEnabled !== false,
+        autoReviewEnabled: autoReviewEnabled === true,
         ...(delegationPolicy ? { delegationPolicy } : {}),
         ...(specialistId ? { specialistId } : {}),
         ...(enabledComputeHosts?.length

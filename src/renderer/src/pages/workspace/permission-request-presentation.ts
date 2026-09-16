@@ -473,6 +473,17 @@ const describePermissionRequest = (request: AcpPermissionRequest): PermissionPre
   }
 
   if (isNetworkTool(request)) {
+    if (
+      request.providerToolName === 'WebFetch' &&
+      request.options.some(({ scope }) => scope === 'session')
+    ) {
+      return {
+        actionTitle: 'Allow web reading?',
+        categoryLabel: 'Read web pages',
+        description:
+          'Conversation approval allows web reading across websites for this conversation and its subagents.'
+      }
+    }
     return {
       actionTitle: 'Access network resource?',
       categoryLabel: 'Network access',

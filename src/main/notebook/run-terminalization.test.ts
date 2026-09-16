@@ -911,3 +911,15 @@ it('keeps execution completed when a post-commit projection fails and retries wi
   expect(executions).toBe(1)
   expect(harness.document().runs[0].status).toBe('completed')
 })
+
+it('AUDIT: persists the actual process cwd instead of the submitted directory', async () => {
+  const harness = createHarness()
+  const actual = `${session.dataRoot}/analysis`
+  const run = runningRun('actual-cwd')
+  const result = await harness.owner.run({
+    session,
+    runningRun: run,
+    invoke: async () => ({ ...completedResult(), cwdBefore: actual, cwdAfter: actual })
+  })
+  expect(result.run.cwdBefore).toBe(actual)
+})

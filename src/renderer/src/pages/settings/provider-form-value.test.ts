@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  LOCAL_MODEL_PRESETS,
   PROVIDER_KINDS,
   createEmptyProviderFormValue,
   defaultCustomApiEndpoint,
   defaultProviderKindKey,
   getProviderFormErrors,
   hasProviderFormErrors,
+  localModelPresetPatch,
   providerFormApiEndpoints,
   providerFormModelForFramework,
   providerKindPatch,
@@ -31,6 +33,52 @@ describe('defaultCustomApiEndpoint', () => {
 
   it('falls back to the legacy Messages API while framework capabilities are unavailable', () => {
     expect(defaultCustomApiEndpoint([])).toBe('anthropic')
+  })
+})
+
+describe('localModelPresetPatch', () => {
+  const ollama = LOCAL_MODEL_PRESETS[0]
+
+  it('seeds only the base URL and format when the user already typed a name and model', () => {
+    // Local model ids depend on what the user has pulled, so nothing is guessed for them.
+    expect(
+      localModelPresetPatch(
+        ollama,
+        createEmptyProviderFormValue({
+          type: 'custom',
+          name: 'My own name',
+          model: 'my-own-model'
+        }),
+        'anthropic'
+      )
+    ).toEqual({ baseUrl: 'http://localhost:11434', apiEndpoint: 'openai' })
+  })
+
+  it('seeds the preset name too when the name field is still empty', () => {
+    expect(
+      localModelPresetPatch(ollama, createEmptyProviderFormValue({ type: 'custom' }), 'anthropic')
+    ).toEqual({
+      baseUrl: 'http://localhost:11434',
+      apiEndpoint: 'openai',
+      name: 'Ollama'
+    })
+  })
+
+  it('reverts exactly what it filled when the active preset is tapped again', () => {
+    // The format falls back to the caller's framework default; a user-typed model is never touched.
+    expect(
+      localModelPresetPatch(
+        ollama,
+        createEmptyProviderFormValue({
+          type: 'custom',
+          baseUrl: 'http://localhost:11434',
+          name: 'Ollama',
+          model: 'my-own-model',
+          apiEndpoint: 'openai'
+        }),
+        'anthropic'
+      )
+    ).toEqual({ baseUrl: '', apiEndpoint: 'anthropic', name: '' })
   })
 })
 
@@ -64,6 +112,20 @@ describe('getProviderFormErrors', () => {
 
     expect(errors).toEqual({})
     expect(hasProviderFormErrors(errors)).toBe(false)
+  })
+
+  it('drops the key requirement for a loopback custom gateway', () => {
+    // Local model servers (Ollama, LM Studio, …) serve without a key; only the base URL and model
+    // stay required.
+    const errors = getProviderFormErrors(
+      createEmptyProviderFormValue({
+        type: 'custom',
+        baseUrl: 'http://localhost:11434',
+        model: 'qwen3:14b'
+      })
+    )
+
+    expect(errors).toEqual({})
   })
 
   it.each([

@@ -7,6 +7,8 @@ import type { NotebookNetworkStatus } from '../../../src/shared/notebook-network
 
 const fixtureLocale =
   new URLSearchParams(location.search).get('locale') === 'zh-Hans' ? 'zh-Hans' : 'en'
+const installLibraryScenario =
+  new URLSearchParams(location.search).get('scenario') === 'install-library'
 const localeReady = Promise.resolve(prepareI18nLocale(fixtureLocale)).then(() =>
   initI18n(fixtureLocale)
 )
@@ -15,12 +17,14 @@ let protection: NotebookNetworkStatus = {
   platform: 'win32',
   reasons: ['windowsProfileMissing']
 }
+if (installLibraryScenario) protection = { kind: 'ready', warnings: [] }
 const environments = {
   python: [],
   r: [
     {
       language: 'r',
-      provenance: 'app-managed',
+      provenance: installLibraryScenario ? 'user-own' : 'app-managed',
+      ...(installLibraryScenario ? { personalRLibraries: ['D:\\R\\personal-library'] } : {}),
       condaEnv: 'default-r',
       envId: 'C:\\OpenScience\\runtime\\envs\\default-r\\bin\\R.exe',
       interpreterPath: 'C:\\OpenScience\\runtime\\envs\\default-r\\bin\\R.exe',
@@ -39,7 +43,15 @@ window.api = {
   },
   runtime: {
     listEnvironments: async () => environments,
-    getEnablement: async () => ({ enabled: {}, installAuthorized: {} }),
+    getEnablement: async () => ({
+      enabled: { [environments.r[0].envId]: true },
+      installAuthorized: {}
+    }),
+    setInstallAuthorized: async () => {
+      throw new Error(
+        "Error invoking remote method 'runtime:set-install-authorized': Error: Select an existing personal library visible to this R runtime."
+      )
+    },
     getAgentEnvironmentCreationEnabled: async () => true,
     listPackageCounts: async () => ({}),
     setSandboxAccess: async (_language: string, _envId: string, authorized: boolean) => {

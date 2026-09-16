@@ -780,7 +780,7 @@ describe('TagsPanel', () => {
 
     const alert = container.querySelector<HTMLElement>('[role="alert"]')
     expect(alert?.textContent).toBe('Could not update Tags.')
-    expect(alert?.className).toContain('text-destructive')
+    expect(alert?.closest('[data-notice-level]')?.getAttribute('data-notice-level')).toBe('error')
     expect(alert?.className).not.toContain('sr-only')
   })
 

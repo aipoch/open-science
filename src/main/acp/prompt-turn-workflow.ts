@@ -25,6 +25,9 @@ import {
   type AcpPromptFinalizationOutcome
 } from './prompt-outcome-finalizer'
 import type { AcpPromptPreparationOwner, PreparedPromptHandle } from './prompt-preparation-owner'
+import { PlanToolWaitObserver } from './plan-review-provider-stop'
+import { combineProviderPromptFacts } from './provider-prompt-facts'
+import type { AcpProviderTurnResult } from './provider-turn-adapter'
 import type { AcpProviderPromptExecutor, ProviderPromptOutcome } from './provider-prompt-executor'
 import type { AcpProviderPromptSerializationOwner } from './provider-prompt-serialization-owner'
 import type { AcpSessionInteractionOwner } from './session-interaction-owner'
@@ -144,6 +147,18 @@ type AcpPromptTurnPlanWorkflow = Readonly<{
     interaction: AcpPromptSessionInteractionScope,
     plan: AcpPromptTurnPlanContext
   ) => AcpPromptTurnPlanContext | Promise<AcpPromptTurnPlanContext>
+  toolWaitFailed?: (interaction: AcpPromptSessionInteractionScope) => void
+  providerStopped?: (interaction: AcpPromptSessionInteractionScope) => void
+  isProviderPaused?: (interaction: AcpPromptSessionInteractionScope) => boolean
+  resumeAfterProviderStop?: (interaction: AcpPromptSessionInteractionScope) => Promise<
+    | {
+        content: string
+        dispatch?: () => Promise<void>
+        notDispatched?: () => Promise<void>
+        accepted: () => Promise<void>
+      }
+    | undefined
+  >
   providerAccepted: (sessionId: string, mode: AcpPromptTurnMode) => void | Promise<void>
   beforeRelease: (sessionId: string, interaction: AcpPromptSessionInteractionScope) => void
   afterRelease: (sessionId: string) => Promise<void>
@@ -352,6 +367,7 @@ class AcpPromptTurnWorkflow {
     let sideChatRelay: ReturnType<NonNullable<typeof env.sideChatRelays>['claim']>
     let sideChatRelaySettled = false
     const notebookWorkingFiles = new NotebookWorkingFileObserver()
+    const planToolWait = new PlanToolWaitObserver()
     const emitUserMessage = (): void => {
       if (
         (turn.mode.kind !== 'user' && turn.mode.kind !== 'application') ||
@@ -434,13 +450,20 @@ class AcpPromptTurnWorkflow {
       const promptBackend = env.backend()
       const framework = promptBackend.framework
       const cwd = promptSnapshot?.cwd ?? this.options.currentCwd()
+      let providerContent = readyPrepared.content
+      let resumeAccepted: (() => Promise<void>) | undefined
+      let resumeDispatch: (() => Promise<void>) | undefined
+      let resumeNotDispatched: (() => Promise<void>) | undefined
+      let deliveryClaimed = false
+      let providerDispatched = false
+      let accumulatedFacts: AcpProviderTurnResult | undefined
       const executeProviderTurn = (): Promise<ProviderPromptOutcome> =>
         executor.execute({
           session,
-          content: readyPrepared.content,
+          content: providerContent,
           cwd,
           frameworkId: promptSnapshot?.frameworkId ?? framework.id,
-          ...(readyPrepared.preDispatchModelCalls
+          ...(!accumulatedFacts && readyPrepared.preDispatchModelCalls
             ? { preDispatchModelCalls: readyPrepared.preDispatchModelCalls }
             : {}),
           isCurrent: () => this.isCurrent(turn),
@@ -455,7 +478,7 @@ class AcpPromptTurnWorkflow {
                 ? { skillRuntimeAllowlist: readyPrepared.skillRuntimeAllowlist }
                 : {})
             })
-            if (request.historyPreamble) {
+            if (!accumulatedFacts && request.historyPreamble) {
               log.info('session transcript replay dispatched', {
                 sessionId,
                 historyTextLength: request.historyPreamble.length,
@@ -464,11 +487,30 @@ class AcpPromptTurnWorkflow {
                 ...env.diagnosticContext()
               })
             }
-            return 'active'
+            if (resumeDispatch) {
+              await resumeDispatch()
+              deliveryClaimed = true
+            }
+            return this.checkpoint(interaction)
           },
-          captureStop: () => interactions.captureTerminal(interaction, 'stop'),
+          onDispatched: () => {
+            providerDispatched = true
+          },
+          captureStop: () => {
+            if (plan.isProviderPaused?.(interaction)) {
+              plan.providerStopped?.(interaction)
+              return true
+            }
+            return interactions.captureTerminal(interaction, 'stop')
+          },
           onAccepted: async () => {
-            await plan.providerAccepted(sessionId, turn.mode)
+            if (resumeAccepted) {
+              const accept = resumeAccepted
+              resumeAccepted = undefined
+              await accept()
+            } else {
+              await plan.providerAccepted(sessionId, turn.mode)
+            }
             if (sideChatRelay && !sideChatRelaySettled) {
               sideChatRelaySettled = true
               try {
@@ -497,6 +539,7 @@ class AcpPromptTurnWorkflow {
           // notifications left Reviewer Corrections with only the [Auditor] prompt persisted, so the
           // fix loop could never observe the completed correction and refused its scoped re-review.
           routeNotification: (notification) => {
+            if (planToolWait.failed(notification)) plan.toolWaitFailed?.(interaction)
             this.safeCallback('Notebook working-file observation failed', () =>
               notebookWorkingFiles.observe(notification)
             )
@@ -510,7 +553,48 @@ class AcpPromptTurnWorkflow {
             })
         })
 
-      return this.options.serialization.run(framework, executeProviderTurn)
+      for (;;) {
+        // Release the shared Provider slot before waiting for human review.
+        let outcome: ProviderPromptOutcome
+        deliveryClaimed = false
+        providerDispatched = false
+        try {
+          outcome = await this.options.serialization.run(framework, executeProviderTurn)
+        } finally {
+          if (deliveryClaimed && !providerDispatched) await resumeNotDispatched?.()
+        }
+        if (outcome.kind !== 'stopped') {
+          if (outcome.kind === 'not-dispatched' && accumulatedFacts) {
+            interactions.captureTerminal(interaction, 'cancelled')
+            return {
+              kind: 'stopped',
+              response: { stopReason: 'cancelled' },
+              facts: accumulatedFacts
+            }
+          }
+          return outcome
+        }
+        accumulatedFacts = accumulatedFacts
+          ? combineProviderPromptFacts(accumulatedFacts, outcome.facts)
+          : outcome.facts
+        if (!plan.isProviderPaused?.(interaction)) {
+          return { ...outcome, facts: accumulatedFacts }
+        }
+        let resumed: Awaited<ReturnType<NonNullable<typeof plan.resumeAfterProviderStop>>>
+        try {
+          resumed = await plan.resumeAfterProviderStop?.(interaction)
+        } catch (error) {
+          if (!interaction.signal.aborted) throw error
+        }
+        if (!resumed || (await this.checkpoint(interaction)) === 'cancelled') {
+          interactions.captureTerminal(interaction, 'cancelled')
+          return { kind: 'stopped', response: { stopReason: 'cancelled' }, facts: accumulatedFacts }
+        }
+        providerContent = resumed.content
+        resumeAccepted = resumed.accepted
+        resumeDispatch = resumed.dispatch
+        resumeNotDispatched = resumed.notDispatched
+      }
     }
     let outcome: AcpPromptFinalizationOutcome
     try {

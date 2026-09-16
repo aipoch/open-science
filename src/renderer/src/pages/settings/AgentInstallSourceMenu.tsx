@@ -89,13 +89,16 @@ const AgentInstallSourceMenu = ({
         title={managedUnavailableReason}
         aria-label={t('{{action}} {{name}}', { action: label, name })}
         onClick={() => onInstall('managed')}
+        aria-busy={Boolean(installing)}
       >
-        {installing ? (
-          <Loader2 className="animate-spin motion-reduce:animate-none" aria-hidden="true" />
-        ) : (
-          <Icon aria-hidden="true" />
-        )}
-        {installing ? busyLabel : label}
+        <span key={String(installing)} className="button-feedback">
+          {installing ? (
+            <Loader2 className="animate-spin motion-reduce:animate-none" aria-hidden="true" />
+          ) : (
+            <Icon aria-hidden="true" />
+          )}
+          {installing ? busyLabel : label}
+        </span>
       </Button>
     )
   }
@@ -108,14 +111,17 @@ const AgentInstallSourceMenu = ({
           size={buttonSize}
           disabled={installing || disabled}
           aria-label={t('{{action}} {{name}}', { action: label, name })}
+          aria-busy={Boolean(installing)}
         >
-          {installing ? (
-            <Loader2 className="animate-spin" aria-hidden="true" />
-          ) : (
-            <Icon aria-hidden />
-          )}
-          {installing ? busyLabel : label}
-          {!installing ? <ChevronDown aria-hidden="true" /> : null}
+          <span key={String(installing)} className="button-feedback">
+            {installing ? (
+              <Loader2 className="animate-spin" aria-hidden="true" />
+            ) : (
+              <Icon aria-hidden />
+            )}
+            {installing ? busyLabel : label}
+            {!installing ? <ChevronDown aria-hidden="true" /> : null}
+          </span>
         </Button>
       </DropdownMenuTrigger>
       {/* The same menu is portaled from the z-60 repair dialog, so its layer must clear that modal. */}

@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { mkdtemp, readFile, rm, rename } from 'node:fs/promises'
 import * as fs from 'node:fs'
@@ -14,6 +14,11 @@ import type { ChildProcess } from 'node:child_process'
 vi.mock('node:fs', async (importOriginal) => ({
   ...(await importOriginal<typeof import('node:fs')>())
 }))
+
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>()
+  return { ...actual, spawnSync: vi.fn(actual.spawnSync) }
+})
 
 const roots: string[] = []
 const BOOT_A = '11111111-1111-4111-8111-111111111111'
@@ -93,6 +98,7 @@ describe('Shell process ownership receipt lifecycle', () => {
   it.runIf(process.platform === 'win32').each(['owned', 'unrelated'] as const)(
     'verifies the actual Windows host identity before recovery: %s',
     async (identity) => {
+      vi.mocked(spawnSync).mockClear()
       const root = await mkdtemp(join(tmpdir(), 'shell-host-identity-'))
       roots.push(root)
       const host = new ShellProcessOwnershipRegistry(root).beginLaunch({
@@ -136,6 +142,22 @@ describe('Shell process ownership receipt lifecycle', () => {
           expect(() => process.kill(child.pid!, 0)).not.toThrow()
           expect(restarted.hasReceipts()).toBe(true)
         }
+      } catch (error) {
+        console.error(
+          'Windows host identity query results',
+          vi.mocked(spawnSync).mock.results.map((entry) => {
+            if (entry.type !== 'return') return { type: entry.type }
+            const result = entry.value
+            return {
+              status: result.status,
+              signal: result.signal,
+              errorCode: (result.error as NodeJS.ErrnoException | undefined)?.code,
+              receiptMatched: result.stdout?.toString().includes(host.receiptId),
+              stderr: result.stderr?.toString().slice(0, 1000)
+            }
+          })
+        )
+        throw error
       } finally {
         if (child.exitCode === null) child.kill()
       }

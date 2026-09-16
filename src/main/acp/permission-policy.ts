@@ -162,6 +162,46 @@ const canConservativelyAutoApprove = (
 const resolveAllowOptionId = (params: RequestPermissionRequest): string | undefined =>
   params.options.find((option) => option.kind.toLowerCase() === 'allow_once')?.optionId
 
+// OpenCode's ACP codec maps only native webfetch to kind=fetch and omits tool-name metadata
+// (opencode/src/acp/{permission,tool}.ts). MCP tools map to other. Claude supplies WebFetch in
+// provider metadata. Do not infer native authority from a URL/title or from another framework's
+// generic fetch kind; Codex Responses/Bridge do not expose this native permission contract.
+const isNativeWebFetchCandidate = (
+  params: RequestPermissionRequest,
+  context: PermissionPolicyContext | undefined
+): boolean => {
+  if (trustedMcpToolIdentity(params) || isMcpTool(params, context?.mcpServerNames ?? []))
+    return false
+  const name = extractProviderToolName(params.toolCall)
+  return (
+    (context?.frameworkId === 'opencode' &&
+      params.toolCall.kind === 'fetch' &&
+      (name === undefined || name === 'webfetch')) ||
+    (context?.frameworkId === 'claude-code' && name === 'WebFetch')
+  )
+}
+
+const isNativeWebFetchPermission = (
+  params: RequestPermissionRequest,
+  context: PermissionPolicyContext | undefined
+): boolean => {
+  if (
+    trustedNativeToolIdentity(params) !== `${context?.frameworkId}/webfetch` ||
+    !isNativeWebFetchCandidate(params, context)
+  )
+    return false
+  const input = params.toolCall.rawInput
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return false
+  const url = (input as Record<string, unknown>).url
+  if (typeof url !== 'string') return false
+  try {
+    const parsed = new URL(url)
+    return ['http:', 'https:'].includes(parsed.protocol) && !parsed.username && !parsed.password
+  } catch {
+    return false
+  }
+}
+
 // OpenCode's native Skill tool only reads an app-provisioned skill definition into the model's
 // context. It is framework plumbing rather than a user-authorizable side effect. Older OpenCode
 // sessions can still emit request_permission, so the runtime binds that request to a preceding native
@@ -291,6 +331,8 @@ const resolveAutomaticPermission = (
 }
 
 export {
+  isNativeWebFetchCandidate,
+  isNativeWebFetchPermission,
   canConservativelyAutoApprove,
   isMcpToolName,
   isArtifactSaveTool,

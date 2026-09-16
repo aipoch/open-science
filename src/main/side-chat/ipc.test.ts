@@ -56,6 +56,38 @@ describe('Side chat IPC', () => {
     })
   })
 
+  it.each([undefined, { providerId: 'chosen-provider', model: 'chosen-model' }])(
+    'inherits the parent model unless the conversation supplies its own selection: %j',
+    async (modelSelection) => {
+      const parentSelection = {
+        providerId: 'parent-provider',
+        model: 'parent-model',
+        reasoningEffort: 'high'
+      }
+      const runtime = { start: vi.fn(async () => ({ sideSessionId: 'side-chat-model' })) }
+      registerSideChatIpcHandlers(
+        runtime as never,
+        {
+          loadParentSession: vi.fn(async () => ({
+            messages: [],
+            agentConfiguration: { ...parentSelection, reasoningEffort: 'high' }
+          })),
+          hasLiveParentSession: vi.fn(() => true),
+          withParentAvailable: vi.fn(async (_id, operation) => operation())
+        } as never
+      )
+      await handlers.get('side-chat:start')?.(undefined, {
+        parentSessionId: 'main',
+        projectId: 'project',
+        text: 'Hello',
+        ...(modelSelection ? { modelSelection } : {})
+      } as never)
+      expect(runtime.start).toHaveBeenCalledWith(
+        expect.objectContaining({ modelSelection: modelSelection ?? parentSelection })
+      )
+    }
+  )
+
   it('rejects an unavailable parent and does not start a temporary runtime', async () => {
     const runtime = {
       start: vi.fn(),
@@ -149,7 +181,7 @@ describe('Side chat IPC', () => {
     expect(runtime.send).not.toHaveBeenCalled()
   })
 
-  it('holds parent availability until restored follow-up admission completes', async () => {
+  it('releases parent availability after dispatch without waiting for the Side Chat turn', async () => {
     let finishSend!: () => void
     const send = new Promise<void>((resolve) => {
       finishSend = resolve
@@ -179,11 +211,10 @@ describe('Side chat IPC', () => {
     } as never) as Promise<void>
     await vi.waitFor(() => expect(runtime.send).toHaveBeenCalledOnce())
     expect(withParentAvailable).toHaveBeenCalledWith('main-1', expect.any(Function))
-    expect(gateReleased).toBe(false)
+    await vi.waitFor(() => expect(gateReleased).toBe(true))
 
     finishSend()
     await followUp
-    expect(gateReleased).toBe(true)
   })
 
   it('does not start a temporary runtime when the panel closes during parent preflight', async () => {

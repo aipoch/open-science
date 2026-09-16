@@ -1,3 +1,4 @@
+import { sessionPackageCommandContracts } from './session-package'
 import { expect, it } from 'vitest'
 import { packageOperationRequestSchema, sessionPackageImportRequestSchema } from './session-package'
 
@@ -25,4 +26,25 @@ it('accepts one bounded destination and keeps project-name drafts ephemeral', ()
       target: {}
     }).success
   ).toBe(false)
+})
+
+it('transports Literature selection through the package operation contract', () => {
+  const snapshot = {
+    id: 'operation',
+    kind: 'export',
+    state: 'awaiting-selection',
+    progress: { phase: 'selecting' },
+    files: [
+      {
+        storageKey: 'uploads/p/s/a/versions/v/content',
+        filename: 'paper.pdf',
+        sizeBytes: 42,
+        groupId: 'a',
+        source: 'literature',
+        versionNumber: 1,
+        dependentFiles: []
+      }
+    ]
+  }
+  expect(sessionPackageCommandContracts.operation.result.parse(snapshot)).toEqual(snapshot)
 })

@@ -122,35 +122,15 @@ class NotebookEnvironmentManagementOwner {
       }
       case 'remove': {
         const name = assertSafeEnvName(request.name)
-        const liveKernel = this.liveKernel(name)
-        if (liveKernel) {
-          throw new Error(
-            `Environment "${name}" is in use by a live ${liveKernel.language} Kernel ` +
-              `(status: ${liveKernel.status}) in Session "${liveKernel.sessionId}". ` +
-              'Waiting for a Run to finish leaves an idle Kernel alive. In that Session, use ' +
-              'list_notebook_runtimes then notebook_switch_runtime with the language and an exact ' +
-              'runtimeId for another Runtime Environment, or notebook_shutdown to stop its Kernels. ' +
-              'These actions clear the affected Kernel memory. If a Runtime Binding still blocks removal, ' +
-              'switch that binding to another environment.'
-          )
-        }
-        const blockingBinding = this.blockingBinding(name)
-        if (blockingBinding) {
-          const bindingState = blockingBinding.status === 'active' ? 'an active' : 'a revoking'
-          throw new Error(
-            `Environment "${name}" cannot be removed because Session ` +
-              `"${blockingBinding.sessionId}" has ${bindingState} Runtime Binding ` +
-              'to it. In that Session, use list_notebook_runtimes then notebook_switch_runtime with ' +
-              'the language and an exact runtimeId for another Runtime Environment. Switching clears ' +
-              'the previous Kernel memory.'
-          )
-        }
+        this.assertUnused(name)
         await this.options.ensureRecovered()
         this.options.assertPrefixRecoverable(envPrefix(this.options.runtimeRoot, name))
         return this.options.environmentOperations.runMutation(
           name,
           async () => {
             signal?.throwIfAborted()
+            this.options.assertPrefixRecoverable(envPrefix(this.options.runtimeRoot, name))
+            this.assertUnused(name)
             manager.removeEnvironment(name)
             this.options.runtimeRepair.completeRemovedManagedEnvironment(name)
             return { removed: { name } }
@@ -187,6 +167,32 @@ class NotebookEnvironmentManagementOwner {
       )
       return { environmentName: result.environment.name, reused: result.reused }
     })
+  }
+
+  private assertUnused(name: string): void {
+    const liveKernel = this.liveKernel(name)
+    if (liveKernel) {
+      throw new Error(
+        `Environment "${name}" is in use by a live ${liveKernel.language} Kernel ` +
+          `(status: ${liveKernel.status}) in Session "${liveKernel.sessionId}". ` +
+          'Waiting for a Run to finish leaves an idle Kernel alive. In that Session, use ' +
+          'list_notebook_runtimes then notebook_switch_runtime with the language and an exact ' +
+          'runtimeId for another Runtime Environment, or notebook_shutdown to stop its Kernels. ' +
+          'These actions clear the affected Kernel memory. If a Runtime Binding still blocks removal, ' +
+          'switch that binding to another environment.'
+      )
+    }
+    const blockingBinding = this.blockingBinding(name)
+    if (blockingBinding) {
+      const bindingState = blockingBinding.status === 'active' ? 'an active' : 'a revoking'
+      throw new Error(
+        `Environment "${name}" cannot be removed because Session ` +
+          `"${blockingBinding.sessionId}" has ${bindingState} Runtime Binding ` +
+          'to it. In that Session, use list_notebook_runtimes then notebook_switch_runtime with ' +
+          'the language and an exact runtimeId for another Runtime Environment. Switching clears ' +
+          'the previous Kernel memory.'
+      )
+    }
   }
 
   private liveKernel(name: string):
