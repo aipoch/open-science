@@ -33,13 +33,13 @@ const EDITABLE_SHORTCUT_TARGET =
 const undoSurfaceClassName = cn(
   noticeSurfaceClassName,
   noticeCapsuleClassName,
-  'pointer-events-auto flex w-full shadow-dialog'
+  'pointer-events-auto flex w-full shadow-menu'
 )
 
-const UNDO_ENTER_TRANSITION = { duration: 0.4, ease: [0.16, 1, 0.3, 1] } as const
-const UNDO_EXIT_TRANSITION = { duration: 0.28, ease: [0.7, 0, 0.84, 0] } as const
-const UNDO_LAYOUT_TRANSITION = { duration: 0.22, ease: [0.16, 1, 0.3, 1] } as const
-const UNDO_REDUCED_TRANSITION = { duration: 0.12, ease: 'linear' } as const
+const UNDO_ENTER_TRANSITION = { duration: 0.18, ease: [0.16, 1, 0.3, 1] } as const
+const UNDO_EXIT_TRANSITION = { duration: 0.14, ease: [0.4, 0, 1, 1] } as const
+const UNDO_LAYOUT_TRANSITION = { duration: 0.18, ease: [0.16, 1, 0.3, 1] } as const
+const UNDO_REDUCED_TRANSITION = { duration: 0, ease: 'linear' } as const
 
 const archiveUndoShortcut = (): { aria: string; label: string } =>
   window.api.platform === 'darwin'
@@ -60,7 +60,7 @@ const UndoItemPresence = ({ children }: { children: ReactNode }): React.JSX.Elem
       aria-hidden={isPresent ? undefined : true}
       inert={isPresent ? undefined : true}
       layout={shouldReduceMotion ? false : 'position'}
-      initial={{ opacity: 0, y: shouldReduceMotion ? 0 : -8 }}
+      initial={{ opacity: 0, y: shouldReduceMotion ? 0 : -4 }}
       animate={{
         opacity: 1,
         y: 0,
@@ -68,7 +68,7 @@ const UndoItemPresence = ({ children }: { children: ReactNode }): React.JSX.Elem
       }}
       exit={{
         opacity: 0,
-        y: shouldReduceMotion ? 0 : -6,
+        y: shouldReduceMotion ? 0 : -4,
         transition: shouldReduceMotion ? UNDO_REDUCED_TRANSITION : UNDO_EXIT_TRANSITION
       }}
       transition={{ layout: UNDO_LAYOUT_TRANSITION }}

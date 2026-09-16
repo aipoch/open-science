@@ -13,6 +13,7 @@ import { LifecycleToast } from '@/components/LifecycleToast'
 import { LanguageSaveToast } from '@/components/LanguageControls'
 import { NotificationLiveToast } from '@/components/NotificationLiveToast'
 import { OpenScienceLogoLoader } from '@/components/OpenScienceLogoLoader'
+import { useSettingsUndoPortal } from '@/components/use-settings-undo-portal'
 import { PermissionUndoSnackbar } from '@/components/PermissionUndoSnackbar'
 import { SessionCatalogRecoveryAlert } from '@/components/SessionCatalogRecoveryAlert'
 import { SessionPersistenceAlert } from '@/components/SessionPersistenceAlert'
@@ -87,6 +88,9 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
   })
   const { sessions } = startup
   const { presentation } = events
+  const undoPortal = useSettingsUndoPortal(
+    <PermissionUndoSnackbar allowsArchiveShortcut={events.allowsArchiveUndoShortcut} />
+  )
 
   if (
     !startup.settings.isLoaded ||
@@ -298,7 +302,7 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
                   />
                 ) : null}
                 {isBasePresentationActive ? <LanguageSaveToast /> : null}
-                <PermissionUndoSnackbar allowsArchiveShortcut={events.allowsArchiveUndoShortcut} />
+                {undoPortal.background}
               </ActionToastStack>
             </div>
             <BottomNoticeStack>
@@ -334,6 +338,7 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
       <Suspense fallback={null}>
         <SettingsPage
           ref={settingsPageRef}
+          undoHostRef={undoPortal.settingsHostRef}
           open={activePresentation === 'settings'}
           onClose={events.settings.close}
           onOpenSession={events.settings.openSession}

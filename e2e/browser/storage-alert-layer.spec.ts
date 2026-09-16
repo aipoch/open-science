@@ -16,6 +16,7 @@ test('Settings covers the persistent recovery alert until the modal closes', asy
   expect(
     await page
       .locator('[data-action-toast-stack]')
+      .filter({ hasText: 'Background cleanup notice' })
       .evaluate((el) => Number(getComputedStyle(el).zIndex))
   ).toBeLessThan(modalLayer)
   expect(

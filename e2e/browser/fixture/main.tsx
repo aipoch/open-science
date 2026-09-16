@@ -13,6 +13,10 @@ import { useMemoryStore } from '@/stores/memory-store'
 import { useUpdateStore } from '@/stores/update-store'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { ActionToast, ActionToastStack } from '@/components/ActionToast'
+import { useSettingsUndoPortal } from '@/components/use-settings-undo-portal'
+import { PermissionUndoSnackbar } from '@/components/PermissionUndoSnackbar'
+import type { PermissionGrantView } from '../../../src/shared/permission-grants'
+import { usePermissionGrantsStore } from '@/stores/permission-grants-store'
 import { SessionCatalogRecoveryAlert } from '@/components/SessionCatalogRecoveryAlert'
 
 // Native boundaries only. Components, navigation, i18n, CSS and browser geometry are production code.
@@ -58,11 +62,50 @@ useUpdateStore.setState({
   status: { state: 'up-to-date', current: '0.0.0', latest: '0.0.0' }
 })
 
+const undoFixture = new URLSearchParams(location.search).has('undo')
+if (undoFixture) {
+  const grants: PermissionGrantView[] = ['Attach connector', 'Attach skill', 'Create agent'].map(
+    (capabilityLabel, index) => ({
+      id: `fixture-${index}`,
+      revision: 1,
+      family: 'registry_writes',
+      capabilityKind: 'customize_mutation',
+      capabilityLabel,
+      scopeKind: 'global',
+      scopeLabel: 'Global',
+      createdAt: 1_787_000_000_000
+    })
+  )
+  const receipt = {
+    token: 'fixture-undo',
+    expiresAt: Date.now() + 60_000,
+    messageKey: 'Revoked {{family}} · {{capability}}',
+    messageParams: { family: 'Registry writes', capability: 'Attach connector' }
+  }
+  usePermissionGrantsStore.setState({
+    status: 'ready',
+    grants,
+    counts: { all: 3, global: 3, project: 0, session: 0 },
+    load: async () => {},
+    extendUndo: async () => Date.now() + 60_000,
+    revoke: async (revoked) =>
+      usePermissionGrantsStore.setState({
+        grants: grants.filter((grant) => !revoked.some((item) => item.id === grant.id)),
+        undo: { ...receipt, expiresAt: Date.now() + 60_000 }
+      }),
+    restore: async () => usePermissionGrantsStore.setState({ grants, undo: undefined }),
+    undo: new URLSearchParams(location.search).has('revoke') ? undefined : receipt
+  })
+}
+
 export function Fixture(): React.JSX.Element {
   useTranslation()
   const [quitNotice, setQuitNotice] = useState(true)
   const [retries, setRetries] = useState(0)
   const open = useSettingsStore((state) => state.isSettingsOpen)
+  const undoPortal = useSettingsUndoPortal(
+    undoFixture ? <PermissionUndoSnackbar allowsArchiveShortcut={() => !open} /> : null
+  )
   return (
     <TooltipProvider>
       <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={() => undefined} />
@@ -95,7 +138,13 @@ export function Fixture(): React.JSX.Element {
         />
       ) : null}
       <output data-testid="quit-retries">{retries}</output>
+      {undoFixture && (
+        <div inert={open} aria-hidden={open || undefined}>
+          <ActionToastStack>{undoPortal.background}</ActionToastStack>
+        </div>
+      )}
       <SettingsPage
+        undoHostRef={undoPortal.settingsHostRef}
         open={open}
         onClose={() => useSettingsStore.getState().closeSettings()}
         onOpenSession={() => undefined}

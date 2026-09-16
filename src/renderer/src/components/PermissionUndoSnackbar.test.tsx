@@ -6,11 +6,24 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { i18next } from '@/i18n'
 import { usePermissionGrantsStore } from '@/stores/permission-grants-store'
 import { useArchiveUndoStore } from '@/stores/archive-undo-store'
+import { useSettingsUndoPortal } from './use-settings-undo-portal'
 import { PermissionUndoSnackbar as PermissionUndoSnackbarComponent } from './PermissionUndoSnackbar'
 
 const PermissionUndoSnackbar = (): React.JSX.Element => (
   <PermissionUndoSnackbarComponent allowsArchiveShortcut={() => true} />
 )
+
+function SettingsUndoFixture({ open }: { open: boolean }): React.JSX.Element {
+  const { background, settingsHostRef } = useSettingsUndoPortal(
+    <PermissionUndoSnackbarComponent allowsArchiveShortcut={() => true} />
+  )
+  return (
+    <>
+      {background}
+      {open && <div ref={settingsHostRef} />}
+    </>
+  )
+}
 
 const expectSnackbarExiting = (container: HTMLElement, selector: string): void => {
   const snackbar = container.querySelector(selector)
@@ -41,6 +54,22 @@ describe('PermissionUndoSnackbar', () => {
   const restore = vi.fn()
   const extendUndo = vi.fn()
   const updateProjectArchive = vi.fn()
+
+  it('keeps focused Undo paused across Settings and resumes the remaining countdown on blur', async () => {
+    await act(async () => root.render(<SettingsUndoFixture open />))
+    await act(async () => vi.advanceTimersByTime(3_000))
+    const undoButton = container.querySelector<HTMLButtonElement>(
+      '[data-testid="permission-undo-snackbar"] button'
+    )
+    await act(async () => undoButton?.focus())
+    await act(async () => root.render(<SettingsUndoFixture open={false} />))
+    expect(document.activeElement).toBe(undoButton)
+    await act(async () => vi.advanceTimersByTime(3_000))
+    expect(usePermissionGrantsStore.getState().undo).toBeDefined()
+    await act(async () => undoButton?.blur())
+    await act(async () => vi.advanceTimersByTime(5_000))
+    expect(usePermissionGrantsStore.getState().undo).toBeUndefined()
+  })
 
   beforeEach(async () => {
     ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -163,7 +192,7 @@ describe('PermissionUndoSnackbar', () => {
 
     const snackbar = container.querySelector<HTMLElement>('[data-testid="archive-undo-snackbar"]')
     expect(snackbar?.className).toContain('rounded-3xl')
-    expect(snackbar?.className).toContain('shadow-dialog')
+    expect(snackbar?.className).toContain('shadow-menu')
     expect(snackbar?.className).toContain('border-border')
     expect(snackbar?.className).not.toContain('shadow-lg')
     // The notice carries a key plus params, so the interpolated text proves it is translated at
