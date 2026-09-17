@@ -113,6 +113,7 @@ export const GlobalSearchDialog = ({
   const [dateReference, setDateReference] = useState(Date.now)
   const [subtype, setSubtype] = useState('all')
   const [advancedOpen, setAdvancedOpen] = useState(false)
+  const [previewOpen, setPreviewOpen] = useState(false)
   const updatedAfter = days ? dateReference - days * 86_400_000 : undefined
   const [counts, setCounts] = useState(initialCounts)
   const [selected, setSelected] = useState<SearchResult>()
@@ -596,7 +597,13 @@ export const GlobalSearchDialog = ({
       }}
     >
       <Dialog.Portal>
-        <Dialog.Overlay className={dialogOverlayClassName} />
+        {/* A portaled file preview owns scrolling without replacing the search panel or scrim. */}
+        {!previewOpen ? <Dialog.Overlay className="hidden" /> : null}
+        <div
+          aria-hidden="true"
+          data-state={open ? 'open' : 'closed'}
+          className={`${dialogOverlayClassName} pointer-events-auto`}
+        />
         <Dialog.Content
           aria-describedby={undefined}
           onInteractOutside={(event) => {
@@ -985,6 +992,7 @@ export const GlobalSearchDialog = ({
                     onLocateFile={(file) => void locateFile(file)}
                     onNavigate={close}
                     onCollapse={collapse}
+                    onPreviewOpenChange={setPreviewOpen}
                   />
                 )}
               </div>

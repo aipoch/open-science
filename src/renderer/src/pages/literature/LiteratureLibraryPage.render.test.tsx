@@ -1,3 +1,4 @@
+import { FocusScope } from '@radix-ui/react-focus-scope'
 import { literatureDeletionError } from '../../../../shared/literature-deletion'
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
@@ -61,20 +62,22 @@ vi.mock('../workspace/FilePreviewDialog', () => ({
   }) => {
     filePreviewRenderCount.value += 1
     return item ? (
-      <div
-        data-testid="literature-pdf-preview"
-        data-allow-reading-context={String(allowReadingContext)}
-      >
-        {`${item.title} · ${item.path}`}
-        <button type="button" onClick={() => onClose()}>
-          Close PDF
-        </button>
-        {onReadWithAgent ? (
-          <button type="button" onClick={() => onReadWithAgent(item)}>
-            Read with agent
+      <FocusScope trapped asChild>
+        <div
+          data-testid="literature-pdf-preview"
+          data-allow-reading-context={String(allowReadingContext)}
+        >
+          {`${item.title} · ${item.path}`}
+          <button type="button" onClick={() => onClose()}>
+            Close PDF
           </button>
-        ) : null}
-      </div>
+          {onReadWithAgent ? (
+            <button type="button" onClick={() => onReadWithAgent(item)}>
+              Read with agent
+            </button>
+          ) : null}
+        </div>
+      </FocusScope>
     ) : null
   }
 }))
@@ -3917,15 +3920,25 @@ describe('LiteratureLibraryPage', () => {
     expect(within(detail).queryByRole('button', { name: 'Preview paper.pdf' })).toBeNull()
   })
 
-  it('does not block PDF wheel events behind reference details and restores the detail modal on close', async () => {
+  it('preserves reference detail and scroll position while releasing only the PDF scroll lock', async () => {
     const itemWithPdf = createLibraryItemWithPdf()
     search.mockImplementation((request: { scope: string }) =>
       Promise.resolve(request.scope === 'library' ? { entries: [itemWithPdf] } : { entries: [] })
     )
     render(<LiteratureLibraryPage />)
     fireEvent.click(screen.getByRole('button', { name: 'All references' }))
-    await openReferenceDetail(await screen.findByText('Corrective Retrieval Augmented Generation'))
-    fireEvent.click(screen.getByRole('button', { name: 'Preview paper.pdf' }))
+    const detail = await openReferenceDetail(
+      await screen.findByText('Corrective Retrieval Augmented Generation')
+    )
+    const trigger = within(detail).getByRole('button', { name: 'Preview paper.pdf' })
+    const scrim = detail.previousElementSibling
+    const scroll = within(detail).getByText('Attachments').closest('.overflow-y-auto')!
+    scroll.scrollTop = 120
+    fireEvent.click(trigger)
+    expect(screen.getByRole('dialog')).toBe(detail)
+    expect(detail.previousElementSibling).toBe(scrim)
+    expect(trigger.isConnected).toBe(true)
+    expect(scroll.scrollTop).toBe(120)
     const preview = screen.getByTestId('literature-pdf-preview')
     const previewClose = within(preview).getByRole('button', { name: 'Close PDF', hidden: true })
     previewClose.focus()
@@ -3936,7 +3949,10 @@ describe('LiteratureLibraryPage', () => {
     expect(wheel.defaultPrevented).toBe(false)
     expect(document.activeElement).toBe(previewClose)
     fireEvent.click(within(preview).getByRole('button', { name: 'Close PDF', hidden: true }))
-    expect(await screen.findByRole('button', { name: 'Preview paper.pdf' })).not.toBeNull()
+    expect(await screen.findByRole('button', { name: 'Preview paper.pdf' })).toBe(trigger)
+    expect(screen.getByRole('dialog')).toBe(detail)
+    expect(detail.previousElementSibling).toBe(scrim)
+    expect(scroll.scrollTop).toBe(120)
     const outsideWheel = new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 600 })
     await act(async () => {
       document.body.dispatchEvent(outsideWheel)

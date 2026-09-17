@@ -45,6 +45,7 @@ type Props = {
   onLocateFile: (file: ProjectFileItem) => void
   onNavigate: () => void
   onCollapse: () => void
+  onPreviewOpenChange: (open: boolean) => void
 }
 
 export const SearchDetails = ({
@@ -55,13 +56,18 @@ export const SearchDetails = ({
   onOpen,
   onLocateFile,
   onNavigate,
-  onCollapse
+  onCollapse,
+  onPreviewOpenChange
 }: Props): React.JSX.Element => {
   const { t, i18n } = useTranslation()
   const locale = resolveLocaleFromTags([i18n.resolvedLanguage ?? i18n.language])
   const contentRef = useRef<HTMLDivElement>(null)
   const [tab, setTab] = useState('content')
   const [previewDialog, setPreviewDialog] = useState<PreviewFileItem>()
+  useLayoutEffect(() => {
+    onPreviewOpenChange(Boolean(previewDialog))
+    return () => onPreviewOpenChange(false)
+  }, [previewDialog, onPreviewOpenChange])
   const [files, setFiles] = useState<ProjectFileItem[]>([])
   const previewReader = useProjectFilePreviewReader()
   const visibleFiles = useMemo(
