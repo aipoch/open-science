@@ -1,3 +1,5 @@
+import { resolveEffectiveSpecialistSkills } from '../../shared/specialist'
+import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-server'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -43,6 +45,7 @@ type ProductionFrameworkRuntimeOptions = Readonly<{
     | 'delegatedArtifactCurrentRunFile'
     | 'spawnAgent'
     | 'delegatedWork'
+    | 'preparedSkills'
   >
   notebookRpcServer(): NotebookLocalRpcServer
   readSession(key: SessionKey): Promise<PersistedChatSession | undefined>
@@ -88,6 +91,7 @@ const createProductionDelegatedFrameworkRuntime = (
           backend: ResolvedAgentBackend
           connection: NotebookRpcConnection
           releaseBackend: boolean
+          preparedSkills?: AcpRuntimeCompositionOptions['preparedSkills']
         }>
       >()
       // The exact provider/model is validated by admission's model resolver. This certification hook
@@ -121,6 +125,7 @@ const createProductionDelegatedFrameworkRuntime = (
           input.attemptId
         )
         let openCodeRuntime: PreparedOpenCodeRuntime | undefined
+        let preparedSkills: AcpRuntimeCompositionOptions['preparedSkills']
         try {
           await mkdir(runtimeHome, { recursive: true, mode: 0o700 })
           const durable = await options.readSession(input.session)
@@ -135,6 +140,90 @@ const createProductionDelegatedFrameworkRuntime = (
           }
           if (frameworkId === 'opencode') {
             openCodeRuntime = await prepareOpenCodeRuntime(backend, runtimeHome)
+          }
+          // Spawn preparation copies authentication/configuration first; project Skills afterwards
+          // so copied Main configuration cannot overwrite the Attempt-owned bound packages.
+          const delegatedSpawn = await backend.framework.prepareDelegatedSpawn?.(
+            backend,
+            runtimeHome
+          )
+          let runtimeBackend = openCodeRuntime?.backend ?? backend
+          if (input.profile) {
+            const specialist = await options.runtime.specialistService?.resolveRunnableById(
+              input.profile
+            )
+            const prepareSkills = options.runtime.settingsService.prepareDelegatedSkills
+            if (!specialist?.enabled || !prepareSkills)
+              throw new Error('Delegated Specialist Skill preparation is unavailable.')
+            const effective = resolveEffectiveSpecialistSkills(
+              specialist,
+              await options.runtime.settingsService.listSpecialistSkillCatalog()
+            )
+            if (effective.kind !== 'specialist')
+              throw new Error('Delegated Specialist Skill scope is unavailable.')
+            const root =
+              frameworkId === 'opencode'
+                ? join(runtimeHome, 'config', 'opencode')
+                : frameworkId === 'codebuddy'
+                  ? join(runtimeHome, 'codebuddy', 'skill-runtime')
+                  : frameworkId === 'codex'
+                    ? runtimeHome
+                    : join(runtimeHome, 'skill-runtime')
+            const configRoot =
+              frameworkId === 'claude-code' || frameworkId === 'codebuddy'
+                ? join(root, '.claude')
+                : root
+            preparedSkills = await prepareSkills.call(
+              options.runtime.settingsService,
+              configRoot,
+              effective.skillIds
+            )
+            const sessionOptions = runtimeBackend.sessionOptions ?? {}
+            const skillRuntime = sessionOptions[OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION] as
+              Record<string, unknown> | undefined
+            if (frameworkId === 'claude-code' || frameworkId === 'codex') {
+              if (
+                typeof skillRuntime?.command !== 'string' ||
+                typeof skillRuntime.entryPath !== 'string'
+              )
+                throw new Error('Delegated Specialist Skill loader is unavailable.')
+            }
+            const sandbox = sessionOptions.sandbox as Record<string, unknown> | undefined
+            const filesystem = sandbox?.filesystem as Record<string, unknown> | undefined
+            const replaceRoot = (paths: unknown): string[] => [
+              ...(Array.isArray(paths)
+                ? paths.filter(
+                    (path): path is string =>
+                      typeof path === 'string' && path !== skillRuntime?.root
+                  )
+                : []),
+              root
+            ]
+            runtimeBackend = {
+              ...runtimeBackend,
+              ...(delegatedSpawn ? { env: delegatedSpawn.env } : {}),
+              sessionOptions: {
+                ...sessionOptions,
+                [OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION]: {
+                  ...skillRuntime,
+                  root,
+                  skillsDirectory: join(configRoot, 'skills')
+                },
+                ...(frameworkId === 'claude-code'
+                  ? {
+                      additionalDirectories: replaceRoot(sessionOptions.additionalDirectories),
+                      sandbox: {
+                        ...sandbox,
+                        filesystem: {
+                          ...filesystem,
+                          allowRead: replaceRoot(filesystem?.allowRead),
+                          denyWrite: replaceRoot(filesystem?.denyWrite)
+                        }
+                      }
+                    }
+                  : {})
+              }
+            }
           }
           const capability = await options.notebookRpcServer().issueDelegatedNotebookConnection({
             projectId: input.session.projectId,
@@ -155,7 +244,8 @@ const createProductionDelegatedFrameworkRuntime = (
             }
           })
           preparedAttempts.set(input.attemptId, {
-            backend: openCodeRuntime?.backend ?? backend,
+            backend: runtimeBackend,
+            preparedSkills,
             connection: capability,
             releaseBackend: releaseResolvedBackend
           })
@@ -181,20 +271,23 @@ const createProductionDelegatedFrameworkRuntime = (
               ? { artifactCurrentRunFile: input.artifactCurrentRunFile }
               : {}),
             async disposeResources() {
-              openCodeRuntime?.dispose()
-              const owned = preparedAttempts.get(input.attemptId)
-              preparedAttempts.delete(input.attemptId)
-              if (owned?.releaseBackend) await releaseResolvedAgentBackendLeases(owned.backend)
-              await rm(runtimeHome, { recursive: true, force: true }).catch(() => undefined)
+              try {
+                await preparedSkills?.dispose()
+              } finally {
+                openCodeRuntime?.dispose()
+                const owned = preparedAttempts.get(input.attemptId)
+                preparedAttempts.delete(input.attemptId)
+                try {
+                  if (owned?.releaseBackend) await releaseResolvedAgentBackendLeases(owned.backend)
+                } finally {
+                  await rm(runtimeHome, { recursive: true, force: true })
+                }
+              }
             }
           }
-          const delegatedSpawn = await backend.framework.prepareDelegatedSpawn?.(
-            backend,
-            runtimeHome
-          )
           if (delegatedSpawn) return { ...base, spawn: delegatedSpawn }
           if (frameworkId === 'claude-code') {
-            return { ...base, sessionSetup: sessionSetup(backend) }
+            return { ...base, sessionSetup: sessionSetup(runtimeBackend) }
           }
           if (frameworkId === 'opencode') {
             return { ...base, modelConfig: openCodeRuntime!.modelConfig }
@@ -203,6 +296,7 @@ const createProductionDelegatedFrameworkRuntime = (
             `Delegated-work framework ${frameworkId} does not prepare an execution scope.`
           )
         } catch (error) {
+          await preparedSkills?.dispose().catch(() => undefined)
           openCodeRuntime?.dispose()
           preparedAttempts.delete(input.attemptId)
           if (releaseResolvedBackend) await releaseResolvedAgentBackendLeases(backend)
@@ -223,6 +317,7 @@ const createProductionDelegatedFrameworkRuntime = (
             ...options.runtime,
             notebookRpcServer: options.notebookRpcServer(),
             fixedBackend: withDelegatedChildContext(owned.backend),
+            preparedSkills: owned.preparedSkills,
             runtimeCallbacks: callbacks,
             delegatedNotebookConnection: owned.connection,
             permissionGrantContext: {

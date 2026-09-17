@@ -4611,6 +4611,43 @@ describe('SettingsService: skills', () => {
       skillRegistry: new SkillRegistry(await seedBundle())
     })
 
+  it('prepares complete disabled bound Skill packages for an Attempt without changing Main settings', async () => {
+    const bundle = await seedBundle()
+    await mkdir(join(bundle, 'demo', 'references'), { recursive: true })
+    await writeFile(join(bundle, 'demo', 'references', 'workflow.md'), 'reference body')
+    const service = new SettingsService({
+      repository,
+      configRoot: storageRoot,
+      skillRegistry: new SkillRegistry(bundle)
+    })
+    await service.setSkillEnabled({ id: 'demo', enabled: false })
+    await service.createSkill({ name: 'unbound', description: 'Unbound skill.', body: '# Unbound' })
+    const unbound = (await service.listSkills()).find((entry) => entry.name === 'unbound')!
+    await service.setSkillEnabled({ id: unbound.id, enabled: false })
+    const configRoot = join(storageRoot, 'delegated-attempt', '.claude')
+    const prepared = await service.prepareDelegatedSkills(configRoot, ['demo'])
+    try {
+      expect(prepared.skillIds).toEqual(['demo'])
+      expect(prepared.catalog).toContainEqual({
+        name: 'demo',
+        description: 'A demo skill.',
+        path: join(configRoot, 'skills', 'demo', 'SKILL.md')
+      })
+      await expect(
+        readFile(join(configRoot, 'skills', 'demo', 'references', 'workflow.md'), 'utf8')
+      ).resolves.toBe('reference body')
+      expect(await readdir(join(configRoot, 'skills'))).not.toContain('unbound')
+      expect(await service.skillsNeedingForceLoad(['demo'])).toEqual(['demo'])
+    } finally {
+      await prepared.dispose()
+    }
+    expect(await readdir(join(configRoot, 'skills'))).toEqual([])
+    await expect(service.prepareDelegatedSkills(configRoot, ['missing-skill'])).rejects.toThrow(
+      'could not be prepared'
+    )
+    expect(await readdir(join(configRoot, 'skills'))).toEqual([])
+  })
+
   it('lists skills with enabled reflecting disabledSkillIds and returns detail body', async () => {
     const service = await createSkillService()
 

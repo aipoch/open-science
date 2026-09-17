@@ -25,6 +25,7 @@ vi.mock('electron', () => ({ app: { getPath: () => tmpdir(), isPackaged: true } 
 import { AcpRuntime } from './runtime.test-utils'
 import type { AcpPromptContentOwner } from './prompt-content-owner'
 import { createAcpTaskAgentPort } from './task-agent-port'
+import { createAcpDelegateExecution } from '../delegation/acp-execution'
 import { loadManagedCodexErrorHandler } from '../settings/codex-error.test-utils'
 import type { AcpAgentConnectionAdapter } from './agent-connection-adapter'
 import type { AcpConnectionCloseWorkflow } from './connection-close-workflow'
@@ -23863,6 +23864,104 @@ describe('ACP runtime skill force-load + nudge', () => {
       } finally {
         await runtime.disconnect()
       }
+    }
+  )
+
+  it.each([
+    ...RESTORED_CONTINUATION_FRAMEWORKS,
+    ['CodeBuddy', codeBuddyFramework, undefined, undefined] as const
+  ])(
+    'dispatches a delegated Specialist with a Main-disabled bound Skill without durable child Session storage on %s',
+    async (_name, framework, modelRoute) => {
+      const firstPrompt = createDeferred<void>()
+      const finishFirstPrompt = createDeferred<void>()
+      const agents: Array<ReturnType<typeof startFakeAgent>> = []
+      const spawn = (): ChildProcessWithoutNullStreams => {
+        const process = new FakeAgentProcess()
+        let prompts = 0
+        agents.push(
+          startFakeAgent(process, ['11111111-1111-4111-8111-111111111111'], {
+            modes: createModes(['read-only', 'agent', 'agent-full-access'], 'read-only'),
+            onPrompt: async () => {
+              if (++prompts === 1) {
+                firstPrompt.resolve()
+                await finishFirstPrompt.promise
+              }
+              return { stopReason: 'end_turn' }
+            }
+          })
+        )
+        return asAgentProcess(process)
+      }
+      const execution = createAcpDelegateExecution({
+        capacity: 1,
+        prepare: (input) => ({
+          executionId: input.attemptId,
+          provenance: {
+            projectId: input.session.projectId,
+            sessionId: input.session.sessionId,
+            agentFrameId: input.frameId,
+            runtimeSegmentId: input.runtimeSegmentId,
+            promptMessageId: 'child-prompt',
+            messageBranchId: 'child-branch'
+          },
+          workspace: { cwd: '/workspace' },
+          runtimeHome: '/runtime/delegated-specialist',
+          frameworkId: framework.id,
+          capability: { revoke: async () => {} }
+        }),
+        assertFrameworkNativeDelegationDisabled: () => {},
+        createRuntime: (_scope, callbacks) =>
+          new AcpRuntime({
+            appVersion: '0.1.0',
+            defaultCwd: '/workspace',
+            resolveBackend: () => ({
+              framework: { ...framework, spawn },
+              ...(modelRoute ? { modelRoute } : {}),
+              executablePath: '/bin/agent',
+              env: {}
+            }),
+            callbacks,
+            resolveSpecialistIdentity: resolveForceLoadSpecialistIdentity,
+            resolveSpecialistSkills: resolveForceLoadSpecialistSkills,
+            skills: {
+              preparedSkillIds: ['research'],
+              needForceLoad: async (ids) => ids.filter((id) => id === 'research'),
+              namesForIds: async (ids) => ids
+            }
+          })
+      })
+      const reservation = await execution.reserve(1)
+      const running = execution.run(
+        {
+          session: { projectId: 'project-1', sessionId: 'parent-session' },
+          frameId: 'child-frame',
+          attemptId: 'delegated-attempt',
+          runtimeSegmentId: 'child-segment',
+          task: 'Analyze the delegated experiment.',
+          inputs: [],
+          profile: 'force-load-specialist',
+          continuation: false
+        },
+        reservation.slotIds[0]
+      )
+      try {
+        await Promise.race([firstPrompt.promise, running.completion])
+        const followup = running.sendMessage('Check the experiment controls too.')
+        finishFirstPrompt.resolve()
+        await followup
+      } finally {
+        finishFirstPrompt.resolve()
+      }
+      await expect(running.completion).resolves.toMatchObject({ status: 'completed' })
+      expect(
+        agents
+          .flatMap((agent) => agent.prompts)
+          .some((prompt) => prompt.text.includes('Analyze the delegated experiment.'))
+      ).toBe(true)
+      expect(agents).toHaveLength(1)
+      expect(agents[0].prompts).toHaveLength(2)
+      expect(agents[0].prompts[1].text).toContain('Check the experiment controls too.')
     }
   )
 

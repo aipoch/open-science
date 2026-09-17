@@ -1,3 +1,4 @@
+import { ClaudeCodeSkillMaterializer } from '../skills/materializer'
 import type { SpecialistListItem } from '../../shared/specialist'
 import { homedir } from 'node:os'
 import { z } from 'zod'
@@ -1104,6 +1105,43 @@ class SettingsService {
     return this.skills.codeBuddySkillCatalog(runtimeRoot, (settings) =>
       this.connectors.connectorSkillCatalogEntries(settings.connectors)
     )
+  }
+
+  // Attempt-owned projection: never changes Main toggles or the admitted provider/model.
+  async prepareDelegatedSkills(
+    configRoot: string,
+    skillIds: readonly string[]
+  ): Promise<{
+    skillIds: string[]
+    catalog: SkillCatalogEntry[]
+    dispose(): Promise<void>
+  }> {
+    const forced = new Set(skillIds)
+    const dispose = (): Promise<void> =>
+      new ClaudeCodeSkillMaterializer().sync(configRoot, [], { directoryLayout: 'agent-facing' })
+    try {
+      await this.runtimeManager.materializeAgentSkills(
+        await this.repository.getSettings(),
+        configRoot,
+        forced,
+        { directoryLayout: 'agent-facing' }
+      )
+      const catalog = await this.skills.delegatedSkillCatalog(
+        join(configRoot, 'skills'),
+        forced,
+        (settings) => this.connectors.connectorSkillCatalogEntries(settings.connectors)
+      )
+      const names = new Set(catalog.map((entry) => entry.name))
+      const prepared = (await this.skills.listSpecialistSkillCatalog())
+        .filter((entry) => names.has(entry.frameworkName))
+        .map((entry) => entry.id)
+      if (skillIds.some((id) => !prepared.includes(id)))
+        throw new Error('A bound Specialist Skill could not be prepared for the delegated Attempt.')
+      return { skillIds: prepared, catalog, dispose }
+    } catch (error) {
+      await dispose()
+      throw error
+    }
   }
 
   async getSkillDetail(id: string): Promise<SkillDetailView> {

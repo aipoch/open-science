@@ -17,6 +17,7 @@ import type { SessionCapabilityPolicy } from './session-capability-owner'
 const log = createLogger('acp-turn-skill-owner')
 const presentation = new AcpSessionPresentationPolicy()
 type AcpTurnSkillHooks = Readonly<{
+  preparedSkillIds?: readonly string[]
   needForceLoad: (ids: string[]) => Promise<string[]>
   namesForIds: (ids: string[]) => Promise<string[]>
   descriptorsForIds?: (
@@ -123,6 +124,7 @@ class AcpTurnSkillOwner {
             throw new Error(`Skill "${rejected}" is not available to Main Agent.`)
           }
         }
+        disabled = disabled.filter((id) => !this.options.skills?.preparedSkillIds?.includes(id))
         const needsReload = disabled.length > 0 && !input.signal?.aborted
         const state: Authorization = {
           selectedSkillIds: selected,
