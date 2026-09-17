@@ -762,7 +762,8 @@ const createApplicationModules = async (
       wslSetupSessions,
       ensureDefaultWslSetupWorkspace: async () => {
         const settings = await settingsRepository.getSettings()
-        if (!settings.dataRoot?.trim()) await mkdir(resolveDataRoot(), { recursive: true })
+        if (!settings.dataRoot && settings.onboardingCompletedAt === undefined)
+          await mkdir(resolveDataRoot(), { recursive: true })
       },
       resolveCodexProxyEnvironment: () =>
         Promise.resolve(networkProxyRuntime.getChildProcessProxyEnvironment())
@@ -813,9 +814,10 @@ const createApplicationModules = async (
   })
   // Prime the data-root cache from settings before any data repository is constructed below. A change
   // to this value only takes effect after a restart, so reading it once here is sufficient.
-  initDataRoot(storedSettings.dataRoot)
+  initDataRoot(storedSettings.dataRoot, storedSettings.onboardingCompletedAt)
   const configuredDataRootMissing =
-    Boolean(storedSettings.dataRoot?.trim()) && (await isDataRootMissing(resolveDataRoot()))
+    (Boolean(storedSettings.dataRoot) || storedSettings.onboardingCompletedAt !== undefined) &&
+    (await isDataRootMissing(resolveDataRoot()))
   initializeDataRootWriteAvailability(configuredDataRootMissing)
   const dataRootCleanupJournal = new DataRootCleanupJournal(resolveConfigRoot())
   const cleanupDataRootSources = createDataRootSourceCleanup((runtimeRoot) =>

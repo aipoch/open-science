@@ -1,27 +1,20 @@
 import { existsSync, statSync } from 'node:fs'
-import { mkdir } from 'node:fs/promises'
-import { hasDataRootContent, initDataRoot, resolveDataRoot } from '../storage-root'
+import { initDataRoot, resolveDataRoot } from '../storage-root'
 import { SettingsDocumentStore } from '../settings/document-store'
 import { SettingsRepository } from '../settings/repository'
 
-// Settings is the sole saved location and onboarding state. Reuse the same document owner for
-// locale/IPC writes, and pin a default only when no dataRoot has been saved yet.
+// Settings alone determines the research location. Merely entering onboarding never saves a root.
 export const initializeDataLocation = async (repository: SettingsRepository): Promise<void> => {
   const settings = await repository.getSettings()
+  initDataRoot(settings.dataRoot, settings.onboardingCompletedAt)
+  const root = resolveDataRoot()
   if (
-    settings.dataRoot &&
-    (!existsSync(settings.dataRoot) || !statSync(settings.dataRoot).isDirectory())
+    (settings.dataRoot !== undefined || settings.onboardingCompletedAt !== undefined) &&
+    (!existsSync(root) || !statSync(root).isDirectory())
   )
     throw new Error(
-      `The saved data location is missing or is not a directory: ${settings.dataRoot}. Reconnect it before restarting.`
+      `The saved data location is missing or is not a directory: ${root}. Reconnect it before restarting.`
     )
-  initDataRoot(settings.dataRoot)
-  if (!settings.dataRoot) {
-    const root = resolveDataRoot()
-    const fresh = !hasDataRootContent(root)
-    await mkdir(root, { recursive: true })
-    await repository.pinInitialDataRoot(root, fresh)
-  }
 }
 
 export const prepareApplicationLocations = async (

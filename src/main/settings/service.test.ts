@@ -58,6 +58,7 @@ vi.mock('electron', () => ({
   net: { fetch: vi.fn((...args: Parameters<typeof fetch>) => globalThis.fetch(...args)) }
 }))
 
+const { initDataRoot } = await import('../storage-root')
 const { SettingsService } = await import('./service')
 const { ResponsesBridge: ResponsesBridgeClass } = await import('./responses-bridge')
 const { SettingsRepository } = await import('./repository')
@@ -4549,7 +4550,9 @@ describe('SettingsService: onboarding', () => {
   it('marks onboarding complete and surfaces it in the snapshot', async () => {
     const service = createService()
 
+    initDataRoot(storageRoot)
     const snapshot = await service.markOnboardingComplete()
+    expect((await service.getStoredSettings()).dataRoot).toBe(storageRoot)
     expect(snapshot.onboardingCompletedAt).toBeTypeOf('number')
 
     // The persisted value is visible on a fresh read too.
@@ -4569,9 +4572,7 @@ describe('SettingsService: onboarding', () => {
   it('persists a new dataRoot with onboarding completion across a fresh read', async () => {
     const service = createService()
 
-    // The repository canonicalizes dataRoot to the host separator on read (for samePath comparisons),
-    // so build the fixture the same way — a bare POSIX literal comes back with backslashes on Windows
-    // and would fail the round-trip.
+    // Use a host-native absolute fixture; the repository preserves its saved spelling.
     const dataRoot = normalize('/mnt/new-data')
     await service.setDataRoot(dataRoot, { completeOnboarding: true })
 

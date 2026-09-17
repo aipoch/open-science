@@ -1,15 +1,11 @@
-import { basename, join, resolve, sep } from 'node:path'
+import { basename, isAbsolute, join, resolve, sep } from 'node:path'
 
 import { app } from 'electron'
 import { directoryHasFiles } from './storage/location-evidence'
 import { MANAGED_WORKSPACE_OWNERSHIP_DIR } from './storage/managed-workspace-ownership-dir'
 
 import { resolveBootstrapConfigRoot, resolveConfigRootOverride } from './storage/config-root'
-import {
-  DataLocationSelectionError,
-  hasDataRootContent,
-  selectDefaultDataRoot
-} from './storage/data-location-selection'
+import { DataLocationSelectionError, hasDataRootContent } from './storage/data-location-selection'
 export { DataLocationSelectionError } from './storage/data-location-selection'
 
 // Fixed config root shared with the pre-Electron bootstrap. Never relocated with research data.
@@ -65,13 +61,8 @@ const dataRootForPicked = (picked: string): string => {
   return direct ? resolved : (candidates[0] ?? join(resolved, folder))
 }
 
-// A saved location is authoritative. Without one, retain main's in-place legacy layout fallback;
-// do not search other directories for a possible lost selection.
-const computeDefaultDataRoot = (): string => {
-  const homeDefault = dataRootForParent(defaultDataParent())
-  if (configuredDataRoot) return homeDefault
-  return selectDefaultDataRoot(resolveConfigRoot(), defaultDataParent(), app.isPackaged)
-}
+// The new default is only an onboarding choice; never infer a saved root from directory content.
+const computeDefaultDataRoot = (): string => dataRootForParent(defaultDataParent())
 
 // Path equality that respects the platform filesystem: case-insensitive on Windows (NTFS paths are
 // case-insensitive), exact elsewhere. Used for the isDefault check and the same/inside-folder
@@ -96,10 +87,21 @@ const isPathInsideOrEqual = (parent: string, child: string): boolean => {
 let cachedDataRoot: string | undefined
 let configuredDataRoot: string | undefined
 
-const initDataRoot = (settingsDataRoot: string | undefined): void => {
-  cachedDataRoot = undefined
-  configuredDataRoot = settingsDataRoot && settingsDataRoot.trim() ? settingsDataRoot : undefined
-  cachedDataRoot = configuredDataRoot ?? computeDefaultDataRoot()
+const initDataRoot = (settingsDataRoot: unknown, onboardingCompletedAt?: number): void => {
+  const unset =
+    settingsDataRoot == null ||
+    (typeof settingsDataRoot === 'string' && settingsDataRoot.trim() === '')
+  if (!unset && (typeof settingsDataRoot !== 'string' || !isAbsolute(settingsDataRoot)))
+    throw new DataLocationSelectionError(
+      'The saved data location (dataRoot) is invalid. Restore its absolute path before restarting.'
+    )
+  configuredDataRoot = unset ? undefined : (settingsDataRoot as string)
+  // 历史数据路径，属于品牌改名豁免项，禁止随展示品牌修改。
+  const legacyDefault = (): string =>
+    join(app.getPath('home'), app.isPackaged ? 'OpenScience' : 'OpenScience-dev')
+  cachedDataRoot =
+    configuredDataRoot ??
+    (onboardingCompletedAt !== undefined ? legacyDefault() : computeDefaultDataRoot())
 }
 
 // Before initDataRoot has run (early callers, tests), fall back to computeDefaultDataRoot()

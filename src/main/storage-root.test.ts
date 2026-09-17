@@ -175,12 +175,14 @@ describe('computeDefaultDataRoot', () => {
     expect(computeDefaultDataRoot()).toBe(join(e2eRoot, 'Open-Science'))
   })
 
-  it('stays at the config root when it already has legacy data and no Open-Science subdir', async () => {
+  it('offers the branded default regardless of data in the config root', async () => {
     const configRoot = resolveConfigRoot()
     await mkdir(join(configRoot, 'notebooks'), { recursive: true })
     await writeFile(join(configRoot, 'notebooks', 'history.json'), '{}')
 
-    expect(computeDefaultDataRoot()).toBe(configRoot)
+    expect(computeDefaultDataRoot()).toBe(
+      join(homeDir, appMock.isPackaged ? 'Open-Science' : 'Open-Science-DEV')
+    )
 
     await rm(configRoot, { recursive: true, force: true })
   })
@@ -195,17 +197,13 @@ describe('computeDefaultDataRoot', () => {
     await rm(configRoot, { recursive: true, force: true })
   })
 
-  it('requires research ownership rather than every migratable directory as a legacy marker', async () => {
+  it('does not scan migratable directories to choose the onboarding default', async () => {
     for (const marker of MIGRATABLE_DATA_DIRS) {
       const configRoot = resolveConfigRoot()
       await mkdir(join(configRoot, marker), { recursive: true })
       await writeFile(join(configRoot, marker, 'history.json'), '{}')
 
-      if (['models', 'uploads'].includes(marker)) {
-        expect(computeDefaultDataRoot()).toBe(join(homeDir, 'Open-Science'))
-      } else {
-        expect(computeDefaultDataRoot()).toBe(configRoot)
-      }
+      expect(computeDefaultDataRoot()).toBe(join(homeDir, 'Open-Science'))
 
       await rm(configRoot, { recursive: true, force: true })
     }
@@ -222,10 +220,8 @@ describe('computeDefaultDataRoot', () => {
     await rm(configRoot, { recursive: true, force: true })
   })
 
-  it('stays at the legacy config root when <home>/Open-Science exists but carries a migration marker', async () => {
-    // A crashed/in-flight migration left a marker-bearing staging dir at homeDefault. It is NOT the
-    // committed default yet, so a legacy config root with real data must still win — otherwise the
-    // half-copied staging dir would split a legacy user's data across two locations.
+  it('does not infer a location from a default migration marker', async () => {
+    // This is only the displayed default; migration owners separately validate staged targets.
     const configRoot = resolveConfigRoot()
     await mkdir(join(configRoot, 'artifacts'), { recursive: true })
     await writeFile(join(configRoot, 'artifacts', 'history.json'), '{}')
@@ -233,18 +229,22 @@ describe('computeDefaultDataRoot', () => {
     await mkdir(homeDefault, { recursive: true })
     await writeFile(join(homeDefault, MIGRATION_MARKER_FILENAME), '{}')
 
-    expect(computeDefaultDataRoot()).toBe(configRoot)
+    expect(computeDefaultDataRoot()).toBe(
+      join(homeDir, appMock.isPackaged ? 'Open-Science' : 'Open-Science-DEV')
+    )
 
     await rm(configRoot, { recursive: true, force: true })
   })
 
-  it('does not treat a markerless partial <home>/Open-Science copy as committed', async () => {
+  it('does not infer a location from a partial copy', async () => {
     const configRoot = resolveConfigRoot()
     await mkdir(join(configRoot, 'artifacts'), { recursive: true })
     await writeFile(join(configRoot, 'artifacts', 'history.json'), '{}')
     await mkdir(join(homeDir, 'Open-Science', 'artifacts'), { recursive: true })
 
-    expect(computeDefaultDataRoot()).toBe(configRoot)
+    expect(computeDefaultDataRoot()).toBe(
+      join(homeDir, appMock.isPackaged ? 'Open-Science' : 'Open-Science-DEV')
+    )
 
     await rm(configRoot, { recursive: true, force: true })
   })
@@ -288,12 +288,14 @@ describe('computeDefaultDataRoot (dev mode)', () => {
     await rm(homeDir, { recursive: true, force: true })
   })
 
-  it('stays at the (dev) config root when it already has legacy data and no Open-Science-DEV subdir', async () => {
+  it('offers the dev default regardless of research in the config root', async () => {
     const configRoot = resolveConfigRoot()
     await mkdir(join(configRoot, 'artifacts'), { recursive: true })
     await writeFile(join(configRoot, 'artifacts', 'history.json'), '{}')
 
-    expect(computeDefaultDataRoot()).toBe(configRoot)
+    expect(computeDefaultDataRoot()).toBe(
+      join(homeDir, appMock.isPackaged ? 'Open-Science' : 'Open-Science-DEV')
+    )
 
     await rm(configRoot, { recursive: true, force: true })
   })

@@ -273,7 +273,7 @@ describe('storage IPC handlers', () => {
     const { SettingsRepository } = await import('../settings/repository')
     const { SettingsPreferencesModule } = await import('../settings/preferences')
     const repository = new SettingsRepository(join(currentParent, 'isolated-config'))
-    await repository.pinInitialDataRoot(dataRoot, false)
+    await repository.setDataRoot({ dataRoot: dataRoot })
     const preferences = new SettingsPreferencesModule(repository)
     initDataRoot(dataRoot)
     const deps = fakeDeps()
@@ -293,7 +293,7 @@ describe('storage IPC handlers', () => {
     const { SettingsRepository } = await import('../settings/repository')
     const { SettingsPreferencesModule } = await import('../settings/preferences')
     const repository = new SettingsRepository(join(currentParent, 'isolated-config'))
-    await repository.pinInitialDataRoot(dataRoot, false)
+    await repository.setDataRoot({ dataRoot: dataRoot })
     const preferences = new SettingsPreferencesModule(repository)
     initDataRoot(dataRoot)
     await mkdir(join(target, 'workspaces'), { recursive: true })
@@ -730,15 +730,22 @@ describe('storage IPC handlers', () => {
     }
   })
 
-  it('get-info flags legacyDataMovePrompt for an unconfigured install with data in the config root', async () => {
+  it('get-info flags legacyDataMovePrompt for a saved install with data in the config root', async () => {
     const home = await mkdtemp(join(tmpdir(), 'ds-legacy-home-'))
     electronHome.path = home
     try {
       // Legacy layout: user data sits directly in the hidden config root, no Open-Science folder yet.
       await mkdir(join(home, '.open-science', 'artifacts'), { recursive: true })
       await writeFile(join(home, '.open-science', 'artifacts', 'history.json'), '{}')
-      initDataRoot(undefined) // unconfigured -> resolves to the legacy config root
-      registerStorageIpcHandlers(fakeDeps()) // getStoredSettings -> {} (unset, never dismissed)
+      initDataRoot(join(home, '.open-science')) // explicitly saved legacy location
+      registerStorageIpcHandlers(
+        fakeDeps({
+          settingsService: {
+            ...fakeDeps().settingsService,
+            getStoredSettings: async () => ({ dataRoot: join(home, '.open-science') })
+          }
+        })
+      )
 
       const info = (await invoke('storage:get-info')) as {
         legacyDataMovePrompt: boolean
@@ -762,8 +769,15 @@ describe('storage IPC handlers', () => {
     try {
       await mkdir(join(home, '.open-science', 'workspaces', 'session-1'), { recursive: true })
       await writeFile(join(home, '.open-science', 'workspaces', 'session-1', 'history.json'), '{}')
-      initDataRoot(undefined)
-      registerStorageIpcHandlers(fakeDeps())
+      initDataRoot(join(home, '.open-science'))
+      registerStorageIpcHandlers(
+        fakeDeps({
+          settingsService: {
+            ...fakeDeps().settingsService,
+            getStoredSettings: async () => ({ dataRoot: join(home, '.open-science') })
+          }
+        })
+      )
 
       const info = (await invoke('storage:get-info')) as {
         legacyDataMovePrompt: boolean
@@ -792,8 +806,15 @@ describe('storage IPC handlers', () => {
         join(home, '.open-science', 'notebook-file-evidence', 'project-1', 'history.json'),
         '{}'
       )
-      initDataRoot(undefined)
-      registerStorageIpcHandlers(fakeDeps())
+      initDataRoot(join(home, '.open-science'))
+      registerStorageIpcHandlers(
+        fakeDeps({
+          settingsService: {
+            ...fakeDeps().settingsService,
+            getStoredSettings: async () => ({ dataRoot: join(home, '.open-science') })
+          }
+        })
+      )
 
       const info = (await invoke('storage:get-info')) as {
         legacyDataMovePrompt: boolean
@@ -817,9 +838,10 @@ describe('storage IPC handlers', () => {
     try {
       await mkdir(join(home, '.open-science', 'artifacts'), { recursive: true })
       await writeFile(join(home, '.open-science', 'artifacts', 'history.json'), '{}')
-      initDataRoot(undefined)
+      initDataRoot(join(home, '.open-science'))
       const deps = fakeDeps()
       vi.mocked(deps.settingsService.getStoredSettings).mockResolvedValue({
+        dataRoot: join(home, '.open-science'),
         legacyDataMovePromptDismissedAt: 123
       })
       registerStorageIpcHandlers(deps)
@@ -3011,7 +3033,7 @@ describe('storage IPC handlers', () => {
   })
 })
 
-it('keeps the one-time legacy move prompt after startup pins the config-root layout', async () => {
+it('keeps the one-time legacy move prompt when startup reuses the saved config-root layout', async () => {
   const { SettingsRepository } = await import('../settings/repository')
   const { initializeDataLocation } = await import('./initialize-location')
   const config = join(currentParent, 'legacy-config')
@@ -3019,6 +3041,7 @@ it('keeps the one-time legacy move prompt after startup pins the config-root lay
   await mkdir(join(config, 'workspaces'), { recursive: true })
   await writeFile(join(config, 'workspaces/history.json'), 'legacy research')
   const repository = new SettingsRepository(config)
+  await repository.setDataRoot({ dataRoot: config })
   await initializeDataLocation(repository)
   expect((await repository.getSettings()).dataRoot).toBe(config)
   registerStorageIpcHandlers(
@@ -3140,7 +3163,7 @@ it.each([
       await writeFile(join(expected, 'workspaces', 'history.json'), 'existing default research')
     }
     const repository = new SettingsRepository(config)
-    await repository.pinInitialDataRoot(old, false)
+    await repository.setDataRoot({ dataRoot: old })
     initDataRoot(old)
     const deps = fakeDeps({
       validateNewDataRoot,
@@ -3226,5 +3249,26 @@ it.each(['fresh', 'moved', 'empty-legacy'] as const)(
     await expect(invoke('storage:get-status')).resolves.toMatchObject({
       legacyDataMovePrompt: false
     })
+  }
+)
+
+it.each([true, false])(
+  'treats a completed implicit legacy root as existing storage (missing=%s)',
+  async (missing) => {
+    electronHome.path = currentParent
+    const legacy = join(currentParent, 'OpenScience')
+    if (!missing) await mkdir(legacy)
+    initDataRoot(undefined, 1234)
+    const deps = fakeDeps()
+    vi.mocked(deps.settingsService.getStoredSettings).mockResolvedValue({
+      onboardingCompletedAt: 1234
+    })
+    registerStorageIpcHandlers(deps)
+    expect(await invoke('storage:get-info')).toMatchObject({
+      dataRoot: legacy,
+      dataRootMissing: missing,
+      canAutoSelectDataDrive: false
+    })
+    expect(existsSync(legacy)).toBe(!missing)
   }
 )

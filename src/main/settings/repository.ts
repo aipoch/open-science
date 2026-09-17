@@ -1,3 +1,6 @@
+import { statSync } from 'node:fs'
+import { isAbsolute } from 'node:path'
+import { samePath } from '../storage-root'
 import { isDeepStrictEqual } from 'node:util'
 import { BootstrapError } from '../../shared/bootstrap'
 import type {
@@ -810,13 +813,23 @@ class SettingsRepository {
     })
   }
 
-  // Stamps the onboarding-completed time exactly once; later calls leave the first value intact.
-  async markOnboardingComplete(timestamp: number): Promise<StoredSettings> {
-    return this.mutate((settings) =>
-      settings.onboardingCompletedAt === undefined
-        ? { ...settings, onboardingCompletedAt: timestamp }
-        : settings
-    )
+  // Commit the confirmed running root and completion in one settings transaction. Never replace
+  // a concurrently saved selection or mark onboarding complete with an unavailable root.
+  async markOnboardingComplete(timestamp: number, dataRoot: string): Promise<StoredSettings> {
+    return this.mutate((settings) => {
+      if (settings.onboardingCompletedAt !== undefined) return settings
+      if (settings.dataRoot && !samePath(settings.dataRoot, dataRoot))
+        throw new Error('The data location changed. Restart to use the saved location.')
+      if (!isAbsolute(dataRoot) || !statSync(dataRoot, { throwIfNoEntry: false })?.isDirectory())
+        throw new Error(
+          `The saved data location is missing or is not a directory: ${dataRoot}. Reconnect it before restarting.`
+        )
+      return {
+        ...settings,
+        dataRoot: settings.dataRoot ?? dataRoot,
+        onboardingCompletedAt: timestamp
+      }
+    })
   }
 
   // Stamps the legacy-path-normalization completion time exactly once; later calls leave the first
@@ -863,18 +876,6 @@ class SettingsRepository {
         dataRootIsInitialDefault: undefined
       }
     }, validateTarget)
-  }
-
-  // Pin the inferred location without invoking relocation or changing any persisted runtime paths.
-  async pinInitialDataRoot(dataRoot: string, fresh: boolean): Promise<StoredSettings> {
-    return this.mutate((settings) => {
-      if (settings.dataRoot && settings.dataRoot !== dataRoot) {
-        throw new Error(
-          'The data location changed during startup. Restart to use the saved location.'
-        )
-      }
-      return { ...settings, dataRoot, ...(fresh ? { dataRootIsInitialDefault: true } : {}) }
-    })
   }
 
   // Applies one RuntimeEnablement change to the latest persisted value inside the write queue.

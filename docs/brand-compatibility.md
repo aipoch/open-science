@@ -24,16 +24,22 @@ the publisher's identity. This change introduces no certificate, trust-store or 
 ## Existing installations
 
 An absolute saved `dataRoot` stays authoritative, including custom paths containing an old brand.
-`settings.dataRoot` is the only saved research location. Startup retains main's fallback for
-pre-dataRoot installations with research directly in the configuration root; it does not search old
-or custom research copies to reconstruct a lost setting. Generic caches, runtime-only content and
-symlinks do not establish that legacy layout. Without a saved setting or that in-place layout, the
-normal new-brand default applies. There is no extra initialization state or lost-settings recovery
-record. Restore a settings backup to reuse a lost custom selection instead of relying on discovery.
+`settings.dataRoot` is the only saved research location. Missing, `null`, empty and whitespace-only
+values mean unset; non-string or non-absolute values are configuration errors. Missing saved
+directories and corrupt settings stop startup without creating a substitute or selecting another root.
 
-`settings.onboardingCompletedAt` determines whether onboarding is required. Exiting midway keeps
-the saved data location and runtime; the next launch continues onboarding there. Completing onboarding
-updates the existing settings document, not a profile initialization record.
+When `settings.onboardingCompletedAt` is set but `dataRoot` is unset, startup uses exactly
+`~/OpenScience` in packaged builds and `~/OpenScience-dev` in development. These historical data paths
+are brand-renaming exemptions: **never change their spelling or case with the display brand**.
+Startup does not scan configuration folders, research copies, caches, runtime or symlinks to infer
+another root. There is no extra initialization state or lost-settings recovery record. Restore a
+settings backup to reuse a lost custom selection instead of relying on discovery.
+
+`settings.onboardingCompletedAt` determines whether onboarding is required. Exiting midway reuses
+any saved data location and continues onboarding. With no saved root, the new-brand default is only
+the current selection: startup does not persist it. Clicking Finish saves the actual full running
+path and completion timestamp in one settings transaction. Explicit custom selections continue to
+use the guarded select-and-relaunch command. Nothing renames or moves existing research directories.
 
 Electron manages the actual profile directory. `OPEN_SCIENCE_USER_DATA` selects an explicit path;
 a configuration override without it uses `<configRoot>/electron-profile`. Otherwise an existing
@@ -63,7 +69,7 @@ Migration preparation rechecks the confirmed target after asynchronous validatio
 cache cleanup. An `environment-inventory` directory name alone grants no deletion rights; unowned
 runtime content is preserved and blocks staging.
 
-Pinning an old in-place configuration/data layout does not dismiss its one-time migration suggestion.
+An explicitly saved old in-place configuration/data layout retains its one-time migration suggestion.
 It remains available only while research content is there and the user has neither dismissed it nor
 selected a different root. Showing the suggestion never moves data automatically.
 

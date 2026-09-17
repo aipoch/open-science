@@ -16,8 +16,9 @@ export const validateSettingsDocumentShape = (value: unknown): void => {
   // A damaged pointer must never sanitize to an unset pointer and start a second empty workspace.
   if (
     isRecord(value) &&
-    value.dataRoot !== undefined &&
-    (typeof value.dataRoot !== 'string' || !isAbsolute(value.dataRoot) || !value.dataRoot.trim())
+    value.dataRoot != null &&
+    (typeof value.dataRoot !== 'string' ||
+      (value.dataRoot.trim() !== '' && !isAbsolute(value.dataRoot)))
   ) {
     throw new DurableJsonRecoveryBarrierError(
       'The saved data location (dataRoot) is invalid. Restore its absolute path before restarting.'

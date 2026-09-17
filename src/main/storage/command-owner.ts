@@ -99,6 +99,7 @@ type StorageCommandOwnerDeps = {
     // and to gate the one-time legacy-data-move prompt (legacyDataMovePromptDismissedAt).
     getStoredSettings: () => Promise<{
       dataRoot?: string
+      onboardingCompletedAt?: number
       dataRootIsInitialDefault?: boolean
       legacyDataMovePromptDismissedAt?: number
     }>
@@ -258,11 +259,10 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     canAutoSelectDataDrive: boolean
   }> => {
     const dataRoot = resolveDataRoot()
-    // Only an explicitly-configured-but-now-gone root counts as "missing"; a fresh install's unset
+    // Saved and completed legacy roots are existing storage; a fresh install's unset
     // dataRoot (default `~/Open-Science` not created yet) is normal and must never nag the user.
     let dataRootMissing = false
-    // Startup pins a pre-§20 config-root layout before this owner runs. The physical legacy layout,
-    // non-fresh selection and unanswered prompt identify it even after dataRoot has been saved.
+    // An explicitly saved pre-§20 config-root layout retains its unanswered migration prompt.
     let legacyDataMovePrompt = false
     // Fail closed: only the same main-owned filesystem/settings snapshot that identifies an empty,
     // unconfigured root may authorize onboarding's pointer-only default-drive selection.
@@ -277,12 +277,13 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     }
 
     if (storedSettings) {
-      // Only an explicitly-configured root that stat proves is gone (ENOENT/ENOTDIR) counts as
+      // Only an existing root that stat proves is gone (ENOENT/ENOTDIR) counts as
       // missing. isDataRootMissing deliberately does NOT collapse other stat errors into "missing"
       // the way a bare existsSync would, so a non-ENOENT failure (seen with non-ASCII paths on some
       // Windows setups, or a transient drive/IO hiccup) can't nag the user to abandon real data.
       const configuredRootMissing =
-        Boolean(storedSettings.dataRoot?.trim()) && (await isDataRootMissing(dataRoot))
+        (Boolean(storedSettings.dataRoot) || storedSettings.onboardingCompletedAt !== undefined) &&
+        (await isDataRootMissing(dataRoot))
       // A failed reconnect recovery leaves the availability owner in its fail-closed missing state.
       // Project that state as still missing so both the initial status probe and an open dialog stay
       // reachable for retry instead of falling back to the Session-loading screen.
@@ -310,6 +311,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
             NON_UPLOAD_DATA_ROOT_DIRS.map((dir) => join(dataRoot, dir))
           )) || (await hasUploadDataBeyondStartupScaffold(dataRoot))
         canAutoSelectDataDrive =
+          storedSettings.onboardingCompletedAt === undefined &&
           (!storedSettings.dataRoot || storedSettings.dataRootIsInitialDefault === true) &&
           !currentRootHasData &&
           !dataRootMissing
@@ -337,7 +339,8 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
   const acceptMissingDataRoot = async (): Promise<void> => {
     const storedSettings = await deps.settingsService.getStoredSettings()
     const configuredRootMissing =
-      Boolean(storedSettings.dataRoot?.trim()) && (await isDataRootMissing(resolveDataRoot()))
+      (Boolean(storedSettings.dataRoot) || storedSettings.onboardingCompletedAt !== undefined) &&
+      (await isDataRootMissing(resolveDataRoot()))
     if (!configuredRootMissing) {
       await reconcileDataRootWriteAvailability(false)
       return

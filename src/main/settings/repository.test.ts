@@ -1211,13 +1211,14 @@ describe('settings repository', () => {
   })
 
   it('stamps onboardingCompletedAt once and is idempotent', async () => {
-    const repository = new SettingsRepository(await createStorageRoot())
+    const root = await createStorageRoot()
+    const repository = new SettingsRepository(root)
 
-    const first = await repository.markOnboardingComplete(1000)
+    const first = await repository.markOnboardingComplete(1000, root)
     expect(first.onboardingCompletedAt).toBe(1000)
 
     // A second call must not overwrite or move the existing timestamp.
-    const second = await repository.markOnboardingComplete(2000)
+    const second = await repository.markOnboardingComplete(2000, root)
     expect(second.onboardingCompletedAt).toBe(1000)
   })
 
@@ -1225,7 +1226,7 @@ describe('settings repository', () => {
     const root = await createStorageRoot()
     const repository = new SettingsRepository(root)
 
-    await repository.markOnboardingComplete(1234)
+    await repository.markOnboardingComplete(1234, root)
 
     const reloaded = await new SettingsRepository(root).getSettings()
     expect(reloaded.onboardingCompletedAt).toBe(1234)
@@ -1286,10 +1287,9 @@ describe('settings repository', () => {
     expect(second.dataRoot).toBe('/mnt/data-b')
     expect(second.onboardingCompletedAt).toBe(1000)
 
-    // getSettings reads through sanitizeSettings, which normalizes the stored path (backslashes on
-    // Windows), so compare against the platform-normalized form rather than the literal.
+    // Reload preserves the actual saved spelling instead of changing the selected path.
     const reloaded = await new SettingsRepository(root).getSettings()
-    expect(reloaded.dataRoot).toBe(normalize('/mnt/data-b'))
+    expect(reloaded.dataRoot).toBe('/mnt/data-b')
   })
 
   it('relocates disabled managed runtime IDs atomically and idempotently with dataRoot', async () => {
@@ -1353,9 +1353,9 @@ describe('settings repository', () => {
     })
   })
 
-  it('sanitizeSettings drops a relative dataRoot and keeps only an absolute, normalized one', () => {
-    // A relative dataRoot (corrupt or hand-edited settings.json) must be dropped so the data tree
-    // never resolves against process.cwd(); initDataRoot then falls back to the default.
+  it('sanitizeSettings retains valid absolute dataRoot verbatim', () => {
+    // The document reader rejects invalid saved paths before sanitization. This lower-level
+    // projection must not turn a relative input into an absolute path.
     expect(sanitizeSettings({ dataRoot: 'relative/path' }).dataRoot).toBeUndefined()
     expect(sanitizeSettings({ dataRoot: './OpenScience' }).dataRoot).toBeUndefined()
 
@@ -1364,12 +1364,13 @@ describe('settings repository', () => {
 
     // Build an absolute path with platform-correct roots so isAbsolute holds on POSIX and Windows.
     const absolute = isAbsolute('/mnt/data') ? '/mnt/data' : `C:${sep}mnt${sep}data`
-    // Surrounding whitespace is trimmed, then the path is kept.
-    expect(sanitizeSettings({ dataRoot: `  ${absolute} ` }).dataRoot).toBe(normalize(absolute))
+    // Leading whitespace makes this non-absolute; trailing whitespace belongs to the directory name.
+    expect(sanitizeSettings({ dataRoot: `  ${absolute} ` }).dataRoot).toBeUndefined()
+    expect(sanitizeSettings({ dataRoot: `${absolute} ` }).dataRoot).toBe(`${absolute} `)
 
-    // A redundant separator AND a trailing separator collapse to the canonical no-trailing-slash form.
+    // Saved spelling is not rewritten during decoding.
     const messy = `${absolute}${sep}${sep}x${sep}`
-    expect(sanitizeSettings({ dataRoot: messy }).dataRoot).toBe(normalize(`${absolute}${sep}x`))
+    expect(sanitizeSettings({ dataRoot: messy }).dataRoot).toBe(messy)
   })
 
   it('never strips a trailing separator past a filesystem root', () => {
