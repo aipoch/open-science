@@ -1010,6 +1010,22 @@ it('isolates concurrent OpenCode Attempts and a continuation without releasing s
   try {
     await mkdir(sourceConfig, { recursive: true })
     await writeFile(join(sourceConfig, 'opencode.json'), 'shared source must stay untouched')
+    const skillSource = join(dataRoot, 'skill-source')
+    await mkdir(join(skillSource, 'references'), { recursive: true })
+    await writeFile(join(skillSource, 'SKILL.md'), '---\nname: example\n---\nExample')
+    await writeFile(join(skillSource, '.catalog_stamp'), 'catalog-stamp')
+    await writeFile(join(skillSource, 'references', 'guide.md'), 'nested resource')
+    await new ClaudeCodeSkillMaterializer().sync(sourceConfig, [
+      {
+        id: 'example',
+        name: 'example',
+        displayName: 'Example',
+        description: 'Example',
+        source: 'featured',
+        sourceDir: skillSource,
+        updatedAt: '2026-09-17'
+      }
+    ])
     const frameworks = createProductionDelegatedFrameworkRuntime({
       capacity: 3,
       dataRoot,
@@ -1121,7 +1137,22 @@ it('isolates concurrent OpenCode Attempts and a continuation without releasing s
       continued.backend.opencodeUsageApi!.baseUrl
     )
     for (const control of [...first.slice(1), continued]) control.finish()
-    await Promise.all([...running.map(({ settled }) => settled), next.settled])
+    const completed = await Promise.all([
+      ...running.filter((_, index) => index !== failedIndex).map(({ settled }) => settled),
+      next.settled
+    ])
+    for (const result of completed) expect(result).toHaveProperty('value')
+    for (const { backend: child } of controls) {
+      await expect(stat(dirname(child.env.XDG_CONFIG_HOME))).rejects.toMatchObject({
+        code: 'ENOENT'
+      })
+    }
+    expect(
+      await readFile(join(sourceConfig, 'skills', 'os-example', '.catalog_stamp'), 'utf8')
+    ).toBe('catalog-stamp')
+    if (process.platform !== 'win32') {
+      expect((await stat(join(sourceConfig, 'skills', 'os-example'))).mode & 0o222).toBe(0)
+    }
     expect(release).toHaveBeenCalledOnce()
     expect(
       JSON.stringify({
@@ -1138,11 +1169,17 @@ it('isolates concurrent OpenCode Attempts and a continuation without releasing s
     await Promise.allSettled(settlements)
     await admission.release()
     spy.mockRestore()
+    for (const config of [
+      sourceConfig,
+      ...controls.map(({ backend: child }) => join(child.env.XDG_CONFIG_HOME, 'opencode'))
+    ]) {
+      await new ClaudeCodeSkillMaterializer().sync(config, [], { directoryLayout: 'agent-facing' })
+    }
     await rm(dataRoot, { recursive: true, force: true })
   }
 })
 
-it.each(['malformed-config', 'unsafe-file-policy'] as const)(
+it.each(['malformed-config', 'unsafe-file-policy', 'capability-failure'] as const)(
   'fails %s before ACP creation and cleans only its Attempt directory',
   async (failure) => {
     const dataRoot = await mkdtemp(join(tmpdir(), 'opencode-preparation-failure-'))
@@ -1155,20 +1192,29 @@ it.each(['malformed-config', 'unsafe-file-policy'] as const)(
         content:
           failure === 'malformed-config'
             ? '{synthetic-secret-must-not-escape'
-            : JSON.stringify({ permission: { task: 'allow' } })
+            : failure === 'unsafe-file-policy'
+              ? JSON.stringify({ permission: { task: 'allow' } })
+              : safeOpenCodeConfig
       }
     ]
     const createRuntime = vi.spyOn(runtimeComposition, 'createAcpRuntime')
     const revoke = vi.fn(async () => undefined)
-    const capability = vi.fn(async () => ({
-      endpoint: 'http://127.0.0.1:1',
-      token: 'synthetic',
-      release: () => undefined,
-      revoke
-    }))
+    const capability = vi.fn(async () => {
+      if (failure === 'capability-failure') throw new Error('Synthetic capability failure')
+      return {
+        endpoint: 'http://127.0.0.1:1',
+        token: 'synthetic',
+        release: () => undefined,
+        revoke
+      }
+    })
     try {
       await mkdir(source, { recursive: true })
       await writeFile(join(source, 'keep'), 'shared')
+      const skill = join(source, 'skills', 'os-example')
+      await mkdir(skill, { recursive: true })
+      await writeFile(join(skill, '.catalog_stamp'), 'preserve source')
+      await chmod(skill, 0o555)
       const frameworks = createProductionDelegatedFrameworkRuntime({
         capacity: 1,
         dataRoot,
@@ -1204,6 +1250,21 @@ it.each(['malformed-config', 'unsafe-file-policy'] as const)(
       const failureResult = await handle.completion.catch((error: Error) => error)
       expect(failureResult).toBeInstanceOf(Error)
       expect(String(failureResult)).not.toContain('synthetic-secret')
+      if (failure === 'capability-failure') {
+        expect(String(failureResult)).toContain('Synthetic capability failure')
+      }
+      await expect(
+        stat(
+          join(
+            dataRoot,
+            'delegation',
+            'project-1',
+            'session-opencode',
+            'runtime',
+            'failed-preparation'
+          )
+        )
+      ).rejects.toMatchObject({ code: 'ENOENT' })
       expect(String(failureResult).length).toBeLessThan(1024)
       expect(createRuntime).not.toHaveBeenCalled()
       expect(revoke).toHaveBeenCalledTimes(failure === 'unsafe-file-policy' ? 1 : 0)
@@ -1226,6 +1287,7 @@ it.each(['malformed-config', 'unsafe-file-policy'] as const)(
       await expect(selected.execution.reserve(1)).resolves.toBeDefined()
     } finally {
       createRuntime.mockRestore()
+      await new ClaudeCodeSkillMaterializer().sync(source, [])
       await rm(dataRoot, { recursive: true, force: true })
     }
   }

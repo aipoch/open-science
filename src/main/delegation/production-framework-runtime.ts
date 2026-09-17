@@ -1,3 +1,4 @@
+import { ClaudeCodeSkillMaterializer } from '../skills/materializer'
 import { resolveEffectiveSpecialistSkills } from '../../shared/specialist'
 import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-server'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
