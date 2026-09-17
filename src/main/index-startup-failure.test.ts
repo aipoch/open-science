@@ -1,9 +1,10 @@
+import type { CredentialIdentity } from './credential-identity/selection'
 vi.mock('./credential-identity/bootstrap', () => ({
   selectStartupCredentialIdentity: (...args: unknown[]) =>
     fixture.selectCredentialIdentity(...args),
   prepareCredentialValidation: (...args: unknown[]) => {
-    fixture.prepareCredentialValidation(...args)
-    return fixture.validateCredentials
+    const prepared: unknown = fixture.prepareCredentialValidation(...args)
+    return typeof prepared === 'function' ? prepared : fixture.validateCredentials
   }
 }))
 vi.mock('./storage/electron-profile', () => ({
@@ -102,7 +103,7 @@ const fixture = vi.hoisted(() => {
   const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() }
   return {
     log,
-    selectCredentialIdentity: vi.fn((...args: unknown[]) => {
+    selectCredentialIdentity: vi.fn((...args: unknown[]): CredentialIdentity => {
       void args
       return {
         backend: 'mac-keychain',
@@ -852,5 +853,106 @@ it('stops synchronously on a failed credential preflight before Electron ready o
     )
   } finally {
     readiness.mockRestore()
+  }
+})
+
+it.each([
+  'fresh',
+  'existing',
+  'missing key',
+  'locked',
+  'decrypt failure',
+  'backend unavailable',
+  'second instance'
+])('runs the real Linux credential bootstrap at the startup boundary: %s', async (scenario) => {
+  const { mkdtemp, mkdir, writeFile, readFile, rm } = await import('node:fs/promises')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const root = await mkdtemp(join(tmpdir(), 'linux-startup-'))
+  try {
+    const paths = { configRoot: join(root, 'config'), profilePath: join(root, 'profile') }
+    await mkdir(paths.configRoot)
+    await mkdir(paths.profilePath)
+    const settingsPath = join(paths.configRoot, 'settings.json')
+    const settings = JSON.stringify({
+      version: 2,
+      providers: [{ keyRef: `enc:${Buffer.from('v11original').toString('base64')}` }]
+    })
+    if (scenario !== 'fresh') await writeFile(settingsPath, settings)
+    vi.stubGlobal(
+      'process',
+      Object.defineProperty(Object.create(process), 'platform', { value: 'linux' })
+    )
+    vi.stubEnv('XDG_CURRENT_DESKTOP', 'GNOME')
+    const metadata = await import('./credential-identity/linux-secret-service')
+    vi.spyOn(metadata, 'probeLinuxCredentialIdentity').mockReturnValue({
+      status:
+        scenario === 'locked'
+          ? 'access-blocked'
+          : ['fresh', 'missing key'].includes(scenario)
+            ? 'not-found'
+            : 'exists'
+    })
+    const real = await vi.importActual<typeof import('./credential-identity/bootstrap')>(
+      './credential-identity/bootstrap'
+    )
+    fixture.selectCredentialIdentity.mockImplementationOnce((options) =>
+      real.selectStartupCredentialIdentity(
+        options as Parameters<typeof real.selectStartupCredentialIdentity>[0]
+      )
+    )
+    fixture.prepareCredentialValidation.mockImplementationOnce((identity) =>
+      real.prepareCredentialValidation(
+        identity as Parameters<typeof real.prepareCredentialValidation>[0],
+        paths
+      )
+    )
+    const cipher = {
+      getSelectedStorageBackend: vi.fn(() => 'gnome_libsecret'),
+      isEncryptionAvailable: vi.fn(() => scenario !== 'backend unavailable'),
+      encryptString: vi.fn(),
+      decryptString: vi.fn(() => {
+        if (scenario === 'decrypt failure') throw Error('denied')
+        return 'original'
+      })
+    }
+    Object.assign(fixture.electron, { safeStorage: cipher })
+    fixture.failAt = 'none'
+    fixture.headless = false
+    if (scenario === 'second instance')
+      fixture.electron.app.requestSingleInstanceLock.mockReturnValue(false)
+    await import('./index')
+    if (scenario === 'second instance') {
+      await vi.waitFor(() => expect(fixture.electron.app.quit).toHaveBeenCalled())
+      expect(fixture.pinLocations).not.toHaveBeenCalled()
+      expect(fixture.prepareCredentialValidation).not.toHaveBeenCalled()
+      expect(cipher.isEncryptionAvailable).not.toHaveBeenCalled()
+    } else {
+      await Promise.race([fixture.ready, fixture.exited])
+      if (['fresh', 'existing'].includes(scenario)) {
+        expect(fixture.configureDesktop).toHaveBeenCalledOnce()
+        expect(fixture.electron.app.setName).toHaveBeenNthCalledWith(1, 'Open Science')
+        expect(fixture.electron.app.setName).toHaveBeenLastCalledWith('Open-Science')
+        expect(fixture.electron.dialog.showErrorBox).not.toHaveBeenCalled()
+        if (scenario === 'existing')
+          expect(cipher.decryptString).toHaveBeenCalledWith(Buffer.from('v11original'))
+      } else {
+        expect(fixture.electron.dialog.showErrorBox).toHaveBeenCalledWith(
+          'Open-Science',
+          expect.stringContaining('CREDENTIAL_IDENTITY')
+        )
+        expect(fixture.prepareLocations).not.toHaveBeenCalled()
+        expect(fixture.configureDesktop).not.toHaveBeenCalled()
+        if (['missing key', 'locked'].includes(scenario)) {
+          expect(fixture.pinLocations).not.toHaveBeenCalled()
+          expect(cipher.isEncryptionAvailable).not.toHaveBeenCalled()
+        }
+      }
+    }
+    expect(cipher.encryptString).not.toHaveBeenCalled()
+    if (scenario !== 'fresh') expect(await readFile(settingsPath, 'utf8')).toBe(settings)
+  } finally {
+    Reflect.deleteProperty(fixture.electron, 'safeStorage')
+    await rm(root, { recursive: true, force: true })
   }
 })

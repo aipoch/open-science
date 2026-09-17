@@ -32,13 +32,25 @@ export const createCredentialAccess = (options: {
     if (failure) throw failure
     if (
       reading &&
-      options.identity.backend === 'mac-keychain' &&
+      (options.identity.backend === 'mac-keychain' ||
+        options.identity.backend === 'linux-secret-service') &&
       !options.identity.exists &&
       !written
     )
       return fail('read-before-key-created')
+    if (options.identity.backend === 'linux-secret-service') {
+      try {
+        if (options.cipher.getSelectedStorageBackend?.() !== 'gnome_libsecret')
+          return fail('linux-backend-unavailable-or-changed')
+      } catch {
+        return fail('linux-backend-unavailable-or-changed')
+      }
+    }
     if (checked) return
-    if (options.identity.backend === 'mac-keychain') {
+    if (
+      options.identity.backend === 'mac-keychain' ||
+      options.identity.backend === 'linux-secret-service'
+    ) {
       let result: IdentityProbeResult
       try {
         result = options.probe(options.identity.appName)
@@ -64,7 +76,7 @@ export const createCredentialAccess = (options: {
       check(false)
       try {
         if (!options.cipher.isEncryptionAvailable()) return fail('credential-access-unavailable')
-        checked = true
+        checked = options.identity.backend !== 'linux-secret-service'
         return true
       } catch {
         return fail('credential-access-unavailable')

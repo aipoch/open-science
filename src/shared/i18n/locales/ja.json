@@ -45,6 +45,7 @@
     "Import Session package": "セッションパッケージをインポート"
   },
   "native": {
+    "Linux OS credentials require an available Secret Service backend and /usr/bin/busctl. Unlock the original default keyring and restart. For an unsupported backend, use a compatible application version without changing the backend or profile.": "Linux のシステム認証情報には、利用可能な Secret Service バックエンドと /usr/bin/busctl が必要です。元のデフォルトキーリングのロックを解除して再起動してください。バックエンドが未対応の場合は、バックエンドやプロファイルを変更せず、互換性のあるアプリのバージョンを使用してください。",
     "Credential storage needs recovery": "認証情報ストレージの復旧が必要です",
     "Silent credential identity checks are not supported by this system credential backend. Startup has stopped to preserve existing encrypted data.": "このシステムの認証情報バックエンドは、操作を求めない識別情報の確認に対応していません。既存の暗号化データを保持するため、起動を停止しました。",
     "Open-Science could not safely access existing encrypted data. Unlock the system credential store or restore the original key and profile, then restart. Existing credentials have not been replaced.": "Open-Science は既存の暗号化データに安全にアクセスできませんでした。システムの認証情報ストレージのロックを解除するか、元の鍵とプロファイルを復元してから再起動してください。既存の認証情報は置き換えられていません。",

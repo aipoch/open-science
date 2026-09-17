@@ -188,17 +188,17 @@ no cross-platform success follows from these local regressions alone.
 
 ## Intentionally retained old spellings
 
-| Spelling or family                                                                                                                             | Reason                                                                                                                                                                      |
-| ---------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `OpenScience`, `OpenScience-DEV`, `Open Science (DEV)`, `Open Science.app` in storage/profile compatibility and explicit installation fixtures | Recognize existing data/profiles and support explicitly bound installations without renaming or moving them; standalone CLI discovery does not enumerate old installations. |
-| `Open Science` / `Open Science (DEV)` in credential selection                                                                                  | Legacy macOS Keychain identity, selected only after a silent new-name miss; see [credential identity](credential-identity.md) for platform support.                         |
-| Windows `Open Science Session package`                                                                                                         | Persisted `.science` ProgID. Its display description changes; registering a second class would break upgrades.                                                              |
-| `OpenScienceTmp`, `.openscience/jobs`, `.openscience/environments`, `openscience-<job-id>`                                                     | Existing owned caches, remote records, activation files, and scheduler recovery; new resources use the new spelling.                                                        |
-| `OpenScienceAPI`, `OpenScienceClient`, `OpenScienceApiError`, exported functions, GraphQL operation names, settings fields                     | Valid language/API identifiers and persisted contracts; inserting a hyphen would break syntax or consumers.                                                                 |
-| `openscience-skills`, marketplace protocols, repository URLs, signing key IDs, content digest prefix                                           | Published and signed third-party-facing contracts. Display copy is updated without changing signed bytes.                                                                   |
-| `# Open Science:` Codex route markers; old CLI/PATH receipt ownership headers                                                                  | Exact managed-block/receipt recognition across upgrades. They are technical ownership markers.                                                                              |
-| `CHANGELOG.md`, rollback-to-0.7.3 fixtures and old-version paths                                                                               | Historical facts and explicit old-version compatibility.                                                                                                                    |
-| `Electron.app` in development tooling                                                                                                          | Upstream Electron runtime filename; its development product display metadata is Open-Science (DEV).                                                                         |
+| Spelling or family                                                                                                                             | Reason                                                                                                                                                                                                   |
+| ---------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `OpenScience`, `OpenScience-DEV`, `Open Science (DEV)`, `Open Science.app` in storage/profile compatibility and explicit installation fixtures | Recognize existing data/profiles and support explicitly bound installations without renaming or moving them; standalone CLI discovery does not enumerate old installations.                              |
+| `Open Science` / `Open Science (DEV)` in credential selection                                                                                  | Legacy macOS Keychain identity after a new-name miss; stable Linux Secret Service technical identity for new and existing users. See [credential identity](credential-identity.md) for platform support. |
+| Windows `Open Science Session package`                                                                                                         | Persisted `.science` ProgID. Its display description changes; registering a second class would break upgrades.                                                                                           |
+| `OpenScienceTmp`, `.openscience/jobs`, `.openscience/environments`, `openscience-<job-id>`                                                     | Existing owned caches, remote records, activation files, and scheduler recovery; new resources use the new spelling.                                                                                     |
+| `OpenScienceAPI`, `OpenScienceClient`, `OpenScienceApiError`, exported functions, GraphQL operation names, settings fields                     | Valid language/API identifiers and persisted contracts; inserting a hyphen would break syntax or consumers.                                                                                              |
+| `openscience-skills`, marketplace protocols, repository URLs, signing key IDs, content digest prefix                                           | Published and signed third-party-facing contracts. Display copy is updated without changing signed bytes.                                                                                                |
+| `# Open Science:` Codex route markers; old CLI/PATH receipt ownership headers                                                                  | Exact managed-block/receipt recognition across upgrades. They are technical ownership markers.                                                                                                           |
+| `CHANGELOG.md`, rollback-to-0.7.3 fixtures and old-version paths                                                                               | Historical facts and explicit old-version compatibility.                                                                                                                                                 |
+| `Electron.app` in development tooling                                                                                                          | Upstream Electron runtime filename; its development product display metadata is Open-Science (DEV).                                                                                                      |
 
 NCBI request `tool=OpenScience` remains a stable external client identifier.
 
@@ -210,6 +210,20 @@ under `Aipoch/OpenScience/notebook-sandbox` stay in place; two populated roots r
 recovery. Isolated runs keep ownership under the configuration root. AppContainer, WFP, mutex and
 named-pipe identifiers such as `Aipoch.OpenScience.Notebook` and `OpenScience.RAccess` are retained
 security identities so upgrades and uninstall can manage the original resources.
+
+## RIS exchange markers
+
+New RIS exports write only `Open-Science literal creator: ` notes. Import accepts both that prefix
+and historical `Open Science literal creator: ` notes, slicing JSON using the actual matched prefix.
+The marker's structure, creator tag, index and literal must match the visible RIS creator field.
+This preserves institution names containing commas for editors and translators, including book
+`A3` versus other item types' `A2` editors. Malformed, out-of-range, mismatched or stale notes after
+third-party edits cannot override the visible fields.
+
+This is **write new, read new and old** compatibility. It does not promise that an old app can read
+new markers; exports do not emit duplicate old/new notes. No historical RIS file, database or existing
+literature record is rewritten. The old prefix remains solely as a read-compatibility identity and
+in fixed historical test fixtures.
 
 ## Explicit location changes
 

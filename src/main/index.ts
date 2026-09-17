@@ -176,7 +176,10 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
   const credentialIdentity = selectStartupCredentialIdentity({
     platform: process.platform,
     packaged: app.isPackaged,
-    credentialStore: getCredentialStore()
+    credentialStore: getCredentialStore(),
+    ...(process.platform === 'linux'
+      ? { linuxPasswordStore: app.commandLine?.getSwitchValue('password-store') }
+      : {})
   })
   app.setName(credentialIdentity.appName)
   preparingLocations = true

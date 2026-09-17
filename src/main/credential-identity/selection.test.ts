@@ -80,7 +80,7 @@ describe('credential identity selection', () => {
     expect(probe).not.toHaveBeenCalled()
   })
 
-  it('allows only the explicit Linux file backend without a supported OS metadata probe', () => {
+  it('requires a Linux metadata adapter without calling the macOS probe, and preserves file mode', () => {
     const probe = vi.fn()
     expect(() => selectCredentialIdentity({ platform: 'linux', packaged: true, probe })).toThrow(
       /credential/i
@@ -93,6 +93,11 @@ describe('credential identity selection', () => {
         probe
       })
     ).toEqual({ backend: 'file', appName: 'Open-Science' })
+    const linuxProbe = vi.fn(() => ({ status: 'exists' as const }))
+    expect(
+      selectCredentialIdentity({ platform: 'linux', packaged: true, probe, linuxProbe })
+    ).toEqual({ backend: 'linux-secret-service', appName: 'Open Science', exists: true })
+    expect(linuxProbe).toHaveBeenCalledExactlyOnceWith('Open Science')
     expect(probe).not.toHaveBeenCalled()
   })
 })

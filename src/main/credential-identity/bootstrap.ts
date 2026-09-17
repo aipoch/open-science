@@ -1,3 +1,7 @@
+import {
+  assertLinuxSecretServiceConfiguration,
+  probeLinuxCredentialIdentity
+} from './linux-secret-service'
 import { validateWindowsProfileKey } from './windows-profile-key'
 import type { SecureStorageCipher } from '../secure-storage'
 import { readCredentialCiphertexts, verifyCredentialCiphertexts } from './ciphertext-inventory'
@@ -10,8 +14,16 @@ import {
 } from './selection'
 
 export const selectStartupCredentialIdentity = (
-  options: Omit<Parameters<typeof selectCredentialIdentity>[0], 'probe'>
-): CredentialIdentity => selectCredentialIdentity({ ...options, probe: probeCredentialIdentity })
+  options: Omit<Parameters<typeof selectCredentialIdentity>[0], 'probe' | 'linuxProbe'>
+): CredentialIdentity => {
+  if (options.platform === 'linux' && options.credentialStore !== 'file')
+    assertLinuxSecretServiceConfiguration(options.linuxPasswordStore)
+  return selectCredentialIdentity({
+    ...options,
+    probe: probeCredentialIdentity,
+    linuxProbe: probeLinuxCredentialIdentity
+  })
+}
 
 // The entire inventory is read before Electron can initialize a profile or create a missing key.
 export const prepareCredentialValidation = (
@@ -24,10 +36,24 @@ export const prepareCredentialValidation = (
       profilePath: paths.profilePath,
       hasCiphertexts: ciphertexts.length > 0
     })
-  if (identity.backend === 'mac-keychain' && !identity.exists && ciphertexts.length)
+  if (
+    (identity.backend === 'mac-keychain' || identity.backend === 'linux-secret-service') &&
+    !identity.exists &&
+    ciphertexts.length
+  )
     throw new CredentialIdentityError('key-missing-for-existing-ciphertext')
   return (cipher, recover) => {
-    installCredentialAccess({ identity, cipher, probe: probeCredentialIdentity, recover })
+    installCredentialAccess({
+      identity,
+      cipher,
+      probe:
+        identity.backend === 'linux-secret-service'
+          ? probeLinuxCredentialIdentity
+          : probeCredentialIdentity,
+      recover
+    })
+    if (identity.backend === 'linux-secret-service')
+      credentialCipher(cipher).isEncryptionAvailable()
     verifyCredentialCiphertexts(ciphertexts, (value) =>
       credentialCipher(cipher).decryptString(value)
     )

@@ -45,6 +45,7 @@
     "Import Session package": "导入会话包"
   },
   "native": {
+    "Linux OS credentials require an available Secret Service backend and /usr/bin/busctl. Unlock the original default keyring and restart. For an unsupported backend, use a compatible application version without changing the backend or profile.": "Linux 系统凭据需要可用的 Secret Service 后端和 /usr/bin/busctl。请解锁原有的默认密钥环并重新启动。如果后端不受支持，请使用兼容的应用版本，不要更改后端或 profile。",
     "Credential storage needs recovery": "凭据存储需要恢复",
     "Silent credential identity checks are not supported by this system credential backend. Startup has stopped to preserve existing encrypted data.": "此系统凭据后端不支持静默身份检查。为保留现有加密数据，启动已停止。",
     "Open-Science could not safely access existing encrypted data. Unlock the system credential store or restore the original key and profile, then restart. Existing credentials have not been replaced.": "Open-Science 无法安全访问现有加密数据。请解锁系统凭据存储，或恢复原始密钥和配置文件，然后重新启动。现有凭据未被替换。",

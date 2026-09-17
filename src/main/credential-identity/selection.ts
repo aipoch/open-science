@@ -4,7 +4,7 @@ export type IdentityProbeResult = Readonly<{
 }>
 
 export type CredentialIdentity = Readonly<
-  | { backend: 'mac-keychain'; appName: string; exists: boolean }
+  | { backend: 'mac-keychain' | 'linux-secret-service'; appName: string; exists: boolean }
   | { backend: 'windows-dpapi' | 'file'; appName: string }
 >
 
@@ -18,13 +18,15 @@ export class CredentialIdentityError extends Error {
   }
 }
 
-// This function has no cache, storage, secret access, or creation capability. Each process starts
-// with the new identity; only an authoritative absence permits the next metadata query.
+// This function has no cache, storage, secret access, or creation capability. macOS probes the new
+// identity first; Linux keeps its stable technical identity without a name fallback.
 export const selectCredentialIdentity = (options: {
   platform: NodeJS.Platform
   packaged: boolean
   credentialStore?: 'os' | 'file'
   probe: (appName: string) => IdentityProbeResult
+  linuxProbe?: (appName: string) => IdentityProbeResult
+  linuxPasswordStore?: string
 }): CredentialIdentity => {
   const suffix = options.packaged ? '' : ' (DEV)'
   const current = `Open-Science${suffix}`
@@ -35,6 +37,18 @@ export const selectCredentialIdentity = (options: {
   }
   if (options.platform === 'linux' && options.credentialStore === 'file') {
     return Object.freeze({ backend: 'file', appName: current })
+  }
+  if (options.platform === 'linux') {
+    const result = options.linuxProbe?.(legacy)
+    if (!result || !['exists', 'not-found'].includes(result.status))
+      throw new CredentialIdentityError(
+        result?.reason ?? `linux-secret-service-probe-${result?.status ?? 'unsupported'}`
+      )
+    return Object.freeze({
+      backend: 'linux-secret-service',
+      appName: legacy,
+      exists: result.status === 'exists'
+    })
   }
   if (options.platform !== 'darwin') throw new CredentialIdentityError('unsupported-backend')
 

@@ -45,6 +45,7 @@
     "Import Session package": "세션 패키지 가져오기"
   },
   "native": {
+    "Linux OS credentials require an available Secret Service backend and /usr/bin/busctl. Unlock the original default keyring and restart. For an unsupported backend, use a compatible application version without changing the backend or profile.": "Linux 시스템 자격 증명에는 사용 가능한 Secret Service 백엔드와 /usr/bin/busctl이 필요합니다. 기존 기본 키링의 잠금을 해제하고 다시 시작하세요. 지원되지 않는 백엔드인 경우 백엔드나 프로필을 변경하지 말고 호환되는 앱 버전을 사용하세요.",
     "Credential storage needs recovery": "자격 증명 저장소를 복구해야 합니다",
     "Silent credential identity checks are not supported by this system credential backend. Startup has stopped to preserve existing encrypted data.": "이 시스템 자격 증명 백엔드는 사용자 상호 작용 없는 식별 정보 확인을 지원하지 않습니다. 기존 암호화 데이터를 보존하기 위해 시작을 중단했습니다.",
     "Open-Science could not safely access existing encrypted data. Unlock the system credential store or restore the original key and profile, then restart. Existing credentials have not been replaced.": "Open-Science가 기존 암호화 데이터에 안전하게 접근할 수 없습니다. 시스템 자격 증명 저장소의 잠금을 해제하거나 원래 키와 프로필을 복원한 후 다시 시작하세요. 기존 자격 증명은 교체되지 않았습니다.",

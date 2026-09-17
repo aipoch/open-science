@@ -45,6 +45,7 @@
     "Import Session package": "Importar paquete de sesión"
   },
   "native": {
+    "Linux OS credentials require an available Secret Service backend and /usr/bin/busctl. Unlock the original default keyring and restart. For an unsupported backend, use a compatible application version without changing the backend or profile.": "Las credenciales del sistema Linux requieren un backend Secret Service disponible y /usr/bin/busctl. Desbloquee el llavero predeterminado original y reinicie. Si el backend no es compatible, utilice una versión compatible de la aplicación sin cambiar el backend ni el perfil.",
     "Credential storage needs recovery": "Es necesario recuperar el almacén de credenciales",
     "Silent credential identity checks are not supported by this system credential backend. Startup has stopped to preserve existing encrypted data.": "Este backend de credenciales del sistema no admite comprobaciones silenciosas de identidad. El inicio se ha detenido para preservar los datos cifrados existentes.",
     "Open-Science could not safely access existing encrypted data. Unlock the system credential store or restore the original key and profile, then restart. Existing credentials have not been replaced.": "Open-Science no ha podido acceder de forma segura a los datos cifrados existentes. Desbloquee el almacén de credenciales del sistema o restaure la clave y el perfil originales y, a continuación, reinicie. No se han reemplazado las credenciales existentes.",

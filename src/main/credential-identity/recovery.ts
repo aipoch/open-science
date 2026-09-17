@@ -9,12 +9,16 @@ export const credentialRecoveryMessage = (
   const i18n = createNativeI18n(resolveLocale('system', systemLanguages))
   const translate = i18n.t.bind(i18n)
   const title = translate('Credential storage needs recovery')
-  const description = error.reason.includes('unsupported')
+  const description = error.reason.startsWith('linux-')
     ? translate(
-        'Silent credential identity checks are not supported by this system credential backend. Startup has stopped to preserve existing encrypted data.'
+        'Linux OS credentials require an available Secret Service backend and /usr/bin/busctl. Unlock the original default keyring and restart. For an unsupported backend, use a compatible application version without changing the backend or profile.'
       )
-    : translate(
-        'Open-Science could not safely access existing encrypted data. Unlock the system credential store or restore the original key and profile, then restart. Existing credentials have not been replaced.'
-      )
+    : error.reason.includes('unsupported')
+      ? translate(
+          'Silent credential identity checks are not supported by this system credential backend. Startup has stopped to preserve existing encrypted data.'
+        )
+      : translate(
+          'Open-Science could not safely access existing encrypted data. Unlock the system credential store or restore the original key and profile, then restart. Existing credentials have not been replaced.'
+        )
   return `${title}\n\n${description}\n\nCREDENTIAL_IDENTITY: ${error.reason}`
 }
