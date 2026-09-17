@@ -497,7 +497,8 @@
           "src/main/notebook/runtime-application-commands.test.ts",
           "src/main/notebook/runtime-ipc.test.ts",
           "src/main/notebook/runtime-workflows.test.ts",
-          "src/main/notebook/windows-micromamba-runner.test.ts"
+          "src/main/notebook/windows-micromamba-runner.test.ts",
+          "src/main/session-plan/plan-context-file.shell.integration.test.ts"
         ]
       },
       "capabilityOverlays": [],
@@ -1836,7 +1837,8 @@
           "src/main/session-package/fork.test.ts",
           "src/main/storage/brand-location.test.ts",
           "src/main/storage/migration-target-race.test.ts",
-          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx"
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
+          "src/main/settings/provider-runtime-health-owner.test.ts"
         ]
       },
       "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
@@ -3017,7 +3019,10 @@
           "src/main/storage/migration-target-race.test.ts",
           "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
           "src/main/credential-identity/macos.test.ts",
-          "src/main/credential-identity/probe-logging.test.ts"
+          "src/main/credential-identity/probe-logging.test.ts",
+          "src/main/settings/responses-bridge.plan-tools.test.ts",
+          "src/main/session-plan/plan-context-file.shell.integration.test.ts",
+          "src/main/settings/provider-runtime-health-owner.test.ts"
         ]
       },
       "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
@@ -3259,7 +3264,8 @@
           "src/main/storage/brand-location.test.ts",
           "src/main/storage/ipc.test.ts",
           "src/main/credential-identity/macos.test.ts",
-          "src/main/credential-identity/probe-logging.test.ts"
+          "src/main/credential-identity/probe-logging.test.ts",
+          "src/main/settings/provider-runtime-health-owner.test.ts"
         ]
       },
       "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
@@ -3473,6 +3479,7 @@
           "src/main/connectors/application.test.ts",
           "src/main/connectors/custom-mcp-bootstrap.test.ts",
           "src/main/connectors/custom-skill-doc.test.ts",
+          "src/main/connectors/descriptors/variants-gnomad.test.ts",
           "src/main/connectors/mcp-client-manager.test.ts",
           "src/main/connectors/mcp-payload-pagination.integration.test.ts",
           "src/main/connectors/oauth-client.test.ts",
@@ -3776,7 +3783,9 @@
           "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
           "src/main/credential-identity/macos.test.ts",
           "src/main/credential-identity/probe-logging.test.ts",
-          "src/main/connectors/descriptors/variants-gnomad.test.ts"
+          "src/main/session-plan/plan-context-file.shell.integration.test.ts",
+          "src/main/settings/responses-bridge.plan-tools.test.ts",
+          "src/main/settings/provider-runtime-health-owner.test.ts"
         ]
       },
       "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
@@ -3798,7 +3807,10 @@
         "src/main/settings/provider-error-replay.ts",
         "src/main/settings/provider-loopback-http-host.ts",
         "src/main/settings/provider-transport-owner.ts",
+        "src/main/settings/provider-failure-observation.ts",
+        "src/main/settings/provider-runtime-health-owner.ts",
         "src/main/settings/responses-bridge.ts",
+        "src/main/settings/responses-bridge.plan-tools.test.ts",
         "src/main/settings/responses-protocol-types.ts",
         "src/main/settings/responses-request-adapter.ts",
         "src/main/settings/responses-response-adapter.ts",
@@ -3818,6 +3830,7 @@
         "src/main/settings/provider-loopback-http-host.test.ts",
         "src/main/settings/provider-transport-owner.architecture.test.ts",
         "src/main/settings/provider-transport-owner.test.ts",
+        "src/main/settings/provider-runtime-health-owner.test.ts",
         "src/main/settings/responses-bridge.integration.test.ts",
         "src/main/settings/responses-bridge.test.ts",
         "src/main/settings/responses-reasoning-replay.test.ts",
@@ -3840,6 +3853,8 @@
         "src/main/settings/openai-provider-bridge.ts",
         "src/main/settings/provider-loopback-http-host.ts",
         "src/main/settings/provider-transport-owner.ts",
+        "src/main/settings/provider-failure-observation.ts",
+        "src/main/settings/provider-runtime-health-owner.ts",
         "src/main/settings/responses-request-adapter.ts",
         "src/main/settings/responses-response-adapter.ts",
         "src/main/settings/system-proxy.ts",
@@ -3860,6 +3875,7 @@
           "src/main/settings/backend-route-planner.test.ts",
           "src/main/settings/backend-route-planner.architecture.test.ts",
           "src/main/settings/provider-transport-owner.test.ts",
+          "src/main/settings/provider-runtime-health-owner.test.ts",
           "src/main/settings/provider-transport-owner.architecture.test.ts",
           "src/main/settings/provider-loopback-http-host.test.ts",
           "src/main/settings/provider-loopback-http-host.architecture.test.ts",
@@ -3879,7 +3895,8 @@
           "src/main/settings/system-proxy.test.ts",
           "src/main/settings/network-proxy-runtime.test.ts",
           "src/main/settings/environment-check.test.ts",
-          "src/main/settings/environment-check-proxy.test.ts"
+          "src/main/settings/environment-check-proxy.test.ts",
+          "src/main/settings/responses-bridge.plan-tools.test.ts"
         ],
         "contract": [
           "src/main/agent-framework/claude-code.test.ts",
@@ -4017,6 +4034,7 @@
           "src/main/connectors/application.test.ts",
           "src/main/connectors/custom-mcp-bootstrap.test.ts",
           "src/main/connectors/custom-skill-doc.test.ts",
+          "src/main/connectors/descriptors/variants-gnomad.test.ts",
           "src/main/connectors/mcp-client-manager.test.ts",
           "src/main/connectors/mcp-payload-pagination.integration.test.ts",
           "src/main/connectors/oauth-client.test.ts",
@@ -4293,8 +4311,7 @@
           "src/main/storage/migration-target-race.test.ts",
           "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
           "src/main/credential-identity/macos.test.ts",
-          "src/main/credential-identity/probe-logging.test.ts",
-          "src/main/connectors/descriptors/variants-gnomad.test.ts"
+          "src/main/credential-identity/probe-logging.test.ts"
         ]
       },
       "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
@@ -4734,7 +4751,8 @@
           "src/main/session-package/fork.test.ts",
           "src/main/storage/brand-location.test.ts",
           "src/main/storage/migration-target-race.test.ts",
-          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx"
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
+          "src/main/settings/provider-runtime-health-owner.test.ts"
         ]
       },
       "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
@@ -5192,7 +5210,9 @@
           "src/main/session-package/fork.test.ts",
           "src/main/storage/brand-location.test.ts",
           "src/main/storage/migration-target-race.test.ts",
-          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx"
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
+          "src/main/session-plan/plan-context-file.shell.integration.test.ts",
+          "src/main/settings/provider-runtime-health-owner.test.ts"
         ]
       },
       "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
@@ -6020,7 +6040,8 @@
           "src/main/session-package/fork.test.ts",
           "src/main/storage/brand-location.test.ts",
           "src/main/storage/migration-target-race.test.ts",
-          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx"
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
+          "src/main/settings/provider-runtime-health-owner.test.ts"
         ]
       },
       "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
@@ -6541,7 +6562,9 @@
           "src/main/session-package/fork.test.ts",
           "src/main/storage/migration-target-race.test.ts",
           "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
-          "src/main/storage/brand-location.test.ts"
+          "src/main/storage/brand-location.test.ts",
+          "src/main/session-plan/plan-legacy-compatibility.test.ts",
+          "src/main/session-plan/plan-context-file.shell.integration.test.ts"
         ]
       },
       "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
@@ -6973,7 +6996,8 @@
           "src/main/storage/migration-target-race.test.ts",
           "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
           "src/main/storage/brand-location.test.ts",
-          "src/main/credential-identity/recovery.test.ts"
+          "src/main/credential-identity/recovery.test.ts",
+          "src/main/session-plan/plan-context-file.shell.integration.test.ts"
         ]
       },
       "capabilityOverlays": ["i18n_catalog"],
@@ -8472,6 +8496,7 @@
           "src/main/connectors/application.test.ts",
           "src/main/connectors/custom-mcp-bootstrap.test.ts",
           "src/main/connectors/custom-skill-doc.test.ts",
+          "src/main/connectors/descriptors/variants-gnomad.test.ts",
           "src/main/connectors/mcp-client-manager.test.ts",
           "src/main/connectors/mcp-payload-pagination.integration.test.ts",
           "src/main/connectors/oauth-client.test.ts",
@@ -8758,7 +8783,8 @@
           "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
           "src/main/credential-identity/macos.test.ts",
           "src/main/credential-identity/probe-logging.test.ts",
-          "src/main/connectors/descriptors/variants-gnomad.test.ts"
+          "src/main/settings/responses-bridge.plan-tools.test.ts",
+          "src/main/settings/provider-runtime-health-owner.test.ts"
         ]
       },
       "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
@@ -9382,7 +9408,8 @@
           "src/main/storage/migration-target-race.test.ts",
           "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
           "src/main/storage/brand-location.test.ts",
-          "src/main/credential-identity/recovery.test.ts"
+          "src/main/credential-identity/recovery.test.ts",
+          "src/main/session-plan/plan-context-file.shell.integration.test.ts"
         ]
       },
       "capabilityOverlays": [],
@@ -9594,6 +9621,7 @@
           "src/main/connectors/application.test.ts",
           "src/main/connectors/custom-mcp-bootstrap.test.ts",
           "src/main/connectors/custom-skill-doc.test.ts",
+          "src/main/connectors/descriptors/variants-gnomad.test.ts",
           "src/main/connectors/mcp-client-manager.test.ts",
           "src/main/connectors/mcp-payload-pagination.integration.test.ts",
           "src/main/connectors/oauth-client.test.ts",
@@ -9955,7 +9983,9 @@
           "src/main/credential-identity/linux.test.ts",
           "src/main/credential-identity/macos.test.ts",
           "src/main/credential-identity/probe-logging.test.ts",
-          "src/main/connectors/descriptors/variants-gnomad.test.ts"
+          "src/main/session-plan/plan-context-file.shell.integration.test.ts",
+          "src/main/settings/responses-bridge.plan-tools.test.ts",
+          "src/main/settings/provider-runtime-health-owner.test.ts"
         ]
       },
       "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
@@ -10301,7 +10331,8 @@
           "src/main/session-package/fork.test.ts",
           "src/main/storage/brand-location.test.ts",
           "src/main/storage/migration-target-race.test.ts",
-          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx"
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
+          "src/main/session-plan/plan-context-file.shell.integration.test.ts"
         ]
       },
       "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
@@ -10476,6 +10507,7 @@
           "src/main/connectors/application.test.ts",
           "src/main/connectors/custom-mcp-bootstrap.test.ts",
           "src/main/connectors/custom-skill-doc.test.ts",
+          "src/main/connectors/descriptors/variants-gnomad.test.ts",
           "src/main/connectors/mcp-client-manager.test.ts",
           "src/main/connectors/mcp-payload-pagination.integration.test.ts",
           "src/main/connectors/oauth-client.test.ts",
@@ -10759,7 +10791,8 @@
           "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
           "src/main/credential-identity/macos.test.ts",
           "src/main/credential-identity/probe-logging.test.ts",
-          "src/main/connectors/descriptors/variants-gnomad.test.ts"
+          "src/main/settings/responses-bridge.plan-tools.test.ts",
+          "src/main/settings/provider-runtime-health-owner.test.ts"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -12121,7 +12154,11 @@
           "src/main/storage/brand-location.test.ts",
           "src/main/storage/migration-target-race.test.ts",
           "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
-          "src/main/cli-install/maintenance.test.ts"
+          "src/main/cli-install/maintenance.test.ts",
+          "src/main/session-plan/plan-context-file.shell.integration.test.ts",
+          "src/main/session-plan/plan-legacy-compatibility.test.ts",
+          "src/main/settings/responses-bridge.plan-tools.test.ts",
+          "src/main/settings/provider-runtime-health-owner.test.ts"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -12613,7 +12650,8 @@
           "src/main/web-service/task-api.test.ts",
           "src/main/window-find-ipc.test.ts",
           "src/shared/renderer-surface-inventory.test.ts",
-          "src/shared/renderer-surface-matrix.test.ts"
+          "src/shared/renderer-surface-matrix.test.ts",
+          "src/main/session-plan/plan-context-file.shell.integration.test.ts"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -17751,7 +17789,8 @@
           "src/main/session-package/fork.test.ts",
           "src/main/storage/brand-location.test.ts",
           "src/main/storage/migration-target-race.test.ts",
-          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx"
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
+          "src/main/acp/runtime-plan-composition.test.ts"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -18006,6 +18045,7 @@
           "src/main/connectors/application.test.ts",
           "src/main/connectors/custom-mcp-bootstrap.test.ts",
           "src/main/connectors/custom-skill-doc.test.ts",
+          "src/main/connectors/descriptors/variants-gnomad.test.ts",
           "src/main/connectors/mcp-client-manager.test.ts",
           "src/main/connectors/mcp-payload-pagination.integration.test.ts",
           "src/main/connectors/oauth-client.test.ts",
@@ -18268,7 +18308,8 @@
           "src/main/credential-identity/linux.test.ts",
           "src/main/credential-identity/macos.test.ts",
           "src/main/credential-identity/probe-logging.test.ts",
-          "src/main/connectors/descriptors/variants-gnomad.test.ts"
+          "src/main/settings/responses-bridge.plan-tools.test.ts",
+          "src/main/settings/provider-runtime-health-owner.test.ts"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -18643,7 +18684,8 @@
           "src/main/storage/brand-location.test.ts",
           "src/main/storage/migration-target-race.test.ts",
           "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
-          "src/main/cli-install/maintenance.test.ts"
+          "src/main/cli-install/maintenance.test.ts",
+          "src/main/session-plan/plan-context-file.shell.integration.test.ts"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -18722,7 +18764,8 @@
           "src/main/notebook/no-legacy-bridge.test.ts",
           "src/main/notebook/repl-loop.integration.test.ts",
           "src/main/runtime-electron-wiring.test.ts",
-          "src/main/tasks/task-runner.test.ts"
+          "src/main/tasks/task-runner.test.ts",
+          "src/main/acp/runtime-plan-composition.test.ts"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -20534,7 +20577,8 @@
           "src/main/web-service/http-server.test.ts",
           "src/main/web-service/task-api.test.ts",
           "src/shared/renderer-surface-inventory.test.ts",
-          "src/shared/renderer-surface-matrix.test.ts"
+          "src/shared/renderer-surface-matrix.test.ts",
+          "src/main/acp/runtime-plan-composition.test.ts"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -21741,7 +21785,11 @@
           "src/main/session-package/fork.test.ts",
           "src/main/storage/brand-location.test.ts",
           "src/main/storage/migration-target-race.test.ts",
-          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx"
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
+          "src/main/session-plan/plan-context-file.shell.integration.test.ts",
+          "src/main/session-plan/plan-context-file.test.ts",
+          "src/main/session-plan/plan-legacy-compatibility.test.ts",
+          "src/main/settings/provider-runtime-health-owner.test.ts"
         ]
       },
       "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
@@ -22784,7 +22832,9 @@
           "src/main/session-package/fork.test.ts",
           "src/main/storage/migration-target-race.test.ts",
           "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
-          "src/main/storage/brand-location.test.ts"
+          "src/main/storage/brand-location.test.ts",
+          "src/main/session-plan/plan-context-file.shell.integration.test.ts",
+          "src/main/settings/provider-runtime-health-owner.test.ts"
         ]
       },
       "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
@@ -23087,6 +23137,7 @@
           "src/main/compute/slurm.real-ssh.integration.test.ts",
           "src/main/compute/ssh-runner.test.ts",
           "src/main/connectors/application.test.ts",
+          "src/main/connectors/descriptors/variants-gnomad.test.ts",
           "src/main/connectors/mcp-payload-pagination.integration.test.ts",
           "src/main/connectors/service.test.ts",
           "src/main/database/permission-approval-summary.test.ts",
@@ -23174,8 +23225,7 @@
           "src/renderer/src/pages/settings/PermissionsPanel.render.test.tsx",
           "src/renderer/src/pages/settings/SpecialistEditor.persistence.render.test.tsx",
           "src/shared/renderer-surface-inventory.test.ts",
-          "src/shared/renderer-surface-matrix.test.ts",
-          "src/main/connectors/descriptors/variants-gnomad.test.ts"
+          "src/shared/renderer-surface-matrix.test.ts"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -23393,7 +23443,13 @@
         "src/main/session-plan/production-plan-service.test.ts",
         "src/main/session-plan/production-plan-service.ts",
         "src/main/session-plan/session-plan-interaction-owner.test.ts",
-        "src/main/session-plan/session-plan-interaction-owner.ts"
+        "src/main/session-plan/session-plan-interaction-owner.ts",
+        "src/main/session-plan/plan-context-file-windows-strategy.ts",
+        "src/main/session-plan/plan-context-file.shell.integration.test.ts",
+        "src/main/session-plan/plan-context-file.test.ts",
+        "src/main/session-plan/plan-context-file.ts",
+        "src/main/session-plan/plan-context-guidance.ts",
+        "src/main/session-plan/plan-legacy-compatibility.test.ts"
       ],
       "interfacePaths": [
         "src/main/session-plan/guidance.ts",
@@ -23401,16 +23457,21 @@
         "src/main/session-plan/plan-mcp-server.ts",
         "src/main/session-plan/plan-service.ts",
         "src/main/session-plan/production-plan-service.ts",
-        "src/main/session-plan/session-plan-interaction-owner.ts"
+        "src/main/session-plan/session-plan-interaction-owner.ts",
+        "src/main/session-plan/plan-context-file.ts",
+        "src/main/session-plan/plan-context-guidance.ts"
       ],
-      "consumerModules": [],
+      "consumerModules": ["workspace_runtime"],
       "testFiles": {
         "owner": [
           "src/main/session-plan/plan-delivery.test.ts",
           "src/main/session-plan/plan-mcp-server.test.ts",
           "src/main/session-plan/plan-service.test.ts",
           "src/main/session-plan/production-plan-service.test.ts",
-          "src/main/session-plan/session-plan-interaction-owner.test.ts"
+          "src/main/session-plan/session-plan-interaction-owner.test.ts",
+          "src/main/session-plan/plan-context-file.shell.integration.test.ts",
+          "src/main/session-plan/plan-context-file.test.ts",
+          "src/main/session-plan/plan-legacy-compatibility.test.ts"
         ],
         "contract": [
           "src/preload/index.test.ts",
@@ -23938,6 +23999,7 @@
           "src/main/connectors/application.test.ts",
           "src/main/connectors/custom-mcp-bootstrap.test.ts",
           "src/main/connectors/custom-skill-doc.test.ts",
+          "src/main/connectors/descriptors/variants-gnomad.test.ts",
           "src/main/connectors/mcp-client-manager.test.ts",
           "src/main/connectors/mcp-payload-pagination.integration.test.ts",
           "src/main/connectors/oauth-client.test.ts",
@@ -24241,7 +24303,9 @@
           "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
           "src/main/credential-identity/macos.test.ts",
           "src/main/credential-identity/probe-logging.test.ts",
-          "src/main/connectors/descriptors/variants-gnomad.test.ts"
+          "src/main/settings/responses-bridge.plan-tools.test.ts",
+          "src/main/session-plan/plan-context-file.shell.integration.test.ts",
+          "src/main/settings/provider-runtime-health-owner.test.ts"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -25380,7 +25444,11 @@
           "src/main/credential-identity/ciphertext-inventory.test.ts",
           "src/main/credential-identity/linux.test.ts",
           "src/main/credential-identity/macos.test.ts",
-          "src/main/credential-identity/probe-logging.test.ts"
+          "src/main/credential-identity/probe-logging.test.ts",
+          "src/main/session-plan/plan-context-file.shell.integration.test.ts",
+          "src/main/session-plan/plan-legacy-compatibility.test.ts",
+          "src/main/session-plan/plan-context-file.test.ts",
+          "src/main/settings/provider-runtime-health-owner.test.ts"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -25870,7 +25938,8 @@
           "src/main/web-service/task-api.test.ts",
           "src/main/window-find-ipc.test.ts",
           "src/shared/renderer-surface-inventory.test.ts",
-          "src/shared/renderer-surface-matrix.test.ts"
+          "src/shared/renderer-surface-matrix.test.ts",
+          "src/main/session-plan/plan-context-file.shell.integration.test.ts"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -27677,7 +27746,8 @@
           "src/renderer/web/bootstrap.test.ts",
           "src/renderer/web/renderer-argument-shape-characterization.test.ts",
           "src/renderer/src/lib/session-fork.test.ts",
-          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx"
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
+          "src/renderer/src/pages/settings/ProviderTestResultCard.test.tsx"
         ]
       },
       "capabilityOverlays": [],
@@ -28750,7 +28820,8 @@
           "src/renderer/src/stores/theme-store.test.ts",
           "src/renderer/web/bootstrap.test.ts",
           "src/renderer/web/renderer-argument-shape-characterization.test.ts",
-          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx"
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
+          "src/renderer/src/pages/settings/ProviderTestResultCard.test.tsx"
         ]
       },
       "capabilityOverlays": [],
@@ -30039,7 +30110,9 @@
         "src/renderer/src/pages/settings/useWslSetupStatus.test.ts",
         "src/renderer/src/pages/settings/useWslSetupStatus.ts",
         "src/renderer/src/pages/settings/validation-message.test.ts",
-        "src/renderer/src/pages/settings/validation-message.ts"
+        "src/renderer/src/pages/settings/validation-message.ts",
+        "src/renderer/src/pages/settings/ProviderTestResultCard.tsx",
+        "src/renderer/src/pages/settings/ProviderTestResultCard.test.tsx"
       ],
       "interfacePaths": [
         "src/renderer/src/pages/settings/AppVersionSection.tsx",
@@ -30138,7 +30211,8 @@
           "src/renderer/src/pages/settings/storage-i18n.render.test.tsx",
           "src/renderer/src/pages/settings/token-usage-analytics.test.ts",
           "src/renderer/src/pages/settings/useWslSetupStatus.test.ts",
-          "src/renderer/src/pages/settings/validation-message.test.ts"
+          "src/renderer/src/pages/settings/validation-message.test.ts",
+          "src/renderer/src/pages/settings/ProviderTestResultCard.test.tsx"
         ],
         "contract": [],
         "consumer": [

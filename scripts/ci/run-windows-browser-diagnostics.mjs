@@ -1,9 +1,44 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 
 import { execFile, execFileSync, spawn } from 'node:child_process'
-import { appendFileSync, mkdirSync } from 'node:fs'
+import { appendFileSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+
+const netlogName = /^netlog-.*\.json$/
+
+const snapshotNetlogs = (directory) => {
+  const snapshot = new Map()
+  try {
+    for (const name of readdirSync(directory)) {
+      if (!netlogName.test(name)) continue
+      const path = resolve(directory, name)
+      try {
+        const { mtimeMs, size } = statSync(path)
+        snapshot.set(path, `${mtimeMs}:${size}`)
+      } catch {
+        // A browser may still be replacing its NetLog while the directory is inspected.
+      }
+    }
+  } catch {
+    // The diagnostics directory does not exist before the first browser run.
+  }
+  return snapshot
+}
+
+const hasFreshNoBufferSpace = (directory, before) => {
+  const after = snapshotNetlogs(directory)
+  for (const [path, fingerprint] of after) {
+    if (before.get(path) === fingerprint) continue
+    try {
+      const netlog = readFileSync(path, 'utf8')
+      if (/"os_error"\s*:\s*10055|"net_error"\s*:\s*-176/.test(netlog)) return true
+    } catch {
+      // Missing diagnostic evidence must never turn a product failure into a retry.
+    }
+  }
+  return false
+}
 
 // Query only selected fields; never capture command lines, environment, or endpoint lists.
 const query = String.raw`
@@ -95,24 +130,38 @@ export async function runWindowsBrowserDiagnostics(
     // Custom Actions shells do not receive the default pwsh error/exit-code prologue/epilogue.
     // Read the runner's script explicitly: its temporary file need not have a .ps1 extension.
     const quotedPath = resolve(scriptPath).replaceAll("'", "''")
-    const child = spawn(
-      'pwsh',
-      [
-        '-NoLogo',
-        '-NoProfile',
-        '-NonInteractive',
-        '-Command',
-        `$ErrorActionPreference = 'Stop'; & ([scriptblock]::Create([IO.File]::ReadAllText('${quotedPath}'))); if (Test-Path variable:LASTEXITCODE) { exit $LASTEXITCODE }`
-      ],
-      { stdio: 'inherit' }
-    )
-    const result = new Promise((done) => {
-      child.once('error', () => done(1))
-      child.once('exit', (code) => done(code ?? 1))
-    })
+    const runLayout = () => {
+      const child = spawn(
+        'pwsh',
+        [
+          '-NoLogo',
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          `$ErrorActionPreference = 'Stop'; & ([scriptblock]::Create([IO.File]::ReadAllText('${quotedPath}'))); if (Test-Path variable:LASTEXITCODE) { exit $LASTEXITCODE }`
+        ],
+        { stdio: 'inherit' }
+      )
+      return new Promise((done) => {
+        child.once('error', () => done(1))
+        child.once('exit', (code) => done(code ?? 1))
+      })
+    }
+    const diagnosticsDirectory = dirname(outputPath)
+    const netlogsBeforeRun = snapshotNetlogs(diagnosticsDirectory)
     sample()
     timer = setInterval(sample, 5000)
-    return await result
+    let result = await runLayout()
+    if (result !== 0 && hasFreshNoBufferSpace(diagnosticsDirectory, netlogsBeforeRun)) {
+      record({
+        endedAt: new Date().toISOString(),
+        status: 'retry',
+        reason: 'windows-no-buffer-space',
+        attempt: 1
+      })
+      result = await runLayout()
+    }
+    return result
   } finally {
     stopped = true
     clearInterval(timer)

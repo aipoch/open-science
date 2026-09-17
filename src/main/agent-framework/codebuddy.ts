@@ -21,6 +21,7 @@ import {
   narrowSkillRuntimeAcpServers
 } from '../skills/runtime-mcp-server'
 import { isProductionDelegatedWorkFramework } from '../delegation/production-readiness'
+import { renderAppMcpToolReferences } from './app-mcp-names'
 import type {
   AgentFramework,
   AgentModelConfig,
@@ -156,7 +157,10 @@ export const createCodeBuddyFramework = ({
     }
 
     const configDir = codeBuddyStorageDir(ctx.storageRoot)
-    const persistentSystemPrompt = ctx.systemPromptAppends?.filter(Boolean).join('\n\n')
+    const persistentSystemPrompt = ctx.systemPromptAppends
+      ?.filter((append): append is string => Boolean(append))
+      .map((append) => renderAppMcpToolReferences('codebuddy', append))
+      .join('\n\n')
     const systemPromptPath = join(configDir, 'system-prompt.md')
     const maxInputTokens = provider.maxInputTokens ?? provider.contextWindow
     const modelConfig = {
@@ -261,7 +265,8 @@ export const createCodeBuddyFramework = ({
       skillLoaderGuidance,
       ...(ctx.turnPromptReminders ?? [])
     ]
-      .filter(Boolean)
+      .filter((append): append is string => Boolean(append))
+      .map((append) => renderAppMcpToolReferences('codebuddy', append))
       .join('\n\n')
     return { ...(promptPrefix ? { promptPrefix } : {}) }
   },

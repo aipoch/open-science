@@ -584,6 +584,8 @@ describe('workspace Save as skill owner', () => {
     act(() => root?.render(createElement(Harness)))
     const graph = session.conversationGraph!
     const frame = graph.frames.find(({ id }) => id === graph.activeFrameId)!
+    const originalRuntimeSegmentId = graph.runtimeSegments.at(-1)?.id
+    const originalRuntimeSegmentCount = graph.runtimeSegments.length
 
     await act(() =>
       owner.saveAsSkill({
@@ -597,6 +599,14 @@ describe('workspace Save as skill owner', () => {
     expect(saveAsSkill).toHaveBeenCalledWith(
       expect.objectContaining({ promptMessageId: expect.any(String) })
     )
-    expect(useSessionStore.getState().sessions[0].specialistSwitchResetRequired).toBeUndefined()
+    const persisted = useSessionStore.getState().sessions[0]
+    const persistedRuntimeSegments = persisted.conversationGraph?.runtimeSegments ?? []
+    expect(persistedRuntimeSegments).toHaveLength(originalRuntimeSegmentCount + 1)
+    expect(persistedRuntimeSegments.at(-1)?.id).not.toBe(originalRuntimeSegmentId)
+    expect(
+      persisted.conversationGraph?.messages.find(({ id }) => id === persisted.messages.at(-1)?.id)
+        ?.runtimeSegmentId
+    ).toBe(persistedRuntimeSegments.at(-1)?.id)
+    expect(persisted.specialistSwitchResetRequired).toBeUndefined()
   })
 })

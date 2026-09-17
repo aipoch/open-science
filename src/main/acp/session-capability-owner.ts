@@ -170,6 +170,7 @@ export type SessionCapabilityPlanOptions = {
   getRpcConnection: (binding: {
     sessionId: string
     projectId: string
+    replaceExisting: false
   }) => Promise<NotebookRpcConnection>
   registerSessionAlias?: (aliasSessionId: string, sessionId: string) => void
 }
@@ -191,6 +192,7 @@ type BuildSessionCapabilitiesRequest = {
   onNotebookConnection?: (connection: NotebookRpcConnection) => void
   onSkillImportConnection?: (connection: SkillImportRpcConnection) => void
   onPlanConnection?: (connection: NotebookRpcConnection) => void
+  onPlanHttpRoute?: (prepareRollback: () => (() => void) | undefined) => void
 }
 
 type SessionCapabilities = Readonly<{
@@ -212,6 +214,7 @@ export type ProvisionSessionCapabilitiesRequest = Omit<
   | 'onNotebookConnection'
   | 'onSkillImportConnection'
   | 'onPlanConnection'
+  | 'onPlanHttpRoute'
   | 'literatureEnabled'
   | 'wslSetupEnabled'
 > & {
@@ -254,6 +257,7 @@ type RevokeProvisionalSessionCapabilitiesRequest = {
   notebookRelease?: () => void
   skillImportRelease?: () => void
   planRelease?: () => void
+  preparePlanHttpRouteRollback?: () => (() => void) | undefined
   ownsStableIdentity: boolean
   capabilityTokens: readonly string[]
 }
@@ -368,6 +372,7 @@ export class AcpSessionCapabilityOwner {
     let notebookRelease: (() => void) | undefined
     let skillImportRelease: (() => void) | undefined
     let planRelease: (() => void) | undefined
+    let preparePlanHttpRouteRollback: (() => (() => void) | undefined) | undefined
     const capabilityTokens: string[] = []
     let built: BuiltSessionCapabilities
     try {
@@ -396,6 +401,9 @@ export class AcpSessionCapabilityOwner {
         onPlanConnection: (connection) => {
           capabilityTokens.push(connection.token)
           planRelease = connection.release
+        },
+        onPlanHttpRoute: (prepareRollback) => {
+          preparePlanHttpRouteRollback = prepareRollback
         }
       })
     } catch (error) {
@@ -419,6 +427,7 @@ export class AcpSessionCapabilityOwner {
         notebookRelease,
         skillImportRelease,
         planRelease,
+        preparePlanHttpRouteRollback,
         ownsStableIdentity
       })
       if (ownsStableIdentity && request.stableAppSessionId) {
@@ -537,6 +546,7 @@ export class AcpSessionCapabilityOwner {
             notebookRelease,
             skillImportRelease,
             planRelease,
+            preparePlanHttpRouteRollback,
             ownsStableIdentity: ownsRoutingIds
           })
           if (ownsRoutingIds && request.stableAppSessionId) {
@@ -559,6 +569,7 @@ export class AcpSessionCapabilityOwner {
             notebookRelease,
             skillImportRelease,
             planRelease,
+            preparePlanHttpRouteRollback,
             ownsStableIdentity: false
           })
           this.finishProvisionalRoutingOwner(routingIds, routingOwner)
@@ -645,6 +656,7 @@ export class AcpSessionCapabilityOwner {
           notebookRelease,
           skillImportRelease,
           planRelease,
+          preparePlanHttpRouteRollback,
           ownsStableIdentity
         })
         if (ownsStableIdentity && request.stableAppSessionId) {
@@ -983,6 +995,7 @@ export class AcpSessionCapabilityOwner {
       this.releaseSessionCapabilities(request.notebookSessionId, request.capabilityTokens)
     }
     if (request.usedHttpTransport && this.options.mcpHttpHost) {
+      const restorePlanRoute = request.preparePlanHttpRouteRollback?.()
       for (const routingId of new Set(request.routingIds)) {
         if (!routingId) continue
         try {
@@ -994,6 +1007,7 @@ export class AcpSessionCapabilityOwner {
           })
         }
       }
+      restorePlanRoute?.()
     }
 
     if (request.notebookRelease) {
@@ -1278,7 +1292,11 @@ export class AcpSessionCapabilityOwner {
     onConnection?: (connection: NotebookRpcConnection) => void
   ): Promise<PlanMcpEnvironment | undefined> {
     if (!this.options.plan || !routingId) return undefined
-    const connection = await this.options.plan.getRpcConnection({ sessionId: routingId, projectId })
+    const connection = await this.options.plan.getRpcConnection({
+      sessionId: routingId,
+      projectId,
+      replaceExisting: false
+    })
     onConnection?.(connection)
     return { ...connection, projectId, sessionId: routingId }
   }
@@ -1446,7 +1464,8 @@ export class AcpSessionCapabilityOwner {
         request.onPlanConnection
       )
       if (environment && this.canPublishHttpRoute(request)) {
-        host.registerPlan(request.routingIds.plan, environment)
+        const prepareRollback = host.registerPlan(request.routingIds.plan, environment)
+        request.onPlanHttpRoute?.(prepareRollback)
         servers.push({
           type: 'http',
           name: PLAN_MCP_SERVER_NAME,

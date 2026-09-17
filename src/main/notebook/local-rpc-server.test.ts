@@ -2216,6 +2216,64 @@ describe('notebook local RPC server', () => {
     }
   )
 
+  it('aborts an admitted Plan call when its issued capability is released', async () => {
+    const root = await createStorageRoot()
+    const callStarted = createDeferred<AbortSignal>()
+    const pendingCall = createDeferred<unknown>()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project',
+      repository: new NotebookRunRepository(root)
+    })
+    const server = new NotebookLocalRpcServer(service, {
+      planService: {
+        call: async (input) => {
+          callStarted.resolve(input.signal)
+          input.signal.addEventListener('abort', () => pendingCall.resolve(undefined), {
+            once: true
+          })
+          return pendingCall.promise
+        }
+      }
+    })
+    const connection = await server.issuePlanConnection('session-1', 'project-1')
+    let request: Promise<Response> | undefined
+
+    try {
+      request = fetchLocalRpc(
+        connection,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            method: 'planCall',
+            params: {
+              operation: 'updateStepStatus',
+              input: { title: 'Analyze the data', status: 'completed' }
+            }
+          })
+        },
+        'Notebook Plan capability RPC'
+      )
+      const signal = await callStarted.promise
+      expect(signal.aborted).toBe(false)
+
+      connection.release?.()
+
+      await vi.waitFor(() => expect(signal.aborted).toBe(true))
+      await expect(request).resolves.toMatchObject({ status: 200 })
+    } finally {
+      pendingCall.resolve(undefined)
+      await request?.catch(() => undefined)
+      connection.release?.()
+      await server.close()
+    }
+  })
+
   it.each([
     ['tcp', 'execute'],
     ['pipe', 'execute'],

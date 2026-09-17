@@ -32,9 +32,9 @@ const createWorkflow = (
     followUpTimeoutMs?: number
     fetchImpl?: typeof fetch
     prepareFollowUp?: ConstructorParameters<typeof AcpNativeFollowUpWorkflow>[0]['prepareFollowUp']
-    registerTurnInputs?: ConstructorParameters<
+    prepareTurnInputs?: ConstructorParameters<
       typeof AcpNativeFollowUpWorkflow
-    >[0]['registerTurnInputs']
+    >[0]['prepareTurnInputs']
   } = {}
 ): {
   request: (method: string, params: unknown) => Promise<unknown>
@@ -98,7 +98,7 @@ const createWorkflow = (
       createMessageId: () => 'message-steer-1',
       fetchImpl: overrides.fetchImpl,
       ...(overrides.prepareFollowUp ? { prepareFollowUp: overrides.prepareFollowUp } : {}),
-      ...(overrides.registerTurnInputs ? { registerTurnInputs: overrides.registerTurnInputs } : {}),
+      ...(overrides.prepareTurnInputs ? { prepareTurnInputs: overrides.prepareTurnInputs } : {}),
       ...(overrides.followUpTimeoutMs !== undefined
         ? { followUpTimeoutMs: overrides.followUpTimeoutMs }
         : {})
@@ -107,6 +107,126 @@ const createWorkflow = (
 }
 
 describe('AcpNativeFollowUpWorkflow', () => {
+  it('releases unsent follow-up preparation when its turn stops and closes late resources', async () => {
+    const turn = new AbortController()
+    let finishPreparation!: (value: { prompt: []; close: () => void }) => void
+    const close = vi.fn()
+    const { workflow, request } = createWorkflow({
+      livePromptTurn: () => ({ turnToken: 'turn-1', signal: turn.signal }),
+      prepareFollowUp: () =>
+        new Promise((resolve) => {
+          finishPreparation = resolve
+        })
+    })
+    const pending = workflow.steerFollowUp({ sessionId: 'app-1', text: 'queued' })
+    turn.abort()
+    await expect(pending).resolves.toEqual({ injected: false, reason: 'no-live-turn' })
+    expect(request).not.toHaveBeenCalled()
+    finishPreparation({ prompt: [], close })
+    await Promise.resolve()
+    expect(close).toHaveBeenCalledOnce()
+    expect(request).not.toHaveBeenCalled()
+    expect(published).toEqual([])
+  })
+
+  it('releases input preparation on cancellation without committing its late result', async () => {
+    const turn = new AbortController()
+    const close = vi.fn()
+    const commit = vi.fn()
+    let finish!: (value: { inputs: []; commit: () => void }) => void
+    const prepareTurnInputs = vi.fn(
+      () =>
+        new Promise<{ inputs: []; commit: () => void }>((resolve) => {
+          finish = resolve
+        })
+    )
+    const { workflow, request } = createWorkflow({
+      livePromptTurn: () => ({ turnToken: 'turn-1', signal: turn.signal }),
+      prepareTurnInputs,
+      prepareFollowUp: async () => ({
+        prompt: [{ type: 'text', text: 'see file' }],
+        close,
+        notebookTurnInputs: {
+          projectId: 'project-1',
+          sessionId: 'app-1',
+          livePromptMessageId: 'prompt-live',
+          uploads: [],
+          references: []
+        }
+      })
+    })
+    const pending = workflow.steerFollowUp({ sessionId: 'app-1', text: 'see file' })
+    await vi.waitFor(() => expect(prepareTurnInputs).toHaveBeenCalledOnce())
+    turn.abort()
+    await expect(pending).resolves.toEqual({ injected: false, reason: 'no-live-turn' })
+    finish({ inputs: [], commit })
+    await Promise.resolve()
+    expect(commit).not.toHaveBeenCalled()
+    expect(close).toHaveBeenCalledOnce()
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  it('observes a late preparation failure after cancellation without dispatching', async () => {
+    const turn = new AbortController()
+    let fail!: (error: Error) => void
+    const { workflow, request } = createWorkflow({
+      livePromptTurn: () => ({ turnToken: 'turn-1', signal: turn.signal }),
+      prepareFollowUp: () =>
+        new Promise((_resolve, reject) => {
+          fail = reject
+        })
+    })
+    const pending = workflow.steerFollowUp({ sessionId: 'app-1', text: 'queued' })
+    turn.abort()
+    await expect(pending).resolves.toEqual({ injected: false, reason: 'no-live-turn' })
+    fail(new Error('late preparation failure'))
+    await Promise.resolve()
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  it('reports accepted delivery even when the synchronous input commit fails', async () => {
+    const commit = vi.fn(() => {
+      throw new Error('registration conflict')
+    })
+    const { workflow, request } = createWorkflow({
+      prepareTurnInputs: async () => ({ inputs: [], commit }),
+      prepareFollowUp: async () => ({
+        prompt: [{ type: 'text', text: 'see file' }],
+        notebookTurnInputs: {
+          projectId: 'project-1',
+          sessionId: 'app-1',
+          livePromptMessageId: 'prompt-live',
+          uploads: [],
+          references: []
+        }
+      })
+    })
+    await expect(
+      workflow.steerFollowUp({ sessionId: 'app-1', text: 'see file' })
+    ).resolves.toMatchObject({ injected: true })
+    expect(request).toHaveBeenCalledOnce()
+    expect(commit).toHaveBeenCalledOnce()
+    expect(published).toHaveLength(1)
+  })
+
+  it('releases unsent preparation when the turn finishes normally', async () => {
+    let finish!: (value: { prompt: []; close: () => void }) => void
+    const close = vi.fn()
+    const { workflow, request } = createWorkflow({
+      prepareFollowUp: () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    })
+    const pending = workflow.steerFollowUp({ sessionId: 'app-1', text: 'queued' })
+    workflow.releaseTurn('app-1', 'turn-1')
+    await expect(pending).resolves.toEqual({ injected: false, reason: 'no-live-turn' })
+    finish({ prompt: [], close })
+    await Promise.resolve()
+    expect(close).toHaveBeenCalledOnce()
+    expect(request).not.toHaveBeenCalled()
+  })
+
   it('Q03 rechecks the bound generation after preparing a follow-up', async () => {
     let current = true
     const close = vi.fn()
@@ -688,30 +808,60 @@ describe('AcpNativeFollowUpWorkflow', () => {
     expect(published).toEqual([])
   })
 
+  it('commits prepared notebook inputs synchronously after acceptance without repeating file work', async () => {
+    let accepted = false
+    const commit = vi.fn(() => {
+      expect(accepted).toBe(true)
+    })
+    const prepareTurnInputs = vi.fn(async () => ({ inputs: [] as [], commit }))
+    const { workflow } = createWorkflow({
+      prepareTurnInputs,
+      request: async () => {
+        accepted = true
+        return { outcome: 'injected' }
+      },
+      prepareFollowUp: async () => ({
+        prompt: [{ type: 'text', text: 'see file' }],
+        notebookTurnInputs: {
+          projectId: 'project-1',
+          sessionId: 'app-1',
+          livePromptMessageId: 'prompt-live',
+          uploads: [],
+          references: []
+        }
+      })
+    })
+    await expect(
+      workflow.steerFollowUp({ sessionId: 'app-1', text: 'see file' })
+    ).resolves.toMatchObject({ injected: true })
+    expect(prepareTurnInputs).toHaveBeenCalledOnce()
+    expect(commit).toHaveBeenCalledOnce()
+    expect(published).toHaveLength(1)
+  })
+
   it('materializes and advertises notebook inputs before steering, then commits after injection', async () => {
-    const registerTurnInputs = vi.fn(async (input: { materializeOnly?: boolean }) =>
-      input.materializeOnly
-        ? [
-            {
-              sourceKind: 'upload-version' as const,
-              inputFileVersionId: 'upload-version-1',
-              filename: 'samples.csv',
-              notebookPath: 'inputs/samples-123456789abc.csv'
-            }
-          ]
-        : undefined
-    )
+    const commit = vi.fn()
+    const prepareTurnInputs = vi.fn(async () => ({
+      inputs: [
+        {
+          sourceKind: 'upload-version' as const,
+          inputFileVersionId: 'upload-version-1',
+          filename: 'samples.csv',
+          notebookPath: 'inputs/samples-123456789abc.csv'
+        }
+      ],
+      commit
+    }))
     const request = vi.fn(async (_method: string, params: unknown) => {
-      expect(registerTurnInputs).toHaveBeenCalledWith(
-        expect.objectContaining({ materializeOnly: true })
-      )
+      expect(prepareTurnInputs).toHaveBeenCalledOnce()
+      expect(commit).not.toHaveBeenCalled()
       expect(JSON.stringify(params)).toContain('inputs/samples-123456789abc.csv')
       expect(JSON.stringify(params)).toContain('use only the exact notebookPath')
       return { outcome: 'injected' }
     })
     const { workflow } = createWorkflow({
       request,
-      registerTurnInputs,
+      prepareTurnInputs,
       prepareFollowUp: async () => ({
         prompt: [{ type: 'text' as const, text: 'see file' }],
         notebookTurnInputs: {
@@ -730,28 +880,23 @@ describe('AcpNativeFollowUpWorkflow', () => {
         messageId: 'message-steer-1'
       }
     )
-    expect(registerTurnInputs).toHaveBeenNthCalledWith(1, {
-      projectId: 'project-1',
-      appSessionId: 'app-1',
-      promptMessageId: 'prompt-live',
-      uploads: [],
-      references: [],
-      materializeOnly: true
-    })
-    expect(registerTurnInputs).toHaveBeenNthCalledWith(2, {
+    expect(prepareTurnInputs).toHaveBeenCalledOnce()
+    expect(prepareTurnInputs).toHaveBeenCalledWith({
       projectId: 'project-1',
       appSessionId: 'app-1',
       promptMessageId: 'prompt-live',
       uploads: [],
       references: []
     })
+    expect(commit).toHaveBeenCalledOnce()
   })
 
   it('keeps a confirmed inject if the live prompt ends before notebook commit', async () => {
-    const registerTurnInputs = vi.fn(async () => undefined)
+    const commit = vi.fn()
+    const prepareTurnInputs = vi.fn(async () => ({ inputs: [], commit }))
     let liveTurnToken = 'turn-1'
     const { workflow } = createWorkflow({
-      registerTurnInputs,
+      prepareTurnInputs,
       livePromptTurn: () =>
         liveTurnToken
           ? { turnToken: liveTurnToken, signal: new AbortController().signal }
@@ -776,10 +921,8 @@ describe('AcpNativeFollowUpWorkflow', () => {
       transport: 'acp-steering',
       messageId: 'message-steer-1'
     })
-    expect(registerTurnInputs).toHaveBeenCalledOnce()
-    expect(registerTurnInputs).toHaveBeenCalledWith(
-      expect.objectContaining({ materializeOnly: true })
-    )
+    expect(prepareTurnInputs).toHaveBeenCalledOnce()
+    expect(commit).not.toHaveBeenCalled()
     expect(published).toEqual([{ sessionId: 'app-1', messageId: 'message-steer-1', text: 'late' }])
   })
 
@@ -812,10 +955,11 @@ describe('AcpNativeFollowUpWorkflow', () => {
   })
 
   it('does not commit notebook inputs when steering is refused', async () => {
-    const registerTurnInputs = vi.fn(async () => undefined)
+    const commit = vi.fn()
+    const prepareTurnInputs = vi.fn(async () => ({ inputs: [], commit }))
     const { workflow } = createWorkflow({
       request: vi.fn(async () => ({})),
-      registerTurnInputs,
+      prepareTurnInputs,
       prepareFollowUp: async () => ({
         prompt: [{ type: 'text' as const, text: 'see file' }],
         notebookTurnInputs: {
@@ -830,10 +974,8 @@ describe('AcpNativeFollowUpWorkflow', () => {
     await expect(workflow.steerFollowUp({ sessionId: 'app-1', text: 'see file' })).resolves.toEqual(
       { injected: false, reason: 'unrecognized-success' }
     )
-    expect(registerTurnInputs).toHaveBeenCalledOnce()
-    expect(registerTurnInputs).toHaveBeenCalledWith(
-      expect.objectContaining({ materializeOnly: true })
-    )
+    expect(prepareTurnInputs).toHaveBeenCalledOnce()
+    expect(commit).not.toHaveBeenCalled()
     expect(published).toEqual([])
   })
 })
@@ -956,8 +1098,9 @@ describe('Side chat advisory decision barrier', () => {
           references: []
         }
       }),
-      registerTurnInputs: async () => {
+      prepareTurnInputs: async () => {
         waiting = true
+        return { inputs: [], commit: () => undefined }
       }
     })
     expect(await workflow.steerSideChatAdvisory({ sessionId: 'app-1', text: 'advisory' })).toEqual({

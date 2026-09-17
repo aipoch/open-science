@@ -613,6 +613,7 @@ gate('NotebookKernelExecutor (fake loop)', () => {
       const [sandboxInvocation] = vi.mocked(processSandbox.wrap).mock.calls[0]
       expect(sandboxInvocation).not.toHaveProperty('signal')
       expect(sandboxInvocation.filesystem.readWriteRoots).not.toContain(request.dataRoot)
+      expect(sandboxInvocation.filesystem.deniedWriteRoots).toContain(request.inputRoot)
       expect(sandboxInvocation.filesystem.deniedWriteRoots).not.toContain(request.runtimeRoot)
       expect(beginExecution).toHaveBeenCalledTimes(2)
       expect(endExecution).toHaveBeenCalledTimes(2)
@@ -625,7 +626,7 @@ gate('NotebookKernelExecutor (fake loop)', () => {
 
   it('allows the sandbox to read a resolved interpreter prefix outside the runtime root', async () => {
     cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-resolved-prefix-sandbox-'))
-    const request = baseRequest(cwdDir)
+    const request = { ...baseRequest(cwdDir), inputRoot: undefined }
     const restoredPrefix = join(cwdDir, 'restored-environments', 'lock-checksum')
     const processSandbox: NotebookProcessSandbox = {
       wrap: vi.fn(async (invocation) => ({
@@ -663,6 +664,7 @@ gate('NotebookKernelExecutor (fake loop)', () => {
 
       const [sandboxInvocation] = vi.mocked(processSandbox.wrap).mock.calls[0]
       expect(sandboxInvocation.filesystem.readOnlyRoots).toContain(restoredPrefix)
+      expect(sandboxInvocation.filesystem.deniedWriteRoots).toEqual([])
     } finally {
       await executor.shutdown()
     }

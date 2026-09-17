@@ -12,6 +12,9 @@ import type { WorkspaceConversationTimelineItem } from './workspace-conversation
 import { findMessageTarget } from './workspace-run-marks'
 
 const TRANSCRIPT_WINDOW_SIZE = 80
+// Native keyboard scrolling may start after the first paint. Keep a bounded input
+// signal until movement, rather than assuming an ordering between scroll and rAF.
+const SCROLL_INPUT_TIMEOUT_MS = 500
 
 type TranscriptWindowState = {
   scopeId: string | undefined
@@ -64,7 +67,8 @@ const useTranscriptWindow = (
   expandAtScrollEdge: (previousScrollTop: number) => void
   followEnd: () => void
   isFollowingEnd: boolean
-  recordUserScroll: () => void
+  recordUserScroll: (dragging?: boolean) => void
+  finishUserScroll: () => void
 } => {
   const [state, setState] = useState<TranscriptWindowState>(() => ({
     scopeId: undefined,
@@ -75,6 +79,11 @@ const useTranscriptWindow = (
   const pendingTargetRef = useRef<ReadingAnchor | undefined>(undefined)
   const readingAnchorRef = useRef<ReadingAnchor | undefined>(undefined)
   const findRestoreRef = useRef<FindSnapshot | undefined>(undefined)
+  const scrollInputRef = useRef<
+    | { top: number; height: number; width: number; contentHeight: number; dragging: boolean }
+    | undefined
+  >(undefined)
+  const scrollInputTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const finding = state.scopeId === scopeId && state.finding === true
   const initialStart = Math.max(0, items.length - TRANSCRIPT_WINDOW_SIZE)
   if (state.scopeId !== scopeId) {
@@ -90,6 +99,11 @@ const useTranscriptWindow = (
     readingAnchorRef.current = undefined
     pendingTargetRef.current = undefined
     findRestoreRef.current = undefined
+    scrollInputRef.current = undefined
+    return () => {
+      clearTimeout(scrollInputTimerRef.current)
+      scrollInputRef.current = undefined
+    }
   }, [scopeId])
   const stateMatchesScope = state.scopeId === scopeId && state.itemCount > 0
   const wasPinnedToEnd =
@@ -232,15 +246,39 @@ const useTranscriptWindow = (
     }
   }, [items, scopeId, viewportRef])
 
-  const recordUserScroll = (): void => {
+  const finishUserScroll = (): void => {
+    clearTimeout(scrollInputTimerRef.current)
+    // A no-op must not arm a later, unrelated scroll indefinitely. Viewport changes
+    // and content shrinkage invalidate it; scrollbar drags stay armed until release.
+    scrollInputTimerRef.current = setTimeout(() => {
+      scrollInputRef.current = undefined
+      scrollInputTimerRef.current = undefined
+    }, SCROLL_INPUT_TIMEOUT_MS)
+  }
+
+  const recordUserScroll = (dragging = false): void => {
     const snapshot = findRestoreRef.current
     if (snapshot && snapshot.window.scopeId === scopeId) {
       snapshot.target = undefined
       snapshot.followEnd = false
+      return
     }
+    const viewport = viewportRef.current
+    if (!wasPinnedToEnd || !viewport || viewport.scrollTop <= 0) return
+    scrollInputRef.current = {
+      top: viewport.scrollTop,
+      height: viewport.clientHeight,
+      width: viewport.clientWidth,
+      contentHeight: viewport.scrollHeight,
+      dragging
+    }
+    clearTimeout(scrollInputTimerRef.current)
+    scrollInputTimerRef.current = undefined
+    if (!dragging) finishUserScroll()
   }
 
   const followEnd = (): void => {
+    scrollInputRef.current = undefined
     const snapshot = findRestoreRef.current
     if (snapshot && snapshot.window.scopeId === scopeId) {
       snapshot.target = undefined
@@ -263,9 +301,40 @@ const useTranscriptWindow = (
   const expandAtScrollEdge = (previousScrollTop: number): void => {
     const viewport = viewportRef.current
     if (!viewport) return
+    const input = scrollInputRef.current
+    // Streaming growth cannot clamp scrollTop upward. Keep the pending input when
+    // the reply grows, so native keyboard movement can still release following.
+    const inputStillValid =
+      !!input &&
+      viewport.clientHeight === input.height &&
+      viewport.clientWidth === input.width &&
+      viewport.scrollHeight >= input.contentHeight
+    const movedIntoHistory = inputStillValid && viewport.scrollTop < input.top
+    const keepFollowing = wasPinnedToEnd && !movedIntoHistory
+    if (input && (!inputStillValid || (!input.dragging && movedIntoHistory))) {
+      scrollInputRef.current = undefined
+      clearTimeout(scrollInputTimerRef.current)
+    } else if (input) {
+      // Growth can anchor the viewport farther down before native input moves it up.
+      input.top = viewport.scrollTop
+      input.contentHeight = viewport.scrollHeight
+    }
     // Pacing can pause window expansion, but must not freeze the reader's scroll position.
-    readingAnchorRef.current = captureReadingAnchor(scopeId, viewport)
-    if (presentationBarrierIndex >= 0) return
+    readingAnchorRef.current =
+      !finding && keepFollowing ? undefined : captureReadingAnchor(scopeId, viewport)
+    if (presentationBarrierIndex >= 0) {
+      if (wasPinnedToEnd && movedIntoHistory) {
+        setState({
+          scopeId,
+          itemCount: items.length,
+          start,
+          end,
+          anchorId: items[start]?.id,
+          followEnd: false
+        })
+      }
+      return
+    }
     const prefetchDistance = Math.max(64, viewport.clientHeight)
     if (finding) {
       const snapshot = findRestoreRef.current
@@ -277,8 +346,9 @@ const useTranscriptWindow = (
       return
     }
     const following =
-      end === items.length &&
-      viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= 0.5
+      keepFollowing ||
+      (end === items.length &&
+        viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= 0.5)
     if (following) readingAnchorRef.current = undefined
     let nextStart = start
     let nextEnd = end
@@ -386,6 +456,7 @@ const useTranscriptWindow = (
     expandAtScrollEdge,
     followEnd,
     recordUserScroll,
+    finishUserScroll,
     isFollowingEnd: !finding && (!stateMatchesScope || wasPinnedToEnd)
   }
 }

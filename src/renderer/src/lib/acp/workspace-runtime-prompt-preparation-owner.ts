@@ -70,6 +70,7 @@ type PreparedWorkspacePromptReplay = HistoryReplayContext & {
 }
 
 type PreparedExistingWorkspacePrompt = {
+  runtimeSegmentOpened: boolean
   appendOwnership: {
     projectId?: string
     agentFrameworkId?: AgentFrameworkId
@@ -269,6 +270,7 @@ const prepareExistingWorkspacePrompt = async (
   let agentContextResetPerformed = false
   let shouldResumeSession = false
   let contextResetFromResume = false
+  let runtimeSegmentOpened = false
   const specialistSwitchReplay = Boolean(currentSession?.specialistSwitchResetRequired)
   if (specialistSwitchReplay) {
     useSessionStore.getState().clearSpecialistSwitchResetRequired(sessionId)
@@ -393,6 +395,13 @@ const prepareExistingWorkspacePrompt = async (
     if (shouldResumeSession || agentContextResetPerformed) {
       await request.drainRuntimeEvents?.(sessionId)
     }
+    if (request.isCurrent?.() === false) return undefined
+    if (agentContextResetPerformed || contextResetFromResume) {
+      if (!useSessionStore.getState().openContextResetRuntimeSegment(sessionId)) {
+        throw new Error('Agent context reset Runtime Segment could not be created.')
+      }
+      runtimeSegmentOpened = true
+    }
   } catch (error) {
     if (request.isCurrent?.() === false) return undefined
     useSessionStore.getState().failRun(sessionId, getResumeFailureMessage(error))
@@ -478,6 +487,7 @@ const prepareExistingWorkspacePrompt = async (
   }
 
   return {
+    runtimeSegmentOpened,
     appendOwnership: {
       projectId: preparedSession?.projectId,
       agentFrameworkId: shouldResumeSession

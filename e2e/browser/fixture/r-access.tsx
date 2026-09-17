@@ -54,6 +54,11 @@ window.api = {
     },
     getAgentEnvironmentCreationEnabled: async () => true,
     listPackageCounts: async () => ({}),
+    listPackages: async () =>
+      Array.from({ length: 80 }, (_, index) => ({
+        name: `package-${String(index + 1).padStart(3, '0')}`,
+        version: '1.0.0'
+      })),
     setSandboxAccess: async (_language: string, _envId: string, authorized: boolean) => {
       if (authorized && protection.kind !== 'ready') {
         throw new Error('Enable protected mode before verifying R access.')

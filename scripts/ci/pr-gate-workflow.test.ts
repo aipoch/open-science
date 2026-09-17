@@ -336,8 +336,8 @@ describe('PR Gate workflow', () => {
     expect(macos?.if).toContain(
       "contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_visual_macos')"
     )
-    // Keep the existing Windows font pilot reachable for Windows-only plans.
-    expect(windows?.if).toBe('${{ matrix.shard == 1 }}')
+    expect(windows?.if).toBeUndefined()
+    expect(windows?.run).toContain('--shard=${{ matrix.shard }}/3')
     expect(workflowText).toContain('--fail-on-flaky-tests')
   })
 
@@ -860,13 +860,17 @@ describe('PR Gate workflow', () => {
     expect(workflow.jobs.macos_e2e['timeout-minutes']).toBe(30)
   })
 
-  it('shards every selected Windows journey without cancelling siblings or colliding artifacts', () => {
+  it('shards every selected Windows suite without cancelling siblings or colliding artifacts', () => {
     const job = workflow.jobs.windows_e2e
     expect(job.strategy?.['fail-fast']).toBe(false)
-    expect(job.strategy?.matrix?.shard).toBe(
-      "${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_browser_windows') && !contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_functional_windows') && !contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_workspace_windows') && fromJSON('[1]') || fromJSON('[1,2,3]') }}"
-    )
+    expect(job.strategy?.matrix?.shard).toEqual([1, 2, 3])
     expect(job.name).toBe('Windows E2E (shard ${{ matrix.shard }}/3)')
+    expect(job.steps?.find(({ name }) => name === 'Install headless Chromium')?.if).toBeUndefined()
+    expect(job.steps?.find(({ id }) => id === 'renderer_layout')?.if).toBeUndefined()
+    expect(job.steps?.find(({ id }) => id === 'renderer_layout')?.run).toContain('--workers=1')
+    expect(job.steps?.find(({ id }) => id === 'renderer_layout')?.run).toContain(
+      '--shard=${{ matrix.shard }}/3'
+    )
     for (const lane of ['e2e_functional_windows', 'e2e_workspace_windows']) {
       const step = job.steps?.find(({ id }) => id === lane)
       expect(step?.if).toContain(
@@ -1299,15 +1303,15 @@ describe('E2E throughput contracts', () => {
     }
   })
 
-  it('retains native-platform font coverage in one Windows browser pilot', () => {
+  it('partitions native-platform browser coverage across Windows runners', () => {
     const job = workflow.jobs.windows_e2e
+    expect(job.steps?.find(({ id }) => id === 'renderer_layout')?.if).toBeUndefined()
     expect(job.steps?.find(({ id }) => id === 'renderer_layout')).toMatchObject({
-      if: '${{ matrix.shard == 1 }}',
-      run: 'npm run test:e2e:browser -- --workers=1 --fail-on-flaky-tests --global-timeout=600000'
+      run: 'npm run test:e2e:browser -- --workers=1 --fail-on-flaky-tests --global-timeout=420000 --shard=${{ matrix.shard }}/3'
     })
     expect(
       job.steps?.find(({ name }) => name === 'Enforce selected Windows E2E checks')?.run
-    ).toContain('check renderer_layout "$RENDERER_LAYOUT_OUTCOME"')
+    ).toContain('[[ "$RENDERER_LAYOUT_OUTCOME" != "success" ]]')
   })
 
   it('partitions macOS groups while preserving the stable aggregate gate', () => {

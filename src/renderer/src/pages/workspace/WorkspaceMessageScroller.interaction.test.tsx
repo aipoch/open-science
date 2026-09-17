@@ -4346,8 +4346,12 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       Object.defineProperties(viewport, {
         clientHeight: { configurable: true, value: 800 },
         scrollHeight: { configurable: true, value: 10_000 },
-        scrollTop: { configurable: true, writable: true, value: 9000 }
+        scrollTop: { configurable: true, writable: true, value: 9200 }
       })
+      await act(async () =>
+        viewport.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -120 }))
+      )
+      viewport.scrollTop = 9000
       await act(async () => viewport.dispatchEvent(new Event('scroll', { bubbles: true })))
       viewport.scrollTop = 5000
       await act(async () => viewport.dispatchEvent(new Event('scroll', { bubbles: true })))
@@ -4357,6 +4361,146 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       expect(rows.filter((node) => node.isConnected)).toHaveLength(80)
     }
   )
+
+  it.each(['layout', 'wheel', 'touch', 'keyboard', 'scrollbar'] as const)(
+    'updates the live tail after %s scrolling without overriding reader intent',
+    async (input) => {
+      const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+      root = createRoot(container)
+      const messages = Array.from({ length: 121 }, (_, index) =>
+        createMessage({
+          id: `restore-${index}`,
+          content: `Restore message ${index}`,
+          createdAt: 1710000000000 + index,
+          updatedAt: 1710000000000 + index
+        })
+      )
+      const render = async (length: number): Promise<void> => {
+        await act(async () =>
+          root.render(
+            <WorkspaceMessageScroller
+              activeSession={createSession({
+                messages: messages.slice(0, length),
+                agentPromptInFlight: true,
+                awaitingFirstAgentOutput: true
+              })}
+              onSendEditedMessage={vi.fn()}
+            />
+          )
+        )
+      }
+      await render(120)
+      const viewport = container.querySelector<HTMLDivElement>(
+        '[data-testid="message-scroller-viewport"]'
+      )!
+      Object.defineProperties(viewport, {
+        clientHeight: { configurable: true, value: 800 },
+        scrollHeight: { configurable: true, value: 10000 },
+        scrollTop: { configurable: true, writable: true, value: input === 'layout' ? 9100 : 9200 }
+      })
+      expect(container.textContent).toContain('Thinking')
+      if (input !== 'layout') {
+        const event =
+          input === 'wheel'
+            ? new WheelEvent('wheel', { bubbles: true, deltaY: -100 })
+            : input === 'keyboard'
+              ? new KeyboardEvent('keydown', { bubbles: true, key: 'PageUp' })
+              : new Event(input === 'touch' ? 'touchmove' : 'pointerdown', { bubbles: true })
+        await act(async () => viewport.dispatchEvent(event))
+        viewport.scrollTop = 9100
+      }
+      await act(async () => viewport.dispatchEvent(new Event('scroll', { bubbles: true })))
+      scrollToEndMock.mockClear()
+      await render(121)
+      const latest = container.querySelector('[data-message-id="restore-120"]')
+      if (input === 'layout') {
+        expect(latest).not.toBeNull()
+        expect(container.textContent).toContain('Thinking')
+        expect(scrollToEndMock).toHaveBeenCalled()
+      } else {
+        expect(latest).toBeNull()
+        expect(container.textContent).not.toContain('Thinking')
+        expect(scrollToEndMock).not.toHaveBeenCalled()
+      }
+      expect(container.querySelectorAll('[data-message-id^="restore-"]')).toHaveLength(80)
+    }
+  )
+
+  it.each([
+    'wheel-down',
+    'wheel-horizontal',
+    'ArrowDown',
+    'PageDown',
+    'End',
+    ' ',
+    'pointer-click',
+    'nested-wheel',
+    'nested-touch',
+    'editable-ArrowUp'
+  ])('keeps mounting the live tail after %s input without viewport movement', async (input) => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    root = createRoot(container)
+    const messages = Array.from({ length: 121 }, (_, index) =>
+      createMessage({ id: `no-op-${index}`, content: `Message ${index}`, createdAt: index + 1 })
+    )
+    const render = async (length: number): Promise<void> => {
+      await act(async () =>
+        root.render(
+          <WorkspaceMessageScroller
+            activeSession={createSession({
+              messages: messages.slice(0, length),
+              agentPromptInFlight: true,
+              awaitingFirstAgentOutput: true
+            })}
+            onSendEditedMessage={vi.fn()}
+          />
+        )
+      )
+    }
+    await render(120)
+    const viewport = container.querySelector<HTMLDivElement>(
+      '[data-testid="message-scroller-viewport"]'
+    )!
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 800 },
+      scrollHeight: { configurable: true, value: 10000 },
+      scrollTop: { configurable: true, writable: true, value: 9200 }
+    })
+    const nested = document.createElement(input.startsWith('editable') ? 'textarea' : 'div')
+    nested.style.overflowY = 'auto'
+    Object.defineProperties(nested, {
+      clientHeight: { value: 100 },
+      scrollHeight: { value: 1000 },
+      scrollTop: { writable: true, value: 500 }
+    })
+    viewport.appendChild(nested)
+    const target = input.startsWith('nested') || input.startsWith('editable') ? nested : viewport
+    const event = input.includes('wheel')
+      ? new WheelEvent('wheel', {
+          bubbles: true,
+          deltaY: input === 'wheel-horizontal' ? 0 : input === 'nested-wheel' ? -100 : 100,
+          deltaX: input === 'wheel-horizontal' ? 100 : 0
+        })
+      : input === 'nested-touch'
+        ? new Event('touchmove', { bubbles: true })
+        : input === 'pointer-click'
+          ? new Event('pointerdown', { bubbles: true })
+          : new KeyboardEvent('keydown', {
+              bubbles: true,
+              key: input === 'editable-ArrowUp' ? 'ArrowUp' : input
+            })
+    await act(async () => target.dispatchEvent(event))
+    if (input.startsWith('nested')) {
+      nested.scrollTop = 400
+      await act(async () => nested.dispatchEvent(new Event('scroll', { bubbles: true })))
+    }
+    // The outer viewport did not move: the browser emits no viewport scroll event.
+    await render(121)
+    expect(container.querySelector('[data-message-id="no-op-120"]')).not.toBeNull()
+    expect(container.querySelectorAll('[data-message-id^="no-op-"]')).toHaveLength(80)
+    expect(container.textContent).toContain('Thinking')
+    nested.remove()
+  })
 
   it('mounts only the tail when an initially empty session receives long history', async () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')

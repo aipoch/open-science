@@ -32,6 +32,7 @@ const python3 =
     : undefined
 
 const platformSupported = process.platform === 'darwin' || process.platform === 'linux'
+const shellQuote = (value: string): string => `'${value.replaceAll("'", `'"'"'`)}'`
 
 describe.runIf(platformSupported)('Notebook filesystem enforcement', () => {
   it
@@ -94,6 +95,60 @@ describe.runIf(platformSupported)('Notebook filesystem enforcement', () => {
         await sandbox.dispose()
         await rm(appRoot, { recursive: true, force: true })
         await rm(workspace, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it.runIf(process.platform === 'linux')(
+    'restores an explicit read-only input beneath the hidden host temporary root',
+    async () => {
+      const privateRoot = await mkdtemp(join(tmpdir(), 'open-science-private-'))
+      const inputRoot = await mkdtemp(join(tmpdir(), 'open-science-input-'))
+      const siblingInputRoot = await mkdtemp(join(tmpdir(), 'open-science-input-sibling-'))
+      const workspace = join(privateRoot, 'workspace')
+      const input = join(inputRoot, 'current.json')
+      const siblingInput = join(siblingInputRoot, 'current.json')
+      await mkdir(workspace)
+      await writeFile(input, 'input', 'utf8')
+      await writeFile(siblingInput, 'sibling', 'utf8')
+      const sandbox = new NotebookNetworkSandbox({
+        policy: { allowedDomains: [], deniedDomains: [] },
+        resources: { root: resolve(import.meta.dirname, '../vendor') }
+      })
+
+      try {
+        await sandbox.initialize()
+        const wrapped = await sandbox.wrap({
+          command: [
+            `test "$(/bin/cat ${shellQuote(input)})" = input`,
+            `if printf changed > ${shellQuote(input)} 2>/dev/null; then exit 41; fi`,
+            `if /bin/cat ${shellQuote(siblingInput)} >/dev/null 2>&1; then exit 42; fi`
+          ].join(' && '),
+          cwd: workspace,
+          env: { PATH: '/usr/bin:/bin' },
+          filesystem: {
+            privateRoot,
+            readOnlyRoots: ['/bin', '/usr/bin', inputRoot],
+            readWriteRoots: [workspace],
+            deniedReadRoots: [],
+            deniedWriteRoots: []
+          },
+          onNetworkAccessRequest: async () => false
+        })
+        const result = await run(wrapped, workspace)
+        const diagnostic = wrapped.annotateStderr(result.stderr)
+        await wrapped.cleanup('exit', { processesTerminated: true })
+
+        expect(result.code, diagnostic).toBe(0)
+        await expect(readFile(input, 'utf8')).resolves.toBe('input')
+        await expect(readFile(siblingInput, 'utf8')).resolves.toBe('sibling')
+      } finally {
+        await sandbox.dispose()
+        await Promise.all([
+          rm(privateRoot, { recursive: true, force: true }),
+          rm(inputRoot, { recursive: true, force: true }),
+          rm(siblingInputRoot, { recursive: true, force: true })
+        ])
       }
     }
   )

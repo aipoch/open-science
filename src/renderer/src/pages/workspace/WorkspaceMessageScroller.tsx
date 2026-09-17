@@ -1519,17 +1519,36 @@ const WorkspaceMessageScrollerImpl = ({
           <MessageScrollerViewport
             ref={handleMessageScrollerViewportRef}
             aria-label={t('Conversation')}
-            onScroll={handleMessageScrollerScroll}
-            onWheel={transcriptWindow.recordUserScroll}
-            onTouchMove={transcriptWindow.recordUserScroll}
-            onPointerDown={(event) => {
-              if (event.target === event.currentTarget) transcriptWindow.recordUserScroll()
+            onScroll={(event) => {
+              if (event.target === event.currentTarget) handleMessageScrollerScroll()
             }}
+            onWheel={(event) => {
+              if (!event.defaultPrevented && !event.ctrlKey && event.deltaY < 0) {
+                transcriptWindow.recordUserScroll()
+              }
+            }}
+            onTouchMove={(event) => {
+              if (!event.defaultPrevented) transcriptWindow.recordUserScroll()
+            }}
+            onPointerDown={(event) => {
+              if (!event.defaultPrevented && event.target === event.currentTarget) {
+                transcriptWindow.recordUserScroll(true)
+              }
+            }}
+            onPointerUp={transcriptWindow.finishUserScroll}
+            onPointerCancel={transcriptWindow.finishUserScroll}
             onKeyDown={(event) => {
               if (
-                ['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(
-                  event.key
-                )
+                event.defaultPrevented ||
+                (event.target instanceof HTMLElement &&
+                  event.target.closest(
+                    'input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"]'
+                  ))
+              )
+                return
+              if (
+                ['ArrowUp', 'PageUp', 'Home'].includes(event.key) ||
+                (event.key === ' ' && event.shiftKey)
               ) {
                 transcriptWindow.recordUserScroll()
               }
@@ -1998,13 +2017,17 @@ const WorkspaceMessageScrollerImpl = ({
 
               {presentationBarrierIndex < 0 ? trailingContent : null}
 
-              {isResumingSession && activeSession ? (
+              {transcriptWindow.end === conversationItems.length &&
+              isResumingSession &&
+              activeSession ? (
                 <WorkspaceAgentLoadingRow
                   sessionId={activeSession.id}
                   phase="resuming"
                   visiblePermissionPending={visiblePermissionPending}
                 />
-              ) : agentLoadingPhase !== 'hidden' && activeSession ? (
+              ) : transcriptWindow.end === conversationItems.length &&
+                agentLoadingPhase !== 'hidden' &&
+                activeSession ? (
                 <WorkspaceAgentLoadingRow
                   sessionId={activeSession.id}
                   phase={agentLoadingPhase}

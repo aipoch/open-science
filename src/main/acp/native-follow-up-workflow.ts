@@ -66,14 +66,13 @@ type NativeFollowUpPreparedContent = Readonly<{
   close?: () => void
 }>
 
-type NativeFollowUpRegisterTurnInputs = (request: {
+type NativeFollowUpPrepareTurnInputs = (request: {
   projectId: string
   appSessionId: string
   promptMessageId: string
   uploads: UploadedAttachment[]
   references: FileReference[]
-  materializeOnly?: boolean
-}) => Promise<readonly NotebookPromptInput[] | void>
+}) => Promise<{ inputs: readonly NotebookPromptInput[]; commit: () => void }>
 
 type NativeFollowUpLivePrompt = Readonly<{
   turnToken: string
@@ -97,7 +96,7 @@ type NativeFollowUpWorkflowOptions = Readonly<{
   sessionCwd: (appSessionId: string) => string | undefined
   publishUserMessage: (input: NativeFollowUpUserMessage) => void
   prepareFollowUp?: (request: AcpSteerFollowUpRequest) => Promise<NativeFollowUpPreparedContent>
-  registerTurnInputs?: NativeFollowUpRegisterTurnInputs
+  prepareTurnInputs?: NativeFollowUpPrepareTurnInputs
   createMessageId?: () => string
   fetchImpl?: typeof fetch
   followUpTimeoutMs?: number
@@ -288,6 +287,7 @@ class AcpNativeFollowUpWorkflow {
     let prompt: readonly ContentBlock[]
     let preparedUploads: readonly UploadedAttachment[] | undefined
     let notebookTurnInputs: NativeFollowUpNotebookTurnInputs | undefined
+    let commitTurnInputs: (() => void) | undefined
     let closePrepared: (() => void) | undefined
     const closePreparedNow = (): void => {
       const close = closePrepared
@@ -308,7 +308,14 @@ class AcpNativeFollowUpWorkflow {
     }
     try {
       if (this.options.prepareFollowUp) {
-        const prepared = await this.options.prepareFollowUp(request)
+        const preparation = await this.prepareForLiveTurn(
+          () => this.options.prepareFollowUp!(request),
+          request.sessionId,
+          initialLive,
+          (late) => late.close?.()
+        )
+        if (!preparation) return refusePrepared('no-live-turn')
+        const prepared = preparation.value
         prompt = prepared.prompt
         preparedUploads = prepared.uploads
         notebookTurnInputs = prepared.notebookTurnInputs
@@ -362,23 +369,28 @@ class AcpNativeFollowUpWorkflow {
       return refusePrepared('prompt-required')
     }
 
-    if (notebookTurnInputs && this.options.registerTurnInputs) {
+    if (notebookTurnInputs && this.options.prepareTurnInputs) {
       try {
-        const notebookInputs = await this.options.registerTurnInputs({
-          projectId: notebookTurnInputs.projectId,
-          appSessionId: notebookTurnInputs.sessionId,
-          promptMessageId: notebookTurnInputs.livePromptMessageId,
-          uploads: [...notebookTurnInputs.uploads],
-          references: [...notebookTurnInputs.references],
-          materializeOnly: true
-        })
-        if (notebookInputs) {
-          const preparedPrompt = appendNotebookInputPrompt([...prompt], notebookInputs)
-          prompt =
-            typeof preparedPrompt === 'string'
-              ? steeringPromptFromText(preparedPrompt)
-              : preparedPrompt
-        }
+        const inputs = notebookTurnInputs
+        const prepared = await this.prepareForLiveTurn(
+          () =>
+            this.options.prepareTurnInputs!({
+              projectId: inputs.projectId,
+              appSessionId: inputs.sessionId,
+              promptMessageId: inputs.livePromptMessageId,
+              uploads: [...inputs.uploads],
+              references: [...inputs.references]
+            }),
+          request.sessionId,
+          initialLive
+        )
+        if (!prepared) return refusePrepared('no-live-turn')
+        commitTurnInputs = prepared.value.commit
+        const preparedPrompt = appendNotebookInputPrompt([...prompt], prepared.value.inputs)
+        prompt =
+          typeof preparedPrompt === 'string'
+            ? steeringPromptFromText(preparedPrompt)
+            : preparedPrompt
       } catch (error) {
         log.info('native follow-up notebook materialization failed', {
           sessionId: notebookTurnInputs.sessionId,
@@ -501,7 +513,17 @@ class AcpNativeFollowUpWorkflow {
 
     const sameLivePrompt = this.sameLivePrompt(request.sessionId, live)
     if (sameLivePrompt) {
-      await this.commitNotebookTurnInputs(notebookTurnInputs)
+      // The provider has accepted the message. Registration cannot start more file work or
+      // turn an accepted delivery into a retryable refusal.
+      try {
+        commitTurnInputs?.()
+      } catch (error) {
+        log.info('native follow-up notebook registration failed', {
+          sessionId: request.sessionId,
+          promptMessageId: notebookTurnInputs?.livePromptMessageId,
+          reason: error instanceof Error ? error.message : String(error)
+        })
+      }
     } else {
       log.info('native follow-up skipped notebook registration', {
         sessionId: request.sessionId,
@@ -540,6 +562,60 @@ class AcpNativeFollowUpWorkflow {
     return injected(route.transport, messageId)
   }
 
+  // Only work that has not reached the provider may be abandoned on turn cancellation.
+  // Keep observing a late result so its temporary resources are released exactly once.
+  private prepareForLiveTurn<T>(
+    prepare: () => Promise<T>,
+    sessionId: string,
+    live: NativeFollowUpLivePrompt | undefined,
+    closeLate?: (value: T) => void
+  ): Promise<{ value: T } | undefined> {
+    const signal = live?.signal
+    if (signal?.aborted) return Promise.resolve(undefined)
+    return new Promise((resolve, reject) => {
+      let cancelled = false
+      const abort = (): void => {
+        cancelled = true
+        signal?.removeEventListener('abort', abort)
+        resolve(undefined)
+      }
+      signal?.addEventListener('abort', abort, { once: true })
+      // The existing turn resource owner also signals normal completion and session teardown.
+      const turns = live ? (this.preparedBySession.get(sessionId) ?? new Map()) : undefined
+      const resources = live ? (turns!.get(live.turnToken) ?? new Set<() => void>()) : undefined
+      if (live && turns && resources) {
+        resources.add(abort)
+        turns.set(live.turnToken, resources)
+        this.preparedBySession.set(sessionId, turns)
+      }
+      void (async () => {
+        try {
+          const value = await prepare()
+          if (!cancelled) {
+            resolve({ value })
+            return
+          }
+          try {
+            closeLate?.(value)
+          } catch {
+            // Cancellation remains authoritative over cleanup of an unused preparation.
+          }
+        } catch (error) {
+          if (!cancelled) reject(error)
+        } finally {
+          signal?.removeEventListener('abort', abort)
+          resources?.delete(abort)
+          if (live && turns && resources?.size === 0 && turns.get(live.turnToken) === resources) {
+            turns.delete(live.turnToken)
+            if (turns.size === 0 && this.preparedBySession.get(sessionId) === turns) {
+              this.preparedBySession.delete(sessionId)
+            }
+          }
+        }
+      })()
+    })
+  }
+
   private sameLivePrompt(sessionId: string, live: NativeFollowUpLivePrompt | undefined): boolean {
     if (!this.options.hasLivePrompt(sessionId)) return false
     if (!this.options.livePrompt) return true
@@ -565,27 +641,6 @@ class AcpNativeFollowUpWorkflow {
       }
       signal.addEventListener('abort', fail, { once: true })
     })
-  }
-
-  private async commitNotebookTurnInputs(
-    notebookTurnInputs: NativeFollowUpNotebookTurnInputs | undefined
-  ): Promise<void> {
-    if (!notebookTurnInputs || !this.options.registerTurnInputs) return
-    try {
-      await this.options.registerTurnInputs({
-        projectId: notebookTurnInputs.projectId,
-        appSessionId: notebookTurnInputs.sessionId,
-        promptMessageId: notebookTurnInputs.livePromptMessageId,
-        uploads: [...notebookTurnInputs.uploads],
-        references: [...notebookTurnInputs.references]
-      })
-    } catch (error) {
-      log.info('native follow-up notebook registration failed', {
-        sessionId: notebookTurnInputs.sessionId,
-        promptMessageId: notebookTurnInputs.livePromptMessageId,
-        reason: error instanceof Error ? error.message : String(error)
-      })
-    }
   }
 
   private async postOpenCodeSteer(

@@ -146,30 +146,25 @@ describe('trusted supplemental selection', () => {
   })
 
   it.skipIf(process.platform === 'win32')(
-    'requires the Windows browser suite on shard one while allowing idle browser steps on native shards',
+    'requires the Windows browser suite on every runner shard',
     () => {
       const enforce = pr.jobs.windows_e2e.steps.find(
         ({ name }) => name === 'Enforce selected Windows E2E checks'
       )!
-      expect(enforce.env?.E2E_SHARD).toBe('${{ matrix.shard }}')
-      for (const shard of ['1', '2', '3']) {
-        for (const outcome of ['success', 'failure', 'cancelled', 'skipped', '']) {
-          const result = spawnSync('bash', ['-e', '-c', enforce.run!], {
-            encoding: 'utf8',
-            env: {
-              ...process.env,
-              E2E_SHARD: shard,
-              RENDERER_LAYOUT_OUTCOME: outcome,
-              SETUP_OUTCOME: 'success',
-              E2E_ACCESSIBILITY_OUTCOME: 'skipped',
-              E2E_FUNCTIONAL_OUTCOME: 'skipped',
-              E2E_WORKSPACE_OUTCOME: 'skipped'
-            }
-          })
-          const succeeds =
-            outcome === 'success' || (shard !== '1' && ['skipped', ''].includes(outcome))
-          expect(result.status, result.stderr).toBe(succeeds ? 0 : 1)
-        }
+      expect(enforce.env?.E2E_SHARD).toBeUndefined()
+      for (const outcome of ['success', 'failure', 'cancelled', 'skipped', '']) {
+        const result = spawnSync('bash', ['-e', '-c', enforce.run!], {
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            RENDERER_LAYOUT_OUTCOME: outcome,
+            SETUP_OUTCOME: 'success',
+            E2E_ACCESSIBILITY_OUTCOME: 'skipped',
+            E2E_FUNCTIONAL_OUTCOME: 'skipped',
+            E2E_WORKSPACE_OUTCOME: 'skipped'
+          }
+        })
+        expect(result.status, result.stderr).toBe(outcome === 'success' ? 0 : 1)
       }
     }
   )

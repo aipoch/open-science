@@ -88,13 +88,19 @@ describe('Session Plan MCP server', () => {
                   name: { type: 'string', description: expect.any(String) },
                   steps: {
                     type: 'array',
-                    description: expect.stringContaining('at least one step'),
+                    description: expect.stringContaining('ordered verifiable work units'),
                     items: {
                       type: 'object',
+                      description: expect.stringContaining('independently verifiable work unit'),
                       required: ['title', 'description'],
                       properties: {
                         title: { type: 'string', description: expect.any(String) },
-                        description: { type: 'string', description: expect.any(String) }
+                        description: {
+                          type: 'string',
+                          description: expect.stringContaining(
+                            'work, promised result, and completion check'
+                          )
+                        }
                       }
                     }
                   }
@@ -130,6 +136,39 @@ describe('Session Plan MCP server', () => {
         'delegations: [{ name, steps: [{ title, description }] }]'
       )
       expect(JSON.stringify(inputSchema)).not.toContain('`{ title, description }` objects')
+      expect(JSON.stringify(inputSchema)).toContain('meaningful stopping point')
+      expect(JSON.stringify(inputSchema)).toContain('independent review or decisions')
+      expect(JSON.stringify(inputSchema)).toContain('user-requested pauses')
+      expect(JSON.stringify(inputSchema)).toContain('substantial jobs')
+      expect(JSON.stringify(inputSchema)).toContain('delivered separately')
+      expect(JSON.stringify(inputSchema)).toContain('Do not target a fixed step count')
+      expect(JSON.stringify(inputSchema)).toContain('result is available as agreed')
+      expect(JSON.stringify(inputSchema)).toContain(
+        'Managed Artifact publication is required only when this step promises it'
+      )
+
+      const updateStep = (await client.listTools()).tools.find(
+        (tool) => tool.name === 'update_step_status'
+      )
+      const updateSchema = updateStep?.inputSchema as {
+        required?: string[]
+        properties?: Record<string, { description?: string; enum?: string[] }>
+      }
+      expect(updateSchema.required).toEqual(['title', 'status'])
+      expect(updateSchema.properties?.title?.description).toContain('exact, case-sensitive title')
+      expect(updateSchema.properties?.status).toMatchObject({
+        enum: ['in_progress', 'completed', 'blocked', 'skipped'],
+        description: expect.stringContaining('blocked only for an irreversible failure')
+      })
+      expect(updateSchema.properties?.status?.description).toContain(
+        'skipped only for unnecessary work that has not started'
+      )
+      expect(updateSchema.properties?.status?.description).toContain(
+        'Terminal statuses cannot change later'
+      )
+      expect(updateSchema.properties?.notes?.description).toContain(
+        'repeated terminal-status no-op does not write new notes'
+      )
     } finally {
       await client.close()
       await server.close()
@@ -220,8 +259,11 @@ describe('Session Plan MCP server', () => {
   })
 
   it('returns a compact step receipt without exposing the internal Plan projection', async () => {
+    const planContext =
+      '<open_science_protected_plan_context>\napproval=approved lifecycle=completed\nPlan details: $OPEN_SCIENCE_INPUT_DIR/plan.md\n</open_science_protected_plan_context>'
     const updateStepStatus = vi.fn().mockResolvedValue({
       changed: true,
+      planContext,
       projection: {
         artifactId: 'artifact-1',
         artifactVersionId: 'version-1',
@@ -261,7 +303,8 @@ describe('Session Plan MCP server', () => {
           changed: true,
           step: { title: 'Analyze the data', status: 'completed' },
           revision: 12,
-          lifecycle: 'completed'
+          lifecycle: 'completed',
+          planContext
         })
         expect(content[0].text).not.toContain('projection')
         expect(content[0].text).not.toContain('private-task-summary')
@@ -277,6 +320,8 @@ describe('Session Plan MCP server', () => {
   })
 
   it('returns compact approval and rejection receipts without exposing their projections', async () => {
+    const approvedPlanContext =
+      '<open_science_protected_plan_context>\napproval=approved lifecycle=approved\nPlan details: $OPEN_SCIENCE_INPUT_DIR/plan.md\n</open_science_protected_plan_context>'
     const projection = (
       approval: 'approved' | 'rejected',
       revision: number
@@ -296,9 +341,11 @@ describe('Session Plan MCP server', () => {
       'plan-decision-receipt-test',
       {
         generate: vi.fn(),
-        approve: vi
-          .fn()
-          .mockResolvedValue({ changed: true, projection: projection('approved', 7) }),
+        approve: vi.fn().mockResolvedValue({
+          changed: true,
+          planContext: approvedPlanContext,
+          projection: projection('approved', 7)
+        }),
         reject: vi.fn().mockResolvedValue({ changed: true, projection: projection('rejected', 8) }),
         updateStepStatus: vi.fn()
       },
@@ -319,7 +366,8 @@ describe('Session Plan MCP server', () => {
           decision: 'approved',
           changed: true,
           revision: 7,
-          lifecycle: 'approved'
+          lifecycle: 'approved',
+          planContext: approvedPlanContext
         })
         expect(JSON.parse(rejectedText)).toEqual({
           kind: 'decision',
@@ -328,6 +376,7 @@ describe('Session Plan MCP server', () => {
           revision: 8,
           lifecycle: 'rejected'
         })
+        expect(JSON.parse(rejectedText)).not.toHaveProperty('planContext')
         expect(`${approvedText}${rejectedText}`).not.toContain('projection')
         expect(`${approvedText}${rejectedText}`).not.toContain('private-decision-summary')
         expect(`${approvedText}${rejectedText}`).not.toContain('private-decision-checksum')
@@ -335,59 +384,67 @@ describe('Session Plan MCP server', () => {
     )
   })
 
-  it('returns only the human feedback needed to revise a generated Plan', async () => {
-    const generate = vi.fn().mockResolvedValue({
-      kind: 'feedback',
-      routeToInteractionId: 'private-interaction-id',
-      artifactVersionId: 'private-artifact-version',
-      text: 'Split the analysis by cohort.',
-      message: {
-        id: 'private-message-id',
-        content: 'Split the analysis by cohort.',
-        createdAt: 123
-      },
-      planRevision: 9,
-      deliveryCommandId: 'private-delivery-receipt'
-    })
-    await withPlanMcpClient(
-      'plan-feedback-receipt-test',
-      { generate, approve: vi.fn(), reject: vi.fn(), updateStepStatus: vi.fn() },
-      async (client) => {
-        const result = await client.callTool({
-          name: 'generate_plan',
-          arguments: {
-            task_summary: 'Analyze one dataset',
-            phases: [
-              {
-                name: 'Analysis',
-                delegations: [
-                  {
-                    name: 'Primary agent',
-                    steps: [{ title: 'Analyze the data', description: 'Produce the result.' }]
-                  }
-                ]
-              }
-            ],
-            desired_outputs: [],
-            feasibility: { confidence: 'high', rationale: 'Inputs are available.' }
-          }
-        })
-        const text = (result as { content: Array<{ text: string }> }).content[0].text
+  it.each([undefined, 'Read session-plan/current.json through the Notebook shell.'])(
+    'returns human feedback and an available Plan reference (%s)',
+    async (planContext) => {
+      const generate = vi.fn().mockResolvedValue({
+        kind: 'feedback',
+        ...(planContext ? { planContext } : {}),
+        routeToInteractionId: 'private-interaction-id',
+        artifactVersionId: 'private-artifact-version',
+        text: 'Split the analysis by cohort.',
+        message: {
+          id: 'private-message-id',
+          content: 'Split the analysis by cohort.',
+          createdAt: 123
+        },
+        planRevision: 9,
+        deliveryCommandId: 'private-delivery-receipt'
+      })
+      await withPlanMcpClient(
+        'plan-feedback-receipt-test',
+        { generate, approve: vi.fn(), reject: vi.fn(), updateStepStatus: vi.fn() },
+        async (client) => {
+          const result = await client.callTool({
+            name: 'generate_plan',
+            arguments: {
+              task_summary: 'Analyze one dataset',
+              phases: [
+                {
+                  name: 'Analysis',
+                  delegations: [
+                    {
+                      name: 'Primary agent',
+                      steps: [{ title: 'Analyze the data', description: 'Produce the result.' }]
+                    }
+                  ]
+                }
+              ],
+              desired_outputs: [],
+              feasibility: { confidence: 'high', rationale: 'Inputs are available.' }
+            }
+          })
+          const text = (result as { content: Array<{ text: string }> }).content[0].text
 
-        expect(JSON.parse(text)).toEqual({
-          kind: 'feedback',
-          text: 'Split the analysis by cohort.'
-        })
-        expect(text).not.toContain('private-interaction-id')
-        expect(text).not.toContain('private-message-id')
-        expect(text).not.toContain('private-delivery-receipt')
-      }
-    )
-  })
+          expect(JSON.parse(text)).toEqual({
+            kind: 'feedback',
+            ...(planContext ? { planContext } : {}),
+            text: 'Split the analysis by cohort.'
+          })
+          expect(text).not.toContain('private-interaction-id')
+          expect(text).not.toContain('private-message-id')
+          expect(text).not.toContain('private-delivery-receipt')
+        }
+      )
+    }
+  )
 
   it('returns a compact decision receipt when generated Plan review completes', async () => {
+    const planContext =
+      '<open_science_protected_plan_context>\napproval=approved lifecycle=approved\nPlan details: $OPEN_SCIENCE_INPUT_DIR/plan.md\n</open_science_protected_plan_context>'
     const generate = vi.fn().mockResolvedValue({
       changed: true,
+      planContext,
       projection: {
         artifactVersionId: 'version-1',
         artifactChecksum: 'private-generated-plan-checksum',
@@ -428,12 +485,343 @@ describe('Session Plan MCP server', () => {
           decision: 'approved',
           changed: true,
           revision: 10,
-          lifecycle: 'approved'
+          lifecycle: 'approved',
+          planContext
         })
         expect(text).not.toContain('private-generated-plan-checksum')
         expect(text).not.toContain('private-generated-plan-summary')
       }
     )
+  })
+
+  it('makes a pending generated Plan explicit in the compact receipt', async () => {
+    const result = await withPlanMcpClient(
+      'generated-plan-pending-receipt-test',
+      {
+        generate: vi.fn().mockResolvedValue({
+          changed: true,
+          projection: {
+            artifactVersionId: 'version-pending',
+            revision: 11,
+            approval: 'pending',
+            lifecycle: 'awaiting_approval'
+          }
+        }),
+        approve: vi.fn(),
+        reject: vi.fn(),
+        updateStepStatus: vi.fn()
+      },
+      (client) =>
+        client.callTool({
+          name: 'generate_plan',
+          arguments: planGenerationArguments([VALID_PHASE])
+        })
+    )
+    const receipt = JSON.parse((result as { content: Array<{ text: string }> }).content[0].text)
+
+    expect(receipt).toEqual({
+      kind: 'plan',
+      changed: true,
+      revision: 11,
+      lifecycle: 'awaiting_approval',
+      guidance: 'Review is pending. Do not execute Plan steps until approval is recorded.'
+    })
+  })
+
+  it('keeps a committed step update successful when its projection refresh failed', async () => {
+    const sensitiveRefreshError = 'database password=should-not-cross-the-MCP-boundary'
+    const planContext =
+      'The step status was committed. Its Plan details could not be refreshed, so do not replay this update.'
+    const result = await withPlanMcpClient(
+      'plan-refresh-failure-receipt-test',
+      {
+        generate: vi.fn(),
+        approve: vi.fn(),
+        reject: vi.fn(),
+        updateStepStatus: vi.fn().mockResolvedValue({
+          changed: true,
+          planContext,
+          refreshError: sensitiveRefreshError,
+          projection: {
+            revision: 14,
+            approval: 'approved',
+            lifecycle: 'in_progress',
+            stepStates: { Analyze: { status: 'in_progress' } }
+          }
+        })
+      },
+      (client) =>
+        client.callTool({
+          name: 'update_step_status',
+          arguments: { title: 'Analyze', status: 'in_progress' }
+        })
+    )
+    const text = (result as { content: Array<{ text: string }> }).content[0].text
+
+    expect(result).not.toHaveProperty('isError')
+    expect(JSON.parse(text)).toEqual({
+      changed: true,
+      revision: 14,
+      lifecycle: 'in_progress',
+      planContext,
+      step: { title: 'Analyze', status: 'in_progress' }
+    })
+    expect(text).toContain('committed')
+    expect(text).toContain('do not replay')
+    expect(text).not.toContain(sensitiveRefreshError)
+    expect(text).not.toContain('refreshError')
+  })
+
+  it.each(['decision-call', 'generation-waiter'])(
+    'preserves a committed decision delivery identity through MCP serialization for a %s',
+    async (path) => {
+      const warning =
+        'The Plan decision was committed, but delivery to the waiting Agent is unconfirmed. Do not repeat the decision automatically.'
+      const committed = {
+        changed: true,
+        deliveryWarning: warning,
+        deliveryCommandId: 'delivery-command-7',
+        projection: {
+          artifactVersionId: 'artifact-version-4',
+          revision: 15,
+          approval: 'approved',
+          lifecycle: 'approved'
+        }
+      }
+      const result = await withPlanMcpClient(
+        `plan-delivery-warning-${path}`,
+        {
+          generate: vi.fn().mockResolvedValue(committed),
+          approve: vi.fn().mockResolvedValue(committed),
+          reject: vi.fn(),
+          updateStepStatus: vi.fn()
+        },
+        (client) =>
+          client.callTool({
+            name: 'generate_plan',
+            arguments:
+              path === 'decision-call'
+                ? { decision: 'approved' }
+                : planGenerationArguments([VALID_PHASE])
+          })
+      )
+      const receipt = JSON.parse((result as { content: Array<{ text: string }> }).content[0].text)
+
+      expect(result).not.toHaveProperty('isError')
+      expect(receipt).toEqual({
+        kind: 'decision',
+        decision: 'approved',
+        changed: true,
+        revision: 15,
+        lifecycle: 'approved',
+        deliveryWarning: warning,
+        artifactVersionId: 'artifact-version-4',
+        deliveryCommandId: 'delivery-command-7'
+      })
+    }
+  )
+
+  it('does not expose delivery identities without a bounded delivery warning', async () => {
+    const approve = vi
+      .fn()
+      .mockResolvedValueOnce({
+        changed: true,
+        deliveryCommandId: 'private-command-without-warning',
+        projection: {
+          artifactVersionId: 'private-version-without-warning',
+          revision: 16,
+          approval: 'approved',
+          lifecycle: 'approved'
+        }
+      })
+      .mockResolvedValueOnce({
+        changed: false,
+        deliveryWarning: 'x'.repeat(2049),
+        deliveryCommandId: 'private-command-with-oversized-warning',
+        projection: {
+          artifactVersionId: 'private-version-with-oversized-warning',
+          revision: 16,
+          approval: 'approved',
+          lifecycle: 'approved'
+        }
+      })
+      .mockResolvedValueOnce({
+        changed: false,
+        deliveryWarning: 'The committed decision delivery is unconfirmed.',
+        deliveryCommandId: 'c'.repeat(2049),
+        projection: {
+          artifactVersionId: 'v'.repeat(2049),
+          revision: 16,
+          approval: 'approved',
+          lifecycle: 'approved'
+        }
+      })
+    await withPlanMcpClient(
+      'plan-delivery-warning-bound-test',
+      { generate: vi.fn(), approve, reject: vi.fn(), updateStepStatus: vi.fn() },
+      async (client) => {
+        for (let index = 0; index < 3; index += 1) {
+          const result = await client.callTool({
+            name: 'generate_plan',
+            arguments: { decision: 'approved' }
+          })
+          const text = (result as { content: Array<{ text: string }> }).content[0].text
+          const receipt = JSON.parse(text)
+
+          if (index === 2) {
+            expect(receipt.deliveryWarning).toBe('The committed decision delivery is unconfirmed.')
+          } else {
+            expect(receipt).not.toHaveProperty('deliveryWarning')
+          }
+          expect(receipt).not.toHaveProperty('artifactVersionId')
+          expect(receipt).not.toHaveProperty('deliveryCommandId')
+          expect(text).not.toContain('private-')
+        }
+      }
+    )
+  })
+
+  it('sanitizes unexpected failures and preserves an unconfirmed outcome at the MCP boundary', async () => {
+    const result = await withPlanMcpClient(
+      'plan-unexpected-error-test',
+      {
+        generate: vi.fn(),
+        approve: vi.fn(),
+        reject: vi.fn(),
+        updateStepStatus: vi.fn(async () => {
+          throw new Error('database password=synthetic-secret')
+        })
+      },
+      (client) =>
+        client.callTool({
+          name: 'update_step_status',
+          arguments: { title: 'Analyze', status: 'in_progress' }
+        })
+    )
+    const text = (result as { content: Array<{ text: string }> }).content[0].text
+    const receipt = JSON.parse(text)
+
+    expect(result).toMatchObject({ isError: true, structuredContent: receipt })
+    expect(receipt).toEqual({
+      error: {
+        message: 'The Session Plan operation did not return a confirmed result.',
+        guidance:
+          'Stop automatic retries. Do not assume the operation failed or repeat it until later Session Plan context confirms whether it took effect. Do not repeat confirmed writes; report unresolved state for application recovery.'
+      }
+    })
+    expect(text).not.toContain('synthetic-secret')
+  })
+
+  it('redacts domain error secrets before bounding the serialized message', async () => {
+    const result = await withPlanMcpClient(
+      'plan-domain-error-bound-test',
+      {
+        generate: vi.fn(),
+        approve: vi.fn(),
+        reject: vi.fn(),
+        updateStepStatus: vi.fn(async () => {
+          throw new PlanCommandError(
+            'unknown-step',
+            `Unknown Plan step password=synthetic-secret\n${'detail '.repeat(500)}`
+          )
+        })
+      },
+      (client) =>
+        client.callTool({
+          name: 'update_step_status',
+          arguments: { title: 'Analyze', status: 'in_progress' }
+        })
+    )
+    const text = (result as { content: Array<{ text: string }> }).content[0].text
+    const receipt = JSON.parse(text)
+
+    expect(receipt.error.message).toContain('[redacted]')
+    expect(receipt.error.message).toContain('[message truncated]')
+    expect(receipt.error.message.length).toBeLessThanOrEqual(2048)
+    expect(text).not.toContain('synthetic-secret')
+  })
+
+  it('does not suggest approval when the current Plan cannot accept step updates', async () => {
+    const result = await withPlanMcpClient(
+      'plan-not-approved-guidance-test',
+      {
+        generate: vi.fn(),
+        approve: vi.fn(),
+        reject: vi.fn(),
+        updateStepStatus: vi.fn(async () => {
+          throw new PlanCommandError(
+            'plan-not-approved',
+            'The current Session Plan was rejected; its steps cannot be updated.'
+          )
+        })
+      },
+      (client) =>
+        client.callTool({
+          name: 'update_step_status',
+          arguments: { title: 'Analyze', status: 'in_progress' }
+        })
+    )
+    const receipt = JSON.parse((result as { content: Array<{ text: string }> }).content[0].text)
+
+    expect(receipt.error.guidance).toContain('unless later Session Plan context confirms')
+    expect(receipt.error.guidance).not.toMatch(/ask|request|submit.*approv/i)
+  })
+
+  it('reports an unavailable Plan capability as not attempted without rebuilding the Plan', async () => {
+    const result = await withPlanMcpClient(
+      'plan-unavailable-guidance-test',
+      {
+        generate: vi.fn(),
+        approve: vi.fn(async () => {
+          throw new PlanCommandError(
+            'plan-unavailable',
+            'Session Plan capability is not configured. This operation was not attempted.'
+          )
+        }),
+        reject: vi.fn(),
+        updateStepStatus: vi.fn()
+      },
+      (client) => client.callTool({ name: 'generate_plan', arguments: { decision: 'approved' } })
+    )
+    const receipt = JSON.parse((result as { content: Array<{ text: string }> }).content[0].text)
+
+    expect(result).toMatchObject({ isError: true, structuredContent: receipt })
+    expect(receipt.error).toEqual({
+      code: 'plan-unavailable',
+      message: 'Session Plan capability is not configured. This operation was not attempted.',
+      guidance:
+        'The operation was not attempted. Do not rebuild or resubmit the Plan. Open-Science must provide the Session Plan capability before another Plan call.'
+    })
+  })
+
+  it('drops an oversized Plan reference from an otherwise valid success receipt', async () => {
+    const result = await withPlanMcpClient(
+      'oversized-plan-reference-test',
+      {
+        generate: vi.fn(),
+        approve: vi.fn().mockResolvedValue({
+          changed: true,
+          planContext: 'x'.repeat(2049),
+          projection: { revision: 3, approval: 'approved', lifecycle: 'approved' }
+        }),
+        reject: vi.fn(),
+        updateStepStatus: vi.fn()
+      },
+      (client) => client.callTool({ name: 'generate_plan', arguments: { decision: 'approved' } })
+    )
+    const receipt = JSON.parse(
+      (result as { content: Array<{ text: string }> }).content[0].text
+    ) as Record<string, unknown>
+
+    expect(result).not.toHaveProperty('isError')
+    expect(receipt).toEqual({
+      kind: 'decision',
+      decision: 'approved',
+      changed: true,
+      revision: 3,
+      lifecycle: 'approved'
+    })
+    expect(receipt).not.toHaveProperty('planContext')
   })
 
   it('fails closed when a Plan handler returns an unknown success shape', async () => {
@@ -455,8 +843,10 @@ describe('Session Plan MCP server', () => {
           isError: true,
           structuredContent: {
             error: {
-              code: 'invalid-plan',
-              message: 'The Session Plan service returned an invalid success result.'
+              code: 'invalid-backend-result',
+              message:
+                'The Session Plan service returned an invalid result. The operation outcome is unconfirmed.',
+              guidance: expect.stringContaining('Stop automatic retries')
             }
           }
         })
@@ -484,7 +874,7 @@ describe('Session Plan MCP server', () => {
 
         expect(result).toMatchObject({
           isError: true,
-          structuredContent: { error: { code: 'invalid-plan' } }
+          structuredContent: { error: { code: 'invalid-backend-result' } }
         })
       }
     )
@@ -547,8 +937,10 @@ describe('Session Plan MCP server', () => {
       isError: true,
       structuredContent: {
         error: {
-          code: 'invalid-plan',
-          message: 'The Session Plan service returned an invalid success result.'
+          code: 'invalid-backend-result',
+          message:
+            'The Session Plan service returned an invalid result. The operation outcome is unconfirmed.',
+          guidance: expect.stringContaining('Stop automatic retries')
         }
       }
     })
@@ -714,6 +1106,156 @@ describe('Session Plan MCP server', () => {
     }
   })
 
+  it('does not misstate an undelivered Plan response as awaiting review', async () => {
+    const result = await withPlanMcpClient(
+      'plan-response-delivery-pending-test',
+      {
+        generate: vi.fn(),
+        approve: vi.fn(async () => {
+          throw new PlanCommandError(
+            'plan-review-pending',
+            'The Session Plan response has not been delivered. Wait for Open-Science to resume this task before making another Plan call.'
+          )
+        }),
+        reject: vi.fn(),
+        updateStepStatus: vi.fn()
+      },
+      (client) => client.callTool({ name: 'generate_plan', arguments: { decision: 'approved' } })
+    )
+    const receipt = JSON.parse((result as { content: Array<{ text: string }> }).content[0].text)
+
+    expect(receipt.error).toMatchObject({
+      code: 'plan-review-pending',
+      guidance: expect.stringContaining('follow the error message or later Session Plan context')
+    })
+    expect(receipt.error.guidance).not.toContain('wait for the current review result')
+  })
+
+  it('reports a local RPC authentication rejection as not attempted with bounded diagnostics', async () => {
+    let requests = 0
+    const rpcServer = createServer((_request, response) => {
+      requests += 1
+      response.writeHead(401, { 'content-type': 'application/json' })
+      response.end(
+        JSON.stringify({
+          error: `Invalid notebook RPC token. echo: rejected-plan-token password=synthetic-secret\n${'detail '.repeat(500)}`
+        })
+      )
+    })
+    const connection = await listenForLocalRpc(rpcServer, {
+      name: 'plan-authentication-rejection-test',
+      transport: 'tcp'
+    })
+    const planServer = createPlanMcpServerForEnvironment({
+      endpoint: connection.endpoint,
+      token: 'rejected-plan-token',
+      projectId: 'project-1',
+      sessionId: 'session-1'
+    })
+    const client = new Client({ name: 'plan-authentication-rejection-test', version: '1.0.0' })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    await Promise.all([planServer.connect(serverTransport), client.connect(clientTransport)])
+
+    try {
+      const result = await client.callTool({
+        name: 'update_step_status',
+        arguments: { title: 'Analyze', status: 'in_progress' }
+      })
+      const text = (result as { content: Array<{ text: string }> }).content[0].text
+      const receipt = JSON.parse(text)
+
+      expect(requests).toBe(1)
+      expect(result).toMatchObject({ isError: true, structuredContent: receipt })
+      expect(receipt.error.message).toContain('operation was not attempted')
+      expect(receipt.error.message).toContain('Invalid notebook RPC token')
+      expect(receipt.error.message).toContain('[redacted]')
+      expect(receipt.error.message).toContain('[message truncated]')
+      expect(receipt.error.message.length).toBeLessThanOrEqual(2048)
+      expect(receipt.error.guidance).toContain("refresh this Session's Plan capability")
+      expect(receipt.error.guidance).toContain('retry only after the application provides')
+      expect(receipt.error.guidance).toContain('Do not retry automatically or bypass the rejection')
+      expect(text).not.toContain('synthetic-secret')
+      expect(text).not.toContain('rejected-plan-token')
+      expect(text).not.toContain('outcome is unconfirmed')
+    } finally {
+      await client.close()
+      await planServer.close()
+      await new Promise<void>((resolve) => rpcServer.close(() => resolve()))
+    }
+  })
+
+  it('keeps an HTTP 500 result unconfirmed and hides its diagnostic', async () => {
+    const rpcServer = createServer((_request, response) => {
+      response.writeHead(500, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ error: 'database password=synthetic-secret' }))
+    })
+    const connection = await listenForLocalRpc(rpcServer, {
+      name: 'plan-unknown-http-failure-test',
+      transport: 'tcp'
+    })
+    const planServer = createPlanMcpServerForEnvironment({
+      endpoint: connection.endpoint,
+      token: 'plan-token',
+      projectId: 'project-1',
+      sessionId: 'session-1'
+    })
+    const client = new Client({ name: 'plan-unknown-http-failure-test', version: '1.0.0' })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    await Promise.all([planServer.connect(serverTransport), client.connect(clientTransport)])
+
+    try {
+      const result = await client.callTool({
+        name: 'update_step_status',
+        arguments: { title: 'Analyze', status: 'in_progress' }
+      })
+      const text = (result as { content: Array<{ text: string }> }).content[0].text
+      const receipt = JSON.parse(text)
+
+      expect(receipt.error.message).toContain('did not return a confirmed result')
+      expect(receipt.error.guidance).toContain('Stop automatic retries')
+      expect(text).not.toContain('synthetic-secret')
+      expect(text).not.toContain('not attempted')
+    } finally {
+      await client.close()
+      await planServer.close()
+      await new Promise<void>((resolve) => rpcServer.close(() => resolve()))
+    }
+  })
+
+  it('keeps a network failure unconfirmed at the MCP boundary', async () => {
+    const rpcServer = createServer()
+    const connection = await listenForLocalRpc(rpcServer, {
+      name: 'plan-network-failure-test',
+      transport: 'tcp'
+    })
+    await new Promise<void>((resolve) => rpcServer.close(() => resolve()))
+    const planServer = createPlanMcpServerForEnvironment({
+      endpoint: connection.endpoint,
+      token: 'plan-token',
+      projectId: 'project-1',
+      sessionId: 'session-1'
+    })
+    const client = new Client({ name: 'plan-network-failure-test', version: '1.0.0' })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    await Promise.all([planServer.connect(serverTransport), client.connect(clientTransport)])
+
+    try {
+      const result = await client.callTool({
+        name: 'update_step_status',
+        arguments: { title: 'Analyze', status: 'in_progress' }
+      })
+      const text = (result as { content: Array<{ text: string }> }).content[0].text
+      const receipt = JSON.parse(text)
+
+      expect(receipt.error.message).toContain('did not return a confirmed result')
+      expect(receipt.error.guidance).toContain('Stop automatic retries')
+      expect(text).not.toContain('not attempted')
+    } finally {
+      await client.close()
+      await planServer.close()
+    }
+  })
+
   it('releases the pending Plan RPC request when its MCP connection closes', async () => {
     let backendRequestAborted = false
     let backendRequestReceived = false
@@ -834,20 +1376,34 @@ describe('Session Plan MCP server', () => {
     ])
     const generateTool = listedTools.tools.find((tool) => tool.name === 'generate_plan')
     expect(generateTool).toBeDefined()
-    expect(generateTool?.description).toMatch(/^Generation and decision use separate call shapes\./)
+    expect(generateTool?.description).toMatch(/^Create a complete Session Plan for review/)
     expect(generateTool?.description).toContain(
-      'all four top-level fields: task_summary, phases, desired_outputs, and feasibility'
+      'generation with task_summary, phases, desired_outputs, and feasibility'
     )
     expect(generateTool?.description).toContain(
-      'For a decision, submit only decision:"approved" or decision:"rejected"'
+      'decision-only with decision:"approved" or decision:"rejected"'
+    )
+    expect(generateTool?.description).toContain('distinct new Plan supersedes the current Plan')
+    expect(generateTool?.description).toContain('current Plan needs revision')
+    expect(generateTool?.description).toContain('complete revised Plan for fresh review')
+    expect(generateTool?.description).toContain('Do not regenerate merely to report progress')
+    expect(generateTool?.description).toContain(
+      'work, concrete deliverable or finding, and completion check'
     )
     expect(generateTool?.description).toContain('kind:feedback')
     expect(generateTool?.description).toContain('decision:"approved"')
     expect(generateTool?.description).not.toContain(
       'every delegation must include its own non-empty `steps` array'
     )
-    expect(generateTool?.description).toContain('repair each reported path')
-    expect(generateTool?.description).toContain('never resend the same invalid arguments unchanged')
+    expect(generateTool?.description).toContain('Repair every reported validation path')
+    const updateTool = listedTools.tools.find((tool) => tool.name === 'update_step_status')
+    expect(updateTool?.description).toMatch(/^Report observed progress/)
+    expect(updateTool?.description).toContain('Waiting for user input')
+    expect(updateTool?.description).toContain('preserves the current status')
+    expect(updateTool?.description).toContain('Earlier steps in the same delegation')
+    expect(updateTool?.description).toContain('all earlier phases must be completed or skipped')
+    expect(updateTool?.description).toContain('only already-started delegations may continue')
+    expect(updateTool?.description).toContain('without inventing terminal statuses')
     await client.callTool({
       name: 'generate_plan',
       arguments: {
@@ -959,7 +1515,12 @@ describe('Session Plan MCP server', () => {
     })
     expect(stale).toMatchObject({ isError: true })
     expect(JSON.parse((stale as { content: Array<{ text: string }> }).content[0].text)).toEqual({
-      error: { code: 'stale-plan', message: 'A newer Plan is active.' }
+      error: {
+        code: 'stale-plan',
+        message: 'A newer Plan is active.',
+        guidance:
+          'Stop automatic retries. Follow later Session Plan context for the current version and state before making another mutation.'
+      }
     })
 
     await client.close()

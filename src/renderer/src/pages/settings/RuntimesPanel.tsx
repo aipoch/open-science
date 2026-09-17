@@ -1362,12 +1362,14 @@ const RuntimesPanel = ({
                   </Dialog.Close>
                 </div>
 
-                <div className={`${dialogBodyClassName} min-h-0 flex-1 overflow-hidden`}>
-                  <p className={dialogDescriptionClassName}>
+                <div
+                  className={`${dialogBodyClassName} flex min-h-0 flex-1 flex-col overflow-hidden`}
+                >
+                  <p className={cn(dialogDescriptionClassName, 'shrink-0')}>
                     {t('Installed packages in this environment.')}
                   </p>
 
-                  <div className="mt-2 flex flex-wrap items-center gap-2 text-[13px] text-muted-foreground">
+                  <div className="mt-2 flex shrink-0 flex-wrap items-center gap-2 text-[13px] text-muted-foreground">
                     <Badge variant="secondary">{providerType(dialogPackagesEnv, t)}</Badge>
                     {/* Conda env name badge — but only when the provenance badge doesn't already carry
                       it: providerType() returns the "Conda: <name>" label for user-own conda envs, so
@@ -1386,7 +1388,7 @@ const RuntimesPanel = ({
                     <code className="truncate text-xs">{dialogPackagesEnv.interpreterPath}</code>
                   </div>
 
-                  <div className="mt-3 flex items-center gap-3">
+                  <div className="mt-3 flex shrink-0 items-center gap-3">
                     <div className="relative max-w-sm flex-1">
                       <Search
                         aria-hidden="true"
@@ -1419,7 +1421,7 @@ const RuntimesPanel = ({
                     ) : null}
                   </div>
 
-                  <div className="mt-2 max-h-[48vh] min-h-0 overflow-y-auto rounded-md border border-border">
+                  <div className="relative mt-2 max-h-[48vh] min-h-0 flex-1 overflow-y-auto rounded-md border border-border">
                     {packagesError !== null ? (
                       <Notice
                         level="error"

@@ -36,6 +36,7 @@ const originalSettingsActions = (() => {
   const state = useSettingsStore.getState()
   return {
     persistProvider: state.persistProvider,
+    saveValidatedProvider: state.saveValidatedProvider,
     validateProvider: state.validateProvider,
     addCustomServer: state.addCustomServer,
     updateCustomServer: state.updateCustomServer
@@ -2030,11 +2031,50 @@ describe('SettingsPage layout', () => {
     )
   })
 
+  it('tests the current Provider edit without saving and keeps actions outside the scrolling form', async () => {
+    installCustomProviderSnapshot()
+    const validateProvider = vi.fn().mockResolvedValue({ ok: false, category: 'auth' })
+    const saveValidatedProvider = vi.fn()
+    useSettingsStore.setState({ validateProvider, saveValidatedProvider })
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
+    )
+    fireEvent.change(document.body.querySelector<HTMLInputElement>('[aria-label="API key"]')!, {
+      target: { value: 'candidate-key' }
+    })
+    const test = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Test connection'
+    )
+    expect(test).toBeDefined()
+    expect(test?.closest('[data-slot="settings-content-scroll"]')).toBeNull()
+    await act(async () => test?.click())
+    expect(validateProvider).toHaveBeenCalledWith({
+      edit: expect.objectContaining({
+        id: 'custom-messages',
+        key: 'candidate-key',
+        requireExisting: true
+      })
+    })
+    expect(saveValidatedProvider).not.toHaveBeenCalled()
+    expect(document.body.textContent).toContain('Authentication failed. Check the API key.')
+    expect(document.body.textContent).toContain('Changes have not been saved.')
+    expect(document.body.querySelector<HTMLInputElement>('[aria-label="API key"]')?.value).toBe(
+      'candidate-key'
+    )
+    fireEvent.change(document.body.querySelector<HTMLInputElement>('[aria-label="API key"]')!, {
+      target: { value: 'another-key' }
+    })
+    expect(document.body.textContent).not.toContain('Authentication failed. Check the API key.')
+  })
+
   it('blocks Provider save and preserves the draft when a live refresh removes the target', async () => {
     const provider = installCustomProviderSnapshot()
-    const persistProvider = vi.fn().mockResolvedValue(provider.id)
+    const saveValidatedProvider = vi
+      .fn()
+      .mockResolvedValue({ providerId: provider.id, validation: { ok: true, category: 'ok' } })
     useSettingsStore.setState({
-      persistProvider,
+      saveValidatedProvider,
       validateProvider: vi.fn().mockResolvedValue(undefined)
     })
 
@@ -2060,14 +2100,16 @@ describe('SettingsPage layout', () => {
       'replacement-key'
     )
     expect(save?.disabled).toBe(true)
-    expect(persistProvider).not.toHaveBeenCalled()
+    expect(saveValidatedProvider).not.toHaveBeenCalled()
   })
 
   it('keeps a conflicting provider draft and reapplies only edited fields to the latest revision', async () => {
     const provider = installCustomProviderSnapshot()
-    const persistProvider = vi.fn().mockResolvedValue(provider.id)
+    const saveValidatedProvider = vi
+      .fn()
+      .mockResolvedValue({ providerId: provider.id, validation: { ok: true, category: 'ok' } })
     useSettingsStore.setState({
-      persistProvider,
+      saveValidatedProvider,
       validateProvider: vi.fn().mockResolvedValue(undefined)
     })
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
@@ -2092,7 +2134,7 @@ describe('SettingsPage layout', () => {
     )
     await act(async () => button('Reapply my changes to the latest configuration')?.click())
     await act(async () => button('Save')?.click())
-    expect(persistProvider).toHaveBeenCalledWith(
+    expect(saveValidatedProvider).toHaveBeenCalledWith(
       expect.objectContaining({
         baseUrl: 'https://new.example',
         key: 'new-secret',
@@ -2104,9 +2146,11 @@ describe('SettingsPage layout', () => {
 
   it('marks a Provider edit save as requiring the existing target', async () => {
     const provider = installCustomProviderSnapshot()
-    const persistProvider = vi.fn().mockResolvedValue(provider.id)
+    const saveValidatedProvider = vi
+      .fn()
+      .mockResolvedValue({ providerId: provider.id, validation: { ok: true, category: 'ok' } })
     useSettingsStore.setState({
-      persistProvider,
+      saveValidatedProvider,
       validateProvider: vi.fn().mockResolvedValue(undefined)
     })
 
@@ -2120,7 +2164,7 @@ describe('SettingsPage layout', () => {
         ?.click()
     )
 
-    expect(persistProvider).toHaveBeenCalledWith(
+    expect(saveValidatedProvider).toHaveBeenCalledWith(
       expect.objectContaining({ id: provider.id, requireExisting: true })
     )
   })
@@ -2151,14 +2195,35 @@ describe('SettingsPage layout', () => {
     expect(persistProvider).not.toHaveBeenCalled()
   })
 
-  it('reports when post-save Provider validation does not complete', async () => {
-    installCustomProviderSnapshot()
-    const validateProvider = vi.fn().mockRejectedValue(new Error('settings IPC unavailable'))
-    useSettingsStore.setState({
-      persistProvider: vi.fn().mockResolvedValue('custom-messages'),
-      validateProvider
+  it('closes the Provider form when a committed save publishes its new revision before returning', async () => {
+    const provider = installCustomProviderSnapshot()
+    const saveValidatedProvider = vi.fn(async () => {
+      useSettingsStore.setState({ providers: [{ ...provider, configRevision: 1 }] })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      return { providerId: provider.id, validation: { ok: true, category: 'ok' as const } }
     })
+    useSettingsStore.setState({ saveValidatedProvider })
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
+    )
+    await act(async () => {
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent?.trim() === 'Save')
+        ?.click()
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    })
+    expect(document.body.querySelector('[data-slot="provider-form-footer"]')).toBeNull()
+  })
 
+  it('reports a committed Provider save separately from a failed Agent reconnect', async () => {
+    installCustomProviderSnapshot()
+    const saveValidatedProvider = vi.fn().mockResolvedValue({
+      providerId: 'custom-messages',
+      validation: { ok: true, category: 'ok' },
+      runtimeReconnectFailed: true
+    })
+    useSettingsStore.setState({ saveValidatedProvider })
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
     await act(async () =>
       document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
@@ -2168,101 +2233,114 @@ describe('SettingsPage layout', () => {
         .find((button) => button.textContent?.trim() === 'Save')
         ?.click()
     )
-
-    await waitFor(() => {
-      expect(validateProvider).toHaveBeenCalledWith({ providerId: 'custom-messages' })
-      expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
-        'Could not test the provider connection.'
-      )
-    })
+    expect(document.body.querySelector('[data-slot="provider-form-footer"]')).toBeNull()
+    expect(document.body.textContent).toContain(
+      'Provider saved, but the Agent could not reconnect. Your changes do not need to be saved again.'
+    )
+    expect(saveValidatedProvider).toHaveBeenCalledOnce()
   })
 
-  it('ignores an older post-save Provider validation failure', async () => {
-    installCustomProviderSnapshot()
-    let rejectFirstValidation: ((error: Error) => void) | undefined
-    let resolveSecondValidation: (() => void) | undefined
-    const validateProvider = vi
+  it('keeps a rejected save in the form without covering the saved configuration', async () => {
+    const provider = installCustomProviderSnapshot()
+    const saveValidatedProvider = vi
       .fn()
-      .mockImplementationOnce(
-        () =>
-          new Promise<void>((_resolve, reject) => {
-            rejectFirstValidation = reject
-          })
-      )
-      .mockImplementationOnce(
-        () =>
-          new Promise<void>((resolve) => {
-            resolveSecondValidation = resolve
-          })
-      )
-    useSettingsStore.setState({
-      persistProvider: vi.fn().mockResolvedValue('custom-messages'),
-      validateProvider
+      .mockResolvedValue({ validation: { ok: false, category: 'auth' } })
+    const persistProvider = vi.fn()
+    useSettingsStore.setState({ saveValidatedProvider, persistProvider })
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
+    )
+    fireEvent.change(document.body.querySelector<HTMLInputElement>('[aria-label="API key"]')!, {
+      target: { value: 'rejected-key' }
     })
+    await act(async () =>
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent?.trim() === 'Save')
+        ?.click()
+    )
+    expect(saveValidatedProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ key: 'rejected-key', expectedConfigRevision: 0 })
+    )
+    expect(document.body.textContent).toContain('Changes have not been saved.')
+    expect(document.body.querySelector<HTMLInputElement>('[aria-label="API key"]')?.value).toBe(
+      'rejected-key'
+    )
+    expect(useSettingsStore.getState().providers).toContainEqual(provider)
+    expect(persistProvider).not.toHaveBeenCalled()
+  })
 
+  it('does not present a superseded Provider test as a successful connection', async () => {
+    installCustomProviderSnapshot()
+    useSettingsStore.setState({
+      validateProvider: vi.fn().mockResolvedValue({ ok: true, category: 'ok', applied: false })
+    })
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
     await act(async () =>
       document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
     )
     await act(async () =>
       Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
-        .find((button) => button.textContent?.trim() === 'Save')
+        .find((button) => button.textContent?.trim() === 'Test connection')
         ?.click()
     )
-    await waitFor(() => expect(validateProvider).toHaveBeenCalledTimes(1))
-
-    await act(async () =>
-      document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
+    expect(document.body.textContent).not.toContain('Connection succeeded.')
+    expect(document.body.textContent).toContain(
+      'Provider configuration changed. Your draft has not been saved.'
     )
-    await act(async () =>
-      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
-        .find((button) => button.textContent?.trim() === 'Save')
-        ?.click()
-    )
-    await waitFor(() => expect(validateProvider).toHaveBeenCalledTimes(2))
-
-    await act(async () => rejectFirstValidation?.(new Error('stale settings IPC failure')))
-
-    expect(document.body.querySelector('[role="alert"]')?.textContent ?? '').not.toContain(
-      'Could not test the provider connection.'
-    )
-    expect(document.body.textContent).toContain('Testing…')
-
-    await act(async () => resolveSecondValidation?.())
-    await waitFor(() => expect(document.body.textContent).not.toContain('Testing…'))
   })
 
-  it('ignores post-save Provider validation after the provider disappears', async () => {
+  it('ignores a pending test after leaving and reopening the same Provider form', async () => {
     installCustomProviderSnapshot()
-    let rejectValidation: ((error: Error) => void) | undefined
+    let finish: ((result: { ok: boolean; category: 'auth' }) => void) | undefined
     const validateProvider = vi.fn(
       () =>
-        new Promise<never>((_resolve, reject) => {
-          rejectValidation = reject
+        new Promise<{ ok: boolean; category: 'auth' }>((resolve) => {
+          finish = resolve
         })
     )
-    useSettingsStore.setState({
-      persistProvider: vi.fn().mockResolvedValue('custom-messages'),
-      validateProvider
-    })
+    useSettingsStore.setState({ validateProvider })
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
+    )
+    const button = (label: string): HTMLButtonElement | undefined =>
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+        (entry) => entry.textContent?.trim() === label
+      )
+    await act(async () => button('Test connection')?.click())
+    await act(async () => button('Cancel')?.click())
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
+    )
+    await act(async () => finish?.({ ok: false, category: 'auth' }))
+    expect(document.body.textContent).not.toContain('Authentication failed. Check the API key.')
+    expect(button('Test connection')?.disabled).toBe(false)
+  })
 
+  it('ignores a pending test after the saved Provider is deleted', async () => {
+    installCustomProviderSnapshot()
+    let finish: ((result: { ok: boolean; category: 'auth' }) => void) | undefined
+    const validateProvider = vi.fn(
+      () =>
+        new Promise<{ ok: boolean; category: 'auth' }>((resolve) => {
+          finish = resolve
+        })
+    )
+    useSettingsStore.setState({ validateProvider })
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
     await act(async () =>
       document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
     )
     await act(async () =>
       Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
-        .find((button) => button.textContent?.trim() === 'Save')
+        .find((button) => button.textContent?.trim() === 'Test connection')
         ?.click()
     )
-    await waitFor(() => expect(validateProvider).toHaveBeenCalledOnce())
-
     act(() => useSettingsStore.setState({ providers: [] }))
-    await act(async () => rejectValidation?.(new Error('deleted provider validation failure')))
-
-    expect(document.body.querySelector('[role="alert"]')?.textContent ?? '').not.toContain(
-      'Could not test the provider connection.'
-    )
+    await act(async () => finish?.({ ok: false, category: 'auth' }))
+    expect(document.body.textContent).not.toContain('Authentication failed. Check the API key.')
+    expect(document.body.textContent).toContain('This Provider no longer exists.')
   })
 
   it('switches to the General panel and shows the diagnostic log file', async () => {

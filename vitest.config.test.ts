@@ -44,6 +44,20 @@ describe('Vitest discovery boundaries', () => {
       expect.arrayContaining([...VITEST_PORTABLE_CI_EXCLUDE_PATTERNS])
     )
   })
+
+  it('assigns the Plan context Shell sandbox check to the native isolation lanes', () => {
+    const planContextTest = 'src/main/session-plan/plan-context-file.shell.integration.test.ts'
+    const linuxFilesystemTest =
+      'packages/notebook-network-sandbox/src/filesystem-enforcement.integration.test.ts'
+    const normalExcludes = vitestExcludePatternsFor({})
+    const portableExcludes = vitestExcludePatternsFor({ VITEST_PORTABLE_CI: '1' })
+
+    expect(VITEST_PROCESS_TEST_GLOBS).toContain('**/*.integration.test.ts')
+    expect(normalExcludes).not.toContain(planContextTest)
+    expect(normalExcludes).not.toContain(linuxFilesystemTest)
+    expect(portableExcludes).toContain(planContextTest)
+    expect(portableExcludes).toContain(linuxFilesystemTest)
+  })
 })
 
 it('excludes the Electron IPC composition root from coverage', () => {

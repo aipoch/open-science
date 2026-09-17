@@ -736,6 +736,8 @@ const createAcpRuntime = ({
                   notebookRpcServer.setArtifactTurnBinding(sessionId, binding),
                 clearArtifactTurnBinding: (sessionId, ownerExecutionId) =>
                   notebookRpcServer.clearArtifactTurnBinding(sessionId, ownerExecutionId),
+                prepareTurnInputs: (request) =>
+                  notebookRpcServer.prepareNotebookTurnInputs(request),
                 registerTurnInputs: (request) =>
                   notebookRpcServer.registerNotebookTurnInputs(request),
                 peekHandoffContext: peekNotebookHandoffContext
@@ -794,8 +796,8 @@ const createAcpRuntime = ({
           ? {
               plan: {
                 mcpEntryPath,
-                getRpcConnection: ({ sessionId, projectId }) =>
-                  notebookRpcServer.issuePlanConnection(sessionId, projectId),
+                getRpcConnection: ({ sessionId, projectId, replaceExisting }) =>
+                  notebookRpcServer.issuePlanConnection(sessionId, projectId, { replaceExisting }),
                 registerSessionAlias: (aliasSessionId, sessionId) =>
                   notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId),
                 sessions: sessionPersistenceCoordinator,

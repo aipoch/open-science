@@ -5500,7 +5500,9 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       >
         <Dialog.Portal>
           <Dialog.Overlay className={dialogOverlayClassName} />
-          <Dialog.Content className={dialogPanelClassName('w-[min(960px,calc(100vw-2rem))] p-0')}>
+          <Dialog.Content
+            className={dialogPanelClassName('flex w-[min(960px,calc(100vw-2rem))] flex-col p-0')}
+          >
             <div className={dialogHeaderClassName}>
               <div>
                 <Dialog.Title className={dialogTitleClassName}>
@@ -5516,7 +5518,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 </Button>
               </Dialog.Close>
             </div>
-            <div className="max-h-[60vh] space-y-5 overflow-y-auto p-5">
+            <div className="relative min-h-0 max-h-[60vh] space-y-5 overflow-y-auto p-5">
               {mergeError ? <LiteratureErrorNotice tone="amber" title={mergeError} /> : null}
               <LiteratureMergeReview
                 entries={selectedItems}
@@ -5532,7 +5534,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 disabled={isBatching}
               />
             </div>
-            <div className="flex justify-end gap-2 border-t border-border-300/80 px-5 py-4">
+            <div className="flex shrink-0 justify-end gap-2 border-t border-border-300/80 px-5 py-4">
               <Dialog.Close asChild>
                 <Button type="button" variant="outline">
                   {t('Cancel')}
@@ -5593,7 +5595,9 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       >
         <Dialog.Portal>
           <Dialog.Overlay className={dialogOverlayClassName} />
-          <Dialog.Content className={dialogPanelClassName('w-[min(640px,calc(100vw-2rem))] p-0')}>
+          <Dialog.Content
+            className={dialogPanelClassName('flex w-[min(640px,calc(100vw-2rem))] flex-col p-0')}
+          >
             <div className={dialogHeaderClassName}>
               <div>
                 <Dialog.Title className={dialogTitleClassName}>
@@ -5636,6 +5640,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
               </div>
             ) : (
               <LiteratureMetadataEditor
+                className="min-h-0"
                 beforeFields={
                   <LiteratureDuplicatePolicyField
                     value={dialogItemEditor?.duplicatePolicy ?? duplicatePolicy}
@@ -5674,7 +5679,9 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         {selectedCandidate ? (
           <Dialog.Portal>
             <Dialog.Overlay className={dialogOverlayClassName} />
-            <Dialog.Content className={dialogPanelClassName('w-[min(620px,calc(100vw-2rem))] p-0')}>
+            <Dialog.Content
+              className={dialogPanelClassName('flex w-[min(620px,calc(100vw-2rem))] flex-col p-0')}
+            >
               <div className={cn(dialogHeaderClassName, 'px-5 py-3')}>
                 <div className="min-w-0">
                   <Dialog.Title className={cn(dialogTitleClassName, 'truncate')}>
@@ -5699,7 +5706,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                   </Button>
                 </Dialog.Close>
               </div>
-              <div className="max-h-[70vh] divide-y divide-border-300/80 overflow-y-auto px-5 text-sm">
+              <div className="relative min-h-0 max-h-[70vh] divide-y divide-border-300/80 overflow-y-auto px-5 text-sm">
                 {candidateProjectNames(selectedCandidate).length > 0 ? (
                   <p className="py-4 text-sm leading-6 text-muted-foreground">
                     {t('Accepting will link to: {{projects}}', {
@@ -5787,7 +5794,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                   </section>
                 ) : null}
               </div>
-              <div className="flex justify-end gap-2 border-t border-border-300/80 px-5 py-4">
+              <div className="flex shrink-0 justify-end gap-2 border-t border-border-300/80 px-5 py-4">
                 {selectedCandidate.state === 'dismissed' ? (
                   <Button
                     type="button"
@@ -6291,7 +6298,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                       }}
                     />
                   ) : (
-                    <div className="min-h-0 flex-1 divide-y divide-border-300/80 overflow-y-auto px-5 text-sm">
+                    <div className="relative min-h-0 flex-1 divide-y divide-border-300/80 overflow-y-auto px-5 text-sm">
                       {fullCreatorLabel(selectedItem.item) ? (
                         <section className="py-4">
                           <h3 className="font-medium">{t('Authors')}</h3>

@@ -729,6 +729,9 @@ const createApplicationModules = async (
   const settingsService = await modules.add(undefined, () => {
     const capability = new SettingsService({
       repository: settingsRepository,
+      onProviderHealthChanged: async () => {
+        await settingsSnapshotCommits.projectAfter(Promise.resolve())
+      },
       installCoordinator: settingsInstallCoordinator,
       skillRuntimeMcpEntryPath: mainEntryPath,
       openAlexFetch: netFetchStandard,

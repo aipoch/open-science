@@ -322,6 +322,8 @@ const prepareShellLaunchOptions = async (
           options.runtimeRoot,
           workloadCacheEnv
         )
+    if (options.inputRoot) shellEnv.OPEN_SCIENCE_INPUT_DIR = options.inputRoot
+    else delete shellEnv.OPEN_SCIENCE_INPUT_DIR
   } catch (error) {
     throw new ShellPreparationError({
       stdout: '',
@@ -349,7 +351,8 @@ const prepareShellLaunchOptions = async (
           env: baseEnv,
           pathEnvironment: {
             OPEN_SCIENCE_HANDOFF_DIR: options.handoffDir,
-            ...workloadCacheEnv
+            ...workloadCacheEnv,
+            ...(options.inputRoot ? { OPEN_SCIENCE_INPUT_DIR: options.inputRoot } : {})
           },
           cwd: options.cwd,
           commandText: options.command,
@@ -383,7 +386,10 @@ const prepareShellLaunchOptions = async (
               notebookWorkloadCacheRoot(options.runtimeRoot)
             ],
             deniedReadRoots: options.protectedDirs ?? [],
-            deniedWriteRoots: options.protectedDirs ?? []
+            deniedWriteRoots: [
+              ...(options.inputRoot ? [options.inputRoot] : []),
+              ...(options.protectedDirs ?? [])
+            ]
           },
           ...(options.signal ? { signal: options.signal } : {})
         })

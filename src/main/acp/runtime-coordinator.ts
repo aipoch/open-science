@@ -591,9 +591,40 @@ class AcpRuntimeCoordinator {
       return pendingReconciliation.response
     }
     if (pendingReconciliation) this.pendingResumeReconciliations.delete(request.sessionId)
-    const targetedRuntime = request.agentTarget
-      ? this.runtimeForTarget(request.agentTarget)
-      : undefined
+    const target = request.agentTarget
+    const ownerTarget = owner && this.runtimeTargets.get(owner)
+    const reuseCodexSession = Boolean(
+      owner &&
+      !this.retiredRuntimes.has(owner) &&
+      target?.frameworkId === 'codex' &&
+      ownerTarget?.frameworkId === 'codex' &&
+      target.providerId === ownerTarget.providerId &&
+      target.model === ownerTarget.model &&
+      owner.isSessionUsingFramework(request.sessionId, 'codex')
+    )
+    if (reuseCodexSession && owner && target) {
+      await this.waitForSessionDrain(owner, request.sessionId)
+      if (
+        this.findRuntimeForSession(request.sessionId) !== owner ||
+        this.retiredRuntimes.has(owner)
+      ) {
+        throw new Error('ACP session configuration was superseded.')
+      }
+      if (
+        (owner.getSessionReasoningEffort(request.sessionId) ?? ownerTarget?.reasoningEffort) !==
+          target.reasoningEffort &&
+        !(await owner.applySessionReasoningEffortChange(request.sessionId, target.reasoningEffort))
+      ) {
+        throw new Error(
+          'The selected reasoning effort could not be applied to this Codex Session. Retry the change.'
+        )
+      }
+    }
+    const targetedRuntime = reuseCodexSession
+      ? owner
+      : target
+        ? this.runtimeForTarget(target)
+        : undefined
     const runtime =
       targetedRuntime ??
       (owner && !this.retiredRuntimes.has(owner) ? owner : this.getActiveRuntime())
@@ -1228,7 +1259,8 @@ class AcpRuntimeCoordinator {
           actual.frameworkId === expected.frameworkId &&
           actual.providerId === expected.providerId &&
           actual.model === expected.model &&
-          actual.reasoningEffort === expected.reasoningEffort
+          (runtime.getSessionReasoningEffort(request.sessionId) ?? actual.reasoningEffort) ===
+            expected.reasoningEffort
         )
       }
       if (!isCurrent()) return Promise.resolve({ injected: false, reason: 'prompt-required' })

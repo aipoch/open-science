@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util'
 import { BootstrapError } from '../../shared/bootstrap'
 import { ensureCodexAuthHome } from './codex-auth'
 import type {
@@ -9,6 +10,7 @@ import type {
   RefreshProviderModelsRequest,
   RefreshProviderModelsResult,
   UpsertProviderRequest,
+  SaveValidatedProviderResult,
   ValidateProviderRequest,
   ValidateProviderResult,
   XaiOAuthDeviceAuthorization
@@ -241,7 +243,9 @@ class ProviderAccountsModule {
   async upsertProvider(request: UpsertProviderRequest): Promise<void> {
     return this.auth.serializeAccountMutation(() => this.upsertProviderNow(request))
   }
-  private async upsertProviderNow(request: UpsertProviderRequest): Promise<void> {
+  private async prepareProvider(
+    request: UpsertProviderRequest
+  ): Promise<{ provider: StoredProvider; settings: StoredSettings }> {
     assertProviderDraftLimits(request)
     const settings = await this.repository.getSettings()
     if (
@@ -395,6 +399,11 @@ class ProviderAccountsModule {
     if (existing?.lastValidationFailure !== undefined && preserveValidationFailure)
       provider.lastValidationFailure = existing.lastValidationFailure
 
+    return { provider, settings }
+  }
+
+  private async upsertProviderNow(request: UpsertProviderRequest): Promise<void> {
+    const { provider, settings } = await this.prepareProvider(request)
     const editId = request.requireExisting ? request.id : undefined
     if (isClaudeSubscriptionProvider(provider.type)) {
       const outgoingId =
@@ -413,6 +422,72 @@ class ProviderAccountsModule {
     await this.repository.upsertProvider(provider, editId, {
       expectedConfigRevision: request.expectedConfigRevision
     })
+  }
+
+  private async prepareProviderEdit(request: UpsertProviderRequest): Promise<{
+    provider: StoredProvider
+    settings: StoredSettings
+    requireExisting: boolean
+    expectedConfigRevision?: number
+  }> {
+    if (request.type !== 'custom' && request.type !== 'official')
+      throw new Error('Connection testing edits requires an API-key provider.')
+    const prepared = await this.prepareProvider(request)
+    const existing = prepared.settings.providers.find(({ id }) => id === prepared.provider.id)
+    return {
+      ...prepared,
+      requireExisting: Boolean(existing),
+      expectedConfigRevision: existing ? (existing.configRevision ?? 0) : undefined
+    }
+  }
+
+  async saveValidatedProvider(
+    request: UpsertProviderRequest
+  ): Promise<SaveValidatedProviderResult> {
+    const prepared = await this.prepareProviderEdit(request)
+    const saved = prepared.settings.providers.find(({ id }) => id === prepared.provider.id)
+    // Validation metadata can change without a configuration revision. A successful probe of the
+    // same connection must not overwrite a newer health observation while waiting to commit.
+    const expectedValidationState =
+      saved &&
+      this.sameValidationTarget(
+        this.resolveProvider(prepared.provider),
+        this.resolveProvider(saved)
+      )
+        ? {
+            lastValidatedAt: saved.lastValidatedAt,
+            lastValidatedTarget: saved.lastValidatedTarget,
+            lastValidationFailure: saved.lastValidationFailure
+          }
+        : undefined
+    const validation = await this.validateProviderEdit(prepared.provider, prepared.settings)
+    if (!validation.ok) return { validation }
+    if (validation.applied === false)
+      throw new Error(
+        'Provider connection status changed. Your changes have not been saved. Test the connection again.'
+      )
+    const target = targetForValidationResult(validation, validation.testedTarget)
+    const provider = {
+      ...prepared.provider,
+      ...buildProviderValidationPatch(
+        expectedValidationState && saved ? saved : prepared.provider,
+        validation,
+        target
+      )
+    }
+    await this.auth.serializeAccountMutation(async () => {
+      const current = await this.repository.getSettings()
+      const exists = current.providers.some(({ id }) => id === provider.id)
+      if (!prepared.requireExisting && exists)
+        throw new Error('Provider configuration changed. Your draft has not been saved.')
+      assertProviderCapacity(current.providers.length, exists)
+      await this.repository.upsertProvider(
+        provider,
+        prepared.requireExisting ? provider.id : undefined,
+        { expectedConfigRevision: prepared.expectedConfigRevision, expectedValidationState }
+      )
+    })
+    return { validation, providerId: provider.id }
   }
 
   async deleteProvider(
@@ -504,6 +579,22 @@ class ProviderAccountsModule {
     await this.repository.setActiveProvider(id, this.resolveActiveModel(provider, model))
   }
   async validateProvider(request: ValidateProviderRequest): Promise<ValidateProviderResult> {
+    if ([request.providerId, request.draft, request.edit].filter(Boolean).length > 1)
+      throw new Error('Choose exactly one provider validation target.')
+    if (request.edit) {
+      if (request.model !== undefined) throw new Error('Edit validation uses the form model.')
+      const prepared = await this.prepareProviderEdit(request.edit)
+      const result = await this.validateProviderEdit(prepared.provider, prepared.settings)
+      const current = (await this.repository.getSettings()).providers.find(
+        ({ id }) => id === prepared.provider.id
+      )
+      if (
+        prepared.requireExisting &&
+        (!current || (current.configRevision ?? 0) !== prepared.expectedConfigRevision)
+      )
+        return { ...result, applied: false }
+      return result
+    }
     if (request.draft) {
       assertProviderDraftLimits(request.draft)
       if (request.draft.type === 'custom' && request.draft.baseUrl?.trim()) {
@@ -518,6 +609,66 @@ class ProviderAccountsModule {
       return { ok: false, category: 'unknown', message: 'No provider to validate.' }
     }
 
+    return this.validateResolvedProvider(request, settings, resolved)
+  }
+
+  private async validateProviderEdit(
+    candidate: StoredProvider,
+    settings: StoredSettings
+  ): Promise<ValidateProviderResult & { testedTarget: ProviderValidationTarget }> {
+    const provider = this.resolveProvider(candidate)
+    const saved = settings.providers.find(({ id }) => id === candidate.id)
+    // A failure belongs to the saved connection only when the tested input resolves to that exact
+    // connection. Candidate credentials and routes must never change the original account's health.
+    const storedId =
+      saved && this.sameValidationTarget(provider, this.resolveProvider(saved))
+        ? saved.id
+        : undefined
+    const result = await this.validateResolvedProvider(
+      { model: provider.model },
+      settings,
+      { provider, storedId },
+      'definitive-failures'
+    )
+    return {
+      ...result,
+      testedTarget: {
+        model: provider.model,
+        endpoint: preferredEndpoint(
+          provider.apiEndpoints ?? ['anthropic'],
+          this.validationFrameworkEndpoints(provider, settings) ?? [
+            'anthropic',
+            'openai',
+            'responses'
+          ]
+        )
+      }
+    }
+  }
+
+  private validationFrameworkEndpoints(
+    provider: ResolvedProvider,
+    settings: StoredSettings
+  ): readonly ChatApiEndpoint[] | undefined {
+    const framework = getAgentFramework(settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID)
+    const incompatibility = this.frameworkIncompatibilityMessage(provider, framework)
+    return isXaiSubscriptionProvider(provider.type)
+      ? ['responses']
+      : !incompatibility &&
+          framework.id === 'codebuddy' &&
+          requiresChatCompletionsBridge(provider, framework)
+        ? providerEndpoints(provider)
+        : incompatibility || framework.id === 'codex'
+          ? undefined
+          : framework.supportedApiTypes
+  }
+
+  private async validateResolvedProvider(
+    request: ValidateProviderRequest,
+    settings: StoredSettings,
+    resolved: { provider: ResolvedProvider; storedId?: string },
+    healthPolicy: 'all' | 'definitive-failures' = 'all'
+  ): Promise<ValidateProviderResult> {
     const storedValidationTarget = resolved.storedId
       ? settings.providers.find((provider) => provider.id === resolved.storedId)
       : undefined
@@ -563,13 +714,10 @@ class ProviderAccountsModule {
     // (provider, framework) relationship, not an endpoint-health fact. The probe still runs —
     // framework-agnostic, against the provider's own declared routes (same as Codex) — so a
     // passing test stays valid across framework switches; the mismatch rides along as a flag.
-    const validationFrameworkEndpoints = isXaiSubscriptionProvider(resolved.provider.type)
-      ? (['responses'] as const)
-      : !incompatibility && framework.id === 'codebuddy' && usesCompatibilityTransport
-        ? providerEndpoints(resolved.provider)
-        : incompatibility || framework.id === 'codex'
-          ? undefined
-          : framework.supportedApiTypes
+    const validationFrameworkEndpoints = this.validationFrameworkEndpoints(
+      resolved.provider,
+      settings
+    )
     const probeResult =
       xaiAuthResult ??
       authResult ??
@@ -591,10 +739,22 @@ class ProviderAccountsModule {
         }
       : probeResult
 
-    if (!resolved.storedId) return result
-    if (this.providerValidationGenerations.get(resolved.storedId) !== validationGeneration) {
+    if (
+      resolved.storedId &&
+      this.providerValidationGenerations.get(resolved.storedId) !== validationGeneration
+    ) {
       return { ...result, applied: false }
     }
+    if (
+      healthPolicy === 'definitive-failures' &&
+      (result.ok ||
+        !(
+          (result.category === 'auth' && (result.status === 401 || result.status === 403)) ||
+          result.category === 'model-not-found'
+        ))
+    )
+      return result
+    if (!resolved.storedId) return result
 
     const latestSettings = await this.repository.getSettings()
     const stored = latestSettings.providers.find((provider) => provider.id === resolved.storedId)
@@ -645,6 +805,24 @@ class ProviderAccountsModule {
           this.providerValidationGenerations.get(current.id) === validationGeneration &&
           currentSettings.agentFrameworkId === settings.agentFrameworkId &&
           current.keyRef === expectedKeyRef &&
+          (!result.ok ||
+            (current.lastValidatedAt === storedValidationTarget?.lastValidatedAt &&
+              isDeepStrictEqual(
+                current.lastValidatedTarget,
+                storedValidationTarget?.lastValidatedTarget
+              ) &&
+              isDeepStrictEqual(
+                current.lastValidationFailure,
+                storedValidationTarget?.lastValidationFailure
+              ))) &&
+          (healthPolicy !== 'definitive-failures' ||
+            (current.lastValidatedAt === storedValidationTarget?.lastValidatedAt &&
+              !(
+                result.category === 'model-not-found' &&
+                current.lastValidationFailure?.category === 'auth' &&
+                current.lastValidationFailure.target === undefined
+              ))) &&
+          (current.configRevision ?? 0) === (storedValidationTarget?.configRevision ?? 0) &&
           this.sameValidationTarget(resolved.provider, this.resolveProvider(current, currentModel))
         )
       },

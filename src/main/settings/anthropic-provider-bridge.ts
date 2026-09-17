@@ -1,3 +1,7 @@
+import {
+  observeProviderFailure,
+  type ProviderFailureObserver
+} from './provider-failure-observation'
 import type { ServerResponse } from 'node:http'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
@@ -52,6 +56,7 @@ const upstreamOrigin = (baseUrl: string): string | undefined => {
 
 export type AnthropicProviderBridgeTarget = Readonly<{
   id: string
+  onProviderFailure?: ProviderFailureObserver
   baseUrl: string
   key?: string
   model: string
@@ -187,9 +192,8 @@ export class AnthropicProviderBridge {
       return
     }
 
-    const parsed = await request.readJsonObject()
-
     const target = this.target
+    const parsed = await request.readJsonObject()
     const requestedModel = typeof parsed.model === 'string' ? parsed.model : undefined
     const model =
       target.backgroundModel !== undefined && requestedModel === target.backgroundModel
@@ -211,6 +215,7 @@ export class AnthropicProviderBridge {
     }
     const baseUrl = normalizeAnthropicBaseUrl(target.baseUrl)
     if (!baseUrl) throw new Error('The Anthropic provider target has no valid base URL.')
+    const startedAt = Date.now()
     let upstream: Response
     try {
       upstream = await fetchProviderRequest(
@@ -238,6 +243,12 @@ export class AnthropicProviderBridge {
       const upstreamBody = await readBoundedProviderErrorBody(upstream, {
         signal: request.signal
       })
+      await observeProviderFailure(
+        target.onProviderFailure,
+        { model, endpoint: 'anthropic', startedAt },
+        upstream.status,
+        upstreamBody.complete ? upstreamBody.body.toString('utf8') : undefined
+      )
       delete headers['content-encoding']
       if (!upstreamBody.complete) headers['content-type'] = 'application/json'
       const bodyToReplay = upstreamBody.complete

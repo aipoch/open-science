@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 vi.mock('electron', () => ({
+  net: { fetch: (input: string, init?: RequestInit) => globalThis.fetch(input, init) },
   safeStorage: {
     isEncryptionAvailable: () => true,
     encryptString: (plaintext: string) => Buffer.from(`cipher:${plaintext}`, 'utf8'),
@@ -17,6 +18,84 @@ const { SettingsService } = await import('./service')
 const { SettingsRepository } = await import('./repository')
 
 describe('SettingsService provider facade', () => {
+  it('returns updated health without claiming a configuration commit when unchanged saved credentials fail', async () => {
+    await repository.setAgentFramework('opencode')
+    await service.upsertProvider({
+      id: 'gateway',
+      type: 'custom',
+      name: 'Original',
+      baseUrl: 'https://gateway.example/v1',
+      model: 'model-a',
+      key: 'existing-secret',
+      apiEndpoints: ['openai']
+    })
+    const before = (await service.getSettingsView()).providers[0]
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('Forbidden', { status: 403 }))
+    )
+    try {
+      const result = await service.saveValidatedProvider({
+        id: 'gateway',
+        type: 'custom',
+        name: 'Unsaved rename',
+        requireExisting: true
+      })
+      expect(result.providerId).toBeUndefined()
+      expect(result.validation).toMatchObject({
+        ok: false,
+        category: 'auth',
+        status: 403,
+        applied: true
+      })
+      expect(result.snapshot?.providers[0]).toMatchObject({
+        id: before.id,
+        name: before.name,
+        configRevision: before.configRevision,
+        lastValidationFailure: { category: 'auth', status: 403 }
+      })
+      expect(JSON.stringify(result)).not.toContain('existing-secret')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('returns the committed provider identity when snapshot refresh fails', async () => {
+    await repository.setAgentFramework('opencode')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'OK' } }] })
+          )
+      )
+    )
+    vi.spyOn(service, 'getSettingsView').mockRejectedValueOnce(new Error('Snapshot unavailable'))
+    try {
+      const result = await service.saveValidatedProvider({
+        type: 'custom',
+        name: 'Gateway',
+        baseUrl: 'https://gateway.example/v1',
+        model: 'test-model',
+        key: 'synthetic-key',
+        apiEndpoints: ['openai']
+      })
+      expect(result).toMatchObject({ validation: { ok: true }, providerId: expect.any(String) })
+      expect(result.snapshot).toBeUndefined()
+      const restored = new SettingsService({
+        repository: new SettingsRepository(dir),
+        configRoot: dir
+      })
+      expect((await restored.getSettingsView()).providers).toEqual([
+        expect.objectContaining({ id: result.providerId, name: 'Gateway' })
+      ])
+      expect(JSON.stringify(result)).not.toContain('synthetic-key')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it.each([
     { framework: 'claude-code', endpoint: 'anthropic', route: 'claude-anthropic' },
     { framework: 'opencode', endpoint: 'openai', route: 'opencode-openai' },

@@ -493,6 +493,8 @@ Active-dialog menus and other foreground child layers retain their own ordering.
 
 ### Dialog / AlertDialog
 
+- Choose one main scroll owner per dialog. Simple forms may scroll the whole panel. A structured dialog with fixed header/footer uses a constrained flex column, a `min-h-0` scrolling body, and non-shrinking header/footer; body viewport caps must still shrink within the remaining panel height. Keep intentionally bounded lists and text inputs independently scrollable.
+- Scroll viewports containing absolutely positioned descendants (including `sr-only` file inputs) must establish their own containing block with `relative`. Otherwise those descendants can extend an ancestor's scroll range and produce a second scrollbar. Verify actual overflow and access to the final content; hiding the outer scrollbar alone is insufficient.
 - Use `Dialog` for regular form dialogs.
 - Use `AlertDialog` for destructive confirmations, except the dedicated Skill and Connector batch management review described below. Those secondary pages use an explicitly non-modal review in their bottom action dock; ordinary per-resource deletion remains an `AlertDialog`.
 - Medium `DialogContent`: `sm:max-w-[576px] max-h-[85svh] overscroll-contain rounded-xl border bg-background p-0 shadow-lg`; target size is approximately `576px x 612px`.

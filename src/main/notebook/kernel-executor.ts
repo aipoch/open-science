@@ -1032,7 +1032,10 @@ class NotebookKernelExecutor implements NotebookExecutor {
               ...(request.runtimeRoot ? [notebookWorkloadCacheRoot(request.runtimeRoot)] : [])
             ]),
             deniedReadRoots: request.protectedDirs ?? [],
-            deniedWriteRoots: request.protectedDirs ?? []
+            deniedWriteRoots: presentPaths([
+              request.inputRoot ?? '',
+              ...(request.protectedDirs ?? [])
+            ])
           }
         })
       : undefined

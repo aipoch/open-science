@@ -24,6 +24,58 @@ afterEach(() => {
 })
 
 describe('native Responses compatibility', () => {
+  it('attributes a delayed rejection to the request target before retargeting', async () => {
+    const originalObserver = vi.fn()
+    const nextObserver = vi.fn()
+    let complete!: (response: Response) => void
+    let accept!: () => void
+    const accepted = new Promise<void>((resolve) => {
+      accept = resolve
+    })
+    const bridge = new NativeResponsesCompatibilityProxy(
+      {
+        baseUrl: 'https://original.example/v1',
+        model: 'original-model',
+        onProviderFailure: originalObserver
+      },
+      async () => {
+        accept()
+        return new Promise((resolve) => {
+          complete = resolve
+        })
+      }
+    )
+    const connection = await bridge.start()
+    try {
+      const pending = fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ model: 'ignored', input: 'hello' })
+      })
+      await accepted
+      bridge.setTarget({
+        baseUrl: 'https://next.example/v1',
+        model: 'next-model',
+        onProviderFailure: nextObserver
+      })
+      complete(Response.json({ error: { type: 'authentication_error' } }, { status: 401 }))
+      expect((await pending).status).toBe(400)
+      expect(originalObserver).toHaveBeenCalledExactlyOnceWith({
+        category: 'auth',
+        status: 401,
+        model: 'original-model',
+        endpoint: 'responses',
+        startedAt: expect.any(Number)
+      })
+      expect(nextObserver).not.toHaveBeenCalled()
+    } finally {
+      await bridge.close()
+    }
+  })
+
   it.each([
     ['JSON', 'application/json', JSON.stringify({ id: 'response', output: [] })],
     ['binary', 'application/octet-stream', 'binary']
@@ -211,6 +263,7 @@ describe('native Responses compatibility', () => {
   })
 
   it('replays an identical deterministic provider error without a second upstream request', async () => {
+    const onProviderFailure = vi.fn()
     const fetchImpl = vi.fn(async () =>
       Response.json(
         { error: { type: 'authentication_error', message: 'Incorrect API key provided' } },
@@ -218,7 +271,12 @@ describe('native Responses compatibility', () => {
       )
     )
     const proxy = new NativeResponsesCompatibilityProxy(
-      { baseUrl: 'https://provider.example.test/v1', key: 'wrong-key', model: 'model-a' },
+      {
+        baseUrl: 'https://provider.example.test/v1',
+        key: 'wrong-key',
+        model: 'model-a',
+        onProviderFailure
+      },
       fetchImpl
     )
     const connection = await proxy.start()
@@ -243,6 +301,13 @@ describe('native Responses compatibility', () => {
         error: { type: 'authentication_error', message: 'Incorrect API key provided' }
       })
       expect(fetchImpl).toHaveBeenCalledOnce()
+      expect(onProviderFailure).toHaveBeenCalledExactlyOnceWith({
+        startedAt: expect.any(Number),
+        category: 'auth',
+        status: 401,
+        model: 'model-a',
+        endpoint: 'responses'
+      })
     } finally {
       await proxy.close()
     }

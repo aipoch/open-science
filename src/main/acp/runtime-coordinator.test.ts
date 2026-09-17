@@ -265,7 +265,21 @@ const createFakeRuntime = (options: {
     }
   )
   const sendAppContinuation = vi.fn(runPrompt)
+  const sessionEfforts = new Map<
+    string,
+    import('../../shared/reasoning-effort').ResolvedReasoningEffort
+  >()
   const runtime = {
+    getSessionReasoningEffort: (id: string) => sessionEfforts.get(id),
+    applySessionReasoningEffortChange: vi.fn(
+      async (
+        id: string,
+        effort: import('../../shared/reasoning-effort').ResolvedReasoningEffort
+      ) => {
+        sessionEfforts.set(id, effort)
+        return true
+      }
+    ),
     getSnapshot: () => snapshot,
     getState: () => toAcpStateCommandResponse({ ...snapshot, revision: 0 }).result,
     getActivePromptSessions: () => options.activePromptSessions ?? [],
@@ -393,6 +407,95 @@ const createFakeRuntime = (options: {
 }
 
 describe('AcpRuntimeCoordinator', () => {
+  it.each([false, true])(
+    'updates Codex effort on the existing writer (draining: %s)',
+    async (draining) => {
+      const created: ReturnType<typeof createFakeRuntime>[] = []
+      const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+        const fake = createFakeRuntime({
+          frameworkId: 'codex',
+          sessionIds: ['thread-1'],
+          callbacks,
+          beforeResume: async () => {
+            if (writer && writer !== fake) throw new Error('already has an active writer')
+          }
+        })
+        created.push(fake)
+        return fake.runtime
+      })
+      const target = {
+        frameworkId: 'codex',
+        providerId: 'subscription',
+        model: 'gpt-6-astra',
+        reasoningEffort: 'xhigh'
+      } as const
+      const session = await coordinator.createSession({
+        agentTarget: target,
+        projectId: 'project-a'
+      })
+      const count = created.length
+      const owner = created.at(-1)!
+      const writer = owner
+      if (draining)
+        owner.emitState({ promptInFlight: true, promptInFlightSessionIds: [session.sessionId] })
+      const change = coordinator.resumeSession({
+        sessionId: session.sessionId,
+        cwd: '/workspace',
+        agentTarget: { ...target, reasoningEffort: 'high' }
+      })
+      void change.catch(() => undefined)
+      if (draining) {
+        await new Promise((resolve) => setTimeout(resolve, 0))
+        expect(owner.runtime.applySessionReasoningEffortChange).not.toHaveBeenCalled()
+        owner.emitState({ promptInFlight: false, promptInFlightSessionIds: [] })
+      }
+      await change
+      expect(created).toHaveLength(count)
+      expect(owner.runtime.applySessionReasoningEffortChange).toHaveBeenCalledWith(
+        'thread-1',
+        'high'
+      )
+      expect(owner.disconnect).not.toHaveBeenCalled()
+      expect(owner.deleteSession).not.toHaveBeenCalled()
+      await coordinator.resumeSession({
+        sessionId: session.sessionId,
+        cwd: '/workspace',
+        agentTarget: target
+      })
+      expect(created).toHaveLength(count)
+      expect(owner.runtime.getSessionReasoningEffort('thread-1')).toBe('xhigh')
+    }
+  )
+
+  it('keeps the existing Codex writer when a live effort update is rejected', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({ frameworkId: 'codex', sessionIds: ['thread-1'], callbacks })
+      created.push(fake)
+      return fake.runtime
+    })
+    const target = {
+      frameworkId: 'codex',
+      providerId: 'subscription',
+      model: 'gpt-6-astra',
+      reasoningEffort: 'xhigh'
+    } as const
+    const session = await coordinator.createSession({ agentTarget: target })
+    const count = created.length
+    const owner = created.at(-1)!
+    vi.mocked(owner.runtime.applySessionReasoningEffortChange).mockResolvedValueOnce(false)
+    await expect(
+      coordinator.resumeSession({
+        sessionId: session.sessionId,
+        cwd: '/workspace',
+        agentTarget: { ...target, reasoningEffort: 'high' }
+      })
+    ).rejects.toThrow('could not be applied')
+    expect(created).toHaveLength(count)
+    expect(owner.resumeSession).not.toHaveBeenCalled()
+    expect(owner.disconnect).not.toHaveBeenCalled()
+  })
+
   it('lazily recreates a runtime for cold Session Plan operations after retirement', async () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
     const coordinator = new AcpRuntimeCoordinator((callbacks) => {

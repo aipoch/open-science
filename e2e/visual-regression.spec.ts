@@ -60,7 +60,9 @@ const pinConversationToEnd = async (page: Page): Promise<void> => {
         (element) => element.scrollHeight - element.clientHeight - element.scrollTop
       )
     })
-    .toBeLessThanOrEqual(1)
+    // Chromium can leave a 1.5 CSS-pixel remainder at this device scale factor even after
+    // scrollTo(scrollHeight). Allow only that subpixel rounding, not a visibly unpinned viewport.
+    .toBeLessThanOrEqual(1.5)
 }
 
 const expectStableScreenshot = async (

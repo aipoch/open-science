@@ -669,6 +669,7 @@ jobs:
           npx vitest run --project process
           packages/notebook-network-sandbox/src/filesystem-enforcement.integration.test.ts
           packages/notebook-network-sandbox/src/network-enforcement.integration.test.ts
+          src/main/session-plan/plan-context-file.shell.integration.test.ts
 
   windows_core:
     name: Windows core
@@ -1126,8 +1127,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Browser-only plans need the complete browser suite on shard 1, not idle native shards.
-        shard: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_browser_windows') && !contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_functional_windows') && !contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_workspace_windows') && fromJSON('[1]') || fromJSON('[1,2,3]') }}
+        shard: [1, 2, 3]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1149,19 +1149,17 @@ jobs:
         shell: bash
         run: node scripts/ci/e2e-setup-snapshot.mjs restore "$RUNNER_TEMP/e2e-setup"
       - name: Install headless Chromium
-        if: ${{ matrix.shard == 1 }}
         run: npx playwright install chromium --only-shell
       - name: Run renderer layout pilot
         id: renderer_layout
-        if: ${{ matrix.shard == 1 }}
         continue-on-error: true
         env:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/renderer-layout-windows
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/renderer-layout-windows.json
-        # NetLog traced blank fixtures to Windows WSAENOBUFS during parallel asset connects.
-        # One worker needs the combined budget of the former two-worker suite.
+        # NetLog traced blank fixtures to Windows WSAENOBUFS after hundreds of asset reloads.
+        # Keep each browser process serialized and cap its loopback socket churn with runner shards.
         shell: node scripts/ci/run-windows-browser-diagnostics.mjs {0}
-        run: npm run test:e2e:browser -- --workers=1 --fail-on-flaky-tests --global-timeout=600000
+        run: npm run test:e2e:browser -- --workers=1 --fail-on-flaky-tests --global-timeout=420000 --shard=${{ matrix.shard }}/3
       - name: Run functional journeys
         id: e2e_functional_windows
         if: ${{ steps.setup.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_functional_windows') }}
@@ -1235,7 +1233,6 @@ jobs:
         if: ${{ always() }}
         shell: bash
         env:
-          E2E_SHARD: ${{ matrix.shard }}
           RENDERER_LAYOUT_OUTCOME: ${{ steps.renderer_layout.outcome }}
           SETUP_OUTCOME: ${{ steps.setup.outcome }}
           E2E_ACCESSIBILITY_OUTCOME: ${{ steps.e2e_accessibility_windows.outcome }}
@@ -1250,9 +1247,8 @@ jobs:
               failed=1
             fi
           }
-          check renderer_layout "$RENDERER_LAYOUT_OUTCOME"
-          if [[ "$E2E_SHARD" == "1" && "$RENDERER_LAYOUT_OUTCOME" != "success" ]]; then
-            echo "Required Windows browser suite did not succeed" >&2
+          if [[ "$RENDERER_LAYOUT_OUTCOME" != "success" ]]; then
+            echo "Required Windows browser suite ended with ${RENDERER_LAYOUT_OUTCOME:-no outcome}" >&2
             failed=1
           fi
           check setup "$SETUP_OUTCOME"
