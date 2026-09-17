@@ -1167,6 +1167,12 @@ class ElectronAppHarness implements ElectronApp {
   async restartAfterCrash(): Promise<Page> {
     const application = this.application
     if (!application) throw new Error('No Electron process is available to terminate.')
+    console.error('Electron crash target', {
+      launcherPid: application.process().pid,
+      launcherExitCode: application.process().exitCode,
+      launcherSignalCode: application.process().signalCode,
+      mainPid: await application.evaluate(() => process.pid)
+    })
     const result = await terminateProcessTree(application.process(), undefined, console)
     if (!result.reaped) throw new Error('Electron crash simulation did not reap the process tree.')
     this.resourceProfiler?.detach(application)
