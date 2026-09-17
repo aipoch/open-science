@@ -81,7 +81,11 @@ describe('PR Gate workflow', () => {
       )?.run
       const script = command?.match(/^npm run (\S+)/)?.[1]
       expect(script, `${platform} functional lane must invoke a registered script`).toBeDefined()
-      for (const spec of ['e2e/session-package.spec.ts', 'e2e/session-package-drop.spec.ts'])
+      for (const spec of [
+        'e2e/session-package.spec.ts',
+        'e2e/session-package-drop.spec.ts',
+        'e2e/session-fork.spec.ts'
+      ])
         expect(
           scripts[script!]?.split(/\s+/),
           `${platform} must exercise Session packages`

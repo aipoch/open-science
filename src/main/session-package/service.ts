@@ -528,7 +528,14 @@ export class SessionPackageService {
         excludedFiles: [...manifest.excludedFiles, ...additional]
       }
       assertNoExcludedContentCopies(records, forwarded.excludedFiles, forwarded.inventory)
-      const staging = await mkdtemp(join(tmpdir(), 'open-science-package-forward-'))
+      // Fork transfers this snapshot into its publication journal with rename. Keep both
+      // sides on the data volume, which may differ from the operating system temp volume.
+      const staging = await mkdtemp(
+        join(
+          options.consumeSnapshot ? this.options.storageRoot : tmpdir(),
+          'open-science-package-forward-'
+        )
+      )
       return withPackageCleanup(
         async () => {
           await assertPackageCapacity(
@@ -709,7 +716,12 @@ export class SessionPackageService {
       throw new Error('Invalid package content selection.')
     validateExcludedFiles(records, excludedFiles)
     if (!options.consumeSnapshot) await assertShareable(sharedSession, this.signal)
-    const directory = await mkdtemp(join(tmpdir(), 'open-science-package-export-'))
+    const directory = await mkdtemp(
+      join(
+        options.consumeSnapshot ? this.options.storageRoot : tmpdir(),
+        'open-science-package-export-'
+      )
+    )
     return withPackageCleanup(
       async () => {
         if (!options.consumeSnapshot) await assertShareable(records, this.signal)

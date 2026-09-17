@@ -16,8 +16,9 @@ import {
 } from '../../shared/conversation-graph'
 import * as storageRoots from '../storage-root'
 import { afterEach, expect, it, vi } from 'vitest'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import { stat, readFile, rm, mkdir, writeFile } from 'node:fs/promises'
+import * as fileSystem from 'node:fs/promises'
 import {
   createProvenanceTestFixture,
   createArtifactVersionRequest
@@ -38,6 +39,9 @@ import { preserveImportedSession } from '../session-persistence/imported-session
 vi.mock('electron', () => ({
   app: { getPath: () => '/home/user', isPackaged: true },
   safeStorage: { isEncryptionAvailable: () => false }
+}))
+vi.mock('node:fs/promises', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('node:fs/promises')>())
 }))
 const fixtures: Awaited<ReturnType<typeof createProvenanceTestFixture>>[] = []
 afterEach(async () => {
@@ -122,6 +126,37 @@ const setup = async (): Promise<{
   })
   return { fixture, repository, service }
 }
+
+it.each(['local', 'imported'] as const)(
+  'forks a %s Session when the data folder is on a different volume from temporary files',
+  async (sourceKind) => {
+    const { fixture, repository, service } = await setup()
+    let source = { projectId: 'project-1', sessionId: 'session-1' }
+    if (sourceKind === 'imported') {
+      const archive = join(fixture.storageRoot, 'source.science')
+      await service.exportTo(source, archive)
+      source = await service.importFrom(archive, undefined, undefined, undefined, {
+        projectId: source.projectId
+      })
+    }
+    const originalRename = fileSystem.rename
+    const dataPrefix = fixture.storageRoot + sep
+    vi.spyOn(fileSystem, 'rename').mockImplementation(async (from, to) => {
+      if (String(to).startsWith(dataPrefix) && !String(from).startsWith(dataPrefix)) {
+        throw Object.assign(new Error('Cross-device link not permitted'), { code: 'EXDEV' })
+      }
+      return originalRename(from, to)
+    })
+
+    const child = await service.fork(source)
+    expect(
+      (await repository.loadSession(child.projectId, child.sessionId))?.forkOrigin
+    ).toBeTruthy()
+    expect(await fileSystem.readdir(fixture.storageRoot)).not.toEqual(
+      expect.arrayContaining([expect.stringMatching(/^open-science-package-(?:export|forward)-/)])
+    )
+  }
+)
 
 it('forks all branches with fresh identities, independent files, replay and no Side Chat', async () => {
   const { fixture, repository, service } = await setup()

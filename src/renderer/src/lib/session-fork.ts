@@ -13,6 +13,7 @@ let forking = false
 export const forkSession = async (session: { id: string; projectId: string }): Promise<void> => {
   let ownsAttempt = false
   const previousId = usePackageOperationStore.getState().operation?.id
+  const navigationRevision = useNavigationStore.getState().explicitNavigationRevision
   try {
     if (!sessionForkAvailable()) throw new Error(i18n.t('Fork is available in the desktop app.'))
     if (forking || packageOperationActive(usePackageOperationStore.getState().operation)) {
@@ -28,7 +29,7 @@ export const forkSession = async (session: { id: string; projectId: string }): P
       projectId: session.projectId,
       sessionId: session.id
     })
-    if (result) {
+    if (result && useNavigationStore.getState().explicitNavigationRevision === navigationRevision) {
       useNavigationStore.getState().openSession(result.projectId, result.sessionId, 'user')
       if (!usePackageOperationStore.getState().operation?.cleanupPending)
         usePackageOperationStore.getState().setOpen(false)

@@ -39,3 +39,9 @@ Upstream immutable inputs remain read-only evidence. Child-owned writable files 
 Source identity-map keys are opaque graph/runtime identifiers, not paths. Receipt creation validates the same schema as recovery; generated destination identities remain path-safe. Legacy compatibility does not bypass checksum or ownership validation.
 
 Already-versioned package copies have no local pre-upgrade image. Save guards require matching durable copy provenance before exempting them from historical upgrade-backup requirements; ordinary local Sessions still require their original backups. The Session repository suite covers both paths.
+
+## Review regressions
+
+Fork snapshot staging stays on the configured data volume before journal publication, so local and imported Sessions can fork when the operating system temporary directory is on another volume. The Fork suite simulates an `EXDEV` boundary and verifies publication and temporary-directory cleanup for both source kinds; it does not substitute for native filesystem testing on every platform.
+
+Fork completion respects navigation that occurred while copying. Renderer tests cover deferred completion after explicit navigation and preservation of pending cleanup. The desktop Fork lifecycle is included in `test:e2e:journey` for macOS and Windows, with a workflow contract test retaining that registration.
