@@ -58,7 +58,9 @@
         "packages/notebook-network-sandbox/vendor/windows/arm64/notebook-appcontainer-host.exe",
         "packages/notebook-network-sandbox/vendor/windows/build.mjs",
         "packages/notebook-network-sandbox/vendor/windows/x64/notebook-appcontainer-host.exe",
-        "packages/notebook-network-sandbox/vendor/wsl2/manifest.json"
+        "packages/notebook-network-sandbox/vendor/wsl2/manifest.json",
+        "packages/notebook-network-sandbox/src/config-root.ts",
+        "packages/notebook-network-sandbox/src/installed-package.test.ts"
       ],
       "interfacePaths": [
         "packages/notebook-network-sandbox/src/index.ts",
@@ -67,7 +69,8 @@
         "packages/notebook-network-sandbox/runtime/src/platform/filesystem-layout.ts",
         "packages/notebook-network-sandbox/runtime/src/platform/windows-appcontainer.ts",
         "packages/notebook-network-sandbox/src/config.ts",
-        "packages/notebook-network-sandbox/vendor/wsl2/manifest.json"
+        "packages/notebook-network-sandbox/vendor/wsl2/manifest.json",
+        "packages/notebook-network-sandbox/src/config-root.ts"
       ],
       "consumerModules": [],
       "testFiles": {
@@ -92,7 +95,8 @@
           "packages/notebook-network-sandbox/src/windows-r-startup.integration.test.ts",
           "packages/notebook-network-sandbox/src/windows-runtime-access.test.ts",
           "packages/notebook-network-sandbox/src/wsl2-isolation.integration.test.ts",
-          "packages/notebook-network-sandbox/src/wsl2-isolation.test.ts"
+          "packages/notebook-network-sandbox/src/wsl2-isolation.test.ts",
+          "packages/notebook-network-sandbox/src/installed-package.test.ts"
         ],
         "contract": [],
         "consumer": [
@@ -408,7 +412,92 @@
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
           "src/main/settings/skill-catalog.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/storage-root.test.ts",
+          "src/main/storage/brand-location.test.ts",
+          "src/main/storage/electron-profile.test.ts",
+          "src/main/compute/ipc.test.ts",
+          "src/main/projects/preview-repository.test.ts",
+          "src/main/session-persistence/projection.test.ts",
+          "src/main/session-persistence/repository-queue.test.ts",
+          "src/main/session-persistence/repository.test.ts",
+          "src/main/storage/migration-target-race.test.ts",
+          "src/main/storage/normalize-legacy-paths.test.ts",
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
+          "src/main/storage/data-path.test.ts",
+          "src/main/session-persistence/data-path-roundtrip.test.ts",
+          "src/main/notebook/provisioner.startup.test.ts",
+          "src/main/session-persistence/compute-policy.test.ts",
+          "src/renderer/src/lib/session-persistence/session-persistence.test.ts",
+          "src/main/compute/compute-password-auth.release.test.ts",
+          "src/main/compute/concurrency-integration.test.ts",
+          "src/main/compute/job-dispatcher.test.ts",
+          "src/main/compute/job-recovery-regressions.integration.test.ts",
+          "src/main/compute/job-repository.test.ts",
+          "src/main/compute/compute-job-cancellation-owner.integration.test.ts",
+          "src/main/compute/slurm.real-ssh.integration.test.ts",
+          "src/main/compute/job-runtime.test.ts",
+          "src/main/compute/ambiguous-dispatch-recovery.integration.test.ts",
+          "src/main/compute/compute-jobs.integration.test.ts",
+          "src/main/compute/compute-service.test.ts",
+          "src/main/compute/job-poll-protocol.integration.test.ts",
+          "src/main/compute/skill-provisioning.test.ts",
+          "src/main/compute/ssh-runner.test.ts",
+          "src/main/compute/agent-compute-service.test.ts",
+          "src/main/compute/compute-password-auth.real-ssh.integration.test.ts",
+          "src/main/compute/job-notifier.integration.test.ts",
+          "src/main/compute/job-poller.test.ts",
+          "src/main/compute/job-deletion-owner.test.ts",
+          "src/main/notebook/run-document-data-paths.test.ts",
+          "src/main/local-models/owner.test.ts",
+          "src/main/compute/application-commands.test.ts",
+          "src/main/acp/create-session-workflow.test.ts",
+          "src/main/acp/managed-session-workspace.test.ts",
+          "src/main/acp/task-agent-port.test.ts",
+          "src/main/acp/handler-workflows.test.ts",
+          "src/main/notebook/external-r-library.test.ts",
+          "src/main/notebook/native-lock-restoration.test.ts",
+          "src/main/notebook/package-manager.test.ts",
+          "src/main/notebook/package-operations.test.ts",
+          "src/main/notebook/pip-install-evidence.test.ts",
+          "src/main/notebook/provisioner.test.ts",
+          "src/main/notebook/restored-environment-verification.test.ts",
+          "scripts/stage-default-envs.test.ts",
+          "src/main/notebook/bundle-local.test.ts",
+          "src/main/notebook/env-ipc.test.ts",
+          "src/main/notebook/environment-lifecycle-workflows.test.ts",
+          "src/main/notebook/environment-operation-foundation.test.ts",
+          "src/main/notebook/language-pack-fetch.test.ts",
+          "src/main/notebook/provisioner.upgrade.test.ts",
+          "src/main/notebook/recovery-coordinator.test.ts",
+          "src/main/notebook/runtime-repair.test.ts",
+          "src/main/notebook/application-commands.test.ts",
+          "src/main/application-event-flow.test.ts",
+          "src/main/notebook/environment-lock.test.ts",
+          "src/main/notebook/external-environment-lock.test.ts",
+          "src/main/notebook/pip-wheel-evidence.test.ts",
+          "src/main/notebook/dependency-analysis.r-plot-repro.test.ts",
+          "src/main/notebook/environment-state-tracker.test.ts",
+          "src/main/artifacts/artifact-reproducibility-receipts.test.ts",
+          "src/main/artifacts/artifact-reproducibility-recipe.test.ts",
+          "src/main/artifacts/provenance-snapshot-decoder.test.ts",
+          "src/main/notebook/cross-turn-input-repro.integration.test.ts",
+          "src/main/notebook/working-file-observer.test.ts",
+          "src/main/artifacts/provenance-analysis-revision.test.ts",
+          "src/renderer/src/pages/workspace/ArtifactProvenancePanel.render.test.tsx",
+          "src/main/artifacts/artifact-reproducibility-export.test.ts",
+          "src/main/notebook/package-process-sandbox.test.ts",
+          "src/main/notebook/package-mutation.test.ts",
+          "src/main/notebook/package-admission.test.ts",
+          "src/main/notebook/environment-management.test.ts",
+          "src/main/notebook/local-rpc-notebook-adapter.test.ts",
+          "src/main/notebook/micromamba.test.ts",
+          "src/main/notebook/runtime-relocation.test.ts",
+          "src/main/notebook/package-listing.test.ts",
+          "src/main/notebook/runtime-application-commands.test.ts",
+          "src/main/notebook/runtime-ipc.test.ts",
+          "src/main/notebook/runtime-workflows.test.ts",
+          "src/main/notebook/windows-micromamba-runner.test.ts"
         ]
       },
       "capabilityOverlays": [],
@@ -752,7 +841,8 @@
           "src/renderer/src/stores/settings-store.test.ts",
           "src/renderer/web/bootstrap.test.ts",
           "src/renderer/web/renderer-argument-shape-characterization.test.ts",
-          "src/renderer/src/lib/session-fork.test.ts"
+          "src/renderer/src/lib/session-fork.test.ts",
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx"
         ]
       },
       "capabilityOverlays": ["renderer_state"],
@@ -1743,7 +1833,10 @@
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
           "src/main/settings/skill-catalog.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/storage/brand-location.test.ts",
+          "src/main/storage/migration-target-race.test.ts",
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx"
         ]
       },
       "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
@@ -2285,7 +2378,10 @@
           "src/renderer/web/renderer-argument-shape-characterization.test.ts",
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/storage/brand-location.test.ts",
+          "src/main/storage/migration-target-race.test.ts",
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx"
         ]
       },
       "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
@@ -2913,7 +3009,13 @@
           "src/renderer/src/stores/settings-connectors-slice.test.ts",
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/storage/brand-location.test.ts",
+          "src/main/credential-identity/persistence.test.ts",
+          "src/main/credential-identity/ciphertext-inventory.test.ts",
+          "src/main/credential-identity/linux.test.ts",
+          "src/main/storage/migration-target-race.test.ts",
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx"
         ]
       },
       "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
@@ -2936,7 +3038,9 @@
         "src/main/settings/mirror-settings.test.ts",
         "src/main/settings/provider-token-limits.test.ts",
         "src/main/settings/record-codec.test.ts",
-        "src/main/settings/repository.test.ts"
+        "src/main/settings/repository.test.ts",
+        "src/main/settings/document-read-error.ts",
+        "src/main/settings/document-shape.ts"
       ],
       "interfacePaths": [
         "src/main/settings/repository.ts",
@@ -3146,7 +3250,12 @@
           "src/renderer/src/stores/locale-preference-recovery.render.test.tsx",
           "src/renderer/src/stores/runtime-settings-store.test.ts",
           "src/shared/renderer-surface-inventory.test.ts",
-          "src/shared/renderer-surface-matrix.test.ts"
+          "src/shared/renderer-surface-matrix.test.ts",
+          "src/main/credential-identity/ciphertext-inventory.test.ts",
+          "src/main/credential-identity/linux.test.ts",
+          "src/main/credential-identity/persistence.test.ts",
+          "src/main/storage/brand-location.test.ts",
+          "src/main/storage/ipc.test.ts"
         ]
       },
       "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
@@ -3654,7 +3763,13 @@
           "src/renderer/src/stores/settings-connectors-slice.test.ts",
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/storage/brand-location.test.ts",
+          "src/main/credential-identity/persistence.test.ts",
+          "src/main/credential-identity/ciphertext-inventory.test.ts",
+          "src/main/credential-identity/linux.test.ts",
+          "src/main/storage/migration-target-race.test.ts",
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx"
         ]
       },
       "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
@@ -4163,7 +4278,13 @@
           "src/renderer/src/stores/settings-connectors-slice.test.ts",
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/storage/brand-location.test.ts",
+          "src/main/credential-identity/persistence.test.ts",
+          "src/main/credential-identity/ciphertext-inventory.test.ts",
+          "src/main/credential-identity/linux.test.ts",
+          "src/main/storage/migration-target-race.test.ts",
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx"
         ]
       },
       "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
@@ -4600,7 +4721,10 @@
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
           "src/main/settings/skill-catalog.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/storage/brand-location.test.ts",
+          "src/main/storage/migration-target-race.test.ts",
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx"
         ]
       },
       "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
@@ -5055,7 +5179,10 @@
           "src/renderer/src/pages/workspace/previews/preview-pagination-contract.test.tsx",
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/storage/brand-location.test.ts",
+          "src/main/storage/migration-target-race.test.ts",
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx"
         ]
       },
       "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
@@ -5348,7 +5475,10 @@
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
           "src/main/settings/skill-catalog.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/storage/brand-location.test.ts",
+          "src/main/storage/migration-target-race.test.ts",
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx"
         ]
       },
       "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
@@ -5877,7 +6007,10 @@
           "src/renderer/web/bootstrap.test.ts",
           "src/renderer/web/renderer-argument-shape-characterization.test.ts",
           "src/main/settings/skill-catalog.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/storage/brand-location.test.ts",
+          "src/main/storage/migration-target-race.test.ts",
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx"
         ]
       },
       "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
@@ -6395,7 +6528,10 @@
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
           "src/main/settings/skill-catalog.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/storage/migration-target-race.test.ts",
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
+          "src/main/storage/brand-location.test.ts"
         ]
       },
       "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
@@ -6823,7 +6959,11 @@
           "src/renderer/src/stores/locale-preference-recovery.render.test.tsx",
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/storage/migration-target-race.test.ts",
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
+          "src/main/storage/brand-location.test.ts",
+          "src/main/credential-identity/recovery.test.ts"
         ]
       },
       "capabilityOverlays": ["i18n_catalog"],
@@ -7312,7 +7452,10 @@
           "src/renderer/src/pages/settings/PermissionsPanel.render.test.tsx",
           "src/renderer/src/pages/workspace/artifact-publication-preview.integration.test.tsx",
           "src/shared/renderer-surface-inventory.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/storage/brand-location.test.ts",
+          "src/main/storage/migration-target-race.test.ts",
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx"
         ]
       },
       "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
@@ -8596,7 +8739,13 @@
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
           "src/shared/run-error-classification.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/storage/brand-location.test.ts",
+          "src/main/credential-identity/persistence.test.ts",
+          "src/main/credential-identity/ciphertext-inventory.test.ts",
+          "src/main/credential-identity/linux.test.ts",
+          "src/main/storage/migration-target-race.test.ts",
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx"
         ]
       },
       "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
@@ -9216,7 +9365,11 @@
           "src/shared/renderer-surface-matrix.test.ts",
           "src/main/session-package/fork.test.ts",
           "src/renderer/src/lib/session-fork.test.ts",
-          "src/renderer/src/pages/workspace/session-action-menu.test.ts"
+          "src/renderer/src/pages/workspace/session-action-menu.test.ts",
+          "src/main/storage/migration-target-race.test.ts",
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
+          "src/main/storage/brand-location.test.ts",
+          "src/main/credential-identity/recovery.test.ts"
         ]
       },
       "capabilityOverlays": [],
@@ -9780,7 +9933,13 @@
           "src/shared/renderer-surface-matrix.test.ts",
           "scripts/ci/e2e-setup-snapshot.test.ts",
           "src/main/process-tree-native-loading.macos.integration.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/storage/migration-target-race.test.ts",
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
+          "src/main/storage/brand-location.test.ts",
+          "src/main/credential-identity/persistence.test.ts",
+          "src/main/credential-identity/ciphertext-inventory.test.ts",
+          "src/main/credential-identity/linux.test.ts"
         ]
       },
       "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
@@ -10123,7 +10282,10 @@
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
           "scripts/ci/e2e-setup-snapshot.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/storage/brand-location.test.ts",
+          "src/main/storage/migration-target-race.test.ts",
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx"
         ]
       },
       "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
@@ -10572,7 +10734,13 @@
           "src/renderer/src/stores/settings-connectors-slice.test.ts",
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/storage/brand-location.test.ts",
+          "src/main/credential-identity/persistence.test.ts",
+          "src/main/credential-identity/ciphertext-inventory.test.ts",
+          "src/main/credential-identity/linux.test.ts",
+          "src/main/storage/migration-target-race.test.ts",
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -10867,7 +11035,9 @@
           "src/renderer/src/stores/specialist-store.test.ts",
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/storage/migration-target-race.test.ts",
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -10981,8 +11151,6 @@
         "src/main/second-instance-router.test.ts",
         "src/main/second-instance-router.ts",
         "src/main/secure-storage.ts",
-        "src/main/single-instance.test.ts",
-        "src/main/single-instance.ts",
         "src/main/source-preview-embed-policy.test.ts",
         "src/main/source-preview-embed-policy.ts",
         "src/main/source-preview-load-monitor.test.ts",
@@ -11009,7 +11177,26 @@
         "src/main/windows-powershell.test.ts",
         "src/main/windows-powershell.ts",
         "src/main/windows.test.ts",
-        "src/main/windows.ts"
+        "src/main/windows.ts",
+        "src/main/credential-identity/access.test.ts",
+        "src/main/credential-identity/access.ts",
+        "src/main/credential-identity/bootstrap.ts",
+        "src/main/credential-identity/ciphertext-inventory.test.ts",
+        "src/main/credential-identity/ciphertext-inventory.ts",
+        "src/main/credential-identity/linux-secret-service.ts",
+        "src/main/credential-identity/linux.test.ts",
+        "src/main/credential-identity/persistence.test.ts",
+        "src/main/credential-identity/probe.test.ts",
+        "src/main/credential-identity/probe.ts",
+        "src/main/credential-identity/recovery.test.ts",
+        "src/main/credential-identity/recovery.ts",
+        "src/main/credential-identity/runtime.ts",
+        "src/main/credential-identity/selection.test.ts",
+        "src/main/credential-identity/selection.ts",
+        "src/main/credential-identity/sqlite-snapshot.test.ts",
+        "src/main/credential-identity/sqlite-snapshot.ts",
+        "src/main/credential-identity/windows-profile-key.test.ts",
+        "src/main/credential-identity/windows-profile-key.ts"
       ],
       "interfacePaths": [
         "src/main/app-lifecycle.ts",
@@ -11057,7 +11244,10 @@
         "src/main/value-guards.ts",
         "src/main/window-close-confirm.ts",
         "src/main/window-ipc.ts",
-        "src/main/windows-powershell.ts"
+        "src/main/windows-powershell.ts",
+        "src/main/credential-identity/bootstrap.ts",
+        "src/main/credential-identity/runtime.ts",
+        "src/main/credential-identity/selection.ts"
       ],
       "consumerModules": [],
       "testFiles": {
@@ -11116,7 +11306,6 @@
           "src/main/runtime-import-cycle.architecture.test.ts",
           "src/main/runtime-state-ownership.architecture.test.ts",
           "src/main/second-instance-router.test.ts",
-          "src/main/single-instance.test.ts",
           "src/main/source-preview-embed-policy.test.ts",
           "src/main/source-preview-load-monitor.test.ts",
           "src/main/source-preview-web-request-owner.test.ts",
@@ -11130,7 +11319,16 @@
           "src/main/window-shortcuts.test.ts",
           "src/main/windows-icon-assets.test.ts",
           "src/main/windows-powershell.test.ts",
-          "src/main/windows.test.ts"
+          "src/main/windows.test.ts",
+          "src/main/credential-identity/access.test.ts",
+          "src/main/credential-identity/ciphertext-inventory.test.ts",
+          "src/main/credential-identity/linux.test.ts",
+          "src/main/credential-identity/persistence.test.ts",
+          "src/main/credential-identity/probe.test.ts",
+          "src/main/credential-identity/recovery.test.ts",
+          "src/main/credential-identity/selection.test.ts",
+          "src/main/credential-identity/sqlite-snapshot.test.ts",
+          "src/main/credential-identity/windows-profile-key.test.ts"
         ],
         "contract": [
           "src/preload/index.test.ts",
@@ -11896,7 +12094,11 @@
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
           "src/main/notebook/dependency-analysis.stdlib-replay.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/storage/brand-location.test.ts",
+          "src/main/storage/migration-target-race.test.ts",
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
+          "src/main/cli-install/maintenance.test.ts"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -12182,7 +12384,10 @@
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
           "src/main/settings/skill-catalog.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/storage/brand-location.test.ts",
+          "src/main/storage/migration-target-race.test.ts",
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -12462,12 +12667,17 @@
         "src/main/cli-install/ipc.test.ts",
         "src/main/cli-install/ipc.ts",
         "src/main/cli-install/launcher.test.ts",
-        "src/main/cli-install/launcher.ts"
+        "src/main/cli-install/launcher.ts",
+        "src/main/cli-install/maintenance.test.ts"
       ],
       "interfacePaths": ["src/main/cli-install/ipc.ts"],
       "consumerModules": [],
       "testFiles": {
-        "owner": ["src/main/cli-install/ipc.test.ts", "src/main/cli-install/launcher.test.ts"],
+        "owner": [
+          "src/main/cli-install/ipc.test.ts",
+          "src/main/cli-install/launcher.test.ts",
+          "src/main/cli-install/maintenance.test.ts"
+        ],
         "contract": [
           "src/preload/index.test.ts",
           "src/renderer/web/api-installer.test.ts",
@@ -12794,7 +13004,10 @@
           "src/renderer/src/pages/settings/SpecialistEditor.persistence.render.test.tsx",
           "src/renderer/src/stores/settings-connectors-slice.test.ts",
           "src/shared/renderer-surface-inventory.test.ts",
-          "src/shared/renderer-surface-matrix.test.ts"
+          "src/shared/renderer-surface-matrix.test.ts",
+          "src/main/credential-identity/persistence.test.ts",
+          "src/main/credential-identity/ciphertext-inventory.test.ts",
+          "src/main/credential-identity/linux.test.ts"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -17510,7 +17723,10 @@
           "src/renderer/src/pages/workspace/artifact-publication-preview.integration.test.tsx",
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/storage/brand-location.test.ts",
+          "src/main/storage/migration-target-race.test.ts",
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -18018,7 +18234,13 @@
           "src/renderer/src/stores/settings-connectors-slice.test.ts",
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/storage/brand-location.test.ts",
+          "src/main/storage/migration-target-race.test.ts",
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
+          "src/main/credential-identity/persistence.test.ts",
+          "src/main/credential-identity/ciphertext-inventory.test.ts",
+          "src/main/credential-identity/linux.test.ts"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -18389,7 +18611,11 @@
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
           "src/main/settings/skill-catalog.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/storage/brand-location.test.ts",
+          "src/main/storage/migration-target-race.test.ts",
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
+          "src/main/cli-install/maintenance.test.ts"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -19100,7 +19326,8 @@
         "src/main/literature/scale-regressions.test.ts",
         "src/main/literature/session-pdf-source-resolver.test.ts",
         "src/main/literature/session-pdf-source-resolver.ts",
-        "src/main/literature/transact.ts"
+        "src/main/literature/transact.ts",
+        "src/main/literature/citation-exchange.test.ts"
       ],
       "interfacePaths": [
         "src/main/literature/agent-pdf-acquisition.ts",
@@ -19293,7 +19520,8 @@
           "src/main/literature/provider-error.test.ts",
           "src/main/literature/reference-resolver.test.ts",
           "src/main/literature/scale-regressions.test.ts",
-          "src/main/literature/session-pdf-source-resolver.test.ts"
+          "src/main/literature/session-pdf-source-resolver.test.ts",
+          "src/main/literature/citation-exchange.test.ts"
         ],
         "contract": [
           "src/preload/index.test.ts",
@@ -19539,7 +19767,10 @@
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
           "src/main/settings/skill-catalog.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/storage/brand-location.test.ts",
+          "src/main/storage/migration-target-race.test.ts",
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -19883,7 +20114,10 @@
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
           "src/main/settings/skill-catalog.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/storage/brand-location.test.ts",
+          "src/main/storage/migration-target-race.test.ts",
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -20182,7 +20416,10 @@
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
           "src/main/settings/skill-catalog.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/storage/brand-location.test.ts",
+          "src/main/storage/migration-target-race.test.ts",
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -20588,7 +20825,10 @@
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
           "src/main/settings/skill-catalog.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/storage/brand-location.test.ts",
+          "src/main/storage/migration-target-race.test.ts",
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -21470,7 +21710,10 @@
           "src/shared/renderer-surface-matrix.test.ts",
           "src/main/notebook/dependency-analysis.stdlib-replay.test.ts",
           "src/main/settings/skill-catalog.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/storage/brand-location.test.ts",
+          "src/main/storage/migration-target-race.test.ts",
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx"
         ]
       },
       "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
@@ -22510,7 +22753,10 @@
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
           "src/main/notebook/dependency-analysis.stdlib-replay.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/storage/migration-target-race.test.ts",
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
+          "src/main/storage/brand-location.test.ts"
         ]
       },
       "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
@@ -22912,7 +23158,6 @@
         "src/main/remote-access/index.ts",
         "src/main/remote-access/ipc.test.ts",
         "src/main/remote-access/ipc.ts",
-        "src/main/remote-access/openscience-logo.svg",
         "src/main/remote-access/pairing-page.test.ts",
         "src/main/remote-access/pairing-page.ts",
         "src/main/remote-access/pairing.test.ts",
@@ -22922,7 +23167,8 @@
         "src/main/remote-access/repository.test.ts",
         "src/main/remote-access/repository.ts",
         "src/main/remote-access/service.test.ts",
-        "src/main/remote-access/service.ts"
+        "src/main/remote-access/service.ts",
+        "src/main/remote-access/open-science-logo.svg"
       ],
       "interfacePaths": [
         "src/main/remote-access/index.ts",
@@ -23407,7 +23653,8 @@
         "src/main/settings/workflows/local-shell.test.ts",
         "src/main/settings/workflows/local-shell.ts",
         "src/main/settings/workflows/runtime.ts",
-        "src/main/settings/workflows/skills.ts"
+        "src/main/settings/workflows/skills.ts",
+        "src/main/settings/device-credentials-codec.ts"
       ],
       "interfacePaths": [
         "src/main/settings/agent-runtime-manager.ts",
@@ -23956,7 +24203,13 @@
           "src/renderer/src/stores/settings-connectors-slice.test.ts",
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/credential-identity/ciphertext-inventory.test.ts",
+          "src/main/credential-identity/linux.test.ts",
+          "src/main/storage/brand-location.test.ts",
+          "src/main/credential-identity/persistence.test.ts",
+          "src/main/storage/migration-target-race.test.ts",
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -24468,7 +24721,16 @@
         "src/main/storage/usage.test.ts",
         "src/main/storage/usage.ts",
         "src/main/storage/versioned-json-decoder.test.ts",
-        "src/main/storage/versioned-json-decoder.ts"
+        "src/main/storage/versioned-json-decoder.ts",
+        "src/main/storage/brand-location.test.ts",
+        "src/main/storage/config-root.ts",
+        "src/main/storage/data-location-selection.ts",
+        "src/main/storage/data-root-selection.ts",
+        "src/main/storage/electron-profile.test.ts",
+        "src/main/storage/electron-profile.ts",
+        "src/main/storage/initialize-location.ts",
+        "src/main/storage/location-evidence.ts",
+        "src/main/storage/migration-target-race.test.ts"
       ],
       "interfacePaths": [
         "src/main/storage/command-owner.ts",
@@ -24490,7 +24752,12 @@
         "src/main/storage/path-presence.ts",
         "src/main/storage/session-package-state.ts",
         "src/main/storage/usage.ts",
-        "src/main/storage/versioned-json-decoder.ts"
+        "src/main/storage/versioned-json-decoder.ts",
+        "src/main/storage/config-root.ts",
+        "src/main/storage/data-root-selection.ts",
+        "src/main/storage/electron-profile.ts",
+        "src/main/storage/initialize-location.ts",
+        "src/main/storage/location-evidence.ts"
       ],
       "consumerModules": [],
       "testFiles": {
@@ -24513,7 +24780,10 @@
           "src/main/storage/path-presence.test.ts",
           "src/main/storage/provenance-migration-validation.test.ts",
           "src/main/storage/usage.test.ts",
-          "src/main/storage/versioned-json-decoder.test.ts"
+          "src/main/storage/versioned-json-decoder.test.ts",
+          "src/main/storage/brand-location.test.ts",
+          "src/main/storage/electron-profile.test.ts",
+          "src/main/storage/migration-target-race.test.ts"
         ],
         "contract": [
           "src/preload/index.test.ts",
@@ -25071,7 +25341,12 @@
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
           "src/main/notebook/dependency-analysis.stdlib-replay.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
+          "src/main/cli-install/maintenance.test.ts",
+          "src/main/credential-identity/persistence.test.ts",
+          "src/main/credential-identity/ciphertext-inventory.test.ts",
+          "src/main/credential-identity/linux.test.ts"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -25987,7 +26262,8 @@
         "src/renderer/src/components/startup-issue-dialog.tsx",
         "src/renderer/src/components/use-notice-countdown.ts",
         "src/renderer/src/components/use-settings-undo-portal.test.tsx",
-        "src/renderer/src/components/use-settings-undo-portal.tsx"
+        "src/renderer/src/components/use-settings-undo-portal.tsx",
+        "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx"
       ],
       "interfacePaths": [
         "src/renderer/src/components/ActionToast.tsx",
@@ -26085,7 +26361,8 @@
           "src/renderer/src/components/notification-inbox-presentation.test.ts",
           "src/renderer/src/components/open-science-logo-motion.test.ts",
           "src/renderer/src/components/session-package-import-menu-model.test.ts",
-          "src/renderer/src/components/use-settings-undo-portal.test.tsx"
+          "src/renderer/src/components/use-settings-undo-portal.test.tsx",
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx"
         ],
         "contract": [],
         "consumer": [
@@ -27365,7 +27642,8 @@
           "src/renderer/src/stores/settings-store.test.ts",
           "src/renderer/web/bootstrap.test.ts",
           "src/renderer/web/renderer-argument-shape-characterization.test.ts",
-          "src/renderer/src/lib/session-fork.test.ts"
+          "src/renderer/src/lib/session-fork.test.ts",
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx"
         ]
       },
       "capabilityOverlays": [],
@@ -28025,7 +28303,8 @@
         "src/renderer/src/lib/utils.ts",
         "src/renderer/src/lib/wsl-support-handoff.ts",
         "src/renderer/src/lib/session-fork.test.ts",
-        "src/renderer/src/lib/session-fork.ts"
+        "src/renderer/src/lib/session-fork.ts",
+        "src/renderer/src/lib/storage-error.ts"
       ],
       "interfacePaths": [
         "src/renderer/src/lib/active-session-display.ts",
@@ -28436,7 +28715,8 @@
           "src/renderer/src/stores/specialist-store.upload.test.ts",
           "src/renderer/src/stores/theme-store.test.ts",
           "src/renderer/web/bootstrap.test.ts",
-          "src/renderer/web/renderer-argument-shape-characterization.test.ts"
+          "src/renderer/web/renderer-argument-shape-characterization.test.ts",
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx"
         ]
       },
       "capabilityOverlays": [],
@@ -29999,7 +30279,8 @@
           "src/renderer/src/stores/settings-store.test.ts",
           "src/renderer/web/bootstrap.test.ts",
           "src/renderer/web/renderer-argument-shape-characterization.test.ts",
-          "src/renderer/src/lib/session-fork.test.ts"
+          "src/renderer/src/lib/session-fork.test.ts",
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx"
         ]
       },
       "capabilityOverlays": [],
@@ -33720,7 +34001,8 @@
           "src/renderer/src/stores/session-store.test.ts",
           "src/renderer/web/bootstrap.test.ts",
           "src/renderer/web/renderer-argument-shape-characterization.test.ts",
-          "src/renderer/src/lib/session-fork.test.ts"
+          "src/renderer/src/lib/session-fork.test.ts",
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx"
         ]
       },
       "capabilityOverlays": [],
@@ -33909,7 +34191,8 @@
         "src/shared/web-rpc-contract.ts",
         "src/shared/window-controls.test.ts",
         "src/shared/window-controls.ts",
-        "src/shared/wsl-setup.ts"
+        "src/shared/wsl-setup.ts",
+        "src/shared/config-root.ts"
       ],
       "interfacePaths": [
         "src/shared/__fixtures__/skill-marketplace.ts",
@@ -33993,7 +34276,8 @@
         "src/shared/web-event-connection.ts",
         "src/shared/web-rpc-contract.ts",
         "src/shared/window-controls.ts",
-        "src/shared/wsl-setup.ts"
+        "src/shared/wsl-setup.ts",
+        "src/shared/config-root.ts"
       ],
       "consumerModules": [],
       "testFiles": {
@@ -34229,6 +34513,37 @@
       "capabilityOverlays": [],
       "fallbackCapability": "shared_contract",
       "fullTestReason": "Shared cross-process contracts have broad renderer, main, CLI and dynamic IPC consumers; retain complete validation."
+    },
+    "native_credential_identity": {
+      "ownerPaths": [
+        "packages/credential-identity-probe-native/README.md",
+        "packages/credential-identity-probe-native/binding.gyp",
+        "packages/credential-identity-probe-native/index.cjs",
+        "packages/credential-identity-probe-native/index.d.ts",
+        "packages/credential-identity-probe-native/package.json",
+        "packages/credential-identity-probe-native/src/credential_identity_probe.cc",
+        "packages/credential-identity-probe-native/src/credential_key_validator.cc",
+        "packages/credential-identity-probe-native/test/crypto_fixture.cc",
+        "packages/credential-identity-probe-native/test/probe.test.cjs",
+        "packages/credential-identity-probe-native/test/security_fixture.cc",
+        "packages/credential-identity-probe-native/test/validator.test.cjs"
+      ],
+      "interfacePaths": [
+        "packages/credential-identity-probe-native/index.cjs",
+        "packages/credential-identity-probe-native/index.d.ts"
+      ],
+      "consumerModules": ["desktop_composition"],
+      "testFiles": {
+        "owner": [],
+        "contract": [],
+        "consumer": [
+          "scripts/credential-helper-signing.test.ts",
+          "src/main/credential-identity/probe.test.ts",
+          "src/main/index-startup-failure.test.ts"
+        ]
+      },
+      "capabilityOverlays": ["windows_sensitive"],
+      "fallbackCapability": "main_runtime"
     }
   }
 }
