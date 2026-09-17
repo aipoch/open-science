@@ -2,6 +2,7 @@
 
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
+import { isDeepStrictEqual } from 'node:util'
 import {
   classifyChanges,
   changeImpactManifestPath,
@@ -26,6 +27,108 @@ function covered(path, manifest) {
   return createAffectedTestPlan(changes, graph, manifest).mode === 'selective'
 }
 
+// Registration is data, but it becomes trusted routing after merge. Retain existing
+// evidence so an additive registration cannot quietly weaken later selective runs.
+function registrationViolations(baseManifest, headManifest, headFiles) {
+  const violations = []
+  const reject = (field) =>
+    violations.push({
+      path: manifestPath,
+      rule: 'module-registration-regression',
+      message: `Registration must preserve ${field}; coverage reductions require a separate CI policy change.`
+    })
+  const { modules: baseModules, ...baseMetadata } = baseManifest
+  const { modules: headModules, ...headMetadata } = headManifest
+  if (!isDeepStrictEqual(baseMetadata, headMetadata)) reject('manifest metadata')
+  const pathFields = ['ownerPaths', 'interfacePaths']
+  const testKinds = ['owner', 'contract', 'consumer']
+  const fields = new Set([
+    ...pathFields,
+    'testFiles',
+    'consumerModules',
+    'capabilityOverlays',
+    'fallbackCapability',
+    'fullTestReason'
+  ])
+  const retain = (before, after, label, applicable = () => true) => {
+    if (before.some((entry) => applicable(entry) && !after.includes(entry))) reject(label)
+  }
+  for (const [id, head] of Object.entries(headModules)) {
+    // Do not let unreviewed data introduce a future selector control field.
+    for (const key of Object.keys(head)) {
+      if (!fields.has(key)) reject(`${id}: unsupported field ${key}`)
+    }
+    if (
+      head.fullTestReason !== undefined &&
+      (typeof head.fullTestReason !== 'string' || !head.fullTestReason.trim())
+    ) {
+      reject(`${id}.fullTestReason`)
+    }
+  }
+  for (const [id, base] of Object.entries(baseModules)) {
+    const head = headModules[id]
+    if (!head) {
+      if (
+        [
+          ...base.ownerPaths,
+          ...base.interfacePaths,
+          ...testKinds.flatMap((kind) => base.testFiles[kind])
+        ].some((path) => headFiles.has(path))
+      ) {
+        reject(`${id}: module with surviving paths`)
+      }
+      continue
+    }
+    for (const field of pathFields) {
+      retain(base[field], head[field], `${id}.${field}`, (path) => headFiles.has(path))
+    }
+    for (const kind of testKinds) {
+      retain(base.testFiles[kind], head.testFiles[kind], `${id}.testFiles.${kind}`, (path) =>
+        headFiles.has(path)
+      )
+    }
+    retain(base.consumerModules, head.consumerModules, `${id}.consumerModules`, (consumer) =>
+      Object.hasOwn(headModules, consumer)
+    )
+    retain(base.capabilityOverlays, head.capabilityOverlays, `${id}.capabilityOverlays`)
+    if (head.fallbackCapability !== base.fallbackCapability) reject(`${id}.fallbackCapability`)
+    if (base.fullTestReason !== undefined && head.fullTestReason !== base.fullTestReason) {
+      reject(`${id}.fullTestReason`)
+    }
+  }
+  // The legacy selector infers an implementation owner from its colocated owner
+  // test only when no explicit match exists. New explicit entries must not hide it.
+  const explicitPaths = (modules) =>
+    new Set(
+      Object.values(modules).flatMap((module) => [
+        ...module.ownerPaths,
+        ...module.interfacePaths,
+        ...testKinds.flatMap((kind) => module.testFiles[kind])
+      ])
+    )
+  const beforePaths = explicitPaths(baseModules)
+  const inferredPaths = new Set(
+    Object.values(baseModules).flatMap((module) =>
+      module.testFiles.owner.map((path) => path.replace(/\.test(\.[cm]?[jt]sx?)$/, '$1'))
+    )
+  )
+  for (const path of explicitPaths(headModules)) {
+    if (beforePaths.has(path) || !inferredPaths.has(path)) continue
+    const changes = [{ path, status: 'modified' }]
+    const before = createAffectedTestPlan(changes, graph, baseManifest)
+    if (before.mode !== 'selective') continue
+    const after = createAffectedTestPlan(changes, graph, headManifest)
+    if (after.mode === 'full') continue
+    retain(before.testFiles, after.testFiles, `${path}: inferred owner tests`, (test) =>
+      headFiles.has(test)
+    )
+    for (const field of ['capabilityOverlays', 'fallbackCapabilities']) {
+      retain(before[field], after[field], `${path}: inferred ${field}`)
+    }
+  }
+  return violations
+}
+
 export function checkModuleOwnership({
   baseManifest,
   headManifest,
@@ -39,7 +142,7 @@ export function checkModuleOwnership({
   validateModuleImpactManifest(headManifest, { pathExists: (path) => after.has(path) })
   const changed = new Set(changes.map(({ path }) => path))
   const manifestChanged = changed.has(manifestPath)
-  const violations = []
+  const violations = registrationViolations(baseManifest, headManifest, after)
   const legacyGaps = []
   for (const path of headFiles.filter(isCode)) {
     if (before.has(path) && !changed.has(path) && !manifestChanged) continue

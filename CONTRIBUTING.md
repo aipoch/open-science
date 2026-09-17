@@ -394,6 +394,19 @@ CI workflows, local actions, CI scripts, Dependabot configuration and CODEOWNERS
 of editing individual usernames in the file. The team must be visible and have explicit repository
 write access. The main ruleset requires approval from one owner other than the PR author and
 dismisses stale approvals after new commits. Ordinary application files have no CODEOWNERS entry.
+The exact `scripts/ci/module-impact.json` registration file is exempt from owner approval; other
+CI scripts and manifests remain protected. New modules and additive ownership/test/consumer
+registrations can enter the normal merge queue after required checks pass, without a bypass.
+
+Trusted-base CI Integrity validates candidate registration data in both PRs and merge groups.
+It preserves surviving owner/interface/test paths, consumer edges, capability overlays, fallback
+routing and existing full-validation markers. References to actually deleted files may be removed.
+New explicit ownership cannot hide existing inferred test coverage. Unknown policy metadata and
+coverage reductions fail the check; owner approval alone does not waive these invariants. Deliberate
+reductions require a separate CI policy change, not a registration-only PR. Registration changes
+still select full portable tests; this exception does not enable untrusted selective test routing.
+Introducing this exception changes protected policy files and therefore still needs owner approval.
+It can then enter the normal queue; no bootstrap bypass is required when its checks pass.
 
 Owner review authorizes control-plane changes; CI Integrity still validates unsafe workflow
 execution, mutable action references, expanded target-workflow permissions and spoofed or missing

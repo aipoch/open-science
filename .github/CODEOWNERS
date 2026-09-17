@@ -8,3 +8,7 @@
 /.github/actions/ @aipoch/ci-maintainers
 /.github/dependabot.yml @aipoch/ci-maintainers
 /scripts/ci/ @aipoch/ci-maintainers
+
+# Ordinary registration is checked as data by trusted-base CI Integrity.
+# Last matching pattern wins; keep this exception exact and ownerless.
+/scripts/ci/module-impact.json
