@@ -1,14 +1,28 @@
+import { Worker } from 'node:worker_threads'
 import { execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile, lstat, rename } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+  lstat,
+  rename,
+  chmod,
+  link,
+  readdir
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   publishNoReplace,
   recoverAnchoredRemoval,
-  removeAnchoredFile
+  removeAnchoredFile,
+  removeAnchoredTree
 } from './atomic-no-replace-publisher'
 
 const require = createRequire(import.meta.url)
@@ -267,3 +281,121 @@ for (const replaced of [false, true]) {
     )
   }
 )
+
+// Exercise the actual native boundary, including adversarial writers in another OS thread.
+describe.skipIf(!nativeBindingAvailable)('anchored runtime tree removal', () => {
+  it('removes read-only copies and links without changing external contents or hard-link permissions', async () => {
+    cleanupRoot = await mkdtemp(join(tmpdir(), 'runtime-tree-'))
+    const target = join(cleanupRoot, 'attempt')
+    const nested = join(target, 'skills', 'os-example')
+    const external = join(cleanupRoot, 'external')
+    await mkdir(nested, { recursive: true })
+    await mkdir(external, { mode: 0o700 })
+    await writeFile(join(external, 'private'), 'external content', { mode: 0o400 })
+    const identity = await lstat(target, { bigint: true })
+    const outside = await lstat(join(external, 'private'))
+    await writeFile(join(nested, '.catalog_stamp'), 'readonly copy', { mode: 0o444 })
+    await link(join(external, 'private'), join(nested, 'hard-link'))
+    await symlink(
+      external,
+      join(nested, 'directory-link'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+    if (process.platform !== 'win32') {
+      await symlink(join(external, 'private'), join(nested, 'file-link'), 'file')
+    }
+    await chmod(nested, 0o555)
+    await chmod(target, 0o555)
+    removeAnchoredTree(cleanupRoot, 'attempt', identity)
+    await expect(lstat(target)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await readFile(join(external, 'private'), 'utf8')).toBe('external content')
+    expect((await lstat(join(external, 'private'))).mode).toBe(outside.mode)
+    expect(await readdir(external)).toEqual(['private'])
+    // Cleanup is idempotent after deletion.
+    removeAnchoredTree(cleanupRoot, 'attempt', identity)
+  })
+
+  it.each(['identity', 'ancestor', 'root'] as const)('refuses a changed %s', async (change) => {
+    cleanupRoot = await mkdtemp(join(tmpdir(), 'runtime-tree-identity-'))
+    const storage = join(cleanupRoot, 'storage')
+    const parent = join(storage, 'runtime')
+    const target = join(parent, 'attempt')
+    await mkdir(target, { recursive: true })
+    await writeFile(join(target, 'keep'), 'must survive')
+    const identity = await lstat(target, { bigint: true })
+    if (change === 'identity') {
+      await rename(target, `${target}-old`)
+      await mkdir(target)
+      await writeFile(join(target, 'keep'), 'replacement')
+    } else {
+      const swapped = change === 'root' ? storage : parent
+      await rename(swapped, `${swapped}-old`)
+      await symlink(`${swapped}-old`, swapped, process.platform === 'win32' ? 'junction' : 'dir')
+    }
+    expect(() => removeAnchoredTree(storage, join('runtime', 'attempt'), identity)).toThrow()
+    expect(await readFile(join(target, 'keep'), 'utf8')).toBe(
+      change === 'identity' ? 'replacement' : 'must survive'
+    )
+    expect(() => removeAnchoredTree(storage, '../outside', identity)).toThrow()
+  })
+
+  it('does not escape the held tree while another thread swaps a directory for a link', async () => {
+    cleanupRoot = await mkdtemp(join(tmpdir(), 'runtime-tree-race-'))
+    const target = join(cleanupRoot, 'attempt')
+    const external = join(cleanupRoot, 'external')
+    await mkdir(join(target, 'race'), { recursive: true })
+    await mkdir(external, { mode: 0o700 })
+    await writeFile(join(external, 'private'), 'must survive', { mode: 0o600 })
+    const identity = await lstat(target, { bigint: true })
+    const externalMode = (await lstat(external)).mode
+    const fileMode = (await lstat(join(external, 'private'))).mode
+    // Keep traversal active while the worker repeatedly replaces the directory entry.
+    for (let index = 0; index < 200; index++) {
+      await mkdir(join(target, `copy-${index}`))
+      await writeFile(join(target, `copy-${index}`, '.catalog_stamp'), 'copy')
+    }
+    const signal = new SharedArrayBuffer(8)
+    const control = new Int32Array(signal)
+    const worker = new Worker(
+      `
+      const { workerData, parentPort } = require('node:worker_threads')
+      const fs = require('node:fs')
+      const path = require('node:path')
+      const control = new Int32Array(workerData.signal)
+      const race = path.join(workerData.target, 'race')
+      const held = path.join(workerData.target, 'held')
+      parentPort.postMessage('ready')
+      while (!Atomics.load(control, 0)) {
+        try {
+          fs.renameSync(race, held)
+          fs.symlinkSync(workerData.external, race, process.platform === 'win32' ? 'junction' : 'dir')
+          Atomics.add(control, 1, 1)
+          fs.unlinkSync(race)
+          fs.renameSync(held, race)
+        } catch {}
+      }
+    `,
+      { eval: true, workerData: { signal, target, external } }
+    )
+    const exited = new Promise<void>((resolve, reject) => {
+      worker.once('exit', () => resolve())
+      worker.once('error', reject)
+    })
+    try {
+      await vi.waitFor(() => expect(Atomics.load(control, 1)).toBeGreaterThan(0))
+      // Contention may fail closed; successful deletion is not required while a writer is live.
+      try {
+        removeAnchoredTree(cleanupRoot, 'attempt', identity)
+      } catch (error) {
+        expect(error).toHaveProperty('code')
+      }
+    } finally {
+      Atomics.store(control, 0, 1)
+      await exited
+    }
+    expect(await readFile(join(external, 'private'), 'utf8')).toBe('must survive')
+    expect((await lstat(external)).mode).toBe(externalMode)
+    expect((await lstat(join(external, 'private'))).mode).toBe(fileMode)
+    expect(await readdir(external)).toEqual(['private'])
+  })
+})

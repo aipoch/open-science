@@ -1002,6 +1002,9 @@ describe('PR Gate workflow', () => {
       'src/main/windows.test.ts',
       'src/main/windows-icon-assets.test.ts',
       'src/main/windows-powershell.test.ts',
+      'src/main/uploads/atomic-no-replace-publisher.test.ts',
+      'src/main/delegation/acp-execution.test.ts',
+      'src/main/delegation/production-framework-runtime.test.ts',
       'src/main/file-save.test.ts',
       'src/main/specialist/repository.test.ts',
       'src/main/notebook/micromamba-cache-powershell.test.ts',
@@ -1009,6 +1012,16 @@ describe('PR Gate workflow', () => {
     ]) {
       expect(runtime?.run).toContain(testFile)
     }
+
+    const nativeMac = workflow.jobs.macos_e2e.steps?.find(
+      ({ name }) => name === 'Test macOS-native behavior'
+    )
+    for (const testFile of [
+      'src/main/uploads/atomic-no-replace-publisher.test.ts',
+      'src/main/delegation/acp-execution.test.ts',
+      'src/main/delegation/production-framework-runtime.test.ts'
+    ])
+      expect(nativeMac?.run).toContain(testFile)
 
     const wheelEvidence = workflow.jobs.windows_core.steps?.find(
       ({ name }) => name === 'Test Windows wheel evidence recovery'

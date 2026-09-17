@@ -33,3 +33,11 @@ export function recoverAnchoredRemoval(
   parentIno: bigint,
   contentFilename?: string
 ): void
+
+/** Remove one owned tree without following links. The root is trusted; the target identity is captured at creation. */
+export function removeAnchoredTree(
+  rootPath: string,
+  relativePath: string,
+  dev: bigint,
+  ino: bigint
+): void

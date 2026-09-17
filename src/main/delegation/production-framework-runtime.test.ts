@@ -2,6 +2,7 @@ import { SettingsService } from '../settings/service'
 import { SettingsRepository } from '../settings/repository'
 import { SkillRegistry } from '../skills/registry'
 import { ClaudeCodeSkillMaterializer } from '../skills/materializer'
+import { removeAnchoredTree } from '../uploads/atomic-no-replace-publisher'
 import {
   loadSkillDocument,
   OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION
@@ -181,14 +182,14 @@ const delegatedSession = (frameworkId: AgentFrameworkId): PersistedChatSession =
 
 describe('production delegated framework runtime bridge', () => {
   it.each([
-    ['claude-code', false],
-    ['opencode', false],
-    ['codex', false],
-    ['codebuddy', false],
-    ['opencode', true]
+    ['claude-code', true],
+    ['opencode', true],
+    ['codex', true],
+    ['codebuddy', true],
+    ['opencode', false]
   ] as const)(
-    'prepares disabled bound Skill packages before %s starts and removes them with the Attempt (cleanup failure: %s)',
-    async (frameworkId, cleanupFailure) => {
+    'prepares bound Skills before %s starts and requires tree shutdown to remove them (reaped: %s)',
+    async (frameworkId, reaped) => {
       const dataRoot = await mkdtemp(join(tmpdir(), 'delegated-bound-skills-'))
       const bundle = join(dataRoot, 'bundle')
       await mkdir(join(bundle, 'research', 'references'), { recursive: true })
@@ -220,19 +221,6 @@ describe('production delegated framework runtime bridge', () => {
         skillRegistry: new SkillRegistry(bundle)
       })
       await settings.setSkillEnabled({ id: 'research', enabled: false })
-      if (cleanupFailure) {
-        const prepare = settings.prepareDelegatedSkills.bind(settings)
-        vi.spyOn(settings, 'prepareDelegatedSkills').mockImplementation(async (...args) => {
-          const prepared = await prepare(...args)
-          return {
-            ...prepared,
-            dispose: async () => {
-              await prepared.dispose()
-              throw new Error('Skill cleanup failed')
-            }
-          }
-        })
-      }
       const admitted = backend(frameworkId)
       admitted.sessionOptions = {
         [OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION]: {
@@ -284,7 +272,7 @@ describe('production delegated framework runtime bridge', () => {
             deleteSession: async () => undefined,
             shutdownForQuit: async () => {
               child?.kill()
-              return { reaped: true }
+              return { reaped }
             }
           } as never
         })
@@ -385,9 +373,16 @@ describe('production delegated framework runtime bridge', () => {
           })
         if (spawnInput) expect(observed!.fixedBackend!.env).toEqual(spawnInput.env)
         finish()
-        if (cleanupFailure) await expect(completion).rejects.toThrow('Skill cleanup failed')
-        else await expect(completion).resolves.toMatchObject({ status: 'completed' })
-        await expect(stat(runtimeHome)).rejects.toMatchObject({ code: 'ENOENT' })
+        if (reaped) {
+          await expect(completion).resolves.toMatchObject({ status: 'completed' })
+          await expect(stat(runtimeHome)).rejects.toMatchObject({ code: 'ENOENT' })
+        } else {
+          await expect(completion).rejects.toThrow('process tree')
+          expect((await stat(runtimeHome)).isDirectory()).toBe(true)
+          expect(
+            await readFile(join(projection.skillsDirectory, 'research', 'SKILL.md'), 'utf8')
+          ).toContain('DELEGATED_RESEARCH_DOCUMENT')
+        }
         expect(JSON.stringify(admitted)).toBe(original)
       } finally {
         finish()
@@ -396,7 +391,11 @@ describe('production delegated framework runtime bridge', () => {
         spawnSpy?.mockRestore()
         runtimeSpy.mockRestore()
         await settings.dispose()
-        await rm(dataRoot, { recursive: true, force: true })
+        removeAnchoredTree(
+          dirname(dataRoot),
+          basename(dataRoot),
+          await lstat(dataRoot, { bigint: true })
+        )
       }
     }
   )

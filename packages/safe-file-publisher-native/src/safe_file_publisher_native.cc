@@ -12,7 +12,9 @@
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <winternl.h>
 #else
+#include <dirent.h>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/file.h>
@@ -955,7 +957,12 @@ napi_value RecoverAnchoredRemoval(napi_env env, napi_callback_info info) {
 #endif
 }
 
+#include "runtime_tree_removal.h"
+
 napi_value Init(napi_env env, napi_value exports) {
+  napi_value tree;
+  napi_create_function(env, "removeAnchoredTree", NAPI_AUTO_LENGTH, RemoveAnchoredTree, nullptr, &tree);
+  napi_set_named_property(env, exports, "removeAnchoredTree", tree);
   napi_value publish;
   napi_create_function(
       env, "publishNoReplace", NAPI_AUTO_LENGTH, PublishNoReplace, nullptr, &publish);

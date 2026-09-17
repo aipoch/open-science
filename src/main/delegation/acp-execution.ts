@@ -49,6 +49,8 @@ type PreparedDelegateExecution = Readonly<{
   permissionProfile?: PermissionProfileId
   capability: DelegateExecutionCapability
   artifactCurrentRunFile?: string
+  // Non-filesystem leases may be released even when process-tree shutdown is unproven.
+  releaseResources?(): Promise<void> | void
   disposeResources?(): Promise<void> | void
 }>
 
@@ -456,7 +458,9 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
         await scope.capability.revoke()
       }
     }
-    const cleanup = async (): Promise<void> => {
+    let runtimeCreationStarted = false
+    let cleanupPromise: Promise<void> | undefined
+    const cleanupOnce = async (): Promise<void> => {
       let firstError: unknown
       try {
         await revokeWrites()
@@ -470,33 +474,42 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
           firstError ??= error
         }
       }
-      let reaped = !runtime
+      let reaped = !runtimeCreationStarted
       if (runtime) {
         try {
-          reaped = (await runtime.shutdownForQuit()).reaped
-          if (!reaped) {
-            firstError ??= new Error('Delegated process tree was not reaped; resources retained.')
-          }
+          reaped = (await runtime.shutdownForQuit()).reaped === true
+          if (!reaped)
+            firstError ??= new Error(
+              'Delegated process tree was not reaped; runtime files were retained.'
+            )
         } catch (error) {
           firstError ??= error
         }
       }
-      // Do not chmod/remove child-owned paths or make them reusable while a process
-      // may still mutate them. A failed reap retains the existing path and slot claims.
-      if (scope && reaped) {
-        const sharedScope =
-          (!ownsRuntimeHome && activeRuntimeHomes.has(scope.runtimeHome)) ||
-          (!ownsWorkspace && activeWorkspaces.has(scope.workspace.cwd))
-        if (ownsRuntimeHome) {
+      if (!reaped)
+        firstError ??= new Error(
+          'Delegated process tree shutdown is unproven; runtime files were retained.'
+        )
+      if (scope) {
+        const mayDispose =
+          reaped &&
+          (ownsRuntimeHome || !activeRuntimeHomes.has(scope.runtimeHome)) &&
+          (ownsWorkspace || !activeWorkspaces.has(scope.workspace.cwd))
+        if (reaped && ownsRuntimeHome) {
           activeRuntimeHomes.delete(scope.runtimeHome)
           ownsRuntimeHome = false
         }
-        if (ownsWorkspace) {
+        if (reaped && ownsWorkspace) {
           activeWorkspaces.delete(scope.workspace.cwd)
           ownsWorkspace = false
         }
         try {
-          if (!sharedScope) await scope.disposeResources?.()
+          await scope.releaseResources?.()
+        } catch (error) {
+          firstError ??= error
+        }
+        try {
+          if (mayDispose) await scope.disposeResources?.()
         } catch (error) {
           firstError ??= error
         }
@@ -505,6 +518,8 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
       if (reaped) releaseSlot(slotId)
       if (firstError !== undefined) throw firstError
     }
+
+    const cleanup = (): Promise<void> => (cleanupPromise ??= cleanupOnce())
 
     const promptRequest = (
       text: string
@@ -564,6 +579,7 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
           return
         }
 
+        runtimeCreationStarted = true
         runtime = options.createRuntime(scope, callbacks)
         const created = await runtime.createSession({
           cwd: scope.workspace.cwd,

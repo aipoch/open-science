@@ -70,3 +70,11 @@ export const recoverAnchoredRemoval = (
     ...(contentFilename === undefined ? [] : [contentFilename])
   )
 }
+
+export const removeAnchoredTree = (
+  rootPath: string,
+  relativePath: string,
+  identity: Pick<BigIntStats, 'dev' | 'ino'>
+): void => {
+  loadBinding().removeAnchoredTree(rootPath, relativePath, identity.dev, identity.ino)
+}

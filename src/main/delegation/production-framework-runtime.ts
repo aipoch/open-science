@@ -1,8 +1,10 @@
 import { resolveEffectiveSpecialistSkills } from '../../shared/specialist'
 import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-server'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
-import { chmod, lstat, mkdir, readdir, rm } from 'node:fs/promises'
-import { join } from 'node:path'
+import { lstat, mkdir } from 'node:fs/promises'
+import type { BigIntStats } from 'node:fs'
+import { removeAnchoredTree } from '../uploads/atomic-no-replace-publisher'
+import { join, relative } from 'node:path'
 
 import {
   materializeSessionConversationGraph,
@@ -77,21 +79,6 @@ const sessionSetup = (backend: ResolvedAgentBackend): SessionSetup =>
     ...(backend.sessionOptions ? { sessionOptions: backend.sessionOptions } : {})
   })
 
-// Called after the Attempt process has stopped. Copied Skills retain read-only directory modes;
-// restore only owned directories, never chmod or traverse symbolic links left by the child.
-const removeRuntimeHome = async (path: string): Promise<void> => {
-  const entry = await lstat(path).catch((error: NodeJS.ErrnoException) => {
-    if (error.code !== 'ENOENT') throw error
-    return undefined
-  })
-  if (!entry) return
-  if (entry.isDirectory()) {
-    await chmod(path, entry.mode | 0o700)
-    for (const name of await readdir(path)) await removeRuntimeHome(join(path, name))
-  }
-  await rm(path, { recursive: true, force: true })
-}
-
 const createProductionDelegatedFrameworkRuntime = (
   options: ProductionFrameworkRuntimeOptions
 ): ProductionDelegatedFrameworks =>
@@ -105,7 +92,6 @@ const createProductionDelegatedFrameworkRuntime = (
         Readonly<{
           backend: ResolvedAgentBackend
           connection: NotebookRpcConnection
-          releaseBackend: boolean
           preparedSkills?: AcpRuntimeCompositionOptions['preparedSkills']
         }>
       >()
@@ -139,10 +125,20 @@ const createProductionDelegatedFrameworkRuntime = (
           'runtime',
           input.attemptId
         )
+        let runtimeIdentity: Pick<BigIntStats, 'dev' | 'ino'> | undefined
+        const removeRuntimeHome = (): void => {
+          if (runtimeIdentity)
+            removeAnchoredTree(
+              options.dataRoot,
+              relative(options.dataRoot, runtimeHome),
+              runtimeIdentity
+            )
+        }
         let openCodeRuntime: PreparedOpenCodeRuntime | undefined
         let preparedSkills: AcpRuntimeCompositionOptions['preparedSkills']
         try {
           await mkdir(runtimeHome, { recursive: true, mode: 0o700 })
+          runtimeIdentity = await lstat(runtimeHome, { bigint: true })
           const durable = await options.readSession(input.session)
           const graph = durable && materializeSessionConversationGraph(durable).conversationGraph
           const frame = graph?.frames.find((candidate) => candidate.id === input.frameId)
@@ -261,8 +257,7 @@ const createProductionDelegatedFrameworkRuntime = (
           preparedAttempts.set(input.attemptId, {
             backend: runtimeBackend,
             preparedSkills,
-            connection: capability,
-            releaseBackend: releaseResolvedBackend
+            connection: capability
           })
           const base: PreparedDelegateExecution = {
             executionId: input.attemptId,
@@ -285,19 +280,15 @@ const createProductionDelegatedFrameworkRuntime = (
             ...(input.artifactCurrentRunFile
               ? { artifactCurrentRunFile: input.artifactCurrentRunFile }
               : {}),
-            async disposeResources() {
-              try {
-                await preparedSkills?.dispose()
-              } finally {
-                openCodeRuntime?.dispose()
-                const owned = preparedAttempts.get(input.attemptId)
-                preparedAttempts.delete(input.attemptId)
-                try {
-                  if (owned?.releaseBackend) await releaseResolvedAgentBackendLeases(owned.backend)
-                } finally {
-                  await removeRuntimeHome(runtimeHome)
-                }
-              }
+            async releaseResources() {
+              openCodeRuntime?.dispose()
+              preparedAttempts.delete(input.attemptId)
+              if (releaseResolvedBackend) await releaseResolvedAgentBackendLeases(backend)
+            },
+            disposeResources() {
+              // Skill projections are inside this owned tree. Do not run their path-based disposer
+              // against files the child could have replaced with links.
+              removeRuntimeHome()
             }
           }
           if (delegatedSpawn) return { ...base, spawn: delegatedSpawn }
@@ -311,11 +302,14 @@ const createProductionDelegatedFrameworkRuntime = (
             `Delegated-work framework ${frameworkId} does not prepare an execution scope.`
           )
         } catch (error) {
-          await preparedSkills?.dispose().catch(() => undefined)
           openCodeRuntime?.dispose()
           preparedAttempts.delete(input.attemptId)
           if (releaseResolvedBackend) await releaseResolvedAgentBackendLeases(backend)
-          await removeRuntimeHome(runtimeHome).catch(() => undefined)
+          try {
+            removeRuntimeHome()
+          } catch {
+            /* Preserve the preparation failure. */
+          }
           throw error
         }
       }
@@ -326,28 +320,22 @@ const createProductionDelegatedFrameworkRuntime = (
       ): ReturnType<typeof createAcpRuntime> => {
         const owned = preparedAttempts.get(scope.executionId)
         if (!owned) throw new Error('Delegated runtime scope is unavailable.')
-        preparedAttempts.delete(scope.executionId)
-        try {
-          return createAcpRuntime({
-            ...options.runtime,
-            notebookRpcServer: options.notebookRpcServer(),
-            fixedBackend: withDelegatedChildContext(owned.backend),
-            preparedSkills: owned.preparedSkills,
-            runtimeCallbacks: callbacks,
-            delegatedNotebookConnection: owned.connection,
-            permissionGrantContext: {
-              projectId: scope.provenance.projectId,
-              sessionId: scope.provenance.sessionId
-            },
-            ...(scope.artifactCurrentRunFile
-              ? { delegatedArtifactCurrentRunFile: scope.artifactCurrentRunFile }
-              : {}),
-            ...(agentProcess ? { spawnAgent: () => agentProcess } : {})
-          })
-        } catch (error) {
-          if (owned.releaseBackend) void releaseResolvedAgentBackendLeases(owned.backend)
-          throw error
-        }
+        return createAcpRuntime({
+          ...options.runtime,
+          notebookRpcServer: options.notebookRpcServer(),
+          fixedBackend: withDelegatedChildContext(owned.backend),
+          preparedSkills: owned.preparedSkills,
+          runtimeCallbacks: callbacks,
+          delegatedNotebookConnection: owned.connection,
+          permissionGrantContext: {
+            projectId: scope.provenance.projectId,
+            sessionId: scope.provenance.sessionId
+          },
+          ...(scope.artifactCurrentRunFile
+            ? { delegatedArtifactCurrentRunFile: scope.artifactCurrentRunFile }
+            : {}),
+          ...(agentProcess ? { spawnAgent: () => agentProcess } : {})
+        })
       }
 
       return {
