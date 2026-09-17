@@ -57,6 +57,7 @@ import type {
   DescribeArtifactEnvironmentLockRequest
 } from '../../../../shared/artifact-reproducibility'
 import type {
+  NotebookEnvironmentLockDiagnostic,
   NotebookEnvironmentLockPartialReason,
   NotebookInputFileSummary,
   NotebookOutput,
@@ -81,7 +82,10 @@ import {
   resolveArtifactVersionDescriptor
 } from './preview-file-item'
 import { NotebookInputDataStrip } from './NotebookInputDataStrip'
-import { ArtifactReproducibilityPanel } from './ArtifactReproducibilityPanel'
+import {
+  ArtifactReproducibilityPanel,
+  EnvironmentLockDiagnostics
+} from './ArtifactReproducibilityPanel'
 import { NotebookCodeBlock } from './notebook-code'
 import { NotebookDialogCell } from './SessionNotebookDialog'
 import { WorkspaceActivityGroup } from './WorkspaceActivityGroup'
@@ -150,6 +154,7 @@ type CapturedEnvironmentLock = {
   kernelKind: 'python' | 'r'
   environmentName?: string
   partialReasons?: NotebookEnvironmentLockPartialReason[]
+  diagnostics?: NotebookEnvironmentLockDiagnostic[]
 }
 
 const packageManagerLabel = (manager: ArtifactEnvironmentLockPackageManager): string => {
@@ -213,21 +218,33 @@ const capturedEnvironmentLocksForRuns = (
       continue
     }
     const previous = locks.get(lock.lockChecksum)
-    if (previous?.state === 'partial' && lock.state === 'partial') {
+    if (previous) {
+      // The checksum identifies lock contents, not coverage of each run's observed environment.
+      // A complete capture in another run cannot fill a relevant run's evidence gap.
+      if (lock.state === 'partial') previous.state = 'partial'
       previous.partialReasons = [
         ...new Set([...(previous.partialReasons ?? []), ...(lock.partialReasons ?? [])])
       ]
+      previous.diagnostics = [...(previous.diagnostics ?? []), ...(lock.diagnostics ?? [])].filter(
+        (diagnostic, index, diagnostics) =>
+          diagnostics.findIndex(
+            (candidate) =>
+              candidate.reason === diagnostic.reason &&
+              candidate.packageName === diagnostic.packageName &&
+              candidate.observedVersion === diagnostic.observedVersion &&
+              candidate.lockedVersion === diagnostic.lockedVersion
+          ) === index
+      )
       continue
     }
-    if (!previous || (previous.state === 'partial' && lock.state === 'available')) {
-      locks.set(lock.lockChecksum, {
-        lockChecksum: lock.lockChecksum,
-        state: lock.state,
-        kernelKind: run.kernelKind,
-        ...(run.environmentName ? { environmentName: run.environmentName } : {}),
-        ...(lock.partialReasons ? { partialReasons: [...lock.partialReasons] } : {})
-      })
-    }
+    locks.set(lock.lockChecksum, {
+      lockChecksum: lock.lockChecksum,
+      state: lock.state,
+      kernelKind: run.kernelKind,
+      ...(run.environmentName ? { environmentName: run.environmentName } : {}),
+      ...(lock.partialReasons ? { partialReasons: [...lock.partialReasons] } : {}),
+      ...(lock.diagnostics ? { diagnostics: [...lock.diagnostics] } : {})
+    })
   }
   return [...locks.values()]
 }
@@ -2123,6 +2140,9 @@ const ArtifactProvenancePanel = ({
                             <p className="mt-1 text-xs leading-5 text-status-warning-foreground dark:text-status-warning-dark-foreground">
                               {partialEnvironmentLockSummary(lock.partialReasons, t)}
                             </p>
+                          ) : null}
+                          {lock.state === 'partial' && lock.diagnostics?.length ? (
+                            <EnvironmentLockDiagnostics diagnostics={lock.diagnostics} />
                           ) : null}
                         </div>
                         <div className="flex min-w-0 flex-wrap items-center gap-2">

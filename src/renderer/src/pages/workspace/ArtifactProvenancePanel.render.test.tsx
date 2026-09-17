@@ -2386,6 +2386,78 @@ describe('ArtifactProvenancePanel', () => {
     expect(container.querySelector('[aria-label="Download R lock"]')).not.toBeNull()
   })
 
+  it.each([false, true])(
+    'preserves partial lock diagnostics across runs sharing a checksum (reverse: %s)',
+    async (reverse) => {
+      const execution = provenance().execution!
+      const run = execution.runs[0]!
+      const runs = [
+        {
+          ...run,
+          environmentLock: {
+            state: 'partial' as const,
+            format: 'environment-lock-bundle' as const,
+            lockChecksum: 'e'.repeat(64),
+            partialReasons: ['non-conda-package-detected' as const],
+            diagnostics: [
+              {
+                reason: 'package-lock-missing' as const,
+                packageName: 'scipy',
+                observedVersion: '1.16.0'
+              },
+              {
+                reason: 'package-version-mismatch' as const,
+                packageName: 'numpy',
+                observedVersion: '2.3.2',
+                lockedVersion: '2.2.6'
+              }
+            ]
+          }
+        },
+        {
+          ...run,
+          runId: 'second-run',
+          runIndex: 1,
+          environmentLock: {
+            state: 'available' as const,
+            format: 'environment-lock-bundle' as const,
+            lockChecksum: 'e'.repeat(64)
+          }
+        },
+        {
+          ...run,
+          runId: 'third-run',
+          runIndex: 2,
+          environmentLock: {
+            state: 'partial' as const,
+            format: 'environment-lock-bundle' as const,
+            lockChecksum: 'e'.repeat(64),
+            partialReasons: ['environment-manifest-partial' as const],
+            diagnostics: [
+              {
+                reason: 'package-lock-missing' as const,
+                packageName: 'scipy',
+                observedVersion: '1.16.0'
+              }
+            ]
+          }
+        }
+      ]
+      getVersionExecution.mockResolvedValue({
+        execution: { ...execution, runs: reverse ? runs.reverse() : runs }
+      })
+      await clickTab('Environment')
+      await flush()
+      expect(container.textContent).toContain('Partial lock')
+      expect(container.textContent).not.toContain('Complete lock')
+      expect(container.textContent).toContain('Package inventory was incomplete.')
+      expect(container.textContent).toContain('No exact lock was captured for scipy (1.16.0).')
+      expect(container.textContent).toContain('numpy: installed 2.3.2, locked 2.2.6.')
+      expect(container.textContent?.match(/No exact lock was captured for scipy/g)).toHaveLength(1)
+      expect(container.querySelector('[aria-label="Create reusable environment"]')).toBeNull()
+    }
+  )
+
   it('downloads the exact captured producer block with the matching kernel extension', async () => {
     const download = [...container.querySelectorAll('button')].find(
       (button) => button.textContent === 'Download'
