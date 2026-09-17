@@ -1,3 +1,7 @@
+import {
+  DEFAULT_PERMISSION_PROFILE,
+  type PermissionProfileId
+} from '../../shared/permission-profiles'
 import { copySessionBookmarks, readSessionBookmarkTargets } from '../bookmarks/repository'
 import { encodeDataPath, decodeDataPath } from '../storage/data-path'
 import type { BookmarkTarget } from '../../shared/bookmarks'
@@ -128,6 +132,7 @@ const PACKAGE_README =
 type PackageOptions = {
   storageRoot: string
   configRoot?: string
+  getDefaultPermissionProfile?: () => Promise<PermissionProfileId>
   getClient: () => Promise<PrismaClient>
   isSessionActive?: (projectId: string, sessionId: string) => boolean
   inspectPackage?: typeof inspectSessionPackage
@@ -1119,7 +1124,11 @@ export class SessionPackageService {
         }
       }
       if (forkSource) {
-        session = createForkSession(session, forkSource)
+        session = createForkSession(
+          session,
+          forkSource,
+          (await this.options.getDefaultPermissionProfile?.()) ?? DEFAULT_PERMISSION_PROFILE
+        )
       }
       validatePackageLiteratureSession(native.records, session)
       const sessionStage = join(configOperationRoot, 'session-stage')

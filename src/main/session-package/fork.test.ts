@@ -661,3 +661,31 @@ it('copies writable file versions, file bookmarks and historical Plan references
   expect((await bookmarks.list(refork)).items).toHaveLength(1)
   await service.close()
 })
+
+it.each(['ask', 'auto', 'full'] as const)(
+  'uses the current global permission profile for local and imported forks (%s)',
+  async (profile) => {
+    const { fixture, repository, service } = await setup()
+    const path = join(fixture.storageRoot, 'permissions.science')
+    await service.exportTo({ projectId: 'project-1', sessionId: 'session-1' }, path)
+    const imported = await service.importFrom(path, undefined, undefined, undefined, {
+      projectId: 'project-1'
+    })
+    let currentProfile: 'ask' | 'auto' | 'full' = 'ask'
+    const configured = new SessionPackageService({
+      storageRoot: fixture.storageRoot,
+      getClient: async () => fixture.client,
+      getDefaultPermissionProfile: async () => currentProfile
+    })
+    currentProfile = profile
+    for (const source of [{ projectId: 'project-1', sessionId: 'session-1' }, imported]) {
+      const child = await configured.fork(source)
+      expect(
+        (await repository.loadSession(child.projectId, child.sessionId))?.permissionProfile
+      ).toBe(profile)
+      expect(
+        (await repository.loadSession(source.projectId, source.sessionId))?.permissionProfile
+      ).toBe('ask')
+    }
+  }
+)

@@ -44,6 +44,12 @@ const dependencyBlock = compact(
 )
 
 describe('production application command wiring', () => {
+  it('reads current global permissions when creating a fork', () => {
+    expect(compact(ipcSource)).toContain(
+      'getDefaultPermissionProfile: async () => getDefaultPermissionProfile(await settingsRepository.getSettings())'
+    )
+  })
+
   it('adopts package publications into the live persistence owner before exposing desktop commands', () => {
     expect(compact(ipcSource)).toContain(
       'await packagePublicationOwner.current?.adoptPublishedSession(projectId, sessionId)'

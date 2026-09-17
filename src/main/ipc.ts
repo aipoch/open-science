@@ -1,3 +1,4 @@
+import { getDefaultPermissionProfile } from '../shared/permission-profiles'
 import { PackageLiteratureReader } from './session-package/literature-reader'
 import { PdfElementAgentReader } from './literature/pdf-structure/agent-reader'
 import { transactLiterature } from './literature/transact'
@@ -1140,6 +1141,8 @@ const createApplicationModules = async (
   } = {}
   const sessionPackageService = await modules.add(undefined, () => {
     const service = new SessionPackageService({
+      getDefaultPermissionProfile: async () =>
+        getDefaultPermissionProfile(await settingsRepository.getSettings()),
       onSessionPublished: async ({ projectId, sessionId }) => {
         await packagePublicationOwner.current?.adoptPublishedSession(projectId, sessionId)
       },

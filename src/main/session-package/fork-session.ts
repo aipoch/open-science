@@ -1,3 +1,4 @@
+import { type PermissionProfileId } from '../../shared/permission-profiles'
 import { createSessionBranchSource } from '../../shared/session-branch-source'
 import {
   SESSION_DETAILS_TITLE_MAX_LENGTH,
@@ -8,7 +9,8 @@ import {
 // execution state. Historical operations stay historical and never acquire live handles.
 export const createForkSession = (
   copied: PersistedChatSession,
-  source: PersistedChatSession
+  source: PersistedChatSession,
+  permissionProfile: PermissionProfileId
 ): PersistedChatSession => {
   const now = Date.now()
   const graph = copied.conversationGraph
@@ -37,13 +39,13 @@ export const createForkSession = (
     sessionDetailsGeneration: undefined,
     sessionDetailsGenerationEligible: undefined,
     // Imported configurations belong to another installation. Use the receiving app's model
-    // defaults; local forks keep the user's desired configuration and approval posture.
+    // defaults; local forks keep the user's desired model configuration.
     cwd: source.packageOrigin ? '' : source.cwd,
     agentFrameworkId: source.packageOrigin ? undefined : source.agentFrameworkId,
     agentBackendId: source.packageOrigin ? undefined : source.agentBackendId,
     agentModel: source.packageOrigin ? undefined : source.agentModel,
     agentConfiguration: source.packageOrigin ? undefined : source.agentConfiguration,
-    permissionProfile: source.packageOrigin ? 'ask' : source.permissionProfile,
+    permissionProfile,
     memoryEnabled: source.packageOrigin ? true : source.memoryEnabled,
     delegationPolicy: source.packageOrigin ? 'allow' : source.delegationPolicy,
     autoReviewEnabled: source.packageOrigin ? false : source.autoReviewEnabled,
