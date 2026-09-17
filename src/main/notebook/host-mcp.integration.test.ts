@@ -7,6 +7,7 @@ import { ConnectorService } from '../connectors/service'
 import { ParserEngine } from '../connectors/engine'
 import { NotebookKernelExecutor } from './kernel-executor'
 import { NotebookLocalRpcServer } from './local-rpc-server'
+import type { NotebookExecutionResult } from './runtime-service'
 
 // host.mcp now lives ONLY in the control-plane repl kernel (a Node process). Node is always available
 // under vitest, so the sole gate is RUN_KERNEL — no provisioned python/r env is needed.
@@ -75,7 +76,192 @@ const baseRequest = (
   ...overrides
 })
 
+// Shared lifecycle for the lookup regression cells; requests and assertions stay in each test.
+async function executeGenomesCell(
+  code: string,
+  fetchImpl: typeof fetch
+): Promise<NotebookExecutionResult> {
+  const connectorService = new ConnectorService({
+    getConnectors: () => ({ enabledIds: ['genomes'], autoAllowIds: ['genomes'] }),
+    resolveApiKey: () => undefined,
+    engine: new ParserEngine({ retries: 0, fetchImpl })
+  })
+  const rpcServer = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+    connectorService
+  })
+  const connection = await rpcServer.issueControlConnection(
+    'session-42',
+    'project-1',
+    'root-frame-session-42'
+  )
+  const exec = makeExecutor()
+  try {
+    return await exec.execute(
+      baseRequest({
+        code,
+        mcpRpcEndpoint: connection.endpoint,
+        mcpRpcSocketPath: connection.socketPath,
+        mcpRpcToken: connection.token,
+        sessionId: 'session-42',
+        projectId: 'project-1'
+      })
+    )
+  } finally {
+    await exec.shutdown()
+    connection.release()
+    await rpcServer.close()
+  }
+}
+
 gate('repl kernel host.mcp', () => {
+  it.each([undefined, 'auto', 'id', 'symbol', 'guess', null, 42])(
+    'preserves and validates lookup query_type through RPC: %s',
+    async (queryType) => {
+      const record = {
+        id: 'ENSMUSG00000059552',
+        species: 'mus_musculus',
+        seq_region_name: '11',
+        start: 69469669
+      }
+      const idUrl = 'https://rest.ensembl.org/lookup/id/Trp53?expand=0'
+      const symbolUrl = 'https://rest.ensembl.org/lookup/symbol/mus_musculus/Trp53?expand=0'
+      const sequenceUrl =
+        'https://rest.ensembl.org/sequence/region/mus_musculus/11:69469669-69469672'
+      const requests: string[] = []
+      const fetchImpl: typeof fetch = async (input) => {
+        const url = String(input)
+        requests.push(url)
+        if (url === idUrl) return Response.json({ error: "ID 'Trp53' not found" }, { status: 400 })
+        if (url === symbolUrl) return Response.json(record)
+        if (url === sequenceUrl)
+          return Response.json({ id: '11:69469669-69469672', molecule: 'dna', seq: 'ACGT' })
+        throw new Error(`Unexpected request ${url}`)
+      }
+      const args = { query: 'Trp53', species: 'mus_musculus', query_type: queryType }
+      const result = await executeGenomesCell(
+        `
+            const lookup = await host.mcp('genomes', 'ensembl_lookup', ${JSON.stringify(args)});
+            let sequence = null;
+            if (lookup.found) {
+              const r = lookup.record;
+              sequence = await host.mcp('genomes', 'ensembl_sequence', {
+                species: lookup.species, region: r.seq_region_name+':'+r.start+'-'+(r.start+3)
+              });
+            }
+            console.log(JSON.stringify({lookup, sequence}));
+          `,
+        fetchImpl
+      )
+      if (queryType === 'guess' || queryType === null || queryType === 42) {
+        expect(result.status).toBe('failed')
+        expect(result.traceback).toContain('query_type')
+        expect(result.stdout.trim()).toBe('')
+        expect(requests).toEqual([])
+      } else {
+        expect(result.status, result.traceback).toBe('completed')
+        const output = JSON.parse(result.stdout.trim())
+        expect(output.lookup).toEqual({
+          found: queryType !== 'id',
+          query: 'Trp53',
+          species: 'mus_musculus',
+          record: queryType === 'id' ? null : record
+        })
+        if (queryType === 'id') {
+          expect(output.sequence).toBeNull()
+          expect(requests).toEqual([idUrl])
+        } else {
+          expect(output.sequence).toMatchObject({ found: true, seq: 'ACGT', length: 4 })
+          expect(requests).toEqual(
+            queryType === 'symbol' ? [symbolUrl, sequenceUrl] : [idUrl, symbolUrl, sequenceUrl]
+          )
+        }
+      }
+    }
+  )
+
+  it.each([
+    ['FBgn0002778', 'drosophila_melanogaster', '3L', 14985100],
+    ['WBGene00006763', 'caenorhabditis_elegans', 'IV', 13261555],
+    ['YBR160W', 'saccharomyces_cerevisiae', 'II', 560078]
+  ])(
+    'routes external ID %s through lookup and downstream sequence',
+    async (id, species, chromosome, start) => {
+      const record = { id, species, seq_region_name: chromosome, start }
+      const requests: string[] = []
+      const region = `${chromosome}:${start}-${Number(start) + 3}`
+      const lookupUrl = `https://rest.ensembl.org/lookup/id/${id}?expand=0`
+      const sequenceUrl = `https://rest.ensembl.org/sequence/region/${species}/${region}`
+      const fetchImpl: typeof fetch = async (input) => {
+        const url = String(input)
+        requests.push(url)
+        if (url === lookupUrl) return Response.json(record)
+        if (url === sequenceUrl) return Response.json({ id: region, molecule: 'dna', seq: 'ACGT' })
+        throw new Error(`Unexpected request ${url}`)
+      }
+      const result = await executeGenomesCell(
+        `
+          const lookup = await host.mcp('genomes','ensembl_lookup',{query:${JSON.stringify(id)}});
+          const r = lookup.record;
+          const sequence = await host.mcp('genomes','ensembl_sequence',{
+            species:lookup.species, region:r.seq_region_name+':'+r.start+'-'+(r.start+3)
+          });
+          console.log(JSON.stringify({lookup,sequence}));
+        `,
+        fetchImpl
+      )
+      expect(result.status, result.traceback).toBe('completed')
+      const output = JSON.parse(result.stdout.trim())
+      expect(output.lookup).toEqual({ found: true, query: id, species, record })
+      expect(output.sequence).toMatchObject({ found: true, seq: 'ACGT', length: 4 })
+      expect(requests).toEqual([lookupUrl, sequenceUrl])
+    }
+  )
+
+  it.each(['missing', 'invalid-species', 'upstream-failure'])(
+    'preserves lookup error classification through host.mcp: %s',
+    async (mode) => {
+      const requests: string[] = []
+      const species = mode === 'invalid-species' ? 'mus_musculuss' : 'mus_musculus'
+      const fetchImpl: typeof fetch = async (input) => {
+        const url = String(input)
+        requests.push(url)
+        if (mode === 'upstream-failure')
+          return Response.json({ error: 'Service unavailable' }, { status: 503 })
+        if (url.includes('/lookup/id/'))
+          return Response.json({ error: "ID 'NOSUCHGENE' not found" }, { status: 400 })
+        return Response.json(
+          {
+            error:
+              mode === 'missing'
+                ? 'No valid lookup found for symbol NOSUCHGENE'
+                : "Can not find internal name for species 'mus_musculuss'"
+          },
+          { status: 400 }
+        )
+      }
+      const result = await executeGenomesCell(
+        `console.log(JSON.stringify(await host.mcp('genomes','ensembl_lookup',{query:'NOSUCHGENE',species:${JSON.stringify(species)}})));`,
+        fetchImpl
+      )
+      if (mode === 'missing') {
+        expect(result.status, result.traceback).toBe('completed')
+        expect(JSON.parse(result.stdout.trim())).toEqual({
+          found: false,
+          query: 'NOSUCHGENE',
+          species,
+          record: null
+        })
+      } else {
+        expect(result.status).toBe('failed')
+        expect(result.traceback).toContain(
+          mode === 'invalid-species' ? 'Can not find internal name for species' : 'HTTP 503'
+        )
+        expect(result.stdout.trim()).toBe('')
+      }
+      expect(requests).toHaveLength(mode === 'upstream-failure' ? 1 : 2)
+    }
+  )
+
   it.each([
     { mode: 'mapped', requestedSpecies: undefined },
     { mode: 'mapped', requestedSpecies: 'homo_sapiens' },

@@ -771,3 +771,86 @@ describe('ParserEngine body cleanup edge cases', () => {
     }
   )
 })
+
+describe('ParserEngine opt-in HTTP JSON bodies', () => {
+  const descriptor: ToolDescriptor = {
+    id: 't',
+    connector: 'c',
+    description: '',
+    input: {},
+    run: (ctx) =>
+      ctx.fetchJsonWithHeaders('https://example.test/data', { allowHttpStatuses: [400] })
+  }
+
+  it('reads opted-in JSON errors once without changing default HTTP handling', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockImplementation(async () => Response.json({ error: 'missing' }, { status: 400 }))
+    const engine = new ParserEngine({ fetchImpl })
+    await expect(engine.call(descriptor, {}, {})).resolves.toMatchObject({
+      body: { error: 'missing' },
+      status: 400,
+      headers: expect.any(Headers)
+    })
+    await expect(
+      engine.call(
+        { ...descriptor, run: (ctx) => ctx.fetchJson('https://example.test/data') },
+        {},
+        {}
+      )
+    ).rejects.toThrow('HTTP 400')
+    await expect(
+      engine.call(
+        { ...descriptor, run: (ctx) => ctx.fetchJsonWithHeaders('https://example.test/data') },
+        {},
+        {}
+      )
+    ).rejects.toThrow('HTTP 400')
+    expect(fetchImpl).toHaveBeenCalledTimes(3)
+  })
+
+  it('retains success status and headers with an error-status opt-in', async () => {
+    const engine = new ParserEngine({
+      fetchImpl: async () => Response.json({ id: 'record' }, { headers: { 'x-total': '1' } })
+    })
+    const result = (await engine.call(descriptor, {}, {})) as {
+      body: unknown
+      status: number
+      headers: Headers
+    }
+    expect(result.body).toEqual({ id: 'record' })
+    expect(result.status).toBe(200)
+    expect(result.headers.get('x-total')).toBe('1')
+  })
+
+  it('still rejects unlisted statuses', async () => {
+    const engine = new ParserEngine({
+      fetchImpl: async () => Response.json({ error: 'bad' }, { status: 401 }),
+      retries: 0
+    })
+    await expect(engine.call(descriptor, {}, {})).rejects.toThrow('HTTP 401')
+  })
+
+  it('bounds opted-in error bodies and cancels their streams', async () => {
+    const response = Response.json({ error: 'x'.repeat(100) }, { status: 400 })
+    const engine = new ParserEngine({ fetchImpl: async () => response, maxResponseBytes: 20 })
+    await expect(engine.call(descriptor, {}, {})).rejects.toThrow('20-byte limit')
+    expect(response.body?.locked).toBe(false)
+  })
+
+  it('times out stalled opted-in error bodies', async () => {
+    const cancel = vi.fn()
+    const response = new Response(
+      new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode('{'))
+        },
+        cancel
+      }),
+      { status: 400 }
+    )
+    const engine = new ParserEngine({ fetchImpl: async () => response, timeoutMs: 20, retries: 0 })
+    await expect(engine.call(descriptor, {}, {})).rejects.toThrow('timed out')
+    expect(cancel).toHaveBeenCalled()
+  })
+})

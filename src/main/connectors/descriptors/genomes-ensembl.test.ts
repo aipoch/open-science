@@ -31,6 +31,249 @@ const run = (
   }).call(tool(id), args, {})
 
 describe('ensembl_lookup', () => {
+  it.each([undefined, 'auto'])(
+    'keeps ID-first symbol fallback when query_type is %s',
+    async (queryType) => {
+      const record = { id: 'ENSMUSG00000059552', species: 'mus_musculus' }
+      const fetchImpl = vi
+        .fn()
+        .mockResolvedValueOnce(Response.json({ error: "ID 'Trp53' not found" }, { status: 400 }))
+        .mockResolvedValueOnce(Response.json(record))
+      expect(
+        await run(
+          'ensembl_lookup',
+          {
+            query: 'Trp53',
+            species: 'mus_musculus',
+            query_type: queryType
+          },
+          fetchImpl
+        )
+      ).toEqual({ found: true, query: 'Trp53', species: 'mus_musculus', record })
+      expect(fetchImpl.mock.calls.map(([url]) => String(url))).toEqual([
+        'https://rest.ensembl.org/lookup/id/Trp53?expand=0',
+        'https://rest.ensembl.org/lookup/symbol/mus_musculus/Trp53?expand=0'
+      ])
+    }
+  )
+
+  it.each(['Trp53', 'FBgn9999999'])(
+    'does not reinterpret a missing explicit ID %s as a symbol',
+    async (query) => {
+      const fetchImpl = vi
+        .fn()
+        .mockResolvedValueOnce(Response.json({ error: `ID '${query}' not found` }, { status: 400 }))
+      expect(await run('ensembl_lookup', { query, query_type: 'id' }, fetchImpl)).toEqual({
+        found: false,
+        query,
+        species: 'homo_sapiens',
+        record: null
+      })
+      expect(fetchImpl).toHaveBeenCalledTimes(1)
+      expect(String(fetchImpl.mock.calls[0][0])).toBe(
+        `https://rest.ensembl.org/lookup/id/${query}?expand=0`
+      )
+    }
+  )
+
+  it('normalizes versioned explicit IDs while preserving their actual species', async () => {
+    const record = { id: 'ENSMUSG00000059552', species: 'mus_musculus' }
+    const fetchImpl = vi.fn().mockResolvedValueOnce(Response.json(record))
+    expect(
+      await run(
+        'ensembl_lookup',
+        {
+          query: 'ENSMUSG00000059552.1',
+          query_type: 'id',
+          species: 'homo_sapiens',
+          expand: true
+        },
+        fetchImpl
+      )
+    ).toEqual({
+      found: true,
+      query: 'ENSMUSG00000059552.1',
+      species: 'mus_musculus',
+      record
+    })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(String(fetchImpl.mock.calls[0][0])).toBe(
+      'https://rest.ensembl.org/lookup/id/ENSMUSG00000059552?expand=1'
+    )
+  })
+
+  it.each(['Trp53', 'ENSMUSG00000059552.1'])(
+    'routes explicit symbol %s directly without ID normalization or probing',
+    async (query) => {
+      const record = { id: 'ENSMUSG00000059552', species: 'mus_musculus' }
+      const fetchImpl = vi.fn(async (input) => {
+        if (String(input).includes('/lookup/id/')) throw new Error('ID endpoint unavailable')
+        return Response.json(record)
+      })
+      expect(
+        await run(
+          'ensembl_lookup',
+          {
+            query,
+            query_type: 'symbol',
+            species: 'mus_musculus',
+            expand: true
+          },
+          fetchImpl
+        )
+      ).toEqual({ found: true, query, species: 'mus_musculus', record })
+      expect(fetchImpl).toHaveBeenCalledTimes(1)
+      expect(String(fetchImpl.mock.calls[0][0])).toBe(
+        `https://rest.ensembl.org/lookup/symbol/mus_musculus/${query}?expand=1`
+      )
+    }
+  )
+
+  it('returns absence after a single explicit symbol miss', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json({ error: 'No valid lookup found for symbol NOSUCHGENE' }, { status: 400 })
+      )
+    expect(
+      await run(
+        'ensembl_lookup',
+        {
+          query: 'NOSUCHGENE',
+          query_type: 'symbol'
+        },
+        fetchImpl
+      )
+    ).toEqual({
+      found: false,
+      query: 'NOSUCHGENE',
+      species: 'homo_sapiens',
+      record: null
+    })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(String(fetchImpl.mock.calls[0][0])).toContain('/lookup/symbol/homo_sapiens/NOSUCHGENE')
+  })
+
+  it('reports an invalid species in explicit symbol mode', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json(
+          { error: "Can not find internal name for species 'mus_musculuss'" },
+          { status: 400 }
+        )
+      )
+    await expect(
+      run(
+        'ensembl_lookup',
+        {
+          query: 'Trp53',
+          query_type: 'symbol',
+          species: 'mus_musculuss'
+        },
+        fetchImpl
+      )
+    ).rejects.toThrow('Can not find internal name for species')
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['guess', '', null, 1])(
+    'rejects invalid query_type %s before HTTP',
+    async (queryType) => {
+      const fetchImpl = vi.fn()
+      await expect(
+        run(
+          'ensembl_lookup',
+          {
+            query: 'Trp53',
+            query_type: queryType
+          },
+          fetchImpl
+        )
+      ).rejects.toThrow('query_type must be auto, id, or symbol')
+      expect(fetchImpl).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each([
+    ['FBgn0002778', 'drosophila_melanogaster'],
+    ['WBGene00006763', 'caenorhabditis_elegans'],
+    ['YBR160W', 'saccharomyces_cerevisiae']
+  ])('resolves non-ENS ID %s without using the symbol endpoint', async (query, species) => {
+    const record = { id: query, species }
+    const fetchImpl = vi.fn().mockResolvedValueOnce(Response.json(record))
+    expect(await run('ensembl_lookup', { query }, fetchImpl)).toEqual({
+      found: true,
+      query,
+      species,
+      record
+    })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(String(fetchImpl.mock.calls[0][0])).toContain(`/lookup/id/${query}?expand=0`)
+  })
+
+  it('does not fall back to a symbol for a missing canonical ID', async () => {
+    const query = 'ENSG99999999999'
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ error: `ID '${query}' not found` }, { status: 400 }))
+    expect(await run('ensembl_lookup', { query }, fetchImpl)).toMatchObject({
+      found: false,
+      record: null
+    })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it('reports invalid species rather than a missing gene', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ error: "ID 'Trp53' not found" }, { status: 400 }))
+      .mockResolvedValueOnce(
+        Response.json(
+          { error: "Can not find internal name for species 'mus_musculuss'" },
+          { status: 400 }
+        )
+      )
+    await expect(
+      run('ensembl_lookup', { query: 'Trp53', species: 'mus_musculuss' }, fetchImpl)
+    ).rejects.toThrow('Can not find internal name for species')
+  })
+
+  it.each([
+    Response.json({ error: 'Invalid expand parameter' }, { status: 400 }),
+    Response.json({ error: "ID 'OTHER' not found" }, { status: 400 }),
+    new Response('<html>Bad request</html>', { status: 400 }),
+    Response.json({}, { status: 400 }),
+    Response.json({ id: 'ENSG00000157764', species: 'homo_sapiens' }, { status: 400 }),
+    Response.json({ error: 'service unavailable' }, { status: 503 })
+  ])(
+    'does not convert other error responses into absence or retry as a symbol',
+    async (response) => {
+      const fetchImpl = vi.fn().mockResolvedValueOnce(response)
+      await expect(run('ensembl_lookup', { query: 'BRAF' }, fetchImpl)).rejects.toThrow()
+      expect(fetchImpl).toHaveBeenCalledTimes(1)
+    }
+  )
+
+  it.each([
+    { status: 400, body: { id: 'ENSG00000157764', species: 'homo_sapiens' } },
+    { status: 400, body: { error: 'Invalid expand parameter' } },
+    { status: 200, body: { error: 'No valid lookup found for symbol BRAF' } }
+  ])('rejects an unexpected symbol response ($status)', async ({ status, body }) => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ error: "ID 'BRAF' not found" }, { status: 400 }))
+      .mockResolvedValueOnce(Response.json(body, { status }))
+    await expect(run('ensembl_lookup', { query: 'BRAF' }, fetchImpl)).rejects.toThrow()
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not treat an absence message on HTTP 200 as permission to fall back', async () => {
+    const fetchImpl = vi.fn().mockResolvedValueOnce(Response.json({ error: "ID 'BRAF' not found" }))
+    await expect(run('ensembl_lookup', { query: 'BRAF' }, fetchImpl)).rejects.toThrow()
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
   it('routes a true stable ID to /lookup/id (species ignored)', async () => {
     const fetchImpl = vi
       .fn()
@@ -88,10 +331,13 @@ describe('ensembl_lookup', () => {
     for (const sym of ['ENSA', 'ENSAP1']) {
       const fetchImpl = vi
         .fn()
+        .mockResolvedValueOnce(Response.json({ error: `ID '${sym}' not found` }, { status: 400 }))
         .mockResolvedValueOnce(jsonRes({ id: 'ENSG00000143420', species: 'homo_sapiens' }))
       await run('ensembl_lookup', { query: sym }, fetchImpl)
-      const url = String(fetchImpl.mock.calls[0][0])
-      expect(url).toContain(`/lookup/symbol/homo_sapiens/${sym}?expand=0`)
+      expect(String(fetchImpl.mock.calls[0][0])).toContain(`/lookup/id/${sym}?expand=0`)
+      expect(String(fetchImpl.mock.calls[1][0])).toContain(
+        `/lookup/symbol/homo_sapiens/${sym}?expand=0`
+      )
     }
   })
 
@@ -100,10 +346,13 @@ describe('ensembl_lookup', () => {
     { query: 'Trp53', species: 'mus_musculus', id: 'ENSMUSG00000059552' }
   ])('preserves the species for symbol lookup $query', async ({ query, species, id }) => {
     const record = { id, species }
-    const fetchImpl = vi.fn().mockResolvedValueOnce(jsonRes(record))
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ error: `ID '${query}' not found` }, { status: 400 }))
+      .mockResolvedValueOnce(jsonRes(record))
     const out = await run('ensembl_lookup', { query, species }, fetchImpl)
 
-    expect(String(fetchImpl.mock.calls[0][0])).toContain(`/lookup/symbol/${species}/${query}`)
+    expect(String(fetchImpl.mock.calls[1][0])).toContain(`/lookup/symbol/${species}/${query}`)
     expect(out).toEqual({ found: true, query, species, record })
   })
 
@@ -127,8 +376,13 @@ describe('ensembl_lookup', () => {
     expect(String(fetchImpl.mock.calls[0][0])).toContain('/lookup/id/LRG_299?expand=0')
   })
 
-  it('maps an upstream 400 to found:false, record:null', async () => {
-    const fetchImpl = vi.fn().mockResolvedValueOnce(errRes(400))
+  it('returns not found only after explicit ID and symbol misses', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ error: "ID 'NOSUCHGENE' not found" }, { status: 400 }))
+      .mockResolvedValueOnce(
+        Response.json({ error: 'No valid lookup found for symbol NOSUCHGENE' }, { status: 400 })
+      )
     const out = (await run('ensembl_lookup', { query: 'NOSUCHGENE' }, fetchImpl)) as {
       found: boolean
       record: unknown
