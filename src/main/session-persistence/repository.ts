@@ -1,3 +1,4 @@
+import { packageOriginSchema } from '../../shared/session-package'
 import { decodeSessionComputePolicy, type SessionComputePolicy } from './compute-policy'
 import { copyFile, lstat, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { constants as fsConstants } from 'node:fs'
@@ -69,6 +70,26 @@ const nextSessionRevision = (revision: number): number => {
     throw new Error('Session revision cannot be incremented safely.')
   }
   return revision + 1
+}
+
+// A package copy starts with already-versioned history and has no local pre-upgrade image.
+// Require matching durable provenance: caller-supplied metadata cannot bypass a local backup.
+const isSamePublishedPackageCopy = (value: unknown, next: PersistedChatSession): boolean => {
+  if (!value || typeof value !== 'object') return false
+  const envelope = value as Record<string, unknown>
+  const current =
+    envelope.session && typeof envelope.session === 'object'
+      ? (envelope.session as Record<string, unknown>)
+      : envelope
+  const origin = packageOriginSchema.safeParse(current.packageOrigin ?? current.forkOrigin)
+  const nextOrigin = next.packageOrigin ?? next.forkOrigin
+  return (
+    origin.success &&
+    Boolean(nextOrigin) &&
+    current.id === next.id &&
+    current.projectId === next.projectId &&
+    origin.data.importId === nextOrigin?.importId
+  )
 }
 
 const hasS2AttemptSchema = (value: unknown): boolean => {
@@ -1535,6 +1556,7 @@ class SessionRepository {
     const currentWritesS2Attempt = hasS2AttemptSchema(current)
     const backupPath = `${filePath}${PRE_S2_BACKUP_SUFFIX}`
     if (currentWritesS2Attempt) {
+      if (isSamePublishedPackageCopy(current, nextSession)) return
       try {
         await lstat(backupPath)
         return
@@ -1578,6 +1600,7 @@ class SessionRepository {
     }
     const backupPath = `${filePath}${PRE_SUBAGENT_MODEL_BACKUP_SUFFIX}`
     if (hasSubagentModelAttemptSchema(current)) {
+      if (isSamePublishedPackageCopy(current, nextSession)) return
       try {
         await lstat(backupPath)
         return

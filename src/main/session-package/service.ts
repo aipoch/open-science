@@ -116,7 +116,14 @@ const importJournalSchema = sessionPackageRequestSchema
       .array(
         z
           .object({
-            scope: z.enum(['artifacts', 'uploads', 'notebooks', 'execution-file-evidence']),
+            scope: z.enum([
+              'artifacts',
+              'uploads',
+              'notebooks',
+              'execution-file-evidence',
+              'notebook-file-evidence',
+              'file-evidence'
+            ]),
             sessionId: sessionPackageRequestSchema.shape.sessionId
           })
           .strict()
@@ -1202,21 +1209,25 @@ export class SessionPackageService {
       await rename(sourceRoot, join(evidenceDirectory, 'source'))
       await writeDurableJsonFile(
         join(evidenceDirectory, 'receipt.json'),
-        JSON.stringify({
-          schemaVersion: 1,
-          ...(session.packageOrigin ?? session.forkOrigin),
-          projectId,
-          sessionId,
-          identities: native.identities,
-          files
-        })
+        JSON.stringify(
+          sessionPackageReceiptSchema.parse({
+            schemaVersion: 1,
+            ...(session.packageOrigin ?? session.forkOrigin),
+            projectId,
+            sessionId,
+            identities: native.identities,
+            files
+          })
+        )
       )
       const directories: ImportJournal['directories'] = []
       for (const scope of [
         'artifacts',
         'uploads',
         'notebooks',
-        'execution-file-evidence'
+        'execution-file-evidence',
+        'notebook-file-evidence',
+        'file-evidence'
       ] as const) {
         const staged = join(destinationRoot, scope, projectId)
         if (!(await lstat(staged).catch(() => undefined))) continue

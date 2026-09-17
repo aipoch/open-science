@@ -22,7 +22,7 @@ If native publication commits but live adoption fails, Fork reports the existing
 | Live ownership | Real repository, persistence coordinator, archive gate and ACP resume workflow agree before restart; completed publication is adopted before UI notification | `src/main/session-package/fork.test.ts`, `src/main/application-command-wiring.test.ts` |
 | Graph and continuation | All branches/messages copied with new identities; selected branch preserved; new message saved; switch branch without losing it; inherited usage attribution and fresh replay state | `src/main/session-package/fork.test.ts` |
 | File independence | Exact copied bytes, separate IDs, editable child-owned text, new version keeps old bytes, source unchanged; new Artifact creation | `src/main/session-package/fork.test.ts`, `src/main/session-package/service.test.ts` |
-| Notebook | Root and delegated-frame histories, scripts, pinned inputs, execution evidence checksums; append a new run without replacing history | `src/main/session-package/service.test.ts` |
+| Notebook | Legacy Notebook file evidence is normalized through the existing ownership parser; sidecars and generation bytes remain linked with new run IDs and verified checksums. Root and delegated-frame histories, scripts, pinned inputs, execution evidence checksums; append a new run without replacing history | `src/main/session-package/service.test.ts` |
 | Plans | Historical Plan document, step status and prompt binding survive; immutable file referenced only by Plan history is copied | `src/main/session-package/fork.test.ts` |
 | PDF and annotations | Reading PDF bindings; PDF, text and image annotations; new IDs and remapped immutable versions; exact target bytes | `src/main/session-package/service.test.ts` |
 | Literature | Metadata and PDF content resolve through the normal content authority; explicit missing-content evidence survives; no duplicate Library installation | `src/main/session-package/literature.test.ts` |
@@ -35,3 +35,7 @@ If native publication commits but live adoption fails, Fork reports the existing
 The Electron test uses a deterministic ACP provider. Notebook execution uses an executor test double while exercising the real Notebook service and repository. These prove application lifecycle and persistence contracts, not live external model behavior, remote Compute execution, or every provider-specific runtime.
 
 Upstream immutable inputs remain read-only evidence. Child-owned writable files can acquire new versions. Existing cleanup deliberately retains entire packages when external Notebook/history references cannot be ruled out; deleting a conversation does not promise immediate byte deletion.
+
+Source identity-map keys are opaque graph/runtime identifiers, not paths. Receipt creation validates the same schema as recovery; generated destination identities remain path-safe. Legacy compatibility does not bypass checksum or ownership validation.
+
+Already-versioned package copies have no local pre-upgrade image. Save guards require matching durable copy provenance before exempting them from historical upgrade-backup requirements; ordinary local Sessions still require their original backups. The Session repository suite covers both paths.

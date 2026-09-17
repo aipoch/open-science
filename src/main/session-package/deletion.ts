@@ -19,7 +19,14 @@ const uuid = z.string().uuid()
 const importedIdentity = z
   .string()
   .refine((value) => uuid.safeParse(value.replace(/^import-/, '')).success)
-const scope = z.enum(['artifacts', 'uploads', 'notebooks', 'execution-file-evidence'])
+const scope = z.enum([
+  'artifacts',
+  'uploads',
+  'notebooks',
+  'execution-file-evidence',
+  'notebook-file-evidence',
+  'file-evidence'
+])
 const journalSchema = sessionPackageRequestSchema
   .extend({
     schemaVersion: z.literal(1),
@@ -336,7 +343,12 @@ export class SessionPackageDeletion {
       )
         return undefined
     }
-    for (const rootName of ['notebooks', 'execution-file-evidence']) {
+    for (const rootName of [
+      'notebooks',
+      'execution-file-evidence',
+      'notebook-file-evidence',
+      'file-evidence'
+    ]) {
       const notebooks = join(this.options.storageRoot, rootName)
       if (!(await exists(notebooks))) continue
       await assertPackageSourcePath(this.options.storageRoot, rootName)

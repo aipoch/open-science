@@ -389,6 +389,62 @@ describe('session persistence repository (per-session files)', () => {
     ).toBeUndefined()
   })
 
+  it.each(['packageOrigin', 'forkOrigin'] as const)(
+    'saves already-versioned %s history without inventing an upgrade backup',
+    async (field) => {
+      const repository = new SessionRepository(await createStorageRoot())
+      const session = createSession({
+        [field]: {
+          importId: 'copy-receipt',
+          sourceProjectId: 'source',
+          sourceSessionId: 'source-session',
+          importedAt: 1,
+          manifestChecksum: 'a'.repeat(64)
+        },
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          delegatedWork: {
+            records: [
+              {
+                agentFrameId: 'child-frame-1',
+                attempts: [
+                  {
+                    id: 'attempt-1',
+                    initiatingTurnMessageId: 'message-1',
+                    status: 'cancelled',
+                    resolvedAgent: { kind: 'main' },
+                    executionModel: {
+                      frameworkId: 'opencode',
+                      providerId: 'provider-a',
+                      backendId: 'provider-a',
+                      modelRoute: 'opencode-openai',
+                      model: 'model-a',
+                      reasoningEffort: 'high'
+                    },
+                    runtimeSegmentIds: [],
+                    startedAt: 1,
+                    endedAt: 2,
+                    cancellationReason: 'main_agent_stop'
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      })
+      await repository.saveSession(session)
+      await expect(
+        repository.saveSession({ ...session, title: 'Saved copy' })
+      ).resolves.toBeDefined()
+      const local = { ...session, id: 'local-without-backup', [field]: undefined }
+      await repository.saveSession(local)
+      await expect(repository.saveSession({ ...local, [field]: session[field] })).rejects.toThrow(
+        'required pre-S2 backup is missing'
+      )
+    }
+  )
+
   it('preserves one immutable pre-S2 Session backup before the first initiating-Turn write', async () => {
     const repository = new SessionRepository(await createStorageRoot())
     const legacy = createSession({

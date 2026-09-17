@@ -1,3 +1,4 @@
+import { parseOwnedExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
 import {
   packageLiteratureSchema,
   validatePackageLiterature,
@@ -29,7 +30,7 @@ import { assertPackageSourcePath, readPackageJson } from './archive'
 import { NotebookRunRepository } from '../notebook/repository'
 import { createFrameNotebookLane } from '../notebook/lane-identity'
 import type { NotebookRunDocument } from '../../shared/notebook'
-import { executionEvidenceSchema } from './execution-evidence'
+import { readExecutionEvidence } from './execution-evidence'
 import { copyFileWithinBudget } from '../bounded-file-io'
 import { assertPackageCapacity } from './capacity'
 
@@ -471,6 +472,13 @@ export const remapStorageKey = (key: string, identities: Record<string, string>)
   }
   map(1)
   if (!(segments[0] === 'execution-file-evidence' && segments[2] === 'blobs')) map(2)
+  if (['notebook-file-evidence', 'file-evidence'].includes(segments[0])) {
+    const run = segments[3] === 'frames' ? 5 : 3
+    if (segments[run]?.startsWith('run-')) {
+      const id = segments[run].slice(4)
+      if (identities[id]) segments[run] = `run-${identities[id]}`
+    }
+  }
   if (segments[0] === 'execution-file-evidence') {
     const activity = segments.findIndex((segment) => segment.startsWith('activity-'))
     if (activity >= 0) {
@@ -490,7 +498,9 @@ export const remapStorageKey = (key: string, identities: Record<string, string>)
     map(3)
     map(5)
   } else if (
-    ['notebooks', 'execution-file-evidence'].includes(segments[0]) &&
+    ['notebooks', 'execution-file-evidence', 'notebook-file-evidence', 'file-evidence'].includes(
+      segments[0]
+    ) &&
     segments[3] === 'frames'
   ) {
     map(4)
@@ -655,16 +665,17 @@ export const prepareNativeImport = async (
       if (typeof run.cellId === 'string') identities[run.cellId] ??= randomUUID()
     }
   }
-  const sidecars = new Map<string, ReturnType<typeof executionEvidenceSchema.parse>>()
+  const sidecars = new Map<string, ReturnType<typeof readExecutionEvidence>>()
   for (const entry of manifest.inventory) {
     if (
-      !entry.storageKey?.startsWith('execution-file-evidence/') ||
+      !entry.storageKey ||
+      !/^(?:execution-file-evidence|notebook-file-evidence|file-evidence)\//.test(
+        entry.storageKey
+      ) ||
       !entry.storageKey.endsWith('/evidence.json')
     )
       continue
-    const value = executionEvidenceSchema.parse(
-      await readPackageJson(join(sourceDirectory, entry.path))
-    )
+    const value = readExecutionEvidence(await readPackageJson(join(sourceDirectory, entry.path)))
     for (const id of [
       value.activityId,
       value.evidenceId,
@@ -715,10 +726,17 @@ export const prepareNativeImport = async (
     const sidecar = transformedSidecars.get(entry.storageKey)
     if (sidecar) await writeFile(target, sidecar)
     if (notebookDocumentIdentity(entry.storageKey)) {
-      const document = mapReferences(await readPackageJson(target), identities) as Record<
-        string,
-        unknown
-      >
+      const original = (await readPackageJson(target)) as NotebookRunDocument
+      for (const run of original.runs) {
+        if (!run.fileEvidence) continue
+        const summary = parseOwnedExecutionFileEvidenceSummary(run.fileEvidence, {
+          activityId: run.runId,
+          activityKind: 'notebook-run'
+        })
+        if (!summary) throw new Error('Invalid Notebook file evidence ownership.')
+        run.fileEvidence = summary
+      }
+      const document = mapReferences(original, identities) as Record<string, unknown>
       const rootKey = remapStorageKey(entry.storageKey, identities).slice(0, -'/run.json'.length)
       document.notebookSessionRoot = `$DATA/${rootKey}`
       document.workspaceCwd = `$DATA/${rootKey}`

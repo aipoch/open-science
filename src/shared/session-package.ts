@@ -210,7 +210,9 @@ export const sessionPackageReceiptSchema = packageOriginSchema
     schemaVersion: z.literal(1),
     projectId: identity,
     sessionId: identity,
-    identities: z.record(identity, identity),
+    // Source graph/runtime IDs are opaque (including composite separators); only remapped
+    // destination IDs become filesystem identities and must satisfy the path-safe schema.
+    identities: z.record(z.string().min(1).max(4096), identity),
     files: z
       .array(
         z

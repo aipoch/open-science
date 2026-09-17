@@ -1,3 +1,4 @@
+import { createFrameNotebookLane } from '../notebook/lane-identity'
 import { BookmarkRepository } from '../bookmarks/repository'
 import { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
 import { SessionProjectionRepository } from '../session-persistence/projection'
@@ -733,3 +734,124 @@ it('numbers sibling forks and nests the direct source title', async () => {
   expect(child?.title).toBe('Study(2)(2)')
   expect(child?.branchSource?.sessionId).toBe(first.sessionId)
 })
+
+it.each(['notebook-file-evidence', 'file-evidence'])(
+  'preserves legacy Notebook evidence and generation bytes through fork and refork (%s)',
+  async (scope) => {
+    const { fixture, service } = await setup()
+    const { createHash } = await import('node:crypto')
+    const checksum = (text: string): string => createHash('sha256').update(text).digest('hex')
+    const document = await fixture.notebookRepository.loadOrCreate({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      workspaceCwd: fixture.storageRoot,
+      lane: createFrameNotebookLane('project-1', 'session-1', 'root-frame')
+    })
+    const key = `${scope}/project-1/session-1/run-old-run/evidence.json`
+    const contentStorageKey = `${scope}/project-1/session-1/run-old-run/blobs/figure`
+    const content = 'Historical figure bytes'
+    await mkdir(
+      join(fixture.storageRoot, scope, 'project-1', 'session-1', 'run-old-run', 'blobs'),
+      { recursive: true }
+    )
+    await writeFile(join(fixture.storageRoot, contentStorageKey), content)
+    const sidecar = JSON.stringify({
+      schemaVersion: 1,
+      evidenceId: 'notebook-file-evidence-old-run',
+      runId: 'old-run',
+      relations: [
+        {
+          generation: {
+            generationId: 'generation',
+            checksum: checksum(content),
+            sizeBytes: Buffer.byteLength(content),
+            contentStorageKey
+          }
+        }
+      ]
+    })
+    await writeFile(join(fixture.storageRoot, key), sidecar)
+    const summary = {
+      schemaVersion: 1,
+      evidenceId: 'notebook-file-evidence-old-run',
+      state: 'partial',
+      checksum: checksum(sidecar),
+      storageKey: key,
+      relationCount: 1,
+      generationCount: 1,
+      scientificOutputCount: 0,
+      initialViewState: 'complete',
+      managedRootsFinalState: 'partial',
+      scientificOutputAnalysis: 'partial',
+      fileReads: 'unavailable',
+      externalPaths: 'unavailable',
+      writerAttribution: 'unavailable',
+      reasonCodes: ['file-reads-not-observed']
+    }
+    await writeFile(
+      join(document.notebookSessionRoot, 'run.json'),
+      JSON.stringify({
+        ...document,
+        runs: [
+          {
+            runId: 'old-run',
+            cellId: 'cell',
+            source: 'agent',
+            script: 'draw()',
+            status: 'completed',
+            startedAt: 1,
+            fileEvidence: summary
+          }
+        ]
+      })
+    )
+    const first = await service.fork({ projectId: 'project-1', sessionId: 'session-1' })
+    const second = await service.fork(first)
+    for (const child of [first, second]) {
+      const runs = await fixture.notebookRepository.readSessionRuns(
+        child.projectId,
+        child.sessionId
+      )
+      const run = runs[0]
+      expect(run.runId).not.toBe('old-run')
+      expect(run.fileEvidence?.activityId).toBe(run.runId)
+      const evidenceBytes = await readFile(
+        join(fixture.storageRoot, run.fileEvidence!.storageKey!),
+        'utf8'
+      )
+      expect(checksum(evidenceBytes)).toBe(run.fileEvidence?.checksum)
+      const evidence = JSON.parse(evidenceBytes)
+      expect(evidence.activityId).toBe(run.runId)
+      const generation = evidence.relations[0].generation
+      expect(await readFile(join(fixture.storageRoot, generation.contentStorageKey), 'utf8')).toBe(
+        content
+      )
+    }
+    expect(
+      JSON.parse(await readFile(join(document.notebookSessionRoot, 'run.json'), 'utf8')).runs[0]
+        .runId
+    ).toBe('old-run')
+    await writeFile(join(fixture.storageRoot, key), sidecar + ' ')
+    await expect(service.fork({ projectId: 'project-1', sessionId: 'session-1' })).rejects.toThrow(
+      'Execution file evidence checksum mismatch.'
+    )
+  }
+)
+
+it.each(['agent-runtime:runtime:call', 'run\u0000delegate\u00001'])(
+  'retains opaque runtime identities in a readable fork receipt (%s)',
+  async (runtimeId) => {
+    const { repository, service } = await setup()
+    const source = (await repository.loadSession('project-1', 'session-1'))!
+    const graph = source.conversationGraph!
+    const segment = graph.runtimeSegments[0]
+    const oldId = segment.id
+    segment.id = runtimeId
+    for (const message of graph.messages) {
+      if (message.runtimeSegmentId === oldId) message.runtimeSegmentId = segment.id
+    }
+    await repository.saveSession(source)
+    const child = await service.fork({ projectId: source.projectId, sessionId: source.id })
+    await expect(service.fork(child)).resolves.toMatchObject({ projectId: source.projectId })
+  }
+)
