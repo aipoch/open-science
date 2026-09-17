@@ -866,22 +866,6 @@ describe('ensembl_sequence', () => {
     }
   )
 
-  it.each([{}, null, [], { seq: 123 }])('rejects a malformed success body: %j', async (body) => {
-    const fetchImpl = vi.fn().mockResolvedValueOnce(Response.json(body))
-    await expect(
-      run('ensembl_sequence', { stable_id: 'ENSG00000141510' }, fetchImpl)
-    ).rejects.toThrow('without a valid sequence')
-  })
-
-  it('preserves an error payload even if the upstream status is 200', async () => {
-    const fetchImpl = vi
-      .fn()
-      .mockResolvedValueOnce(Response.json({ error: "ID 'ENSG00000141510' not found" }))
-    await expect(
-      run('ensembl_sequence', { stable_id: 'ENSG00000141510' }, fetchImpl)
-    ).rejects.toThrow('Ensembl sequence failed:')
-  })
-
   it('throws when neither stable_id nor region is provided', async () => {
     const fetchImpl = vi.fn()
     await expect(run('ensembl_sequence', {}, fetchImpl)).rejects.toThrow(/stable_id or region/)

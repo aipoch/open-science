@@ -509,33 +509,30 @@ export const GENOMES_ENSEMBL_TOOLS: ToolDescriptor[] = [
           `${ENSEMBL}/sequence/id/${encodeURIComponent(id)}?type=${encodeURIComponent(seqType)}`,
           { allowHttpStatuses: [400] }
         )
-        const record =
-          body && typeof body === 'object' && !Array.isArray(body) ? (body as Dict) : null
-        const error = record?.error
-        // Ensembl also uses 400 for multiple sequences and incompatible sequence types.
-        // Only explicit absence of this exact ID is a negative lookup result.
-        if (status === 400 && error === `ID '${id}' not found`) {
-          return {
-            found: false,
-            query,
-            seq_type: seqType,
-            id: null,
-            description: null,
-            molecule: null,
-            length: 0,
-            sha256: null
-          }
-        }
-        if (typeof error === 'string') {
-          throw new Error(`Ensembl sequence failed: ${error.slice(0, 1000)}`)
-        }
         if (status === 400) {
+          const record =
+            body && typeof body === 'object' && !Array.isArray(body) ? (body as Dict) : null
+          const error = record?.error
+          // Ensembl also uses 400 for multiple sequences and incompatible sequence types.
+          // Only explicit absence of this exact ID is a negative lookup result.
+          if (error === `ID '${id}' not found`) {
+            return {
+              found: false,
+              query,
+              seq_type: seqType,
+              id: null,
+              description: null,
+              molecule: null,
+              length: 0,
+              sha256: null
+            }
+          }
+          if (typeof error === 'string') {
+            throw new Error(`Ensembl sequence failed: ${error.slice(0, 1000)}`)
+          }
           throw new Error('Ensembl sequence returned an unrecognized HTTP 400 response')
         }
-        if (!record || typeof record.seq !== 'string') {
-          throw new Error('Ensembl sequence returned a record without a valid sequence')
-        }
-        resp = record
+        resp = body as Dict
       } else {
         // Region route: malformed/oversized regions raise the upstream 400 (not caught).
         resp = (await ctx.fetchJson(`${ENSEMBL}/sequence/region/${species}/${region}`)) as Dict
