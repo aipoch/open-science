@@ -772,11 +772,12 @@ const WorkspacePage = ({
     sessionController.view.specialist.barrierInFlight,
     activeSessionActionability?.actions
   )
+  // A created Session can change permissions before its history is replayed on the next send.
   const canChangePermissionProfile =
     isSessionPersistenceReady &&
     !activeSessionHasSendPreparation &&
     !activeSession?.compacting &&
-    !awaitsHistoryReplay &&
+    !activeSession?.isPending &&
     !conversation.queue.hasPendingWork
   const canCompactContext =
     isSessionPersistenceReady &&

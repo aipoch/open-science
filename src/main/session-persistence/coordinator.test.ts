@@ -507,6 +507,34 @@ describe('SessionPersistenceCoordinator', () => {
     release()
   })
 
+  it('preserves the fork head across renderer saves and restart', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'fork-head-save-'))
+    try {
+      const repository = new SessionRepository(root)
+      await repository.saveSession(
+        createSession({
+          forkOrigin: {
+            importId: 'copy',
+            sourceProjectId: 'project-1',
+            sourceSessionId: 'source',
+            importedAt: 1,
+            manifestChecksum: 'a'.repeat(64)
+          },
+          forkHeadMessageId: 'copied-head'
+        })
+      )
+      const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+      for (const submittedHead of [undefined, 'new-reply']) {
+        const current = (await repository.loadSession('project-1', 'session-1'))!
+        await coordinator.saveSession({ ...current, forkHeadMessageId: submittedHead })
+        const reopened = await new SessionRepository(root).loadSession('project-1', 'session-1')
+        expect(reopened?.forkHeadMessageId).toBe('copied-head')
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('saves an imported renderer projection through Main without losing runtime evidence', async () => {
     const root = await mkdtemp(join(tmpdir(), 'imported-session-save-'))
     try {
