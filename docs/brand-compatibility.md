@@ -10,9 +10,16 @@ Only this project's product name uses the hyphenated spelling. Third-party offic
 and test fixtures. URLs retain their exact remote addresses. Historical facts and quoted names
 retain their original spelling. Technical identities and historical storage paths follow the
 compatibility rules below; they are not display copy to mechanically rename.
-The configured SignPath test certificate subject is `CN=Test certificate for 'Open-Science [OSS]'`;
-the process inspection CA uses `CN=Open-Science process inspection CA` for both its self-signed root
-and issued leaf certificates. These certificate subjects are not legacy-spelling exceptions.
+The SignPath test certificate retains main's real subject,
+`CN=Test certificate for 'Open Science [OSS]'`. Application IDs, release signing identities and
+certificate verification policies also follow main; display branding does not request a new certificate.
+macOS retains main's existing ad-hoc signing path, not a newly obtained Developer ID or a guarantee
+that upgrades avoid system authorization. The credential probe and validator remain unpacked and
+signed before the outer application.
+
+The process TLS inspection CA (`CN=Open-Science process inspection CA`) is separate from application
+release code signing. Its root/leaf subjects describe the sandbox's TLS inspection certificates, not
+the publisher's identity. This change introduces no certificate, trust-store or credential migration.
 
 ## Existing installations
 
@@ -120,10 +127,19 @@ app version; preserve the damaged file and recovery records. Startup never repla
   install its own wrapper before removing the exact superseded executable alternative at the same
   product location. It does not additionally remove old-brand alternatives from other installations.
   Normal sandbox, MIME, desktop database and AppArmor setup remain.
-- CLI discovery is read-only and accepts old/new installation directories crossed with old/new
-  executable names. Explicit selections and the existing development/installed candidate order remain;
-  among installed candidates, new-brand names are preferred. Old managed launcher and Windows PATH
-  receipt ownership markers remain accepted by the explicit CLI installation workflow.
+- Standalone CLI discovery is read-only and checks only current new-brand default installation
+  locations, after the existing repository development lookup. It does not enumerate old/mixed names
+  or search arbitrary Linux PATH directories; public CLI wrappers are not desktop executables.
+  `--app-path` takes precedence over `OPEN_SCIENCE_APP_PATH`, then automatic discovery. Explicit valid
+  old-name, custom and mixed-name executable paths remain supported. A missing explicit selection
+  errors on that path instead of falling back to another installation.
+- App-installed CLI launchers bind to that application's executable; AppImage launchers bind to the
+  stable AppImage file and mount its payload per invocation, never to a temporary FUSE path. Startup
+  maintenance repairs confirmed missing bindings, not brand-copy differences or surviving bindings to
+  another installation. Unknown formats and unreadable bindings require explicit handling, not
+  automatic takeover. Users can explicitly reinstall/rebind or uninstall app-managed launchers.
+  Old managed launcher and Windows PATH receipt ownership markers remain accepted; unrelated files
+  remain protected by the existing ownership checks.
 
 Normal installation and updater replacement, permission checks, update eligibility and signing
 configuration are retained. Technical app IDs, protocols, signatures, certificate subjects, update
@@ -137,6 +153,8 @@ Electron profiles and credentials remain in use. Credential identity selection a
 `verifyCredentialCiphertexts` still run before settings writers; see
 [credential identity](credential-identity.md). Selecting `settings.dataRoot` does not replace either
 profile or credential recovery. No installation rename or data migration is required for compatibility.
+There is no special migration, mixed-identity decryption or re-encryption layer for unpublished
+intermediate PR versions; identity failures preserve evidence and require recovery.
 
 Coexistence does **not** authorize concurrent writes. The startup lock is acquired for the resolved
 Electron profile before initialization writes, and arguments from a second launch are retained while
@@ -155,7 +173,8 @@ resolving the same profile cannot reach initialization writers. Startup argument
 credential validation ordering remain covered. Temporary bundle tests exercise actual macOS `ditto`
 staging, same-name replacement and failure rollback, without touching `/Applications` or the Dock.
 A rendered Debian post-install hook captures OS commands to verify that unrelated old-brand
-alternatives survive. CLI tests cover new, old, mixed-name and coexisting layouts.
+alternatives survive. CLI tests cover new-default discovery, refusal to automatically select old or
+mixed-name layouts, explicit bindings to those layouts, and preservation of coexisting bindings.
 
 Storage/profile regressions must continue to cover authoritative old/custom selections, fresh defaults,
 development/isolation precedence, missing or corrupt settings, missing profiles, ambiguous roots,
@@ -169,17 +188,17 @@ no cross-platform success follows from these local regressions alone.
 
 ## Intentionally retained old spellings
 
-| Spelling or family                                                                                                         | Reason                                                                                                                                              |
-| -------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `OpenScience`, `OpenScience-DEV`, `Open Science (DEV)`, `Open Science.app` in location/installation discovery code         | Recognize existing data, profiles and installations without renaming or moving them.                                                                |
-| `Open Science` / `Open Science (DEV)` in credential selection                                                              | Legacy macOS Keychain identity, selected only after a silent new-name miss; see [credential identity](credential-identity.md) for platform support. |
-| Windows `Open Science Session package`                                                                                     | Persisted `.science` ProgID. Its display description changes; registering a second class would break upgrades.                                      |
-| `OpenScienceTmp`, `.openscience/jobs`, `.openscience/environments`, `openscience-<job-id>`                                 | Existing owned caches, remote records, activation files, and scheduler recovery; new resources use the new spelling.                                |
-| `OpenScienceAPI`, `OpenScienceClient`, `OpenScienceApiError`, exported functions, GraphQL operation names, settings fields | Valid language/API identifiers and persisted contracts; inserting a hyphen would break syntax or consumers.                                         |
-| `openscience-skills`, marketplace protocols, repository URLs, signing key IDs, content digest prefix                       | Published and signed third-party-facing contracts. Display copy is updated without changing signed bytes.                                           |
-| `# Open Science:` Codex route markers; old CLI/PATH receipt ownership headers                                              | Exact managed-block/receipt recognition across upgrades. They are technical ownership markers.                                                      |
-| `CHANGELOG.md`, rollback-to-0.7.3 fixtures and old-version paths                                                           | Historical facts and explicit old-version compatibility.                                                                                            |
-| `Electron.app` in development tooling                                                                                      | Upstream Electron runtime filename; its development product display metadata is Open-Science (DEV).                                                 |
+| Spelling or family                                                                                                                             | Reason                                                                                                                                                                      |
+| ---------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `OpenScience`, `OpenScience-DEV`, `Open Science (DEV)`, `Open Science.app` in storage/profile compatibility and explicit installation fixtures | Recognize existing data/profiles and support explicitly bound installations without renaming or moving them; standalone CLI discovery does not enumerate old installations. |
+| `Open Science` / `Open Science (DEV)` in credential selection                                                                                  | Legacy macOS Keychain identity, selected only after a silent new-name miss; see [credential identity](credential-identity.md) for platform support.                         |
+| Windows `Open Science Session package`                                                                                                         | Persisted `.science` ProgID. Its display description changes; registering a second class would break upgrades.                                                              |
+| `OpenScienceTmp`, `.openscience/jobs`, `.openscience/environments`, `openscience-<job-id>`                                                     | Existing owned caches, remote records, activation files, and scheduler recovery; new resources use the new spelling.                                                        |
+| `OpenScienceAPI`, `OpenScienceClient`, `OpenScienceApiError`, exported functions, GraphQL operation names, settings fields                     | Valid language/API identifiers and persisted contracts; inserting a hyphen would break syntax or consumers.                                                                 |
+| `openscience-skills`, marketplace protocols, repository URLs, signing key IDs, content digest prefix                                           | Published and signed third-party-facing contracts. Display copy is updated without changing signed bytes.                                                                   |
+| `# Open Science:` Codex route markers; old CLI/PATH receipt ownership headers                                                                  | Exact managed-block/receipt recognition across upgrades. They are technical ownership markers.                                                                              |
+| `CHANGELOG.md`, rollback-to-0.7.3 fixtures and old-version paths                                                                               | Historical facts and explicit old-version compatibility.                                                                                                                    |
+| `Electron.app` in development tooling                                                                                                          | Upstream Electron runtime filename; its development product display metadata is Open-Science (DEV).                                                                         |
 
 NCBI request `tool=OpenScience` remains a stable external client identifier.
 

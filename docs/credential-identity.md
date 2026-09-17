@@ -2,7 +2,11 @@
 
 Open-Science keeps its displayed name and existing application ID/signing identity. Credential
 selection is process-local and runs on every launch before Electron initializes OSCrypt. It does
-not persist an old-name preference or migrate research data.
+not persist an old-name preference or migrate research data. Unpublished intermediate PR builds do
+not receive a separate migration, mixed-identity decryption or re-encryption layer. Probe failures,
+missing keys with existing ciphertext, and decryption failures require recovery; they do not authorize
+switching identities, clearing ciphertext or recreating the profile. Existing macOS keys are not
+renamed, moved or deleted, and system Keychain authorization is never bypassed.
 
 ## Platform support
 

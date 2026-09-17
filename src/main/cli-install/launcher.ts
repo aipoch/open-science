@@ -750,14 +750,31 @@ export const uninstallCliLauncher = async (
   return { installed: false, target: plan.target, onPath: false }
 }
 
-// AppImage status is content-aware: a legacy shim can exist while still pointing at an unmounted
-// FUSE path. Other packages report installed only when the existing launcher is app-managed.
+// Read only literal bindings emitted by our POSIX launchers, never evaluate shell text. Unknown
+// formats require explicit reinstall. A surviving binding belongs to its selected installation,
+// even when this application has different branding, payload paths or a different AppImage file.
+const needsAppImageRepair = async (content: string, env: CliLauncherEnv): Promise<boolean> => {
+  if (!isLinuxAppImage(env) || !isManagedCliLauncher(content)) return false
+  if (content === planCliLauncher(env).shim) return false
+  const literal = content.match(
+    /^(?:app_image=|OPEN_SCIENCE_APP_PATH=)('(?:[^']|'\\'')*')(?: ELECTRON_RUN_AS_NODE=1 exec |$)/m
+  )?.[1]
+  if (!literal) return false
+  const binding = literal.slice(1, -1).replaceAll("'\\''", "'")
+  if (!posix.isAbsolute(binding)) return false
+  // Only confirmed absence allows maintenance. Permission/read errors preserve the binding and
+  // propagate to the startup owner's existing error handler; they do not authorize takeover.
+  return (await statCliLauncher(binding)) === undefined
+}
+
+// Report the shared command's usable binding, not whether its text matches this installation.
 export const getCliLauncherStatus = async (env: CliLauncherEnv): Promise<CliLauncherStatus> => {
   const plan = planCliLauncher(env)
   const content = await readCliLauncher(plan.target)
-  const installed = isLinuxAppImage(env)
-    ? content === plan.shim
-    : content !== undefined && isManagedCliLauncher(content)
+  const installed =
+    content !== undefined &&
+    isManagedCliLauncher(content) &&
+    !(await needsAppImageRepair(content, env))
   return {
     installed,
     target: plan.target,
@@ -769,20 +786,27 @@ export const getCliLauncherStatus = async (env: CliLauncherEnv): Promise<CliLaun
   }
 }
 
-// Only an existing app-managed AppImage launcher is eligible for automatic migration. Comparing the
-// complete planned content covers the stable AppImage path, mount procedure, and CLI entry behavior.
 export const isCliShimStale = async (env: CliLauncherEnv): Promise<boolean> => {
   if (!isLinuxAppImage(env)) return false
-  const plan = planCliLauncher(env)
-  const content = await readCliLauncher(plan.target)
-  return content !== undefined && isManagedCliLauncher(content) && content !== plan.shim
+  const content = await readCliLauncher(planCliLauncher(env).target)
+  return content !== undefined && (await needsAppImageRepair(content, env))
 }
 
-// Migrate legacy mount-pinned shims and refresh the stable path after the AppImage file itself moves.
+// Repair missing mount-pinned executables or moved AppImages, never merely different branding or a
+// live coexisting binding. Keep the validated file open so replacement cannot take over a new inode.
 export const ensureCliLauncherCurrent = async (
-  env: CliLauncherEnv,
-  runCommand: CommandRunner = defaultRunCommand
+  env: CliLauncherEnv
 ): Promise<CliLauncherStatus | undefined> => {
-  if (!(await isCliShimStale(env))) return undefined
-  return installCliLauncher(env, runCommand)
+  if (!isLinuxAppImage(env)) return undefined
+  const plan = planCliLauncher(env)
+  const opened = await openStableCliLauncher(plan.target, constants.O_RDONLY)
+  if (!opened) return undefined
+  try {
+    const content = await opened.handle.readFile('utf8')
+    if (!(await needsAppImageRepair(content, env))) return undefined
+    await replaceCliLauncher(plan, opened)
+  } finally {
+    if (!opened.closed) await opened.handle.close()
+  }
+  return getCliLauncherStatus(env)
 }

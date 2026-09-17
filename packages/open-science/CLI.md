@@ -85,7 +85,17 @@ open-science url
 human-readable, JSON, and JSONL output never includes the local token.
 
 Use `--port <port>` to override the default port of `44100`. `--app-path <path>` selects a specific
-Open-Science executable. Development builds also support `--config-root <path>`.
+Open-Science executable, taking priority over `OPEN_SCIENCE_APP_PATH`; both override automatic app
+location. An invalid explicit path is an error, never a reason to silently select another installation.
+Old-name, custom and mixed-name layouts remain usable through an explicit executable path.
+
+Standalone app discovery checks only current new-brand defaults: `/Applications/Open-Science.app`
+and `~/Applications/Open-Science.app` (internal executable `Contents/MacOS/Open-Science`) on macOS;
+`%LOCALAPPDATA%/Programs/Open-Science/open-science.exe` and
+`%PROGRAMFILES%/Open-Science/open-science.exe` on Windows; `/opt/Open-Science/open-science` on Linux.
+It does not search arbitrary PATH directories or use public CLI wrappers as desktop executables.
+Portable AppImages and nondefault installations require an explicit path. Existing repository
+build discovery still precedes installed defaults. Development builds also support `--config-root <path>`.
 
 `open-science stop` requests an authenticated graceful shutdown and waits for the service to exit. If
 the request cannot be accepted or a dedicated daemon remains alive after the shutdown deadline, the
@@ -206,6 +216,12 @@ ELECTRON_RUN_AS_NODE=1 "/Applications/Open-Science.app/Contents/MacOS/Open-Scien
 Repeat the same absolute invocation with `cli install --json`. Respect the returned `pathHint`;
 Windows may require a new terminal and Unix shells may need the existing launcher directory on PATH.
 The launcher uses the existing ownership receipts and does not claim unrelated executables.
+An app-installed launcher stays bound to its installing application's actual executable. AppImage
+launchers use the stable AppImage file and mount its payload for each invocation. Startup maintenance
+repairs confirmed missing bindings, but does not rewrite an otherwise working launcher merely for
+new brand wording or take over a surviving binding to another installation. Use an explicit
+`cli install` to rebind and `cli uninstall` to remove an app-managed command. Old applications and
+launchers may remain; this does not authorize simultaneous writes to shared research data.
 
 ## Agent runtimes
 

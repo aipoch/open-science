@@ -816,7 +816,7 @@ pdescribe('AppImage launcher reconciliation (POSIX)', () => {
     posixEnv({
       appExecPath: '/tmp/.mount_open-scienceNEW/open-science',
       cliEntryPath: '/tmp/.mount_open-scienceNEW/resources/cli/index.mjs',
-      appImagePath: '/home/alice/Open-Science.AppImage',
+      appImagePath: join(home, 'Open-Science.AppImage'),
       ...overrides
     })
 
@@ -841,8 +841,8 @@ pdescribe('AppImage launcher reconciliation (POSIX)', () => {
       [
         '#!/bin/sh',
         '[ "$1" = "--appimage-mount" ] || exit 90',
-        'printf "%s\\n" "$FAKE_MOUNT_DIR"',
         'trap \'printf stopped > "$FAKE_STOPPED"; exit 0\' 1 2 15',
+        'printf "%s\\n" "$FAKE_MOUNT_DIR"',
         'while :; do sleep 0.05; done'
       ].join('\n'),
       { mode: 0o755 }
@@ -888,8 +888,45 @@ pdescribe('AppImage launcher reconciliation (POSIX)', () => {
     await expect(readFile(stoppedPath, 'utf8')).resolves.toBe('stopped')
   })
 
+  it.each(['mount exits', 'payload missing'] as const)('fails safely when %s', async (failure) => {
+    const mountDir = join(home, 'incomplete mount')
+    const appImagePath = join(home, 'broken.AppImage')
+    const stoppedPath = join(home, 'mount-stopped')
+    await mkdir(mountDir)
+    await writeFile(
+      appImagePath,
+      failure === 'mount exits'
+        ? '#!/bin/sh\nexit 29\n'
+        : [
+            '#!/bin/sh',
+            'trap \'printf stopped > "$FAKE_STOPPED"; exit 0\' 1 2 15',
+            'printf "%s\\n" "$FAKE_MOUNT_DIR"',
+            'while :; do sleep 0.05; done'
+          ].join('\n'),
+      { mode: 0o755 }
+    )
+    const target = (await installCliLauncher(appImageEnv({ appImagePath }))).target
+    const run = spawnSync(target, ['two words'], {
+      encoding: 'utf8',
+      timeout: 10_000,
+      env: { ...process.env, FAKE_MOUNT_DIR: mountDir, FAKE_STOPPED: stoppedPath }
+    })
+    expect(run.error).toBeUndefined()
+    expect(run.status).toBe(failure === 'mount exits' ? 29 : 1)
+    expect(run.stderr).toContain(
+      failure === 'mount exits' ? 'exited before reporting' : 'missing its executable or CLI entry'
+    )
+    if (failure === 'payload missing')
+      await expect(readFile(stoppedPath, 'utf8')).resolves.toBe('stopped')
+  })
+
   it('detects and migrates a legacy shim that pins an old FUSE mount', async () => {
-    await installCliLauncher(posixEnv())
+    await installCliLauncher(
+      posixEnv({
+        appExecPath: join(home, '.mount_old', 'open-science'),
+        cliEntryPath: join(home, '.mount_old', 'resources', 'cli', 'index.mjs')
+      })
+    )
     const env = appImageEnv()
 
     expect(await isCliShimStale(env)).toBe(true)
@@ -897,18 +934,18 @@ pdescribe('AppImage launcher reconciliation (POSIX)', () => {
     expect(result).toMatchObject({ installed: true })
 
     const shim = await readFile(result!.target, 'utf8')
-    expect(shim).toContain("app_image='/home/alice/Open-Science.AppImage'")
+    expect(shim).toContain(`app_image='${env.appImagePath}'`)
     expect(shim).not.toContain('/tmp/.mount_open-scienceNEW')
   })
 
   it('updates the stable shim after the AppImage file moves', async () => {
     await installCliLauncher(appImageEnv())
-    const moved = appImageEnv({ appImagePath: '/home/alice/Applications/Open-Science.AppImage' })
+    const moved = appImageEnv({ appImagePath: join(home, 'Applications', 'Open-Science.AppImage') })
 
     expect(await isCliShimStale(moved)).toBe(true)
     await ensureCliLauncherCurrent(moved)
     expect(await readFile(planCliLauncher(moved).target, 'utf8')).toContain(
-      "app_image='/home/alice/Applications/Open-Science.AppImage'"
+      `app_image='${moved.appImagePath}'`
     )
   })
 
@@ -919,7 +956,12 @@ pdescribe('AppImage launcher reconciliation (POSIX)', () => {
   })
 
   it('reports a legacy AppImage shim as not installed until reconciliation succeeds', async () => {
-    await installCliLauncher(posixEnv())
+    await installCliLauncher(
+      posixEnv({
+        appExecPath: join(home, '.mount_old', 'open-science'),
+        cliEntryPath: join(home, '.mount_old', 'resources', 'cli', 'index.mjs')
+      })
+    )
     expect(await getCliLauncherStatus(appImageEnv())).toMatchObject({ installed: false })
   })
 
