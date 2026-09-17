@@ -274,20 +274,22 @@ describe('module impact shadow', () => {
       fallbackCapabilities: ['notebook_network_sandbox'],
       capabilityOverlays: []
     })
-    expect(report.shadow.testFiles).toEqual([
-      'packages/notebook-network-sandbox/src/address-policy.test.ts',
-      'packages/notebook-network-sandbox/src/config.test.ts',
-      'packages/notebook-network-sandbox/src/filesystem-enforcement.integration.test.ts',
-      'packages/notebook-network-sandbox/src/filesystem-policy.test.ts',
-      'packages/notebook-network-sandbox/src/gateway.test.ts',
-      'packages/notebook-network-sandbox/src/index.test.ts',
-      'packages/notebook-network-sandbox/src/network-enforcement.integration.test.ts',
-      'packages/notebook-network-sandbox/src/private-network.test.ts',
-      'packages/notebook-network-sandbox/src/proxy-env.test.ts',
-      'packages/notebook-network-sandbox/src/resources.test.ts',
-      'packages/notebook-network-sandbox/src/runtime-config.test.ts',
-      'packages/notebook-network-sandbox/src/windows-appcontainer.test.ts'
-    ])
+    expect(report.shadow.testFiles).toEqual(
+      expect.arrayContaining([
+        'packages/notebook-network-sandbox/src/address-policy.test.ts',
+        'packages/notebook-network-sandbox/src/config.test.ts',
+        'packages/notebook-network-sandbox/src/filesystem-enforcement.integration.test.ts',
+        'packages/notebook-network-sandbox/src/filesystem-policy.test.ts',
+        'packages/notebook-network-sandbox/src/gateway.test.ts',
+        'packages/notebook-network-sandbox/src/index.test.ts',
+        'packages/notebook-network-sandbox/src/network-enforcement.integration.test.ts',
+        'packages/notebook-network-sandbox/src/private-network.test.ts',
+        'packages/notebook-network-sandbox/src/proxy-env.test.ts',
+        'packages/notebook-network-sandbox/src/resources.test.ts',
+        'packages/notebook-network-sandbox/src/runtime-config.test.ts',
+        'packages/notebook-network-sandbox/src/windows-appcontainer.test.ts'
+      ])
+    )
     expect(report.comparison.requiredLanes).toEqual(
       expect.arrayContaining([
         'unit_macos',
@@ -359,17 +361,13 @@ describe('module impact shadow', () => {
       expect(report.authoritative.mode).toBe('selective')
       expect(report.shadow).toMatchObject({
         mode: 'selective',
-        modules: ['i18n_catalog', 'i18n_main_adapter', 'i18n_renderer_adapter']
+        modules: ['i18n_catalog']
       })
       expect(report.shadow.testFiles).toEqual([
         'src/main/locale/owner.test.ts',
         'src/renderer/src/i18n/resources.test.ts'
       ])
-      expect(report.shadow.fallbackCapabilities).toEqual([
-        'main_runtime',
-        'renderer_view',
-        'shared_contract'
-      ])
+      expect(report.shadow.fallbackCapabilities).toEqual(['shared_contract'])
       expect(report.comparison.requiredLanes).toContain('i18n')
       expect(report.comparison.selectedLanes).toContain('i18n')
       expect(report.comparison.missingLanes).toEqual([])

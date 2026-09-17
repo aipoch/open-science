@@ -13,7 +13,11 @@ export function resolveVitestMaxWorkers(
   return Math.max(available - 1, 1)
 }
 
-export const VITEST_ARCHITECTURE_TEST_GLOBS = ['**/*.architecture.test.ts'] as const
+export const VITEST_ARCHITECTURE_TEST_GLOBS = [
+  '**/*.architecture.test.ts',
+  // Whole-repository graph scanning belongs after the parallel pool, retaining its timeout.
+  'scripts/ci/module-consumer-coverage.test.ts'
+] as const
 
 export const VITEST_DATABASE_TEST_GLOBS = [
   'scripts/database-migration-ledger-smoke.test.ts',

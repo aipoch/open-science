@@ -1,3 +1,4 @@
+import { forkSession, sessionForkAvailable } from '@/lib/session-fork'
 import { sideChatBlock, sideChatBlockMessage } from './side-chat-availability'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { PackageOperationIndicator } from '@/components/SessionPackageOperation'
@@ -402,6 +403,7 @@ type ConversationPanelSessionTools = {
   openNotebook: (notebook: NotebookSessionReference, runId?: string) => void
   openJobs: (sessionId: string) => void
   openJob?: (job: JobSummary) => void
+  openSession?: (sessionId: string) => void
 }
 
 type ConversationPanelSubagents = {
@@ -450,6 +452,11 @@ const ConversationPanel = ({
   const { total: bookmarkCount, loadError: bookmarkLoadError } = useBookmarks()
   const { activeSession, composerFocusKey, canEditDraft, actionError, sideChatDisabledReason } =
     view
+  const sourceSessionNumber = useSessionStore(
+    (state) =>
+      state.sessions.find((session) => session.id === activeSession?.branchSource?.sessionId)
+        ?.number
+  )
   const hasBookmarkEntry = Boolean(activeSession && (bookmarkCount > 0 || bookmarkLoadError))
   const {
     view: {
@@ -1152,8 +1159,13 @@ const ConversationPanel = ({
           >
             <Menu className="size-5" strokeWidth={2} aria-hidden="true" />
           </button>
-          <h1 className="min-w-0 flex-1 truncate text-[13px] font-semibold text-text-000">
-            {activeSession?.title ?? t('New conversation')}
+          <h1 className="flex min-w-0 flex-1 items-center gap-2 text-[13px] font-semibold text-text-000">
+            {activeSession?.number !== undefined ? (
+              <span className="shrink-0 font-normal text-muted-foreground">
+                #{activeSession.number}
+              </span>
+            ) : null}
+            <span className="truncate">{activeSession?.title ?? t('New conversation')}</span>
           </h1>
           <NotificationBell className="md:hidden" />
           <button
@@ -1179,6 +1191,28 @@ const ConversationPanel = ({
           <WorkspaceMessageEditStateProvider canEditMessage={canEditMessage}>
             <WorkspaceMessageScroller
               activeSession={activeSession}
+              forkSourceContent={
+                activeSession?.forkOrigin &&
+                activeSession.branchSource &&
+                sessionTools.openSession ? (
+                  <div className="mb-2 flex items-center gap-2 text-xs">
+                    <span className="h-px flex-1 bg-border" aria-hidden="true" />
+                    <GitBranch className="size-3 text-muted-foreground" aria-hidden="true" />
+                    <button
+                      type="button"
+                      className="text-primary hover:underline"
+                      onClick={() =>
+                        sessionTools.openSession?.(activeSession.branchSource!.sessionId)
+                      }
+                    >
+                      {sourceSessionNumber !== undefined
+                        ? t('Continued from chat #{{number}}', { number: sourceSessionNumber })
+                        : t('Continued from chat')}
+                    </button>
+                    <span className="h-px flex-1 bg-border" aria-hidden="true" />
+                  </div>
+                ) : null
+              }
               credentialPending={pendingCredentialRequest !== undefined}
               visiblePermissionPending={pendingPermissions.length > 0}
               optimisticMessage={optimisticMessage}
@@ -1627,7 +1661,11 @@ const ConversationPanel = ({
                         aria-label={t('Session export in progress')}
                       >
                         <LockKeyhole className="size-4 shrink-0" aria-hidden="true" />
-                        <p className="text-sm">{t('Temporarily read-only during export')}</p>
+                        <p className="text-sm">
+                          {packageOperation?.kind === 'fork'
+                            ? t('Temporarily read-only during fork')
+                            : t('Temporarily read-only during export')}
+                        </p>
                       </section>
                     ) : activeSession?.packageOrigin ? (
                       <section
@@ -1647,6 +1685,19 @@ const ConversationPanel = ({
                             'Read-only. Browse the conversation, files and recorded results. Code execution and continuation are disabled.'
                           )}
                         </p>
+                        {sessionForkAvailable() ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="mt-2"
+                            onClick={() => {
+                              void forkSession(activeSession)
+                            }}
+                          >
+                            <GitBranch className="size-4" aria-hidden="true" />
+                            {t('Fork to continue')}
+                          </Button>
+                        ) : null}
                         <details className="mt-2 text-xs leading-5 text-muted-foreground">
                           <summary className="cursor-pointer">{t('Package source')}</summary>
                           <dl className="mt-1 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">

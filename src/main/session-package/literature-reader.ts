@@ -1,3 +1,4 @@
+import { lstat } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { PrismaClient, Prisma } from '@prisma/client'
 import {
@@ -33,7 +34,14 @@ export class PackageLiteratureReader {
     })
     if (!row) return undefined
     const { projectId, sessionId } = row.uploadFile
-    const directory = `artifacts/${projectId}/${sessionId}/.session-package`
+    const base = `artifacts/${projectId}/${sessionId}`
+    const forkReceipt = await lstat(join(this.options.storageRoot, base, '.session-fork')).catch(
+      (error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') return undefined
+        throw error
+      }
+    )
+    const directory = `${base}/${forkReceipt ? '.session-fork' : '.session-package'}`
     try {
       await assertPackageSourcePath(this.options.storageRoot, `${directory}/receipt.json`)
     } catch (error) {

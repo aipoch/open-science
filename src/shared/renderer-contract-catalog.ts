@@ -1824,6 +1824,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'sessions.exportConversation': callable<
     (request: ExportConversationRequest) => Promise<ExportConversationResult>
   >()('sessions', ['sessions:export-conversation', MAPPED_ELECTRON]),
+  'sessions.fork': callable<
+    (request: SessionPackageRequest) => Promise<SessionPackageRequest | null>
+  >()('sessions', ['sessions:fork', MAPPED_ELECTRON, undefined, undefined, RUNTIME_VALIDATED]),
   'sessions.exportPackage': callable<
     (request: SessionPackageRequest) => Promise<SessionPackageExportResult>
   >()('sessions', [

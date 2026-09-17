@@ -283,6 +283,7 @@ describe('application command composition', () => {
       'sessions:edit-details',
       'sessions:export-package',
       'sessions:filter-pdf-context-candidates',
+      'sessions:fork',
       'sessions:import-package',
       'sessions:link-pdf-context',
       'sessions:package-operation',

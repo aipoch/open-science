@@ -174,7 +174,10 @@ const projectByName = (name: string): VitestProjectTest => {
 }
 
 it('runs whole-tree architecture scans in one reused worker after the parallel unit pool', () => {
-  expect(VITEST_ARCHITECTURE_TEST_GLOBS).toEqual(['**/*.architecture.test.ts'])
+  expect(VITEST_ARCHITECTURE_TEST_GLOBS).toEqual([
+    '**/*.architecture.test.ts',
+    'scripts/ci/module-consumer-coverage.test.ts'
+  ])
   const architecture = projectByName('architecture')
   expect(architecture.include).toEqual([...VITEST_ARCHITECTURE_TEST_GLOBS])
   expect(architecture.isolate).toBe(false)

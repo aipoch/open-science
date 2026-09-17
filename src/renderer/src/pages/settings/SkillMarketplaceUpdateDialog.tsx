@@ -1,3 +1,4 @@
+import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { useTranslation } from 'react-i18next'
 import * as Dialog from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
@@ -23,6 +24,7 @@ export function SkillMarketplaceUpdateDialog({
   onConfirm: () => void
 }): React.JSX.Element {
   const { t } = useTranslation()
+  const dialogPreview = useRetainedDialogValue(preview)
   return (
     <Dialog.Root
       open={Boolean(preview)}
@@ -47,45 +49,45 @@ export function SkillMarketplaceUpdateDialog({
               )}
             </Dialog.Description>
           </div>
-          {preview ? (
+          {dialogPreview ? (
             <div className="min-h-0 overflow-y-auto px-5 py-4">
-              <p className="font-medium">{preview.displayName}</p>
+              <p className="font-medium">{dialogPreview.displayName}</p>
               <p className="mt-1 text-sm text-muted-foreground">
                 {t('Update Skill from {{from}} to {{to}}?', {
-                  from: preview.installedVersion ?? t('Unknown'),
+                  from: dialogPreview.installedVersion ?? t('Unknown'),
                   to: version
                 })}
               </p>
               <p className="mt-3 text-sm">
                 {t('Affected Specialists')}:{' '}
-                {preview.specialists.length
-                  ? preview.specialists.map((item) => item.name).join(', ')
+                {dialogPreview.specialists.length
+                  ? dialogPreview.specialists.map((item) => item.name).join(', ')
                   : t('None')}
               </p>
-              {preview.mainEnabled ? (
+              {dialogPreview.mainEnabled ? (
                 <p className="mt-1 text-sm">
                   {t('This Skill is also enabled for the Main Agent.')}
                 </p>
               ) : null}
               <p className="mt-3 text-sm text-muted-foreground">
-                {preview.localChanges === 'unknown'
+                {dialogPreview.localChanges === 'unknown'
                   ? t(
                       'The original installed content is unavailable. Local changes cannot be determined.'
                     )
-                  : preview.localChanges === 'modified'
+                  : dialogPreview.localChanges === 'modified'
                     ? t('This Skill has local changes. Updating will replace them.')
                     : t('The installed files match the previous Marketplace release.')}
               </p>
               <SkillReplacementSummary
                 replacement={{
-                  targetId: preview.localSkillId,
-                  sourceLabel: preview.source === 'personal' ? t('Personal') : t('Imported'),
-                  added: preview.added,
-                  modified: preview.modified,
-                  removed: preview.removed
+                  targetId: dialogPreview.localSkillId,
+                  sourceLabel: dialogPreview.source === 'personal' ? t('Personal') : t('Imported'),
+                  added: dialogPreview.added,
+                  modified: dialogPreview.modified,
+                  removed: dialogPreview.removed
                 }}
               />
-              {preview.differences.map((file) => (
+              {dialogPreview.differences.map((file) => (
                 <DiffViewer
                   key={file.path}
                   name={file.path}

@@ -155,7 +155,8 @@ export class ParserEngine {
       url: string,
       accept: string,
       init?: RequestInit,
-      retries = this.retries
+      retries = this.retries,
+      allowHttpStatuses: readonly number[] = []
     ): Promise<{ response: Response; bodyText?: string }> => {
       for (let attempt = 0; ; attempt++) {
         signal.throwIfAborted()
@@ -182,7 +183,7 @@ export class ParserEngine {
             headers: { accept, 'user-agent': USER_AGENT, ...init?.headers },
             signal: requestSignal
           })
-          if (res.ok && res.body) {
+          if ((res.ok || allowHttpStatuses.includes(res.status)) && res.body) {
             const reader = res.body.getReader()
             // Native fetch observes abort too; explicitly cancel injected/independent streams.
             const cancelReader = (): void => {
@@ -245,7 +246,7 @@ export class ParserEngine {
           throw failure
         }
         if (!res) throw new Error(`No response for ${redactUrl(url)}`)
-        if (res.ok) {
+        if (res.ok || allowHttpStatuses.includes(res.status)) {
           signal?.throwIfAborted()
           return { response: res, ...(bodyText !== undefined ? { bodyText } : {}) }
         }
@@ -272,11 +273,18 @@ export class ParserEngine {
         const { response, bodyText } = await doFetch(url, 'application/json')
         return bodyText === undefined ? response.json() : JSON.parse(bodyText)
       },
-      fetchJsonWithHeaders: async (url) => {
-        const { response, bodyText } = await doFetch(url, 'application/json')
+      fetchJsonWithHeaders: async (url, options) => {
+        const { response, bodyText } = await doFetch(
+          url,
+          'application/json',
+          undefined,
+          this.retries,
+          options?.allowHttpStatuses
+        )
         return {
           body: bodyText === undefined ? await response.json() : JSON.parse(bodyText),
-          headers: response.headers
+          headers: response.headers,
+          status: response.status
         }
       },
       fetchText: async (url, accept = 'text/plain, application/xml, */*') => {

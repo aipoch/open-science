@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { Prisma, type Bookmark as BookmarkRow, type PrismaClient } from '@prisma/client'
 import { isDeepStrictEqual } from 'node:util'
 
@@ -227,6 +228,37 @@ class BookmarkRepository {
     const client = await this.getClient()
     await client.bookmark.deleteMany({ where: { projectId } })
   }
+}
+
+export const readSessionBookmarkTargets = async (
+  client: Pick<Prisma.TransactionClient, 'bookmark'>,
+  source: { projectId: string; sessionId: string }
+): Promise<BookmarkTarget[]> =>
+  (await client.bookmark.findMany({ where: source })).map(targetFromRow)
+
+// Fork stays inside this installation: private notes are copied transactionally, never added
+// to an export package. The caller remaps only the target using the research copy's identity map.
+export const copySessionBookmarks = async (
+  client: Pick<Prisma.TransactionClient, 'bookmark'>,
+  source: { projectId: string; sessionId: string },
+  target: { projectId: string; sessionId: string },
+  mapTarget: (target: BookmarkTarget) => BookmarkTarget
+): Promise<void> => {
+  const rows = await client.bookmark.findMany({
+    where: source,
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }]
+  })
+  if (!rows.length) return
+  await client.bookmark.createMany({
+    data: rows.map((row) => ({
+      id: randomUUID(),
+      ...target,
+      ...storedParts(canonicalTarget(mapTarget(targetFromRow(row)))),
+      note: row.note,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt
+    }))
+  })
 }
 
 export { BookmarkRepository }

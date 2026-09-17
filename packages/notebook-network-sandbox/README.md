@@ -162,6 +162,17 @@ already-running sessions retain their original mode. `removeWindows()` uses the 
 elevation behavior, stops protected AppContainer processes, removes only ownership-proven resources,
 and returns future launches to standard mode.
 
+Managed and external R kernels can start in Windows standard mode without administrator setup.
+Their authenticated gateway remains active, but software that ignores proxy settings is not isolated.
+R admission checks the native ownership receipt and pending operations: an absent setup permits
+standard execution, while incomplete, damaged, or unreadable protection does not. The admission
+decision is checked again before launch; a protected R request never falls back to standard mode.
+Settings mutations in the same owner process invalidate prepared R launches until the executor
+synchronously starts the owned process tree. Already-started trees retain their selected mode;
+this check does not coordinate mutations from other processes.
+Protected mode retains its separate R runtime-access authorization. This decision is transient and
+does not add a setting or change the ownership receipt format.
+
 Packaged callers pass `join(process.resourcesPath, 'notebook-network-sandbox')` as `resources.root`.
 Development callers point it at this package's `vendor` directory.
 

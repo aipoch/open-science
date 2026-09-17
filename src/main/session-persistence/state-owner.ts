@@ -946,6 +946,7 @@ class SessionPersistenceStateOwner {
       )
     }
     const authority = authoritative.status === 'found' ? authoritative.session : undefined
+    session = { ...session, forkOrigin: authority?.forkOrigin }
     if (authority?.packageOrigin) session = preserveImportedSession(authority, session)
     else if (session.packageOrigin) session = { ...session, packageOrigin: undefined }
     const { session: submittedSession, expectedRevision } = resolveRevisionedSessionSave(

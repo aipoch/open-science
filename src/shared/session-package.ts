@@ -71,7 +71,7 @@ export type PackageProgress = {
 
 export type PackageOperationSnapshot = {
   id: string
-  kind: 'export' | 'import'
+  kind: 'export' | 'import' | 'fork'
   session?: SessionPackageRequest
   importTarget?: SessionPackageImportRequest
   presentationRevision?: number
@@ -84,7 +84,11 @@ export type PackageOperationSnapshot = {
   progress: PackageProgress
   files?: PackageSelectableFile[]
   summary?: PackageSelectionSummary
-  result?: { filePath?: string; imported?: SessionPackageRequest }
+  result?: {
+    filePath?: string
+    imported?: SessionPackageRequest
+    recovery?: SessionPackageRequest & { operationId: string; outcome: 'committed' | 'unconfirmed' }
+  }
   error?: string
   cleanupPending?: boolean
   transferBytesPerSecond?: number
@@ -206,7 +210,9 @@ export const sessionPackageReceiptSchema = packageOriginSchema
     schemaVersion: z.literal(1),
     projectId: identity,
     sessionId: identity,
-    identities: z.record(identity, identity),
+    // Source graph/runtime IDs are opaque (including composite separators); only remapped
+    // destination IDs become filesystem identities and must satisfy the path-safe schema.
+    identities: z.record(z.string().min(1).max(4096), identity),
     files: z
       .array(
         z
@@ -231,7 +237,7 @@ export type SessionPackageImportResult = SessionPackageRequest | null
 const packageOperationSnapshotSchema: z.ZodType<PackageOperationSnapshot> = z
   .object({
     id: identity,
-    kind: z.enum(['export', 'import']),
+    kind: z.enum(['export', 'import', 'fork']),
     session: sessionPackageRequestSchema.optional(),
     importTarget: sessionPackageImportRequestSchema.optional(),
     presentationRevision: z.number().int().nonnegative().optional(),
@@ -292,7 +298,13 @@ const packageOperationSnapshotSchema: z.ZodType<PackageOperationSnapshot> = z
       .strict()
       .optional(),
     result: z
-      .object({ filePath: z.string().optional(), imported: sessionPackageRequestSchema.optional() })
+      .object({
+        filePath: z.string().optional(),
+        imported: sessionPackageRequestSchema.optional(),
+        recovery: sessionPackageRequestSchema
+          .extend({ operationId: identity, outcome: z.enum(['committed', 'unconfirmed']) })
+          .optional()
+      })
       .strict()
       .optional(),
     error: z.string().optional(),
@@ -302,6 +314,10 @@ const packageOperationSnapshotSchema: z.ZodType<PackageOperationSnapshot> = z
   })
   .strict()
 export const sessionPackageCommandContracts = {
+  fork: defineApplicationCommandContract(
+    validationCodec(z.tuple([sessionPackageRequestSchema])),
+    validationCodec(sessionPackageRequestSchema.nullable())
+  ),
   operation: defineApplicationCommandContract(
     validationCodec(z.tuple([packageOperationRequestSchema])),
     validationCodec(packageOperationSnapshotSchema.nullable())

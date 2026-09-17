@@ -481,11 +481,94 @@ const sessionFieldValuesEqual = (
       )
     : jsonValuesEqual(left, right)
 
+// Task completion and live renderer projection can assign different IDs to the same reply.
+// Reconcile only a new leaf with identical runtime evidence and payload. The existing graph
+// rebase retains disjoint changes (such as terminal context samples on the prompt) and rejects
+// competing edits. Only an unsaved projection adopts an existing durable message identity.
+const reconcileCompletedTaskReply = (
+  base: PersistedChatSession,
+  submitted: PersistedChatSession,
+  latest: PersistedChatSession
+): PersistedChatSession => {
+  const graph = submitted.conversationGraph
+  const authority = latest.conversationGraph
+  if (
+    !latest.taskRunCommitId ||
+    latest.status !== 'idle' ||
+    latest.activeRun ||
+    !graph ||
+    !authority
+  )
+    return submitted
+  const branchId = selectedRootBranchId(submitted)
+  if (branchId !== selectedRootBranchId(latest)) return submitted
+  const local = graph.messages.find(
+    ({ id }) => id === graph.branches.find((branch) => branch.id === branchId)?.headMessageId
+  )
+  const durable = authority.messages.find(
+    ({ id }) => id === authority.branches.find((branch) => branch.id === branchId)?.headMessageId
+  )
+  if (
+    !local ||
+    !durable ||
+    local.id === durable.id ||
+    local.role !== 'agent' ||
+    durable.role !== 'agent' ||
+    durable.status !== 'complete' ||
+    !local.eventIds.length ||
+    !local.responseToMessageId ||
+    local.responseToMessageId !== durable.responseToMessageId ||
+    base.conversationGraph?.messages.some(({ id }) => id === local.id) ||
+    !jsonValuesEqual(local.eventIds, durable.eventIds) ||
+    (submitted.activeRun && submitted.activeRun.promptMessageId !== local.responseToMessageId) ||
+    (submitted.status !== 'running' && submitted.status !== 'idle')
+  )
+    return submitted
+  const normalized = { ...local }
+  for (const key of [
+    'id',
+    'streamId',
+    'status',
+    'createdAt',
+    'updatedAt',
+    'completedAt',
+    'turnUsage',
+    'turnUsageUnavailable',
+    'modelCallUsage'
+  ] as const) {
+    Reflect.deleteProperty(normalized, key)
+    if (Object.hasOwn(durable, key)) Object.assign(normalized, { [key]: durable[key] })
+  }
+  if (!jsonValuesEqual(normalized, durable)) return submitted
+  const normalizedGraph = {
+    ...graph,
+    messages: graph.messages.map((message) => (message === local ? durable : message)),
+    branches: graph.branches.map((branch) =>
+      branch.id === branchId ? { ...branch, headMessageId: durable.id } : branch
+    )
+  }
+  const reconciledGraph = rebaseConversationGraph(
+    base.conversationGraph,
+    normalizedGraph,
+    authority
+  )
+  if (!reconciledGraph) return submitted
+  return {
+    ...submitted,
+    conversationGraph: reconciledGraph,
+    messages: resolveActiveConversationMessages(reconciledGraph).map(projectConversationMessage),
+    ...resolveActiveConversationActivities(reconciledGraph),
+    status: latest.status,
+    activeRun: latest.activeRun
+  }
+}
+
 const rebaseSessionAfterRevisionConflict = (
   base: PersistedChatSession,
   submitted: PersistedChatSession,
   latest: PersistedChatSession
 ): PersistedChatSession | undefined => {
+  submitted = reconcileCompletedTaskReply(base, submitted, latest)
   const rebased: PersistedChatSession = structuredClone(latest)
   const graphOwnsCompatibilityProjections = Boolean(
     base.conversationGraph && submitted.conversationGraph && latest.conversationGraph
@@ -595,6 +678,17 @@ const rebaseSessionAfterRevisionConflict = (
     if (projection.activityGroups.length > 0) rebased.activityGroups = projection.activityGroups
     else delete rebased.activityGroups
   }
+
+  // A terminal Task receipt describes the preceding prompt, not a locally started follow-up.
+  if (
+    latest.taskRunCommitId &&
+    latest.taskRunCommitId !== base.taskRunCommitId &&
+    latest.status === 'idle' &&
+    submitted.activeRun &&
+    submitted.activeRun.promptMessageId !== base.activeRun?.promptMessageId &&
+    rebased.activeRun?.promptMessageId === submitted.activeRun.promptMessageId
+  )
+    rebased.status = submitted.status
 
   rebased.revision = sessionRevision(latest)
   rebased.updatedAt = Math.max(base.updatedAt, submitted.updatedAt, latest.updatedAt) + 1
@@ -1766,6 +1860,7 @@ const createStoreSaver = (
         const saveOptions = conflictRebaseFields.length > 0 ? { conflictRebaseFields } : undefined
         const sourceAuthority = acknowledgedSessions.get(session.id)
         let submittedAuthority = sourceAuthority
+        let rebasedBeforeSave = false
         const serializeSession = (): PersistedChatSession => {
           let persisted = toPersistedSession(session, nextStreamingMessages)
           // Explicit navigation already carries all ancestor and descendant selections. Only
@@ -1789,14 +1884,26 @@ const createStoreSaver = (
               branchContextResetRequired: sourceAuthority?.branchContextResetRequired
             }
           }
-          // A passive queued snapshot can predate a remotely created Branch. Rebase its changes
-          // before using a newer revision. Explicit navigation already selects the intended Branch.
+          // A queued snapshot can predate newer content on the same Branch too. Rebase
+          // against its original authority before borrowing the newer revision number.
           submittedAuthority = acknowledgedSessions.get(session.id)
+          if (sourceAuthority && submittedAuthority) {
+            const reconciled = reconcileCompletedTaskReply(
+              sourceAuthority,
+              persisted,
+              submittedAuthority
+            )
+            rebasedBeforeSave = reconciled !== persisted
+            persisted = reconciled
+          }
           if (
             !selectionIntent &&
             sourceAuthority &&
             submittedAuthority &&
-            selectedRootBranchId(sourceAuthority) !== selectedRootBranchId(submittedAuthority)
+            (selectedRootBranchId(sourceAuthority) !== selectedRootBranchId(submittedAuthority) ||
+              (submittedAuthority.taskRunCommitId &&
+                submittedAuthority.taskRunCommitId !== sourceAuthority.taskRunCommitId &&
+                sessionRevision(submittedAuthority) > sessionRevision(sourceAuthority)))
           ) {
             const rebased = rebaseSessionAfterRevisionConflict(
               sourceAuthority,
@@ -1809,10 +1916,10 @@ const createStoreSaver = (
                 sessionRevision(submittedAuthority)
               )
             }
+            rebasedBeforeSave = true
             persisted = rebased
           }
-          // Completion may overtake this queued snapshot on the same Branch. Adopt its
-          // lifecycle only if the local snapshot still represents the unchanged earlier run.
+          // Non-Task completions can also overtake an unchanged queued running snapshot.
           if (
             sourceAuthority &&
             submittedAuthority &&
@@ -1845,7 +1952,9 @@ const createStoreSaver = (
             session: durableSession,
             mode:
               !keepLocalBranch &&
-              (recoveredRevisionConflict || (options?.conflictRebaseFields?.length ?? 0) > 0)
+              (rebasedBeforeSave ||
+                recoveredRevisionConflict ||
+                (options?.conflictRebaseFields?.length ?? 0) > 0)
                 ? 'replace-persisted-if-current'
                 : 'merge-upload-identities'
           })

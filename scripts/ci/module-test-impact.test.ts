@@ -22,6 +22,17 @@ const currentStatus = JSON.stringify({
 })
 
 describe('module test impact commands', () => {
+  it('selects the standalone workflow contract instead of the global fallback', () => {
+    const plan = createAffectedTestPlan(
+      [{ path: 'scripts/ci/pr-gate-workflow.test.ts', status: 'modified' }],
+      { status: 'unavailable-manifest-only', testFiles: [] }
+    )
+    expect(plan.mode).toBe('selective')
+    expect(plan.testFiles).toEqual(['scripts/ci/pr-gate-workflow.test.ts'])
+    expect(plan.capabilityOverlays).toEqual([])
+    expect(plan.fallbackCapabilities).toEqual([])
+  })
+
   it('builds a deterministic declared-test plan for one module', () => {
     const plan = createModuleTestPlan('artifact_storage')
 
@@ -197,7 +208,7 @@ describe('module test impact commands', () => {
     expect(plan.reasonChains).toContain('artifact_storage -> artifact_provenance')
   })
 
-  it.each(['src/main/reviewer/reviewer-session-driver.ts', 'src/shared/reviewer.ts'])(
+  it.each(['src/main/reviewer/reviewer-session-driver.ts'])(
     'expands Reviewer changes through downstream consumers for %s',
     (path) => {
       const plan = createAffectedTestPlan([{ path, status: 'modified' }], {

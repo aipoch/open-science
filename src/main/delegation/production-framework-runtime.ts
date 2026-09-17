@@ -1,7 +1,7 @@
 import { resolveEffectiveSpecialistSkills } from '../../shared/specialist'
 import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-server'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
-import { mkdir, rm } from 'node:fs/promises'
+import { chmod, lstat, mkdir, readdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import {
@@ -77,6 +77,27 @@ const sessionSetup = (backend: ResolvedAgentBackend): SessionSetup =>
     ...(backend.sessionOptions ? { sessionOptions: backend.sessionOptions } : {})
   })
 
+// Called before a child is spawned or after its process tree is confirmed reaped.
+// Skip remaining symlinks so cleanup does not chmod their external targets.
+const makeRuntimeCopyRemovable = async (path: string): Promise<void> => {
+  const entry = await lstat(path).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== 'ENOENT') throw error
+    return undefined
+  })
+  if (!entry || entry.isSymbolicLink()) return
+  if (entry.isDirectory()) {
+    await chmod(path, (entry.mode & 0o777) | 0o700)
+    for (const child of await readdir(path, { withFileTypes: true })) {
+      if (child.isDirectory() || (process.platform === 'win32' && child.isFile())) {
+        await makeRuntimeCopyRemovable(join(path, child.name))
+      }
+    }
+  } else if (process.platform === 'win32' && entry.isFile()) {
+    // Windows also checks the readonly file attribute when deleting a file.
+    await chmod(path, (entry.mode & 0o777) | 0o600)
+  }
+}
+
 const createProductionDelegatedFrameworkRuntime = (
   options: ProductionFrameworkRuntimeOptions
 ): ProductionDelegatedFrameworks =>
@@ -124,6 +145,14 @@ const createProductionDelegatedFrameworkRuntime = (
           'runtime',
           input.attemptId
         )
+        const removeRuntimeHome = async (): Promise<void> => {
+          // OpenCode copies Main's read-only Skills even without a Specialist. Clear only
+          // this Attempt's projection before removing its home, also after partial setup.
+          if (frameworkId === 'opencode') {
+            await makeRuntimeCopyRemovable(runtimeHome)
+          }
+          await rm(runtimeHome, { recursive: true, force: true })
+        }
         let openCodeRuntime: PreparedOpenCodeRuntime | undefined
         let preparedSkills: AcpRuntimeCompositionOptions['preparedSkills']
         try {
@@ -280,7 +309,7 @@ const createProductionDelegatedFrameworkRuntime = (
                 try {
                   if (owned?.releaseBackend) await releaseResolvedAgentBackendLeases(owned.backend)
                 } finally {
-                  await rm(runtimeHome, { recursive: true, force: true })
+                  await removeRuntimeHome()
                 }
               }
             }
@@ -300,7 +329,7 @@ const createProductionDelegatedFrameworkRuntime = (
           openCodeRuntime?.dispose()
           preparedAttempts.delete(input.attemptId)
           if (releaseResolvedBackend) await releaseResolvedAgentBackendLeases(backend)
-          await rm(runtimeHome, { recursive: true, force: true }).catch(() => undefined)
+          await removeRuntimeHome().catch(() => undefined)
           throw error
         }
       }

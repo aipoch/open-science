@@ -213,6 +213,7 @@ const createDependencies = () => {
     readPreview: vi.fn()
   }
   const electron = {
+    forkSession: vi.fn(async () => null),
     exportSessionPackage: vi.fn(async () => ({ saved: false })),
     sessionPackageOperation: vi.fn(async () => null),
     importSessionPackage: vi.fn(async () => null),
@@ -262,6 +263,7 @@ const WRAPPED_COMMAND_KEYS = [
   'sessionDelete',
   'sessionEditDetails',
   'sessionExportConversation',
+  'sessionFork',
   'sessionExportPackage',
   'sessionImportPackage',
   'sessionPackageOperation',
@@ -350,6 +352,7 @@ describe('Data and content application commands', () => {
         'sessions:delete-session',
         'sessions:edit-details',
         'sessions:export-conversation',
+        'sessions:fork',
         'sessions:export-package',
         'sessions:import-package',
         'sessions:package-operation',
@@ -1935,6 +1938,14 @@ describe('Data and content application commands', () => {
       format: 'markdown' as const,
       selectedPromptMessageIds: ['prompt-1']
     }
+    const forkInvocation = invocation(
+      [{ projectId: 'project-1', sessionId: 'session-1' }] as const,
+      electronCaller
+    )
+    await expect(
+      router.dispatcher.invoke(dataContentApplicationCommands.sessionFork, forkInvocation)
+    ).resolves.toBeNull()
+    expect(deps.electron.forkSession).toHaveBeenCalledWith(forkInvocation)
     const exportInvocation = invocation([exportRequest] as const, electronCaller)
     await expect(
       router.dispatcher.invoke(

@@ -1,3 +1,4 @@
+import { BookmarkRepository } from '../bookmarks/repository'
 import { SessionProjectionRepository } from '../session-persistence/projection'
 import { LiteratureAttachmentAuthority } from '../literature/attachment-authority'
 import { SessionPdfSourceResolver } from '../literature/session-pdf-source-resolver'
@@ -224,6 +225,26 @@ it.each([false, true])(
       const lease = await authority.openContent(survivorId)
       await lease.close()
     }
+    const forked = await target.service.fork(second)
+    const forkedSession = (await new SessionRepository(target.storageRoot).loadSession(
+      forked.projectId,
+      forked.sessionId
+    ))!
+    const forkedVersionId = forkedSession.runtimeContext!.pdfContext!.bindings[0].sourceVersionId
+    if (excluded)
+      await expect(authority.openContent(forkedVersionId)).rejects.toThrow('not included')
+    else {
+      const lease = await authority.openContent(forkedVersionId)
+      try {
+        expect(await readFile(lease.path)).toEqual(createTestPdf())
+      } finally {
+        await lease.close()
+      }
+    }
+    // A fork is editable history; its next export captures the current native records while
+    // retaining packaged Literature metadata and any explicit missing-content evidence.
+    const reforked = await target.service.fork(forked)
+    expect(reforked.sessionId).not.toBe(forked.sessionId)
   }
 )
 
@@ -546,4 +567,70 @@ it('imports historical metadata-only Literature mentions with attachment IDs but
     item: { title: 'Historical metadata' }
   })
   expect(await target.client.uploadVersion.count()).toBe(0)
+})
+
+it('forks a PDF referenced only by a private bookmark and keeps its metadata and target usable', async () => {
+  const fixture = await setup()
+  await seed(fixture)
+  await new SessionRepository(fixture.storageRoot).saveSession({
+    ...session(),
+    runtimeContext: undefined
+  })
+  const bookmarks = new BookmarkRepository(async () => fixture.client)
+  await bookmarks.create({
+    projectId: 'project-1',
+    sessionId: 'session-1',
+    id: 'pdf-bookmark',
+    note: 'Private PDF note',
+    target: {
+      kind: 'pdf',
+      source: {
+        kind: 'literature-attachment-version',
+        projectId: 'project-1',
+        sourceFileId: 'attachment-1',
+        versionId: 'version-1',
+        checksum: sha256(createTestPdf()),
+        name: 'paper.pdf',
+        path: 'literature-attachment-version:version-1'
+      },
+      selector: {
+        kind: 'region',
+        pageNumber: 1,
+        pageRotation: 0,
+        coordinateVersion: 1,
+        rect: { x: 0, y: 0, width: 0.5, height: 0.5 }
+      }
+    }
+  })
+  const forked = await fixture.service.fork({ projectId: 'project-1', sessionId: 'session-1' })
+  const bookmark = (await bookmarks.list(forked)).items[0]
+  expect(bookmark.note).toBe('Private PDF note')
+  if (bookmark.target.source.kind !== 'literature-attachment-version')
+    throw new Error('Expected PDF target')
+  expect(bookmark.target.source.versionId).not.toBe('version-1')
+  const reader = new PackageLiteratureReader({
+    storageRoot: fixture.storageRoot,
+    getClient: async () => fixture.client,
+    files: new ManagedFileVersionService({
+      storageRoot: fixture.storageRoot,
+      getClient: async () => fixture.client
+    })
+  })
+  const authority = new LiteratureAttachmentAuthority({
+    getClient: async () => fixture.client,
+    content: new ContentRepository({
+      storageRoot: fixture.storageRoot,
+      getClient: async () => fixture.client
+    }),
+    packages: reader
+  })
+  const lease = await authority.openContent(bookmark.target.source.versionId)
+  try {
+    expect(await readFile(lease.path)).toEqual(createTestPdf())
+  } finally {
+    await lease.close()
+  }
+  expect((await fixture.service.readOrigin(forked)).literature?.items[0].item.title).toBe(
+    'Evidence paper'
+  )
 })

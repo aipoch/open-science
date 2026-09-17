@@ -1,14 +1,13 @@
 import { createHash } from 'node:crypto'
-import type { ToolDescriptor } from '../types'
+import type { ToolContext, ToolDescriptor } from '../types'
 
 // Ensembl REST — keyless GETs; the engine already sends Accept: application/json for fetchJson, so
 // plain paths return JSON without the ?content-type suffix.
 const ENSEMBL = 'https://rest.ensembl.org'
 const DEFAULT_SPECIES = 'homo_sapiens'
 
-// A TRUE Ensembl stable id: ENS + optional 3-4 letter species code + a feature letter [EGTP] + a
-// >=6-digit block (optionally .version), OR an LRG_N id. Symbols merely STARTING with "ENS" (ENSA,
-// ENSAP1) fail the digit block and route to the symbol endpoint instead.
+// Recognizes Ensembl/LRG IDs for version normalization and for avoiding symbol fallback on a
+// missing canonical ID. This is not an exhaustive list of IDs accepted by Ensembl (e.g. FlyBase).
 const STABLE_ID_RE = /^(ENS([A-Z]{3,4})?[EGTP]\d{6,}(\.\d+)?|LRG_\d+)$/
 
 const isStableId = (query: string): boolean => STABLE_ID_RE.test(query.trim())
@@ -29,6 +28,28 @@ function clampInt(v: unknown, def: number, lo: number, hi: number): number {
 // `HTTP 400 for <url>` with the body stripped, so we key on the status code.
 const isNotFound = (err: unknown): boolean =>
   err instanceof Error && /\bHTTP 400\b/.test(err.message)
+
+// Only an exact upstream absence response permits fallback or found:false. A bad species,
+// invalid arguments, malformed JSON, or a server failure must remain an error.
+async function lookupRecord(
+  ctx: ToolContext,
+  url: string,
+  missingMessage: string
+): Promise<Dict | null> {
+  const { body: record, status } = await ctx.fetchJsonWithHeaders(url, { allowHttpStatuses: [400] })
+  if (record && typeof record === 'object' && !Array.isArray(record)) {
+    const error = (record as Dict).error
+    if (typeof error === 'string') {
+      if (status === 400 && error === missingMessage) return null
+      throw new Error(`Ensembl lookup failed: ${error.slice(0, 1000)}`)
+    }
+    if (status === 400) throw new Error('Ensembl lookup returned an unrecognized HTTP 400 response')
+    if (typeof (record as Dict).species === 'string' && String((record as Dict).species).trim()) {
+      return record as Dict
+    }
+  }
+  throw new Error('Ensembl lookup returned a record without a valid species')
+}
 
 // hex sha256 of a string (used to fingerprint sequences even when the text is omitted).
 const sha256 = (s: string): string => createHash('sha256').update(s, 'utf8').digest('hex')
@@ -237,11 +258,12 @@ export const GENOMES_ENSEMBL_TOOLS: ToolDescriptor[] = [
     id: 'ensembl_lookup',
     connector: 'genomes',
     description:
-      'Look up an Ensembl gene/transcript/protein by stable ID or a gene by symbol; returns the core annotation record (location, biotype, canonical transcript, description). Args: query (Ensembl stable ID ENSG.../ENST.../ENSP..., versioned accepted; or a gene symbol/alias like BRAF — true stable IDs [ENS + optional species code + feature letter + >=6-digit block, or LRG_N] route to the ID endpoint; everything else, incl. symbols starting with "ENS" like ENSA, to the symbol endpoint); species (Ensembl species name for symbol lookups, default homo_sapiens; ignored for stable IDs); expand (include the child feature tree — a gene\'s transcripts/exons/translation; default off). Returns {found, query, species, record}; species comes from the returned record on success and echoes the requested/default species when not found; record is null when nothing matches, else the upstream lookup dict — for a gene {id, display_name, description, biotype, object_type, seq_region_name, start, end, strand, assembly_name, canonical_transcript, version, ...} with 1-based inclusive coordinates.',
+      'Look up genes, transcripts, or proteins by stable ID, or genes by symbol. query accepts ENS IDs (versioned allowed), FlyBase/WormBase/yeast IDs, or symbols such as BRAF. query_type: auto (default) tries ID first, then symbol only on explicit absence unless the input is a canonical ENS/LRG ID; id uses only ID lookup; symbol uses only symbol lookup without version normalization. species applies only to symbol lookup (default homo_sapiens) and is not inferred. expand includes transcripts, exons and translations (default false). Invalid requests and service failures raise errors.',
     input: {
       type: 'object',
       properties: {
         query: { type: 'string' },
+        query_type: { type: 'string', enum: ['auto', 'id', 'symbol'], default: 'auto' },
         species: { type: 'string', default: DEFAULT_SPECIES },
         expand: { type: 'boolean', default: false }
       },
@@ -250,26 +272,35 @@ export const GENOMES_ENSEMBL_TOOLS: ToolDescriptor[] = [
     required: ['query'],
     returns:
       '{found, query, species, record} — species is the upstream record species on success, otherwise the requested/default species; record is the upstream lookup dict (1-based inclusive coords) or null when nothing matches.',
-    example: 'const result = await host.mcp("genomes", "ensembl_lookup", {"query": "BRAF"})',
+    example:
+      'const result = await host.mcp("genomes", "ensembl_lookup", {"query": "BRAF", "query_type": "symbol"})',
     run: async (ctx, a) => {
       const query = String(a.query).trim()
+      const queryType = a.query_type === undefined ? 'auto' : a.query_type
+      if (queryType !== 'auto' && queryType !== 'id' && queryType !== 'symbol') {
+        throw new Error('query_type must be auto, id, or symbol')
+      }
       const species = String(a.species ?? DEFAULT_SPECIES)
       const expand = a.expand === true ? 1 : 0
-      const url = isStableId(query)
-        ? `${ENSEMBL}/lookup/id/${encodeURIComponent(upstreamStableId(query))}?expand=${expand}`
-        : `${ENSEMBL}/lookup/symbol/${encodeURIComponent(species)}/${encodeURIComponent(query)}?expand=${expand}`
-      try {
-        const record = (await ctx.fetchJson(url)) as Dict | null
-        const recordSpecies = record?.species
-        if (typeof recordSpecies !== 'string' || !recordSpecies.trim()) {
-          throw new Error('Ensembl lookup returned a record without a valid species')
-        }
-        // Stable IDs select their own species; the requested/default species only routes symbols.
-        return { found: true, query, species: recordSpecies, record }
-      } catch (err) {
-        if (isNotFound(err)) return { found: false, query, species, record: null }
-        throw err
+      let record: Dict | null = null
+      if (queryType !== 'symbol') {
+        const stableId = upstreamStableId(query)
+        record = await lookupRecord(
+          ctx,
+          `${ENSEMBL}/lookup/id/${encodeURIComponent(stableId)}?expand=${expand}`,
+          `ID '${stableId}' not found`
+        )
       }
+      if (queryType === 'symbol' || (queryType === 'auto' && !record && !isStableId(query))) {
+        record = await lookupRecord(
+          ctx,
+          `${ENSEMBL}/lookup/symbol/${encodeURIComponent(species)}/${encodeURIComponent(query)}?expand=${expand}`,
+          `No valid lookup found for symbol ${query}`
+        )
+      }
+      if (!record) return { found: false, query, species, record: null }
+      // Stable IDs select their own species; the requested/default species only routes symbols.
+      return { found: true, query, species: record.species, record }
     }
   },
   {

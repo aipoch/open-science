@@ -15,6 +15,7 @@ import {
   retryPendingArtifactFinalization,
   saveSessionInOrder
 } from '@/lib/session-persistence/session-persistence'
+import { forkSession, sessionForkAvailable } from '@/lib/session-fork'
 import { exportSessionPackage, sessionPackageExportAvailable } from '@/lib/session-package-export'
 import { usePackageOperationStore } from '@/stores/package-operation-store'
 import { useMemoryStore } from '@/stores/memory-store'
@@ -1046,6 +1047,22 @@ const WorkspacePage = ({
     openSession(sessionId)
   }
 
+  const openForkSource = async (sessionId: string): Promise<void> => {
+    const navigationRevision = useNavigationStore.getState().explicitNavigationRevision
+    try {
+      const source = await window.api.sessions.loadOne({ projectId: scopedProjectId, sessionId })
+      if (useNavigationStore.getState().explicitNavigationRevision !== navigationRevision) return
+      if (!source || source.archivedAt !== undefined) {
+        setAttachmentError(t('This session was deleted or is unavailable.'))
+        return
+      }
+      openSessionWithoutExportError(sessionId)
+    } catch {
+      if (useNavigationStore.getState().explicitNavigationRevision !== navigationRevision) return
+      setAttachmentError(t('This session was deleted or is unavailable.'))
+    }
+  }
+
   // Forwards visible permission decisions to the runtime bridge.
   const respondToVisiblePermission = (requestId: string, optionId?: string): Promise<void> =>
     respondToPermission(requestId, optionId)
@@ -1279,6 +1296,7 @@ const WorkspacePage = ({
                 window.api.artifacts?.sessionReproducibility ? setCheckSession : undefined
               }
               onViewNotebook={sessionController.actions.openNotebook}
+              onForkSession={sessionForkAvailable() ? forkSession : undefined}
               onExportPackage={sessionPackageExportAvailable() ? openPackageExport : undefined}
               onExportSession={
                 typeof window.api.sessions?.exportConversation === 'function'
@@ -1367,6 +1385,14 @@ const WorkspacePage = ({
                 close()
                 sessionController.actions.openNotebook(session)
               }}
+              onForkSession={
+                sessionForkAvailable()
+                  ? async (session) => {
+                      close()
+                      await forkSession(session)
+                    }
+                  : undefined
+              }
               onExportPackage={
                 sessionPackageExportAvailable()
                   ? async (session) => {
@@ -1516,6 +1542,7 @@ const WorkspacePage = ({
                 }
               }}
               sessionTools={{
+                openSession: (sessionId) => void openForkSource(sessionId),
                 notebookReference: activeNotebookReference,
                 openNotebook: openNotebookPreview,
                 openJobs: sessionController.actions.openJobList,

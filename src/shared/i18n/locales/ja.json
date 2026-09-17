@@ -42,7 +42,8 @@
     "Discard changes": "変更を破棄",
     "Discard unsaved changes?": "未保存の変更を破棄しますか？",
     "Export Session package": "セッションパッケージをエクスポート",
-    "Import Session package": "セッションパッケージをインポート"
+    "Import Session package": "セッションパッケージをインポート",
+    "Wait for all Session activity and pending approvals to finish before forking.": "すべてのセッション処理と保留中の承認が完了してから複製してください。"
   },
   "native": {
     "Conversation export is too large. Select fewer conversation turns.": "会話のエクスポートが大きすぎます。選択する会話ターンを減らしてください。",
@@ -113,9 +114,13 @@
     "Session package operation in progress": "セッションパッケージを処理中",
     "Temporary files could not be removed. Try cleanup again.": "一時ファイルを削除できませんでした。後処理を再試行してください。",
     "Could not complete the Session package operation. Check the package and available disk space, then try again.": "セッションパッケージの操作を完了できませんでした。パッケージとディスクの空き容量を確認してから、再試行してください。",
-    "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "元のパッケージを利用できません。移動、削除されたか、読み取れなくなった可能性があります。別のパッケージを選択してください。"
+    "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "元のパッケージを利用できません。移動、削除されたか、読み取れなくなった可能性があります。別のパッケージを選択してください。",
+    "Could not fork this Session: {{reason}}": "このセッションを複製できませんでした：{{reason}}",
+    "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "複製の公開処理を復旧する必要があります（操作 {{operationId}}、セッション {{sessionId}}）。再度複製する前にアプリを再起動してこの操作を復旧してください。"
   },
   "renderer": {
+    "Continued from chat #{{number}}": "会話 #{{number}} から継続",
+    "Continued from chat": "元の会話から継続",
     "Open-source license": "オープンソースライセンス",
     "Old Shell launch records are blocking this update.": "古いシェル起動記録が更新を妨げています。",
     "Recovery will back up old Shell launch records and retry the update. Project data and settings are preserved.": "復旧操作では古いシェル起動記録をバックアップし、更新を再試行します。プロジェクトのデータと設定は保持されます。",
@@ -5912,6 +5917,21 @@
     "A Side chat prompt is already running.": "サイドチャットは応答中です。",
     "Enter a message to send.": "送信するメッセージを入力してください。",
     "Send draft to Side chat": "下書きをサイドチャットに送信",
-    "Opens an empty Side chat; keeps your draft.": "空の Side chat を開き、下書きを保持します。"
+    "Opens an empty Side chat; keeps your draft.": "空の Side chat を開き、下書きを保持します。",
+    "Fork": "複製",
+    "Fork Session": "セッションを複製",
+    "Fork to continue": "複製して続行",
+    "Could not fork Session": "セッションを複製できませんでした",
+    "Fork is available in the desktop app.": "複製機能はデスクトップアプリで利用できます。",
+    "Wait for the current transfer to finish before forking a Session.": "現在の転送が完了してからセッションを複製してください。",
+    "Fork creates an independent Session with all branches and research data. No code runs automatically.": "すべてのブランチと研究データを含む独立したセッションを作成します。コードは自動実行されません。",
+    "Preparing fork…": "複製を準備中…",
+    "Copying research…": "研究データをコピー中…",
+    "Fork completed": "複製が完了しました",
+    "Fork failed": "複製に失敗しました",
+    "Fork cancelled": "複製をキャンセルしました",
+    "Open forked Session": "複製したセッションを開く",
+    "Temporarily read-only during fork": "複製中は一時的に読み取り専用です",
+    "Session storage is not ready.": "セッションストレージの準備ができていません。"
   }
 }

@@ -171,6 +171,7 @@ type WorkspaceMessageScrollerProps = {
   onAnnotationError?: (error: AnnotationValidationError) => void
   canBranchInNewSession?: boolean
   onBranchInNewSession?: (messageId: string) => void
+  forkSourceContent?: ReactNode
   trailingContent?: ReactNode
   pendingElicitations?: PendingElicitationRequest[]
   // Events are read-only projections; retry sends an intent that main validates against its state.
@@ -510,6 +511,7 @@ const WorkspaceMessageScrollerImpl = ({
   optimisticMessage,
   canBranchInNewSession = false,
   onBranchInNewSession,
+  forkSourceContent,
   trailingContent,
   pendingElicitations = [],
   handoffLifecycleSource,
@@ -1456,6 +1458,20 @@ const WorkspaceMessageScrollerImpl = ({
     }
   }
 
+  const forkBoundaryItemId = activeSession?.forkOrigin
+    ? conversationItems.findLast(
+        (item) =>
+          (item.type === 'message' || item.type === 'turn-completion') &&
+          Boolean(item.message.usageOrigin)
+      )?.id
+    : undefined
+  const forkDivider = (itemId: string): ReactNode =>
+    forkSourceContent && itemId === forkBoundaryItemId ? (
+      <MessageScrollerItem messageId={`fork-source-${currentSessionId}`} className="min-w-0">
+        <div className="mx-auto w-full max-w-4xl px-4 py-3 md:px-6">{forkSourceContent}</div>
+      </MessageScrollerItem>
+    ) : null
+
   return (
     <TooltipProvider
       key={activeSession?.id ?? 'empty-conversation'}
@@ -1733,6 +1749,7 @@ const WorkspaceMessageScrollerImpl = ({
                           onRerun={handleRerunReview}
                         />
                       ) : null}
+                      {forkDivider(item.id)}
                     </Fragment>
                   )
                 }
@@ -1784,6 +1801,7 @@ const WorkspaceMessageScrollerImpl = ({
                           onRerun={handleRerunReview}
                         />
                       ) : null}
+                      {forkDivider(item.id)}
                     </Fragment>
                   )
                 }
@@ -2134,6 +2152,7 @@ const areWorkspaceMessageScrollerPropsEqual = (
   (previous.canBranchInNewSession ?? false) === (next.canBranchInNewSession ?? false) &&
   (previous.reportPresentationRevealing ?? false) === (next.reportPresentationRevealing ?? false) &&
   previous.onBranchInNewSession === next.onBranchInNewSession &&
+  previous.forkSourceContent === next.forkSourceContent &&
   previous.trailingContent === next.trailingContent &&
   previous.isResumingSession === next.isResumingSession &&
   previous.onAddAnnotation === next.onAddAnnotation &&

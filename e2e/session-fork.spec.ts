@@ -1,0 +1,115 @@
+import { expect } from '@playwright/test'
+import { test } from './fixtures/electron-app'
+
+test.use({ windowMode: 'normal' })
+
+test('forks local and imported research and immediately continues through the real desktop lifecycle', async ({
+  app
+}, testInfo) => {
+  test.setTimeout(240_000)
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
+  await app.configureSessionPackageDialogs()
+  await page.getByRole('button', { name: 'New project', exact: true }).click()
+  const project = page.getByRole('dialog', { name: 'New project' })
+  await project.getByLabel('Name').fill('Fork lifecycle')
+  await project.getByRole('button', { name: 'Create project' }).click()
+  const prompt = 'Summarize the deterministic fixture.'
+  await page.getByRole('textbox', { name: 'Ask anything' }).fill(prompt)
+  await page.getByRole('button', { name: 'Send message' }).click()
+  await expect(page.getByText(`Deterministic reply: ${prompt}`, { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Stop generating' })).toHaveCount(0)
+  await page.getByRole('button', { name: `Open actions for ${prompt}` }).click()
+  await page.getByRole('menuitem', { name: 'Fork', exact: true }).click()
+  const title = `${prompt}(2)`
+  await expect(page.getByRole('button', { name: `Open actions for ${title}` })).toBeVisible()
+  const row = page
+    .locator('[data-session-id]')
+    .filter({ has: page.getByRole('button', { name: `Open actions for ${title}` }) })
+  await expect(row.getByRole('img', { name: 'Read-only' })).toHaveCount(0)
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(/^#\d+.*\(2\)$/)
+  const sourceLabel = await page
+    .getByRole('button', { name: /^Continued from chat #\d+$/ })
+    .innerText()
+  const sourceNumber = sourceLabel.match(/#\d+$/)![0]
+  await page.getByRole('button', { name: /^Continued from chat #\d+$/ }).click()
+  await expect(page.getByRole('button', { name: /^Continued from chat #\d+$/ })).toHaveCount(0)
+  await expect(page.getByRole('heading', { level: 1 })).toContainText(sourceNumber)
+  await row.locator('[data-slot="session-open-button"]').click()
+  await expect(page.getByRole('button', { name: /^Continued from chat #\d+$/ })).toBeVisible()
+  for (const [kind, followup] of [
+    ['local', 'Continue local fork'],
+    ['imported', 'Continue imported fork']
+  ] as const) {
+    if (kind === 'imported') {
+      await page.getByRole('button', { name: `Open actions for ${title}` }).click()
+      await page.getByRole('menuitem', { name: 'Export', exact: true }).hover()
+      await page.getByRole('menuitem', { name: 'Export Session package', exact: true }).click()
+      const exporting = page.getByRole('dialog', { name: 'Export Session package', exact: true })
+      await exporting.getByRole('button', { name: 'Export', exact: true }).click()
+      await expect(
+        exporting.getByText('Package operation completed', { exact: true })
+      ).toBeVisible()
+      await exporting.getByRole('button', { name: 'Close', exact: true }).click()
+      await page.getByRole('button', { name: 'Fork lifecycle', exact: true }).click()
+      await page.getByRole('menuitem', { name: 'Import Session package…', exact: true }).click()
+      const importing = page.getByRole('dialog', { name: 'Import Session package', exact: true })
+      await importing.getByRole('button', { name: 'Import', exact: true }).click()
+      await importing.getByRole('button', { name: 'Open imported Session', exact: true }).click()
+      await expect(page.getByRole('region', { name: 'Imported research history' })).toBeVisible()
+      await page.getByRole('button', { name: 'Fork to continue', exact: true }).click()
+      await expect(page.getByRole('region', { name: 'Imported research history' })).toHaveCount(0)
+    }
+    const replies = page.getByText(`Deterministic reply: ${prompt}`, { exact: true })
+    const previousReplies = await replies.count()
+    await page.getByRole('textbox', { name: 'Ask anything' }).fill(followup)
+    await page.getByRole('button', { name: 'Send message' }).click()
+    await expect(replies).toHaveCount(previousReplies + 1)
+    await expect(page.getByRole('button', { name: 'Stop generating' })).toHaveCount(0)
+    await expect(page.getByText(/Project owner is unavailable/)).toHaveCount(0)
+    await expect(page.getByText(/could not save the latest conversation changes/)).toHaveCount(0)
+    await expect
+      .poll(async () =>
+        page.evaluate(
+          async (text) =>
+            (await window.api.sessions.loadAll()).sessions.some(
+              (session) =>
+                session.forkOrigin && session.messages.some((message) => message.content === text)
+            ),
+          followup
+        )
+      )
+      .toBe(true)
+    await page.screenshot({ path: testInfo.outputPath(`${kind}-fork-continued.png`) })
+  }
+  const restarted = await app.restart()
+  await restarted
+    .getByRole('region', { name: 'Recent sessions' })
+    .getByRole('button', {
+      name: new RegExp('^Summarize the deterministic fixture\\.\\(2\\)\\(2\\)')
+    })
+    .click()
+  await expect(restarted.getByRole('textbox', { name: 'Ask anything' })).toBeVisible()
+  await expect(
+    restarted
+      .locator('[data-slot="session-open-button"][aria-current="page"]')
+      .getByRole('img', { name: 'Read-only' })
+  ).toHaveCount(0)
+  const replies = restarted.getByText(`Deterministic reply: ${prompt}`, { exact: true })
+  const before = await replies.count()
+  await restarted.getByRole('textbox', { name: 'Ask anything' }).fill('Continue after restart')
+  await restarted.getByRole('button', { name: 'Send message' }).click()
+  await expect(replies).toHaveCount(before + 1)
+  await expect(restarted.getByText(/Project owner is unavailable/)).toHaveCount(0)
+  await expect
+    .poll(async () =>
+      restarted.evaluate(async () =>
+        (await window.api.sessions.loadAll()).sessions.some(
+          (session) =>
+            session.forkOrigin &&
+            session.messages.some((message) => message.content === 'Continue after restart')
+        )
+      )
+    )
+    .toBe(true)
+})

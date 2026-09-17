@@ -207,6 +207,7 @@ export const WEB_INVOKE_CHANNELS = {
   'sessions.exportConversation': 'sessions:export-conversation',
   'sessions.exportPackage': 'sessions:export-package',
   'sessions.filterPdfContextCandidates': 'sessions:filter-pdf-context-candidates',
+  'sessions.fork': 'sessions:fork',
   'sessions.importPackage': 'sessions:import-package',
   'sessions.linkPdfContext': 'sessions:link-pdf-context',
   'sessions.list': 'sessions:list',

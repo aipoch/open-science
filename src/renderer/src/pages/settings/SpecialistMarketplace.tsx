@@ -1,3 +1,4 @@
+import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { inlineNoticeClassName } from '@/components/ui/notice-chrome'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { ErrorNotice } from '@/components/error-notice'
@@ -213,11 +214,12 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
   const sourceCandidateTokenRef = useRef<string | undefined>(undefined)
   const installCandidateTokenRef = useRef<string | undefined>(undefined)
   const installedSpecialists = useSpecialistStore((state) => state.items)
-  const sourceRemovalAffectedSpecialists = sourcePendingRemoval
+  const dialogRemovalSource = useRetainedDialogValue(sourcePendingRemoval)
+  const sourceRemovalAffectedSpecialists = dialogRemovalSource
     ? installedSpecialists.flatMap((item) =>
         item.kind === 'custom' &&
         item.origin === 'marketplace' &&
-        item.marketplaceProvenance?.sourceId === sourcePendingRemoval.id
+        item.marketplaceProvenance?.sourceId === dialogRemovalSource.id
           ? [item]
           : []
       )
@@ -708,7 +710,7 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
               >
                 <div className={dialogHeaderClassName}>
                   <AlertDialog.Title className={dialogTitleClassName}>
-                    {t('Remove “{{name}}”?', { name: sourcePendingRemoval?.name ?? '' })}
+                    {t('Remove “{{name}}”?', { name: dialogRemovalSource?.name ?? '' })}
                   </AlertDialog.Title>
                   <AlertDialog.Cancel asChild>
                     <Button

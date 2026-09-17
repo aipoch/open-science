@@ -42,7 +42,8 @@
     "Discard changes": "Ignorer les modifications",
     "Discard unsaved changes?": "Ignorer les modifications non enregistrées ?",
     "Export Session package": "Exporter un paquet de session",
-    "Import Session package": "Importer un paquet de session"
+    "Import Session package": "Importer un paquet de session",
+    "Wait for all Session activity and pending approvals to finish before forking.": "Attendez la fin de toutes les activités de la session et des approbations en attente avant de dupliquer."
   },
   "native": {
     "Conversation export is too large. Select fewer conversation turns.": "L’exportation de la conversation est trop volumineuse. Sélectionnez moins de tours de conversation.",
@@ -115,9 +116,13 @@
     "Session package operation in progress": "Opération sur le paquet de session en cours",
     "Temporary files could not be removed. Try cleanup again.": "Les fichiers temporaires n’ont pas pu être supprimés. Réessayez le nettoyage.",
     "Could not complete the Session package operation. Check the package and available disk space, then try again.": "L’opération sur le paquet de session n’a pas pu être terminée. Vérifiez le paquet et l’espace disque disponible, puis réessayez.",
-    "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "Le paquet d’origine est indisponible. Il a peut-être été déplacé, supprimé ou est devenu illisible. Choisissez un autre paquet."
+    "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "Le paquet d’origine est indisponible. Il a peut-être été déplacé, supprimé ou est devenu illisible. Choisissez un autre paquet.",
+    "Could not fork this Session: {{reason}}": "Impossible de dupliquer cette session : {{reason}}",
+    "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "La publication de la copie doit être rétablie (opération {{operationId}}, session {{sessionId}}). Redémarrez l’application pour récupérer cette opération avant de dupliquer à nouveau."
   },
   "renderer": {
+    "Continued from chat #{{number}}": "Suite de la conversation #{{number}}",
+    "Continued from chat": "Suite d’une conversation",
     "Open-source license": "Licence open source",
     "Old Shell launch records are blocking this update.": "D’anciens enregistrements de lancement du Terminal bloquent cette mise à jour.",
     "Recovery will back up old Shell launch records and retry the update. Project data and settings are preserved.": "La récupération sauvegardera les anciens enregistrements de lancement du Terminal et relancera la mise à jour. Les données du projet et les paramètres seront conservés.",
@@ -6244,6 +6249,21 @@
     "A Side chat prompt is already running.": "Une réponse de la discussion parallèle est déjà en cours.",
     "Enter a message to send.": "Saisissez un message à envoyer.",
     "Send draft to Side chat": "Envoyer le brouillon à la discussion parallèle",
-    "Opens an empty Side chat; keeps your draft.": "Ouvre un Side chat vide et conserve votre brouillon."
+    "Opens an empty Side chat; keeps your draft.": "Ouvre un Side chat vide et conserve votre brouillon.",
+    "Fork": "Dupliquer",
+    "Fork Session": "Dupliquer la session",
+    "Fork to continue": "Dupliquer pour continuer",
+    "Could not fork Session": "Impossible de dupliquer la session",
+    "Fork is available in the desktop app.": "La duplication est disponible dans l’application de bureau.",
+    "Wait for the current transfer to finish before forking a Session.": "Attendez la fin du transfert en cours avant de dupliquer une session.",
+    "Fork creates an independent Session with all branches and research data. No code runs automatically.": "Crée une session indépendante avec toutes les branches et données de recherche. Aucun code ne s’exécute automatiquement.",
+    "Preparing fork…": "Préparation de la copie…",
+    "Copying research…": "Copie des données de recherche…",
+    "Fork completed": "Duplication terminée",
+    "Fork failed": "Échec de la duplication",
+    "Fork cancelled": "Duplication annulée",
+    "Open forked Session": "Ouvrir la session dupliquée",
+    "Temporarily read-only during fork": "Lecture seule temporaire pendant la duplication",
+    "Session storage is not ready.": "Le stockage des sessions n’est pas prêt."
   }
 }

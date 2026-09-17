@@ -107,7 +107,7 @@ describe('trusted supplemental selection', () => {
     const modules = createAffectedTestPlan(changes, graph)
     const plan = resolveAuthoritativePlan(classifyChanges(changes), modules)
     expect(plan.mode).toBe('selective')
-    expect(modules.modules).toEqual(['connector_ontology', 'genomes_ensembl_connector'])
+    expect(modules.modules).toEqual(['connector_ontology', 'notebook_application'])
     expect(modules.testFiles).toEqual(
       expect.arrayContaining([
         'src/main/connectors/registry.test.ts',
@@ -175,8 +175,8 @@ describe('trusted supplemental selection', () => {
   )
 
   it.each([
-    'src/main/artifacts/ro-crate-export.ts',
-    'src/renderer/src/pages/settings/SettingsPage.tsx',
+    'src/main/artifacts/unregistered-export.ts',
+    'src/renderer/src/pages/settings/unregistered-page.tsx',
     'e2e/fixtures/electron-app.ts',
     'e2e/new-unknown.spec.ts',
     'package.json',

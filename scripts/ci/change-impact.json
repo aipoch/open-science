@@ -105,6 +105,12 @@
       "capabilities": ["documentation"]
     },
     {
+      "id": "native_runtime_packages",
+      "role": "owner",
+      "paths": ["packages/process-tree-native/**", "packages/safe-file-publisher-native/**"],
+      "capabilities": ["notebook_network_sandbox", "windows_sensitive"]
+    },
+    {
       "id": "notebook_network_sandbox",
       "role": "owner",
       "paths": ["packages/notebook-network-sandbox/**"],
@@ -250,7 +256,8 @@
         "src/shared/settings.ts",
         "src/shared/update.ts",
         "src/shared/web-api-map.generated.ts",
-        "src/shared/wsl-setup.ts"
+        "src/shared/wsl-setup.ts",
+        "src/main/delegation/production-framework-runtime.ts"
       ],
       "capabilities": ["windows_sensitive"]
     },
@@ -341,7 +348,28 @@
         "src/main/*window*.ts",
         "src/main/second-instance-router.ts",
         "src/main/ipc.ts",
-        "src/main/index.ts"
+        "src/main/index.ts",
+        "src/main/*.ts",
+        "src/main/agents/**",
+        "src/main/archive/**",
+        "src/main/background-result-delivery/**",
+        "src/main/cli-install/**",
+        "src/main/diagnostics/**",
+        "src/main/host-sdk/**",
+        "src/main/literature/**",
+        "src/main/local-models/**",
+        "src/main/managed-file-versions/**",
+        "src/main/memory/**",
+        "src/main/net/**",
+        "src/main/notifications/**",
+        "src/main/office-preview/**",
+        "src/main/remote-access/**",
+        "src/main/session-package/**",
+        "src/main/session-plan/**",
+        "src/main/tasks/**",
+        "src/main/update/**",
+        "src/main/web-service/**",
+        "src/main/wsl/**"
       ],
       "capabilities": ["e2e_regressions", "e2e_delegation"]
     }

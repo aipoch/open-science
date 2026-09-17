@@ -214,3 +214,86 @@ it('groups conversation and package exports while keeping package admission inde
   await bindings['export-package'].execute(context)
   expect(onExportPackage).toHaveBeenCalledWith(context.session)
 })
+
+it.each([
+  'idle',
+  'running',
+  'waiting-permission',
+  'waiting-plan-approval',
+  'waiting-for-user'
+] as const)(
+  'places Fork between Export and Archive and disables it when busy (%s)',
+  async (status) => {
+    const onForkSession = vi.fn(async () => undefined)
+    const bindings = createSessionActionBindings({
+      canMutateConversations: true,
+      canDeleteConversations: false,
+      canDownloadArtifacts: true,
+      onTogglePin: vi.fn(),
+      onRenameSession: vi.fn(),
+      onDownloadArtifacts: vi.fn(),
+      onViewNotebook: vi.fn(),
+      onDeleteSession: vi.fn(),
+      onForkSession,
+      onExportPackage: vi.fn(async () => undefined)
+    })
+    const context = invocation(createSession({ status }))
+    const entries = resolveActionMenuEntries(
+      {
+        identityKey: context.session.id,
+        catalog: SESSION_ACTION_CATALOG,
+        recipe: SESSION_ACTION_RECIPE,
+        bindings
+      },
+      context
+    )
+    const actions = entries.filter((entry) => entry.kind === 'action')
+    const forkIndex = actions.findIndex((entry) => entry.action === 'fork')
+    expect(actions[forkIndex - 1].action).toBe('export-package')
+    expect(actions[forkIndex + 1].action).toBe('archive')
+    expect(actions[forkIndex].disabled).toBe(status !== 'idle')
+    if (status !== 'idle') expect(actions[forkIndex].disabledDescription).toBeTruthy()
+    await bindings.fork.execute(context)
+    expect(onForkSession).toHaveBeenCalledWith(context.session)
+  }
+)
+
+it.each([
+  { canMutateConversations: true, packageBusy: false, disabled: false },
+  { canMutateConversations: true, packageBusy: true, disabled: true },
+  { canMutateConversations: false, packageBusy: false, disabled: true }
+])('allows read-only imports to fork when storage and transfer are ready (%j)', (state) => {
+  const bindings = createSessionActionBindings({
+    ...state,
+    canDeleteConversations: false,
+    canDownloadArtifacts: true,
+    onTogglePin: vi.fn(),
+    onRenameSession: vi.fn(),
+    onDownloadArtifacts: vi.fn(),
+    onViewNotebook: vi.fn(),
+    onDeleteSession: vi.fn(),
+    onForkSession: vi.fn(async () => undefined)
+  })
+  const context = invocation(
+    createSession({
+      packageOrigin: {
+        importId: 'receipt',
+        sourceProjectId: 'source',
+        sourceSessionId: 'source',
+        importedAt: 1,
+        manifestChecksum: 'a'.repeat(64)
+      }
+    })
+  )
+  const [entry] = resolveActionMenuEntries(
+    {
+      identityKey: 'session-1',
+      catalog: SESSION_ACTION_CATALOG,
+      recipe: [{ kind: 'action', action: 'fork' }],
+      bindings
+    },
+    context
+  )
+  expect(entry).toMatchObject({ disabled: state.disabled })
+  if (state.disabled) expect(entry).toHaveProperty('disabledDescription', expect.any(String))
+})

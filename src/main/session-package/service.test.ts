@@ -1150,6 +1150,13 @@ it('keeps terminal Task and Compute results as evidence without installing jobs 
     taskRuns: [{ status: 'completed', output: 'Task result' }],
     computeJobs: [{ status: 'success', stdout: '42' }]
   })
+  const fork = await importer.fork(imported)
+  expect((await importer.readOrigin(fork)).history).toEqual(origin.history)
+  const refork = await importer.fork(fork)
+  expect((await importer.readOrigin(refork)).history).toMatchObject({
+    taskRuns: [{ status: 'completed', output: 'Task result' }],
+    computeJobs: [{ status: 'success', stdout: '42' }]
+  })
   await expect(new FileTaskRunJournal(target.storageRoot).load()).resolves.toEqual([])
   await expect(target.client.computeJob.count()).resolves.toBe(0)
 })
@@ -2267,6 +2274,72 @@ it.each(['root', 'frame'] as const)(
       notebook.execute({ ...request, code: 'print(1)', source: 'user', language: 'python' })
     ).rejects.toThrow('read-only')
     expect(executorFactory).not.toHaveBeenCalled()
+    // Fork uses the same complete evidence copier, but publishes writable ownership. Verify
+    // Notebook history, upstream Upload inputs and derived execution evidence survive together.
+    const forked = await importer.fork(imported)
+    const forkHistory = await importer.readOrigin(forked)
+    // Upstream inputs retain evidence ownership; the child may read but cannot rewrite them.
+    await expect(
+      files.inspect({
+        projectId: forked.projectId,
+        source: 'upload',
+        fileId: forkHistory.identities['upload-1']
+      })
+    ).resolves.toMatchObject({ canEdit: false })
+    const forkedRuns = await target.notebookRepository.readSessionRuns(
+      forked.projectId,
+      forked.sessionId
+    )
+    expect(forkedRuns.map((run) => run.script)).toEqual(['draw_plot()', 'read_input()'])
+    expect(forkedRuns[0].runId).not.toBe(importedRun.runId)
+    const forkedEvidence = forkedRuns[0].fileEvidence!
+    const forkedEvidenceText = await readFile(
+      join(target.storageRoot, forkedEvidence.storageKey!),
+      'utf8'
+    )
+    expect(sha256(forkedEvidenceText)).toBe(forkedEvidence.checksum)
+    await expect(
+      files.adoptLegacyArtifact({
+        projectId: forked.projectId,
+        sessionId: forked.sessionId,
+        sourceFileId: 'fork-new-artifact',
+        logicalFilename: 'continued.txt',
+        content: Buffer.from('new evidence')
+      })
+    ).resolves.toBeDefined()
+    const continuedNotebook = new NotebookRuntimeService({
+      projectId: forked.projectId,
+      configRoot: target.storageRoot,
+      dataRoot: target.storageRoot,
+      repository: target.notebookRepository,
+      executorFactory: () => ({
+        execute: async (request) => ({
+          status: 'completed',
+          stdout: 'continued',
+          stderr: '',
+          traceback: '',
+          cwdAfter: request.cwd,
+          outputs: []
+        }),
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+    try {
+      const execution = await continuedNotebook.execute({
+        projectId: forked.projectId,
+        sessionId: forked.sessionId,
+        workspaceCwd: target.storageRoot,
+        code: 'print("continued")',
+        source: 'user',
+        language: 'python'
+      })
+      expect(execution).toMatchObject({ status: 'completed' })
+      expect(
+        (await target.notebookRepository.readSessionRuns(forked.projectId, forked.sessionId)).length
+      ).toBeGreaterThan(forkedRuns.length)
+    } finally {
+      await continuedNotebook.shutdownAll()
+    }
     await expect(
       deleteWorkingFileEvidenceProject(target.storageRoot, imported.projectId)
     ).resolves.toBeUndefined()
@@ -2618,6 +2691,27 @@ it.each(['pdf-context', 'pdf-annotation', 'text-annotation', 'image-annotation']
     if (kind === 'pdf-context')
       expect(session?.messages[0].pdfContext?.bindings[0].sourceVersionId).toBe(version.id)
     else expect(session?.messages[0].annotations).toHaveLength(1)
+    const fork = await importer.fork(imported)
+    const forkOrigin = await importer.readOrigin(fork)
+    const forkSession = (await new SessionRepository(target.storageRoot).loadSession(
+      fork.projectId,
+      fork.sessionId
+    ))!
+    const forkVersion = await target.client.uploadVersion.findUniqueOrThrow({
+      where: { id: forkOrigin.identities['version-1'] }
+    })
+    expect(await readFile(join(target.storageRoot, forkVersion.contentStorageKey))).toEqual(content)
+    if (kind === 'pdf-context') {
+      const binding = forkSession.messages[0].pdfContext!.bindings[0]
+      expect(binding.sourceVersionId).toBe(forkVersion.id)
+      expect(binding.bindingId).not.toBe(session!.messages[0].pdfContext!.bindings[0].bindingId)
+    } else {
+      const annotation = forkSession.messages[0].annotations![0]
+      expect(annotation.id).not.toBe(session!.messages[0].annotations![0].id)
+      if (annotation.source.kind === 'project-file')
+        expect(annotation.source.path).toContain(forkVersion.id)
+      else expect(annotation.source).toMatchObject({ versionId: forkVersion.id })
+    }
   }
 )
 
