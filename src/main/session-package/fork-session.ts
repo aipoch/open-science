@@ -9,7 +9,20 @@ export const nextForkTitle = (sourceTitle: string, existingTitles: readonly stri
   const titles = new Set(existingTitles)
   for (let index = 2; ; index += 1) {
     const suffix = `(${index})`
-    const title = `${sourceTitle.slice(0, SESSION_DETAILS_TITLE_MAX_LENGTH - suffix.length)}${suffix}`
+    const limit = SESSION_DETAILS_TITLE_MAX_LENGTH - suffix.length
+    let prefix = sourceTitle
+    if (prefix.length > limit) {
+      let end = 0
+      // Keep UTF-16 length within the shared limit without splitting a visible character.
+      for (const { index, segment } of new Intl.Segmenter(undefined, {
+        granularity: 'grapheme'
+      }).segment(sourceTitle)) {
+        if (index + segment.length > limit) break
+        end = index + segment.length
+      }
+      prefix = sourceTitle.slice(0, end)
+    }
+    const title = `${prefix}${suffix}`
     if (!titles.has(title)) return title
   }
 }

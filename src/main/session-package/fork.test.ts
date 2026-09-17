@@ -855,3 +855,20 @@ it.each(['agent-runtime:runtime:call', 'run\u0000delegate\u00001'])(
     await expect(service.fork(child)).resolves.toMatchObject({ projectId: source.projectId })
   }
 )
+
+it('persists distinct bounded titles for queued forks of a long Unicode title', async () => {
+  const { fixture, repository, service } = await setup()
+  const source = (await repository.loadSession('project-1', 'session-1'))!
+  const title = '文'.repeat(76) + '👩‍🔬 research'
+  await repository.saveSession({ ...source, title })
+  const request = { projectId: source.projectId, sessionId: source.id }
+  const children = await Promise.all([service.fork(request), service.fork(request)])
+  const reader = new SessionRepository(fixture.storageRoot)
+  const titles = await Promise.all(
+    children.map(
+      async (child) => (await reader.loadSession(child.projectId, child.sessionId))?.title
+    )
+  )
+  expect(titles).toEqual(['文'.repeat(76) + '(2)', '文'.repeat(76) + '(3)'])
+  expect((await repository.loadSession(source.projectId, source.id))?.title).toBe(title)
+})
