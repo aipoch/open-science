@@ -274,12 +274,14 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
       slotIds: Object.freeze(slotIds),
       async release(slotId) {
         if (!owned.delete(slotId)) return
-        releaseSlot(slotId)
+        // Running slots belong to cleanup, including failed reaping; caller finally blocks
+        // may only release reservations that have not transferred to an execution.
+        if (slots.get(slotId)?.status === 'reserved') releaseSlot(slotId)
       },
       async releaseAll() {
         for (const slotId of [...owned]) {
           owned.delete(slotId)
-          releaseSlot(slotId)
+          if (slots.get(slotId)?.status === 'reserved') releaseSlot(slotId)
         }
       }
     })

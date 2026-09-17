@@ -1199,6 +1199,8 @@ describe('ACP delegate execution production adapter', () => {
     await running.accepted
     harness.controls.get('pending-shutdown')!.complete()
     await vi.waitFor(() => expect(harness.cleanup).toContain('shutdown:pending-shutdown'))
+    await reservation.release(reservation.slotIds[0])
+    await reservation.releaseAll()
     expect(harness.cleanup).not.toContain('resources:pending-shutdown')
     await expect(harness.execution.reserve(1)).rejects.toMatchObject({ code: 'capacity' })
     shutdown.resolve({ reaped: true })
@@ -1207,9 +1209,28 @@ describe('ACP delegate execution production adapter', () => {
     await expect(harness.execution.reserve(1)).resolves.toHaveProperty('slotIds')
   })
 
-  it.each(['unreaped', 'throws', 'construction'] as const)(
-    'retains unsafe runtime ownership and releases only leases when shutdown is %s',
-    async (failure) => {
+  it('releases unused reservations without freeing a running slot', async () => {
+    const { execution, controls } = makeHarness(3)
+    const reservation = await execution.reserve(3)
+    const running = execution.run(makeInput('owned-slot'), reservation.slotIds[0])
+    await running.accepted
+    await reservation.release(reservation.slotIds[1])
+    await reservation.releaseAll()
+    const unused = await execution.reserve(2)
+    await expect(execution.reserve(1)).rejects.toMatchObject({ code: 'capacity' })
+    controls.get('owned-slot')!.complete()
+    await expect(running.completion).resolves.toMatchObject({ status: 'completed' })
+    await unused.releaseAll()
+    await expect(execution.reserve(3)).resolves.toHaveProperty('slotIds')
+  })
+
+  it.each(
+    (['unreaped', 'throws', 'construction'] as const).flatMap((failure) =>
+      (['release', 'releaseAll'] as const).map((release) => ({ failure, release }))
+    )
+  )(
+    'retains unsafe runtime ownership when shutdown is $failure and the caller invokes $release',
+    async ({ failure, release }) => {
       const shutdownResult = vi.fn(async () => {
         if (failure === 'throws') throw new Error('shutdown failed')
         return { reaped: false }
@@ -1232,6 +1253,9 @@ describe('ACP delegate execution production adapter', () => {
       expect(cleanup.filter((entry) => entry === 'release:unsafe')).toHaveLength(1)
       expect(cleanup).not.toContain('resources:unsafe')
       expect(shutdownResult).toHaveBeenCalledTimes(failure === 'construction' ? 0 : 1)
+      // Mirror the outer launcher's finally blocks: neither release may free an unsafe slot.
+      if (release === 'release') await reservation.release(reservation.slotIds[0])
+      else await reservation.releaseAll()
       // The failed Attempt still owns its slot and runtime path; a sibling cannot delete/reuse it.
       await expect(execution.reserve(2)).rejects.toMatchObject({ code: 'capacity' })
       const next = await execution.reserve(1)

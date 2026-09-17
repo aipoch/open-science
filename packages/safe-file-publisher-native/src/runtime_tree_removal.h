@@ -122,7 +122,11 @@ int RemoveTreeAt(int parent, const char* name, unsigned depth, dev_t device,
   }
   closedir(scan);
   if (error) { errno = error; return -1; }
-  // A concurrent replacement is never traversed. Refuse to remove a different directory.
+  // Detect replacements already visible here. POSIX has no inode-conditioned unlink:
+  // a replacement after this check can still lose an empty directory entry, but
+  // AT_REMOVEDIR neither follows a replacement symlink nor removes a nonempty directory.
+  // This is no-follow traversal, not isolation from arbitrary same-UID namespace writers.
+  // The execution owner must confirm process-tree reaping before invoking cleanup.
   struct stat current{};
   if (fstatat(parent, name, &current, AT_SYMLINK_NOFOLLOW) != 0) return -1;
   if (current.st_dev != info.st_dev || current.st_ino != info.st_ino) { errno = ESTALE; return -1; }
