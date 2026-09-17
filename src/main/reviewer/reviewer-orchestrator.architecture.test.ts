@@ -820,7 +820,8 @@ describe('Reviewer orchestrator architecture', () => {
           'src/renderer/src/pages/workspace/artifact-publication-preview.integration.test.tsx',
           'src/renderer/src/pages/workspace/previews/preview-pagination-contract.test.tsx',
           'src/shared/renderer-surface-inventory.test.ts',
-          'src/shared/renderer-surface-matrix.test.ts'
+          'src/shared/renderer-surface-matrix.test.ts',
+          'src/main/settings/skill-catalog.test.ts'
         ]
       },
       capabilityOverlays: ['windows_sensitive', 'e2e_regressions', 'e2e_delegation'],

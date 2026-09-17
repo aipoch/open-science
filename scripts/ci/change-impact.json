@@ -256,7 +256,8 @@
         "src/shared/settings.ts",
         "src/shared/update.ts",
         "src/shared/web-api-map.generated.ts",
-        "src/shared/wsl-setup.ts"
+        "src/shared/wsl-setup.ts",
+        "src/main/delegation/production-framework-runtime.ts"
       ],
       "capabilities": ["windows_sensitive"]
     },

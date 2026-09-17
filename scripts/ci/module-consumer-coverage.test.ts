@@ -39,7 +39,7 @@ it('retains every statically reachable consumer test and declared runtime-loadin
     const specs = new Set(
       ts.preProcessFile(text, true, true).importedFiles.map(({ fileName }) => fileName)
     )
-    if (/\b(?:vi|jest)\s*\./.test(text)) {
+    if (/\b(?:vi\.(?:mock|doMock|importActual)|jest\.mock)\b/.test(text)) {
       const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, false)
       const visit = (node: ts.Node): void => {
         if (

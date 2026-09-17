@@ -1,6 +1,7 @@
 import { SettingsService } from '../settings/service'
 import { SettingsRepository } from '../settings/repository'
 import { SkillRegistry } from '../skills/registry'
+import { ClaudeCodeSkillMaterializer } from '../skills/materializer'
 import {
   loadSkillDocument,
   OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION
@@ -8,7 +9,7 @@ import {
 import { describe, expect, it, vi } from 'vitest'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { readFileSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 
@@ -385,6 +386,115 @@ describe('production delegated framework runtime bridge', () => {
         spawnSpy?.mockRestore()
         runtimeSpy.mockRestore()
         await settings.dispose()
+        await rm(dataRoot, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it.each([false, true])(
+    'cleans copied read-only OpenCode Skills without a Specialist (prepare failure: %s)',
+    async (prepareFailure) => {
+      const dataRoot = await mkdtemp(join(tmpdir(), 'delegated-readonly-copy-'))
+      const sourceRoot = join(dataRoot, 'main-config', 'opencode')
+      const sourceSkill = join(sourceRoot, 'skills', 'os-example')
+      const sourceFile = join(sourceSkill, '.catalog_stamp')
+      await mkdir(sourceSkill, { recursive: true })
+      await writeFile(sourceFile, 'main-owned snapshot')
+      await chmod(sourceFile, 0o444)
+      await chmod(sourceSkill, 0o555)
+      const admitted = backend('opencode')
+      admitted.env.XDG_CONFIG_HOME = dirname(sourceRoot)
+      const runtimeHome = join(
+        dataRoot,
+        'delegation',
+        'project-1',
+        'session-opencode',
+        'runtime',
+        'copied-attempt'
+      )
+      const revoke = vi.fn(async () => undefined)
+      const runtimeSpy = vi.spyOn(runtimeComposition, 'createAcpRuntime').mockImplementation(
+        (options) =>
+          ({
+            createSession: async () => ({ sessionId: 'ephemeral-child' }),
+            sendAppContinuation: async () => {
+              options.runtimeCallbacks!.onProviderPromptAccepted?.('ephemeral-child')
+              const copy = join(runtimeHome, 'config', 'opencode', 'skills', 'os-example')
+              expect(await readFile(join(copy, '.catalog_stamp'), 'utf8')).toBe(
+                'main-owned snapshot'
+              )
+              if (process.platform !== 'win32') expect((await stat(copy)).mode & 0o222).toBe(0)
+              await symlink(
+                sourceSkill,
+                join(dirname(copy), 'external-skill'),
+                process.platform === 'win32' ? 'junction' : 'dir'
+              )
+
+              return { stopReason: 'end_turn' }
+            },
+            deleteSession: async () => undefined,
+            shutdownForQuit: async () => ({ reaped: true })
+          }) as never
+      )
+      try {
+        const frameworks = createProductionDelegatedFrameworkRuntime({
+          capacity: 1,
+          dataRoot,
+          runtime: { settingsService: {} } as never,
+          notebookRpcServer: () =>
+            ({
+              issueDelegatedNotebookConnection: async () => {
+                if (prepareFailure) throw new Error('Notebook preparation failed')
+                return {
+                  endpoint: 'http://127.0.0.1:1',
+                  token: 'test',
+                  release: () => undefined,
+                  revoke
+                }
+              }
+            }) as never,
+          readSession: async () => delegatedSession('opencode')
+        })
+        const selected = await frameworks.forSession(session('opencode'))
+        const reservation = await selected.execution.reserve(1)
+        const running = selected.execution.run(
+          {
+            session: { projectId: 'project-1', sessionId: 'session-opencode' },
+            frameId: 'child-frame',
+            attemptId: 'copied-attempt',
+            runtimeSegmentId: 'child-segment',
+            executionModel: {
+              frameworkId: 'opencode',
+              providerId: 'provider',
+              backendId: 'opencode:provider',
+              modelRoute: 'opencode-openai',
+              model: 'admitted-model',
+              reasoningEffort: 'default'
+            },
+            executionBackend: admitted,
+            task: 'Investigate',
+            inputs: [],
+            workspaceCwd: dataRoot,
+            continuation: false
+          },
+          reservation.slotIds[0]
+        )
+        if (prepareFailure) {
+          await expect(running.completion).rejects.toThrow('Notebook preparation failed')
+        } else {
+          await expect(running.completion).resolves.toMatchObject({ status: 'completed' })
+          expect(revoke).toHaveBeenCalledOnce()
+        }
+        await expect(stat(runtimeHome)).rejects.toMatchObject({ code: 'ENOENT' })
+        expect(await readFile(sourceFile, 'utf8')).toBe('main-owned snapshot')
+        if (process.platform !== 'win32') expect((await stat(sourceSkill)).mode & 0o222).toBe(0)
+      } finally {
+        runtimeSpy.mockRestore()
+        await new ClaudeCodeSkillMaterializer().sync(join(runtimeHome, 'config', 'opencode'), [], {
+          directoryLayout: 'agent-facing'
+        })
+        await chmod(sourceSkill, 0o755)
+        await chmod(sourceFile, 0o644)
         await rm(dataRoot, { recursive: true, force: true })
       }
     }
