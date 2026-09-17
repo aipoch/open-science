@@ -25,6 +25,8 @@ it('retains every statically reachable consumer test and declared runtime-loadin
     // Resolve the local package inside this checkout, not a shared node_modules symlink.
     paths: {
       '@aipoch/notebook-network-sandbox': ['packages/notebook-network-sandbox/src/index.ts'],
+      '@aipoch/process-tree-native': ['packages/process-tree-native/index.d.ts'],
+      '@aipoch/safe-file-publisher-native': ['packages/safe-file-publisher-native/index.d.ts'],
       '@/*': ['src/renderer/src/*'],
       '@renderer/*': ['src/renderer/src/*']
     }

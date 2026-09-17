@@ -5441,7 +5441,8 @@
         "src/main/artifacts/test-support/save-crash-child.ts",
         "src/main/artifacts/write-budget-owner.test.ts",
         "src/main/notebook/reproduction-runtime.test.ts",
-        "src/renderer/src/pages/workspace/ArtifactReproducibilityPanel.test.tsx"
+        "src/renderer/src/pages/workspace/ArtifactReproducibilityPanel.test.tsx",
+        "src/main/notebook/dependency-analysis.stdlib-replay.test.ts"
       ],
       "interfacePaths": [
         "src/main/artifacts/provenance-message-snapshot.ts",
@@ -9747,7 +9748,8 @@
           "src/renderer/src/stores/runtime-settings-store.test.ts",
           "src/renderer/src/stores/settings-connectors-slice.test.ts",
           "src/shared/renderer-surface-inventory.test.ts",
-          "src/shared/renderer-surface-matrix.test.ts"
+          "src/shared/renderer-surface-matrix.test.ts",
+          "scripts/ci/e2e-setup-snapshot.test.ts"
         ]
       },
       "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
@@ -10088,7 +10090,8 @@
           "src/renderer/src/pages/workspace/artifact-publication-preview.integration.test.tsx",
           "src/renderer/src/pages/workspace/previews/preview-pagination-contract.test.tsx",
           "src/shared/renderer-surface-inventory.test.ts",
-          "src/shared/renderer-surface-matrix.test.ts"
+          "src/shared/renderer-surface-matrix.test.ts",
+          "scripts/ci/e2e-setup-snapshot.test.ts"
         ]
       },
       "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
@@ -11857,7 +11860,8 @@
           "src/renderer/src/stores/settings-connectors-slice.test.ts",
           "src/renderer/src/stores/specialist-store.test.ts",
           "src/shared/renderer-surface-inventory.test.ts",
-          "src/shared/renderer-surface-matrix.test.ts"
+          "src/shared/renderer-surface-matrix.test.ts",
+          "src/main/notebook/dependency-analysis.stdlib-replay.test.ts"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -21402,7 +21406,8 @@
           "src/renderer/src/pages/workspace/artifact-publication-preview.integration.test.tsx",
           "src/renderer/src/pages/workspace/previews/preview-pagination-contract.test.tsx",
           "src/shared/renderer-surface-inventory.test.ts",
-          "src/shared/renderer-surface-matrix.test.ts"
+          "src/shared/renderer-surface-matrix.test.ts",
+          "src/main/notebook/dependency-analysis.stdlib-replay.test.ts"
         ]
       },
       "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
@@ -22440,7 +22445,8 @@
           "src/renderer/src/stores/locale-preference-recovery.render.test.tsx",
           "src/renderer/src/stores/runtime-settings-store.test.ts",
           "src/shared/renderer-surface-inventory.test.ts",
-          "src/shared/renderer-surface-matrix.test.ts"
+          "src/shared/renderer-surface-matrix.test.ts",
+          "src/main/notebook/dependency-analysis.stdlib-replay.test.ts"
         ]
       },
       "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
@@ -24990,7 +24996,8 @@
           "src/renderer/src/stores/settings-connectors-slice.test.ts",
           "src/renderer/src/stores/specialist-store.test.ts",
           "src/shared/renderer-surface-inventory.test.ts",
-          "src/shared/renderer-surface-matrix.test.ts"
+          "src/shared/renderer-surface-matrix.test.ts",
+          "src/main/notebook/dependency-analysis.stdlib-replay.test.ts"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

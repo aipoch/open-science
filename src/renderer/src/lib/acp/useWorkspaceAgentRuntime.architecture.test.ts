@@ -861,17 +861,35 @@ describe('workspace runtime architecture', () => {
       }
     }
     const workspaceRuntime = manifest.modules.workspace_runtime
-    expect(workspaceRuntime.ownerPaths).toEqual(
-      expect.arrayContaining([
-        'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.ts',
-        'src/renderer/src/lib/acp/workspace-events.ts',
-        ...ownerNames.map((name) => `src/renderer/src/lib/acp/${name}.ts`),
-        'src/renderer/src/lib/acp/workspace-subagent-runtime-presentation.ts'
-      ])
-    )
-    expect(workspaceRuntime.interfacePaths).toEqual(
-      expect.arrayContaining(['src/renderer/src/lib/acp/useWorkspaceAgentRuntime.ts'])
-    )
+    expect(workspaceRuntime.ownerPaths).toEqual([
+      'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.ts',
+      'src/renderer/src/lib/acp/workspace-events.ts',
+      'src/renderer/src/lib/acp/workspace-runtime-event-owner.ts',
+      'src/renderer/src/lib/acp/workspace-runtime-prompt-preparation-owner.ts',
+      'src/renderer/src/lib/acp/workspace-runtime-session-branch-owner.ts',
+      'src/renderer/src/lib/acp/workspace-runtime-attachment-owner.ts',
+      'src/renderer/src/lib/acp/workspace-runtime-command-owner.ts',
+      'src/renderer/src/lib/acp/workspace-runtime-session-lifecycle-owner.ts',
+      'src/renderer/src/lib/acp/workspace-runtime-session-memory-owner.ts',
+      'src/renderer/src/lib/acp/workspace-runtime-selection-owner.ts',
+      'src/renderer/src/lib/acp/workspace-runtime-save-as-skill-owner.ts',
+      'src/renderer/src/lib/acp/workspace-subagent-runtime-presentation.ts',
+      'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.architecture.test.ts',
+      'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.characterization.test.tsx',
+      'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.test.ts',
+      'src/renderer/src/lib/acp/workspace-events.test.ts',
+      'src/renderer/src/lib/acp/workspace-runtime-event-owner.test.ts',
+      'src/renderer/src/lib/acp/workspace-runtime-save-as-skill-owner.test.tsx',
+      'src/renderer/src/lib/acp/workspace-runtime-session-branch-owner.test.ts',
+      'src/renderer/src/lib/acp/workspace-runtime-session-memory.test.ts'
+    ])
+    expect(workspaceRuntime.interfacePaths).toEqual([
+      'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.ts',
+      'src/renderer/src/lib/acp/workspace-events.ts',
+      'src/renderer/src/lib/acp/workspace-runtime-command-owner.ts',
+      'src/renderer/src/lib/acp/workspace-runtime-event-owner.ts',
+      'src/renderer/src/lib/acp/workspace-subagent-runtime-presentation.ts'
+    ])
     expect(workspaceRuntime.consumerModules).toEqual(['workspace_page'])
     expect(workspaceRuntime.testFiles.owner).toContain(architectureTestPath)
     expect(workspaceRuntime.capabilityOverlays).toEqual(['renderer_state'])
