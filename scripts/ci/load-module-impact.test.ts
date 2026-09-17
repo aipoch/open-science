@@ -197,16 +197,20 @@ describe('module registration layouts', () => {
     split(sample())
     commit()
     const oid = git('rev-parse', 'HEAD:scripts/ci/module-impact/sample.json')
-    git(
-      'update-index',
-      '--add',
-      '--cacheinfo',
-      `100644,${oid},scripts/ci/module-impact/sample.json\n`
+    // Windows rejects control characters in index paths. Build the hostile tree as
+    // Git data so every platform reaches the reader without checking out that path.
+    const tree = (input: string): string =>
+      execFileSync('git', ['mktree', '-z'], { cwd: root, input, encoding: 'utf8' }).trim()
+    const shards = tree(`100644 blob ${oid}\tsample.json\0` + `100644 blob ${oid}\tsample.json\n\0`)
+    const metadata = git('rev-parse', 'HEAD:scripts/ci/module-impact.json')
+    const ci = tree(
+      `040000 tree ${shards}\tmodule-impact\0` + `100644 blob ${metadata}\tmodule-impact.json\0`
     )
-    git('commit', '--quiet', '-m', 'ci(test): add ambiguous filename')
-    expect(() =>
-      loadModuleImpactManifestAtRevision(git('rev-parse', 'HEAD'), { cwd: root })
-    ).toThrow('Invalid module-impact shard path')
+    const scripts = tree(`040000 tree ${ci}\tci\0`)
+    const revision = git('commit-tree', tree(`040000 tree ${scripts}\tscripts\0`), '-m', 'fixture')
+    expect(() => loadModuleImpactManifestAtRevision(revision, { cwd: root })).toThrow(
+      'Invalid module-impact shard path'
+    )
   })
 
   it('keeps the checked-in registration inline during the reader rollout', () => {
