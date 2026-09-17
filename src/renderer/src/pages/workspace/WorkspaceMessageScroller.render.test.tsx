@@ -2598,11 +2598,27 @@ it('keeps the fork divider after inherited history when new turns are appended',
     role: 'agent',
     content: 'Inherited answer',
     sortIndex: 1,
+    completedAt: 2,
+    responseToMessageId: 'original-prompt',
     usageOrigin: { sessionId: 'original', messageId: 'original-answer' }
   })
   const session = createSession({
     status: 'idle',
     messages: [inherited],
+    forkHeadMessageId: inherited.id,
+    activities: [
+      {
+        id: 'late-tool',
+        kind: 'tool',
+        title: 'Late inherited activity',
+        status: 'completed',
+        eventIds: [],
+        createdAt: 20,
+        updatedAt: 20,
+        sortIndex: 20,
+        promptMessageId: 'original-prompt'
+      }
+    ],
     forkOrigin: {
       importId: 'receipt',
       sourceProjectId: 'default',

@@ -51,6 +51,28 @@ const createSessionWithActivity = (activity: unknown): Record<string, unknown> =
 })
 
 describe('Session file envelope versions', () => {
+  it('round-trips a local fork head without inferring it for historical Sessions', () => {
+    const session = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      forkOrigin: {
+        importId: 'copy',
+        sourceProjectId: 'project-a',
+        sourceSessionId: 'source',
+        importedAt: 2,
+        manifestChecksum: 'a'.repeat(64)
+      },
+      forkHeadMessageId: 'copied-head'
+    })!
+    const reopened = normalizeSessionFile(JSON.parse(JSON.stringify(createSessionFile(session))))!
+    expect(reopened.forkHeadMessageId).toBe('copied-head')
+    expect(
+      normalizeSessionFile({ ...session, forkHeadMessageId: undefined })?.forkHeadMessageId
+    ).toBeUndefined()
+    expect(
+      normalizeSessionFile({ ...session, forkOrigin: undefined })?.forkHeadMessageId
+    ).toBeUndefined()
+  })
+
   const legacySession = (): Record<string, unknown> => createSessionWithActivity(undefined)
 
   it.each([

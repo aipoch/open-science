@@ -1,6 +1,8 @@
 import { expect, it } from 'vitest'
 import { SESSION_DETAILS_TITLE_MAX_LENGTH } from '../../shared/session-persistence'
-import { nextForkTitle } from './fork-session'
+import { createForkSession, nextForkTitle } from './fork-session'
+import type { PersistedChatSession } from '../../shared/session-persistence'
+import { createLinearConversationGraph } from '../../shared/conversation-graph'
 
 it.each([
   ['Study', [], 'Study(2)'],
@@ -27,3 +29,52 @@ it.each([
     expect(existing).not.toContain(title)
   }
 )
+
+it('records the copied active branch head independently of original usage attribution on refork', () => {
+  const copied: PersistedChatSession = {
+    id: 'child',
+    projectId: 'project',
+    title: 'Copy',
+    cwd: '',
+    status: 'idle',
+    createdAt: 1,
+    updatedAt: 2,
+    messages: [],
+    packageOrigin: {
+      importId: 'copy',
+      sourceProjectId: 'project',
+      sourceSessionId: 'source',
+      importedAt: 2,
+      manifestChecksum: 'a'.repeat(64)
+    },
+    conversationGraph: createLinearConversationGraph({
+      sessionId: 'child',
+      createdAt: 1,
+      updatedAt: 2,
+      messages: [
+        {
+          id: 'local-head',
+          role: 'agent',
+          content: 'Copied answer',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 2,
+          usageOrigin: { sessionId: 'ancestor', messageId: 'original-head' }
+        }
+      ]
+    })
+  }
+  const source = {
+    ...copied,
+    id: 'source',
+    packageOrigin: undefined,
+    forkHeadMessageId: 'previous-copy-head'
+  }
+  const fork = createForkSession(copied, source, 'ask', 'Copy(2)')
+  expect(fork.forkHeadMessageId).toBe('local-head')
+  expect(fork.conversationGraph?.messages[0].usageOrigin).toEqual({
+    sessionId: 'ancestor',
+    messageId: 'original-head'
+  })
+})
