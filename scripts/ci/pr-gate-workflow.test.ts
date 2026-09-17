@@ -629,7 +629,7 @@ describe('PR Gate workflow', () => {
       name: 'Module tests and coverage',
       needs: ['preflight', 'unit_shard'],
       'runs-on':
-        "${{ (needs.unit_shard.result != 'skipped' || fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke') && 'ubuntu-latest' || 'macos-14' }}"
+        "${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group' || needs.unit_shard.result != 'skipped' || fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke') && 'ubuntu-latest' || 'macos-14' }}"
     })
     expect(unit.if).toContain('always()')
     expect(unit.env?.VITEST_DEFER_COVERAGE_THRESHOLDS).toBeUndefined()
@@ -729,9 +729,11 @@ describe('PR Gate workflow', () => {
       expect(producer.needs).toBe('preflight')
       if (platform === 'windows') expect(producer.if).toBe(consumer.if)
       else {
-        expect(producer.if).toContain("macosProfile != 'smoke'")
+        expect(producer.if).toContain(
+          "!contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_smoke_macos')"
+        )
         expect(consumer.if).toContain(
-          "macosProfile == 'smoke' || needs.macos_e2e_setup.result == 'success'"
+          "contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_smoke_macos') || needs.macos_e2e_setup.result == 'success'"
         )
       }
       expect(producer.strategy).toBeUndefined()
@@ -766,7 +768,7 @@ describe('PR Gate workflow', () => {
         ...(platform === 'macos'
           ? {
               cache:
-                "${{ fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke' && 'npm' || '' }}"
+                "${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_smoke_macos') && 'npm' || '' }}"
             }
           : {}),
         'package-manager-cache': false
@@ -784,7 +786,9 @@ describe('PR Gate workflow', () => {
         consumer.steps?.some(
           ({ run, if: condition }) =>
             /npm-ci\.mjs|npm ci|npm run build:/.test(run ?? '') &&
-            !condition?.includes("macosProfile == 'smoke'")
+            !condition?.includes(
+              "contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_smoke_macos')"
+            )
         )
       ).toBe(false)
       // The trusted evaluator already rejects a selected bundle skipped by a failed/cancelled setup.
@@ -1033,7 +1037,7 @@ describe('PR Gate workflow', () => {
 
     expect(native).toMatchObject({
       'continue-on-error': true,
-      if: "${{ matrix.group == 'journeys' && fromJSON(needs.preflight.outputs.plan).macosProfile != 'smoke' && fromJSON(needs.preflight.outputs.plan).mode == 'full' }}"
+      if: expect.stringContaining("macosProfile == 'expanded'")
     })
     for (const testFile of [
       'packages/notebook-network-sandbox/src/filesystem-enforcement.integration.test.ts',
@@ -1344,13 +1348,15 @@ it('runs short Mac setup and tests in one job without web build or snapshot tran
   const install = mac.steps?.find(({ name }) => name === 'Install short Mac dependencies')
   const build = mac.steps?.find(({ id }) => id === 'smoke_build')
   expect(install).toMatchObject({
-    if: "${{ fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke' }}",
+    if: "${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_smoke_macos') }}",
     run: 'node scripts/ci/npm-ci.mjs'
   })
   expect(build).toMatchObject({ if: install?.if, run: 'npm run build:e2e' })
   expect(mac.steps?.some(({ run }) => run === 'npm run build:web')).toBe(false)
   for (const name of ['Download E2E setup', 'Restore E2E setup']) {
-    expect(mac.steps?.find((step) => step.name === name)?.if).toContain("macosProfile != 'smoke'")
+    expect(mac.steps?.find((step) => step.name === name)?.if).toContain(
+      "!contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_smoke_macos')"
+    )
   }
   const core = mac.steps?.find(({ id }) => id === 'e2e_smoke_macos')
   expect(core?.if).toContain("steps.smoke_build.outcome == 'success'")
@@ -1402,5 +1408,15 @@ it('provides a focused manual plan that exercises the same single-runner Mac job
     ).toBe(false)
   } finally {
     rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+it('opts into risk-v2 and keeps automated portable tests off macOS for both event types', () => {
+  const classify = workflow.jobs.preflight.steps?.find(({ id }) => id === 'classify')
+  expect(classify?.env?.PR_GATE_PLATFORM_POLICY).toBe('risk-v2')
+  const related = workflow.jobs.unit.steps?.find(({ id }) => id === 'unit_macos_related')
+  for (const event of ['pull_request', 'merge_group']) {
+    expect(workflow.jobs.unit['runs-on']).toContain(`github.event_name == '${event}'`)
+    expect(related?.env?.VITEST_PORTABLE_CI).toContain(`github.event_name == '${event}'`)
   }
 })

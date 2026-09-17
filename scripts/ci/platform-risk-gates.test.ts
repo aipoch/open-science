@@ -343,3 +343,113 @@ it.each(['pull_request', 'merge_group'])('keeps known PR diffs selective for %s'
     )
   }
 })
+
+describe('risk-v2 queue-only Mac policy', () => {
+  const inputs = [
+    'src/renderer/src/components/ui/button.tsx',
+    'src/main/acp/runtime.ts',
+    'src/main/second-instance-router.ts',
+    'src/main/notebook/kernel-executor.ts',
+    'package.json',
+    'unknown/new-runtime.ts'
+  ]
+  const resolve = (
+    path: string,
+    event: string
+  ): ReturnType<typeof runModuleImpactAuthorityCli>['plan'] =>
+    runModuleImpactAuthorityCli(
+      ['--base', 'a'.repeat(40), '--head', 'b'.repeat(40)],
+      { EVENT_NAME: event, PR_GATE_PLATFORM_POLICY: 'risk-v2' },
+      { execute: () => Buffer.from(`M\0${path}\0`), write: () => undefined }
+    ).plan
+  it.each(inputs)('keeps PR %s on portable and Windows checks with no Mac bundle', (path) => {
+    const plan = resolve(path, 'pull_request')
+    expect(plan.bundles).not.toContain('macos_e2e')
+    expect(macosGroupsForPlan(plan)).toEqual([])
+    expect(plan.bundles).toContain('windows_e2e')
+    expect(
+      plan.lanes.filter((lane: string) => lane.startsWith('e2e_') && lane.endsWith('_macos'))
+    ).toEqual([])
+    const conclusions = Object.fromEntries(
+      ['preflight', ...plan.bundles].map((key) => [key, 'success'])
+    )
+    expect(
+      evaluatePrGate(
+        toGitHubOutputPlan(plan),
+        { ...conclusions, macos_e2e: 'skipped' },
+        { executionMode: 'bundles' }
+      ).ok
+    ).toBe(true)
+  })
+  it.each(inputs)('limits queue %s to one Mac group without repeated Windows E2E', (path) => {
+    const plan = resolve(path, 'merge_group')
+    expect(macosGroupsForPlan(plan)).toEqual(['journeys'])
+    expect(plan.lanes).toContain('e2e_smoke_macos')
+    expect(plan.bundles).not.toContain('windows_e2e')
+    expect(plan.lanes).not.toContain('e2e_delegation_macos')
+    expect(plan.lanes).not.toContain('e2e_regressions_macos')
+    expect(plan.macosProfile).toBe(path.includes('/ui/') ? 'smoke' : 'expanded')
+    const conclusions = Object.fromEntries(
+      ['preflight', ...plan.bundles].map((key) => [key, 'success'])
+    )
+    expect(
+      evaluatePrGate(toGitHubOutputPlan(plan), conclusions, { executionMode: 'bundles' }).ok
+    ).toBe(true)
+    expect(
+      evaluatePrGate(
+        toGitHubOutputPlan(plan),
+        { ...conclusions, macos_e2e: 'skipped' },
+        { executionMode: 'bundles' }
+      ).ok
+    ).toBe(false)
+  })
+  it.each(['pull_request', 'merge_group'])(
+    'keeps docs and contract-only %s without Mac',
+    (event) => {
+      for (const path of ['README.md', 'scripts/ci/pr-gate-workflow.test.ts']) {
+        expect(resolve(path, event).bundles).not.toContain('macos_e2e')
+      }
+    }
+  )
+  it.each(['pull_request', 'merge_group'])(
+    'passes the actual gate CLI for %s risk-v2 plans',
+    (event) => {
+      const plan = toGitHubOutputPlan(resolve('src/main/acp/runtime.ts', event))
+      const needs = Object.fromEntries(
+        ['preflight', ...plan.bundles].map((key) => [key, { result: 'success' }])
+      )
+      const run = spawnSync(process.execPath, ['scripts/ci/evaluate-pr-gate.mjs'], {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          PR_GATE_PLATFORM_POLICY: 'risk-v2',
+          PR_GATE_EXECUTION_MODE: 'bundles',
+          PR_GATE_PLAN: JSON.stringify(plan),
+          PR_GATE_NEEDS: JSON.stringify(needs)
+        }
+      })
+      expect(run.status, run.stderr).toBe(0)
+    }
+  )
+
+  it('requires risk-selected native checks in the same core job', () => {
+    const step = workflow('.github/workflows/pr-gate.yml').jobs.macos_e2e.steps.find(
+      ({ name }) => name === 'Enforce selected macOS checks'
+    )!
+    for (const outcome of ['success', 'skipped', 'failure', 'cancelled', '']) {
+      const result = spawnSync('bash', ['-c', step.run!], {
+        env: {
+          ...process.env,
+          ...Object.fromEntries(Object.keys(step.env ?? {}).map((key) => [key, 'skipped'])),
+          E2E_GROUP: 'journeys',
+          E2E_SMOKE_SELECTED: 'true',
+          E2E_SMOKE_OUTCOME: 'success',
+          UNIT_MACOS_SMOKE_OUTCOME: 'success',
+          MACOS_PROFILE: 'expanded',
+          UNIT_MACOS_NATIVE_OUTCOME: outcome
+        }
+      })
+      expect(result.status).toBe(outcome === 'success' ? 0 : 1)
+    }
+  })
+})

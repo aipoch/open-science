@@ -278,11 +278,55 @@ export function platformExecutionPlan(plan, changes, event) {
   }
 }
 
+// v2 moves Mac validation to the queue; keep v1 for workflows that cannot yet
+// execute the short core and native checks together on one runner.
+export function queueMacExecutionPlan(plan, changes, event) {
+  const platform = platformExecutionPlan(plan, changes, event)
+  if (!['pull_request', 'merge_group'].includes(event)) return platform
+  const lanes = new Set(platform.lanes)
+  const hasDesktop = platform.bundles.includes('macos_e2e')
+  for (const lane of lanes) {
+    if (
+      defaultManifest.laneBundles[lane] === 'macos_e2e' ||
+      (event === 'merge_group' && defaultManifest.laneBundles[lane] === 'windows_e2e')
+    ) {
+      lanes.delete(lane)
+    }
+  }
+  if (event === 'merge_group' && hasDesktop) {
+    lanes.add('build')
+    lanes.add('e2e_smoke_macos')
+  }
+  const selectedLanes = defaultManifest.laneOrder.filter((lane) => lanes.has(lane))
+  const bundles = new Set(selectedLanes.map((lane) => defaultManifest.laneBundles[lane]))
+  return {
+    ...platform,
+    lanes: selectedLanes,
+    bundles: defaultManifest.bundleOrder.filter((bundle) => bundles.has(bundle)),
+    reasonChains: [
+      ...plan.reasonChains,
+      event === 'pull_request'
+        ? 'risk-v2: portable tests and Windows business E2E; Mac validation deferred to merge queue'
+        : 'risk-v2: one Mac core job with risk-selected native checks; complete Mac regression scheduled twice daily'
+    ]
+  }
+}
+
 // Derived after module/consumer overlays are resolved. Missing metadata in a trusted old plan
 // is handled conservatively by the workflow, which still runs all four groups.
 export function macosGroupsForPlan(plan) {
   if (!plan.bundles?.includes('macos_e2e')) return []
-  if (plan.macosProfile === 'smoke') return ['journeys']
+  if (
+    plan.macosProfile === 'smoke' ||
+    (plan.lanes.includes('e2e_smoke_macos') &&
+      plan.lanes.every(
+        (lane) =>
+          defaultManifest.laneBundles[lane] !== 'macos_e2e' ||
+          ['build', 'e2e_smoke_macos'].includes(lane)
+      ))
+  ) {
+    return ['journeys']
+  }
   if (plan.mode === 'full') return ['journeys', 'presentation', 'regressions', 'delegation']
   const groups = {
     journeys: ['e2e_smoke_macos', 'build', 'e2e_functional_macos', 'e2e_workspace_macos'],

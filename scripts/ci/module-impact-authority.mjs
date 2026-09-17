@@ -10,6 +10,7 @@ import {
   formatPlanSummary,
   parseNameStatus,
   platformExecutionPlan,
+  queueMacExecutionPlan,
   toGitHubOutputPlan
 } from './classify-pr-changes.mjs'
 import {
@@ -66,9 +67,11 @@ export function runModuleImpactAuthorityCli(
     : unusedModulePlan
   const report = createModuleImpactShadowReport(candidatePlan, modulePlan)
   const plan =
-    environment.PR_GATE_PLATFORM_POLICY === 'risk-v1'
-      ? platformExecutionPlan(report.resolved, changes, environment.EVENT_NAME)
-      : report.resolved
+    environment.PR_GATE_PLATFORM_POLICY === 'risk-v2'
+      ? queueMacExecutionPlan(report.resolved, changes, environment.EVENT_NAME)
+      : environment.PR_GATE_PLATFORM_POLICY === 'risk-v1'
+        ? platformExecutionPlan(report.resolved, changes, environment.EVENT_NAME)
+        : report.resolved
   const planJson = JSON.stringify(plan)
   const outputPlanJson = JSON.stringify(toGitHubOutputPlan(plan))
   const lanesJson = JSON.stringify(plan.lanes)
