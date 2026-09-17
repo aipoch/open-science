@@ -1,6 +1,12 @@
+import { createLogger } from '../logger'
+import { safeCredentialProbeResult } from './probe'
+
+const log = createLogger('credential-identity')
+
 export type IdentityProbeResult = Readonly<{
   status: 'exists' | 'not-found' | 'access-blocked' | 'error' | 'unsupported'
   reason?: string
+  osStatus?: number
 }>
 
 export type CredentialIdentity = Readonly<
@@ -9,7 +15,10 @@ export type CredentialIdentity = Readonly<
 >
 
 export class CredentialIdentityError extends Error {
-  constructor(readonly reason: string) {
+  constructor(
+    readonly reason: string,
+    readonly probe?: IdentityProbeResult & Readonly<{ appName: string }>
+  ) {
     // Native startup recovery translates this stable message before displaying it.
     super(
       'Credential storage needs recovery. Existing credentials and profile data have been preserved.'
@@ -18,8 +27,8 @@ export class CredentialIdentityError extends Error {
   }
 }
 
-// This function has no cache, storage, secret access, or creation capability. macOS probes the new
-// identity first; Linux keeps its stable technical identity without a name fallback.
+// Selection never reads or creates a secret. macOS prefers the first confirmed identity;
+// unconfirmed selection is not permission to create a key. Linux retains its own policy.
 export const selectCredentialIdentity = (options: {
   platform: NodeJS.Platform
   packaged: boolean
@@ -52,16 +61,38 @@ export const selectCredentialIdentity = (options: {
   }
   if (options.platform !== 'darwin') throw new CredentialIdentityError('unsupported-backend')
 
+  const probes: Array<IdentityProbeResult & { order: number; appName: string }> = []
+  const select = (appName: string, exists: boolean, reason: string): CredentialIdentity => {
+    log.info('identity selection completed', {
+      outcome: 'selected',
+      appName,
+      exists,
+      reason,
+      probes,
+      ...(probes.length === 1
+        ? {
+            skippedProbe: { appName: legacy, reason: 'preferred-identity-present' }
+          }
+        : {})
+    })
+    return Object.freeze({ backend: 'mac-keychain', appName, exists })
+  }
   for (const appName of [current, legacy]) {
     let result: IdentityProbeResult
     try {
-      result = options.probe(appName)
+      result = safeCredentialProbeResult(options.probe(appName))
     } catch {
-      throw new CredentialIdentityError('probe-error')
+      // Keep a fixed diagnostic code, never the thrown value or arbitrary error message.
+      result = { status: 'error', reason: 'probe-exception' }
     }
+    probes.push({ order: probes.length + 1, appName, ...result })
     if (result.status === 'exists')
-      return Object.freeze({ backend: 'mac-keychain', appName, exists: true })
-    if (result.status !== 'not-found') throw new CredentialIdentityError(`probe-${result.status}`)
+      return select(
+        appName,
+        true,
+        appName === current ? 'preferred-identity-present' : 'legacy-identity-present'
+      )
   }
-  return Object.freeze({ backend: 'mac-keychain', appName: current, exists: false })
+  // False means unconfirmed, not authoritative absence. Inventory and access guards still apply.
+  return select(current, false, 'no-identity-confirmed')
 }

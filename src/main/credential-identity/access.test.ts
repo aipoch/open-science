@@ -168,3 +168,36 @@ it('a concurrent first-creation loser stops without overwriting the winning key 
   expect(() => loser.encryptString('retry')).toThrow(/recovery/i)
   expect(stored).toEqual({ key: 'winner', creates: 2 })
 })
+
+it('preserves safe macOS recheck diagnostics in the final redacted recovery log', async () => {
+  const { cipher } = fixture()
+  const { formatLine } = await import('../logger')
+  const lines: string[] = []
+  const access = createCredentialAccess({
+    identity,
+    cipher,
+    probe: () => ({
+      status: 'access-blocked',
+      reason: 'keychain-search-list-changed',
+      osStatus: 0
+    }),
+    recover: (error) =>
+      lines.push(
+        formatLine('error', 'credentials', 'access failed', {
+          recoveryReason: error.reason,
+          identityProbe: error.probe
+        })
+      )
+  })
+  expect(() => access.decryptString(Buffer.from('legacy:old'))).toThrow(/recovery/i)
+  expect(() => access.encryptString('replacement')).toThrow(/recovery/i)
+  expect(cipher.decryptString).not.toHaveBeenCalled()
+  expect(cipher.encryptString).not.toHaveBeenCalled()
+  expect(lines).toHaveLength(1)
+  expect(JSON.parse(lines[0]).data.identityProbe).toEqual({
+    appName: 'Open Science',
+    status: 'access-blocked',
+    reason: 'keychain-search-list-changed',
+    osStatus: 0
+  })
+})

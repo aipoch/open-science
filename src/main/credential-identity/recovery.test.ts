@@ -13,3 +13,20 @@ it.each(['linux-backend-unsupported:KWallet', 'linux-secret-service-metadata-una
     expect(chinese).toContain(reason)
   }
 )
+
+it.each(['keychain-locked', 'keychain-search-incomplete', 'keychain-state-changed'])(
+  'includes the concrete macOS probe code in localized recovery guidance: %s',
+  (reason) => {
+    const error = new CredentialIdentityError('probe-access-blocked', {
+      appName: 'Open-Science',
+      status: 'access-blocked',
+      reason,
+      osStatus: 0
+    })
+    for (const locale of ['en', 'zh-CN']) {
+      const message = credentialRecoveryMessage(error, [locale])
+      expect(message).toContain('probe-access-blocked')
+      expect(message).toContain(reason)
+    }
+  }
+)

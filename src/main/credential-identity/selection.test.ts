@@ -11,61 +11,47 @@ const choose = (
   statuses: IdentityProbeResult['status'][],
   packaged = true
 ): { selection: CredentialIdentity; probe: Mock<() => IdentityProbeResult> } => {
-  const probe = vi.fn(() => result(statuses.shift()!))
+  const probe = vi.fn(() => result(statuses.shift() ?? 'not-found'))
   return { selection: selectCredentialIdentity({ platform: 'darwin', packaged, probe }), probe }
 }
 
 describe('credential identity selection', () => {
-  it('chooses the new identity without querying the old one when it exists', () => {
-    const { selection, probe } = choose(['exists'])
-    expect(selection).toMatchObject({ appName: 'Open-Science', exists: true })
-    expect(probe.mock.calls).toEqual([['Open-Science']])
-  })
-
-  it('queries the old identity only after an explicit new-identity not-found', () => {
-    const { selection, probe } = choose(['not-found', 'exists'])
-    expect(selection).toMatchObject({ appName: 'Open Science', exists: true })
-    expect(probe.mock.calls).toEqual([['Open-Science'], ['Open Science']])
-  })
-
-  it('selects the new identity as a later creation target when both are absent', () => {
-    const { selection, probe } = choose(['not-found', 'not-found'])
-    expect(selection).toMatchObject({ appName: 'Open-Science', exists: false })
-    expect(probe).toHaveBeenCalledTimes(2)
-  })
-
-  it.each(['access-blocked', 'error', 'unsupported'] as const)(
-    'does not fall back or allow creation on %s',
-    (status) => {
-      const probe = vi.fn(() => result(status))
-      expect(() => selectCredentialIdentity({ platform: 'darwin', packaged: true, probe })).toThrow(
-        /credential/i
-      )
-      expect(probe).toHaveBeenCalledTimes(1)
+  const statuses = ['exists', 'not-found', 'access-blocked', 'error', 'unsupported'] as const
+  it.each([true, false])('selects sequentially for all status pairs (packaged=%s)', (packaged) => {
+    const suffix = packaged ? '' : ' (DEV)'
+    const current = `Open-Science${suffix}`
+    const legacy = `Open Science${suffix}`
+    for (const preferred of statuses) {
+      for (const previous of statuses) {
+        const { selection, probe } = choose([preferred, previous], packaged)
+        expect(selection).toEqual({
+          backend: 'mac-keychain',
+          appName: preferred === 'exists' || previous !== 'exists' ? current : legacy,
+          exists: preferred === 'exists' || previous === 'exists'
+        })
+        expect(probe.mock.calls).toEqual(
+          preferred === 'exists' ? [[current]] : [[current], [legacy]]
+        )
+      }
     }
-  )
+  })
 
-  it.each(['access-blocked', 'error'] as const)(
-    'also fails closed on old-identity %s',
-    (status) => {
-      expect(() => choose(['not-found', status])).toThrow(/credential/i)
-    }
-  )
-
-  it('does not interpret a thrown query exception as not-found', () => {
-    const probe = vi.fn(() => {
-      throw new Error('I/O failed')
+  it.each([true, false])('continues after thrown probes (legacy exists=%s)', (legacyExists) => {
+    const probe = vi.fn<() => IdentityProbeResult>(() => {
+      throw new Error('password=PRIVATE-ERROR')
     })
-    expect(() => selectCredentialIdentity({ platform: 'darwin', packaged: true, probe })).toThrow(
-      /credential/i
-    )
-    expect(probe).toHaveBeenCalledTimes(1)
-  })
-
-  it('uses separate development identities', () => {
-    const { selection, probe } = choose(['not-found', 'exists'], false)
-    expect(selection.appName).toBe('Open Science (DEV)')
-    expect(probe.mock.calls).toEqual([['Open-Science (DEV)'], ['Open Science (DEV)']])
+    if (legacyExists)
+      probe
+        .mockImplementationOnce(() => {
+          throw new Error('PRIVATE-ERROR')
+        })
+        .mockImplementationOnce(() => ({ status: 'exists' }))
+    expect(selectCredentialIdentity({ platform: 'darwin', packaged: true, probe })).toEqual({
+      backend: 'mac-keychain',
+      appName: legacyExists ? 'Open Science' : 'Open-Science',
+      exists: legacyExists
+    })
+    expect(probe.mock.calls).toEqual([['Open-Science'], ['Open Science']])
   })
 
   it('does not cache a legacy selection across launches', () => {

@@ -42,6 +42,17 @@ export const prepareCredentialValidation = (
     ciphertexts.length
   )
     throw new CredentialIdentityError('key-missing-for-existing-ciphertext')
+  if (identity.backend === 'mac-keychain' && !identity.exists) {
+    // Electron's native network service can use OSCrypt without going through the JS cipher.
+    // Before the first await/profile write, unconfirmed selection needs metadata evidence that
+    // the selected key either exists or is definitely absent. This never calls safeStorage.
+    const result = probeCredentialIdentity(identity.appName)
+    if (result.status !== 'exists' && result.status !== 'not-found')
+      throw new CredentialIdentityError(`initialization-probe-${result.status}`, {
+        appName: identity.appName,
+        ...result
+      })
+  }
   return (cipher, recover) => {
     installCredentialAccess({
       identity,

@@ -36,11 +36,25 @@ documents the no-UI flag and returned-buffer cleanup requirements.
 - Disable Keychain interaction process-wide, read back that setting, and restore its previous value.
   A failed disable, readback, or restore fails closed. Query-level UI suppression alone does not work
   for file-based Keychains.
-- Copy the current search list and require every included Keychain to be unlocked and readable.
-  Check again after each lookup. An unrelated locked Keychain deliberately blocks the result.
-- Request only attributes, with data, references, and persistent references explicitly disabled.
-  Search the exact service and account, return at most two matches, and reject duplicates or malformed
-  results. No Keychain create, update, delete, unlock, password-read, or OSCrypt API is used.
+- Copy the complete current search list and require readable Keychains with available status.
+  Re-copy the list and compare its order and statuses after each lookup and ownership check.
+  Changes fail closed. Do not omit locked Keychains from the query.
+- Request attributes and a temporary item reference, with data and persistent references explicitly
+  disabled. Use `SecKeychainItemCopyKeychain` only to establish the item's owning database; never
+  serialize the reference, owner, or returned attributes. Search the exact service and account,
+  return at most two matches, and reject observed duplicates or malformed results. No Keychain
+  create, update, delete, unlock, password-read, or OSCrypt API is used.
+- With a locked Keychain present, accept a positive match only when its owner is the first Keychain
+  in the unchanged search list and that owner is unlocked. This establishes Electron's first-match
+  reading owner, not global uniqueness: a later locked database may hide another item, but cannot
+  precede this owner. Any observed duplicate still blocks the result. A locked owner or a later owner
+  returns `keychain-search-incomplete`; this deliberately conservative case requires recovery.
+- A not-found result with any locked Keychain is uncertain (`keychain-locked`), never absence.
+  In particular, the helper cannot query the bare account without establishing suffixed-account
+  absence. Application-name selection is a separate policy: the caller may probe another name and
+  select a confirmed identity, but must retain inventory and actual-access guards. An uncertain
+  selected identity is not permission to create a replacement. Unlock the relevant original
+  Keychains and retry; do not remove keys or retry failed secret access under another identity.
 - Follow Electron's account precedence: `<name> Key` first; only `errSecItemNotFound` permits querying
   `<name>`. An access failure never triggers a fallback. No returned attributes are copied to stdout.
 
@@ -64,6 +78,11 @@ Electron startup and account-suffix patch were also compared with Electron 39.2.
   OSCrypt's real lookup requests password data and must never serve as a metadata probe.
 - [Apple's macOS query/result implementation](https://github.com/apple-oss-distributions/Security/blob/db15acbe6a7f257a859ad9a3bb86097bfe0679d9/OSX/libsecurity_keychain/lib/SecItem.cpp#L3132):
   numeric match limits are supported; a limit greater than one returns an array even for one match.
+- [Apple file-keychain cursor](https://github.com/apple-oss-distributions/Security/blob/db15acbe6a7f257a859ad9a3bb86097bfe0679d9/OSX/libsecurity_keychain/lib/KCCursor.cpp):
+  databases are traversed in search-list order; some database failures are skipped. Consequently,
+  query success or not-found alone cannot certify a complete search through locked databases.
+- [Apple item ownership query](https://github.com/apple-oss-distributions/Security/blob/db15acbe6a7f257a859ad9a3bb86097bfe0679d9/OSX/libsecurity_keychain/lib/SecKeychainItem.cpp#L228):
+  copying the owning Keychain uses the item's metadata, without retrieving its secret.
 
 ## Verification
 

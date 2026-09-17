@@ -1,5 +1,6 @@
 #include <iostream>
 #include <string>
+#include <vector>
 
 #ifdef __APPLE__
 #include <CoreFoundation/CoreFoundation.h>
@@ -40,6 +41,8 @@ struct SecurityApi {
   OSStatus (*copy_search_list)(CFArrayRef*);
   OSStatus (*get_status)(SecKeychainRef, SecKeychainStatus*);
   OSStatus (*copy_matching)(CFDictionaryRef, CFTypeRef*);
+  CFTypeID (*item_type_id)();
+  OSStatus (*copy_item_keychain)(SecKeychainItemRef, SecKeychainRef*);
 };
 
 struct ScopedCF {
@@ -91,25 +94,53 @@ class InteractionGuard {
   bool restore_needed_ = false;
 };
 
-ProbeResult CheckSearchList(CFArrayRef search_list, const SecurityApi& api) {
+// Lock state affects absence and lookup precedence, not whether metadata can be queried.
+ProbeResult ReadSearchState(CFArrayRef search_list, const SecurityApi& api,
+                            std::vector<SecKeychainStatus>& states) {
   const CFIndex count = CFArrayGetCount(search_list);
   if (count == 0) return Failure("keychain-search-list-empty");
   if (count > 64) return Failure("keychain-search-list-too-large");
   for (CFIndex i = 0; i < count; i++) {
     auto keychain = reinterpret_cast<SecKeychainRef>(
         const_cast<void*>(CFArrayGetValueAtIndex(search_list, i)));
+    for (CFIndex j = 0; j < i; j++) {
+      if (CFEqual(keychain, CFArrayGetValueAtIndex(search_list, j)))
+        return Failure("invalid-keychain-search-list");
+    }
     SecKeychainStatus keychain_status = 0;
     const OSStatus status = api.get_status(keychain, &keychain_status);
     if (status != errSecSuccess) return Failure("keychain-status-unavailable", status);
-    // A locked or unreadable keychain cannot establish that a credential is absent.
-    if (!(keychain_status & kSecUnlockStateStatus)) return {"access-blocked", "keychain-locked", ""};
     if (!(keychain_status & kSecReadPermStatus)) return {"access-blocked", "keychain-unreadable", ""};
+    states.push_back(keychain_status);
   }
   return {"ready", "", ""};
 }
 
+ProbeResult CheckStableSearch(CFArrayRef original, const std::vector<SecKeychainStatus>& states,
+                              const SecurityApi& api) {
+  CFArrayRef current = nullptr;
+  const OSStatus status = api.copy_search_list(&current);
+  ScopedCF owner;
+  owner.value = current;
+  if (status != errSecSuccess) return Failure("keychain-search-list-unavailable", status);
+  if (!current || CFGetTypeID(current) != CFArrayGetTypeID())
+    return Failure("invalid-keychain-search-list");
+  if (!CFEqual(original, current)) return {"access-blocked", "keychain-search-list-changed", ""};
+  std::vector<SecKeychainStatus> current_states;
+  auto result = ReadSearchState(current, api, current_states);
+  if (result.status != "ready") return result;
+  if (states != current_states) return {"access-blocked", "keychain-state-changed", ""};
+  return {"ready", "", ""};
+}
+
+bool HasLockedKeychain(const std::vector<SecKeychainStatus>& states) {
+  for (auto state : states) if (!(state & kSecUnlockStateStatus)) return true;
+  return false;
+}
+
 ProbeResult QueryAccount(const std::string& service, const std::string& account,
-                         CFArrayRef search_list, const SecurityApi& api) {
+                         CFArrayRef search_list, const std::vector<SecKeychainStatus>& states,
+                         const SecurityApi& api) {
   ScopedCF service_value;
   service_value.value = CFStringCreateWithCString(nullptr, service.c_str(), kCFStringEncodingUTF8);
   ScopedCF account_value;
@@ -124,7 +155,7 @@ ProbeResult QueryAccount(const std::string& service, const std::string& account,
       kSecMatchLimit, kSecReturnAttributes, kSecReturnData, kSecReturnRef,
       kSecReturnPersistentRef, kSecUseAuthenticationUI, kSecUseDataProtectionKeychain};
   const void* values[] = {kSecClassGenericPassword, service_value.value, account_value.value,
-      search_list, match_limit.value, kCFBooleanTrue, kCFBooleanFalse, kCFBooleanFalse,
+      search_list, match_limit.value, kCFBooleanTrue, kCFBooleanFalse, kCFBooleanTrue,
       kCFBooleanFalse, kSecUseAuthenticationUIFail, kCFBooleanFalse};
   ScopedCF query;
   query.value = CFDictionaryCreate(nullptr, keys, values, sizeof(keys) / sizeof(keys[0]),
@@ -132,10 +163,15 @@ ProbeResult QueryAccount(const std::string& service, const std::string& account,
   if (!query.value) return Failure("query-allocation-failed");
   ScopedCF metadata;
   const OSStatus status = api.copy_matching(static_cast<CFDictionaryRef>(query.value), &metadata.value);
-  // Check again after a query: lock transitions must not turn a blocked lookup into absence.
-  auto availability = CheckSearchList(search_list, api);
+  // Detect changes across the lookup, including search order and account fallback.
+  auto availability = CheckStableSearch(search_list, states, api);
   if (availability.status != "ready") return availability;
-  if (status == errSecItemNotFound) return {"not-found", "account-not-found", "", status};
+  if (status == errSecItemNotFound) {
+    // SecItem's file-keychain cursor can skip inaccessible databases. Never interpret an
+    // incomplete search as absence, even if a different identity/account might be available.
+    if (HasLockedKeychain(states)) return {"access-blocked", "keychain-locked", ""};
+    return {"not-found", "account-not-found", "", status};
+  }
   if (status != errSecSuccess) return Failure("metadata-query-failed", status);
   if (!metadata.value || CFGetTypeID(metadata.value) != CFArrayGetTypeID()) return Failure("invalid-metadata-result");
   auto items = static_cast<CFArrayRef>(metadata.value);
@@ -154,6 +190,32 @@ ProbeResult QueryAccount(const std::string& service, const std::string& account,
       CFGetTypeID(returned_account) != CFStringGetTypeID() ||
       !CFEqual(returned_service, service_value.value) ||
       !CFEqual(returned_account, account_value.value)) return Failure("invalid-metadata-result");
+  // A nonpersistent reference is metadata only. It establishes which database Electron's
+  // default-search-list lookup would reach; neither the reference nor its owner is serialized.
+  auto reference = CFDictionaryGetValue(attributes, kSecValueRef);
+  if (!reference || CFGetTypeID(reference) != api.item_type_id())
+    return Failure("invalid-item-reference");
+  SecKeychainRef keychain = nullptr;
+  const OSStatus owner_status = api.copy_item_keychain(
+      reinterpret_cast<SecKeychainItemRef>(const_cast<void*>(reference)), &keychain);
+  ScopedCF keychain_owner;
+  keychain_owner.value = keychain;
+  if (owner_status != errSecSuccess || !keychain)
+    return Failure("item-keychain-unavailable", owner_status);
+  CFIndex owner_index = -1;
+  for (CFIndex i = 0; i < CFArrayGetCount(search_list); i++) {
+    if (CFEqual(keychain, CFArrayGetValueAtIndex(search_list, i))) owner_index = i;
+  }
+  if (owner_index < 0) return Failure("item-keychain-outside-search-list");
+  if (HasLockedKeychain(states) &&
+      (owner_index != 0 || !(states[0] & kSecUnlockStateStatus))) {
+    // A skipped earlier database could change MatchLimitOne's owner. Only a positive match
+    // in the unlocked first database is authoritative when any database is locked. Still
+    // reject all observed duplicates above; unseen later entries cannot precede this owner.
+    return {"access-blocked", "keychain-search-incomplete", ""};
+  }
+  availability = CheckStableSearch(search_list, states, api);
+  if (availability.status != "ready") return availability;
   return {"exists", "account-metadata-found", account};
 }
 
@@ -174,12 +236,13 @@ ProbeResult ProbeIdentity(const std::string& identity, const SecurityApi& api) {
     } else if (!search_list || CFGetTypeID(search_list) != CFArrayGetTypeID()) {
       result = Failure("invalid-keychain-search-list");
     } else {
-      result = CheckSearchList(search_list, api);
+      std::vector<SecKeychainStatus> states;
+      result = ReadSearchState(search_list, api, states);
       if (result.status == "ready") {
         const std::string service = identity + " Safe Storage";
         // Match Electron 39's non-MAS account precedence. Only definite absence permits fallback.
-        result = QueryAccount(service, identity + " Key", search_list, api);
-        if (result.status == "not-found") result = QueryAccount(service, identity, search_list, api);
+        result = QueryAccount(service, identity + " Key", search_list, states, api);
+        if (result.status == "not-found") result = QueryAccount(service, identity, search_list, states, api);
       }
     }
   }
@@ -199,7 +262,7 @@ int main(int argc, char* argv[]) {
   const std::string platform = "darwin";
   const credential_identity::SecurityApi api{SecKeychainGetUserInteractionAllowed,
       SecKeychainSetUserInteractionAllowed, SecKeychainCopySearchList, SecKeychainGetStatus,
-      SecItemCopyMatching};
+      SecItemCopyMatching, SecKeychainItemGetTypeID, SecKeychainItemCopyKeychain};
   result = credential_identity::ProbeIdentity(identity, api);
 #else
 #ifdef _WIN32

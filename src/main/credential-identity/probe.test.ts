@@ -153,3 +153,61 @@ it('passes only DPAPI ciphertext over stdin to the separate Windows key-read exe
     expect.objectContaining({ input: ciphertext, stdio: ['pipe', 'pipe', 'ignore'] })
   )
 })
+
+it.each([
+  ['keychain-locked', 0],
+  ['keychain-search-incomplete', 0],
+  ['keychain-search-list-changed', 0],
+  ['keychain-state-changed', 0],
+  ['invalid-item-reference', 0],
+  ['item-keychain-unavailable', -25293],
+  ['item-keychain-outside-search-list', 0],
+  ['metadata-query-failed', -25308]
+])('preserves safe native diagnostics for %s', async (reason, osStatus) => {
+  fixture.spawn.mockReturnValue({
+    status: 0,
+    signal: null,
+    error: undefined,
+    stdout: JSON.stringify({
+      schemaVersion: 1,
+      platform: 'darwin',
+      identity: 'Open-Science',
+      status: 'access-blocked',
+      reason,
+      osStatus,
+      account: 'private-account',
+      secret: 'private-secret'
+    })
+  })
+  const { probeCredentialIdentity } = await import('./probe')
+  expect(probeCredentialIdentity('Open-Science')).toEqual({
+    status: 'access-blocked',
+    reason,
+    osStatus
+  })
+})
+
+it.each([
+  ['unknown-private-value', 'private-status'],
+  ['password=private-secret', 0.5],
+  [{ secret: 'private-secret' }, 2147483648]
+])(
+  'omits untrusted diagnostic fields without changing blocked status',
+  async (reason, osStatus) => {
+    fixture.spawn.mockReturnValue({
+      status: 0,
+      signal: null,
+      error: undefined,
+      stdout: JSON.stringify({
+        schemaVersion: 1,
+        platform: 'darwin',
+        identity: 'Open-Science',
+        status: 'access-blocked',
+        reason,
+        osStatus
+      })
+    })
+    const { probeCredentialIdentity } = await import('./probe')
+    expect(probeCredentialIdentity('Open-Science')).toEqual({ status: 'access-blocked' })
+  }
+)

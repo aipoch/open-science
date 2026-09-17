@@ -18,12 +18,23 @@ void Expect(bool condition, const char* message) {
 }
 
 struct Fixture {
+  std::string identity = "Open Science (DEV)";
   bool interaction = true;
   bool fail_get = false;
   bool fail_disable = false;
   bool ignore_disable = false;
   bool fail_restore = false;
   bool locked = false;
+  bool unrelated_locked = false;
+  bool second_keychain = false;
+  bool owner_second = false;
+  bool missing_reference = false;
+  bool wrong_reference_type = false;
+  bool owner_outside = false;
+  bool list_changes_after_query = false;
+  bool list_changes_after_owner = false;
+  bool owner_called = false;
+  OSStatus owner_status = errSecSuccess;
   bool locks_after_query = false;
   bool unreadable = false;
   bool empty_search_list = false;
@@ -63,17 +74,21 @@ OSStatus SetInteraction(Boolean allowed) {
 OSStatus CopySearchList(CFArrayRef* result) {
   Expect(!fixture.interaction, "search list accessed while interaction was enabled");
   if (fixture.search_status != errSecSuccess) return fixture.search_status;
-  const void* values[] = {CFSTR("fake-keychain")};
-  *result = CFArrayCreate(nullptr, values, fixture.empty_search_list ? 0 : 1,
+  const void* values[] = {CFSTR("fake-keychain"), CFSTR("unrelated-keychain")};
+  if ((fixture.list_changes_after_query && fixture.queries) ||
+      (fixture.list_changes_after_owner && fixture.owner_called)) {
+    values[0] = CFSTR("replaced-keychain");
+  }
+  *result = CFArrayCreate(nullptr, values, fixture.empty_search_list ? 0 : ((fixture.unrelated_locked || fixture.second_keychain) ? 2 : 1),
                          &kCFTypeArrayCallBacks);
   return errSecSuccess;
 }
 
-OSStatus GetStatus(SecKeychainRef, SecKeychainStatus* status) {
+OSStatus GetStatus(SecKeychainRef keychain, SecKeychainStatus* status) {
   Expect(!fixture.interaction, "keychain status accessed while interaction was enabled");
   if (fixture.keychain_status != errSecSuccess) return fixture.keychain_status;
   *status = (fixture.unreadable ? 0 : kSecReadPermStatus) |
-            ((fixture.locked || (fixture.locks_after_query && fixture.queries))
+            (((fixture.locked && CFEqual(keychain, CFSTR("fake-keychain"))) || (fixture.unrelated_locked && CFEqual(keychain, CFSTR("unrelated-keychain"))) || (fixture.locks_after_query && fixture.queries))
                  ? 0 : kSecUnlockStateStatus);
   return errSecSuccess;
 }
@@ -93,8 +108,8 @@ OSStatus CopyMatching(CFDictionaryRef query, CFTypeRef* result) {
          "query was not restricted to generic passwords");
   Expect(CFDictionaryGetValue(query, kSecReturnData) == kCFBooleanFalse,
          "query requested password data");
-  Expect(CFDictionaryGetValue(query, kSecReturnRef) == kCFBooleanFalse,
-         "query returned credential references");
+  Expect(CFDictionaryGetValue(query, kSecReturnRef) == kCFBooleanTrue,
+         "query did not return the temporary ownership reference");
   Expect(CFDictionaryGetValue(query, kSecReturnPersistentRef) == kCFBooleanFalse,
          "query returned persistent credential references");
   Expect(CFDictionaryGetValue(query, kSecReturnAttributes) == kCFBooleanTrue,
@@ -108,13 +123,13 @@ OSStatus CopyMatching(CFDictionaryRef query, CFTypeRef* result) {
                          kCFNumberIntType, &match_limit) && match_limit == 2,
          "query cannot detect duplicate accounts within its bounded result");
   auto search_list = static_cast<CFArrayRef>(CFDictionaryGetValue(query, kSecMatchSearchList));
-  Expect(search_list && CFArrayGetCount(search_list) == 1, "query lost its search list");
+  Expect(search_list && CFArrayGetCount(search_list) == ((fixture.unrelated_locked || fixture.second_keychain) ? 2 : 1), "query lost its search list");
   Expect(StringValue(CFDictionaryGetValue(query, kSecAttrService)) ==
-             "Open Science (DEV) Safe Storage", "wrong service");
+             fixture.identity + " Safe Storage", "wrong service");
   const auto account = StringValue(CFDictionaryGetValue(query, kSecAttrAccount));
   fixture.accounts.push_back(account);
   fixture.queries++;
-  const OSStatus status = account == "Open Science (DEV) Key" ? fixture.primary_status
+  const OSStatus status = account == fixture.identity + " Key" ? fixture.primary_status
                                                             : fixture.legacy_status;
   if (status != errSecSuccess) return status;
   if (fixture.malformed_result) {
@@ -133,6 +148,8 @@ OSStatus CopyMatching(CFDictionaryRef query, CFTypeRef* result) {
     if (fixture.attribute_variant == "non-string-account") CFDictionarySetValue(attributes, kSecAttrAccount, kCFBooleanTrue);
     if (fixture.attribute_variant == "different-service") CFDictionarySetValue(attributes, kSecAttrService, CFSTR("Different Safe Storage"));
     if (fixture.attribute_variant == "different-account") CFDictionarySetValue(attributes, kSecAttrAccount, CFSTR("Different Key"));
+    if (!fixture.missing_reference) CFDictionarySetValue(attributes, kSecValueRef,
+        fixture.wrong_reference_type ? static_cast<CFTypeRef>(kCFBooleanTrue) : CFSTR("item-reference"));
     if (fixture.result_has_secret) CFDictionarySetValue(attributes, kSecValueData, CFSTR("never-output"));
     if (fixture.dictionary_result) {
       *result = attributes;
@@ -146,10 +163,25 @@ OSStatus CopyMatching(CFDictionaryRef query, CFTypeRef* result) {
   return errSecSuccess;
 }
 
-const SecurityApi api{GetInteraction, SetInteraction, CopySearchList, GetStatus, CopyMatching};
+OSStatus CopyItemKeychain(SecKeychainItemRef reference, SecKeychainRef* keychain) {
+  Expect(!fixture.interaction, "owner query allowed authentication UI");
+  Expect(CFEqual(reference, CFSTR("item-reference")), "invalid reference reached owner lookup");
+  fixture.owner_called = true;
+  if (fixture.owner_status != errSecSuccess) return fixture.owner_status;
+  *keychain = reinterpret_cast<SecKeychainRef>(const_cast<void*>(CFRetain(
+      fixture.owner_outside ? CFSTR("outside-keychain") :
+      fixture.owner_second ? CFSTR("unrelated-keychain") : CFSTR("fake-keychain"))));
+  return errSecSuccess;
+}
+
+const SecurityApi api{GetInteraction, SetInteraction, CopySearchList, GetStatus, CopyMatching,
+                      CFStringGetTypeID, CopyItemKeychain};
+int scenarios = 0;
 
 ProbeResult Run(const char* expected_status, const char* expected_reason = nullptr) {
-  ProbeResult result = ProbeIdentity("Open Science (DEV)", api);
+  ++scenarios;
+  ProbeResult result = ProbeIdentity(fixture.identity, api);
+  if (result.status != expected_status) std::cerr << "scenario " << scenarios << ": " << result.status << "/" << result.reason << '\n';
   Expect(result.status == expected_status, "wrong probe result status");
   if (expected_reason) Expect(result.reason == expected_reason, "wrong probe result reason");
   return result;
@@ -162,9 +194,16 @@ int main() {
   fixture = {};
   fixture.primary_status = errSecSuccess;
   auto result = Run("exists");
-  Expect(result.account == "Open Science (DEV) Key", "wrong primary account");
+  Expect(result.account == fixture.identity + " Key", "wrong primary account");
   Expect(fixture.queries == 1 && fixture.restorations == 1 && fixture.interaction,
          "primary lookup did not stop and restore interaction");
+
+  fixture = {};
+  fixture.primary_status = errSecSuccess;
+  fixture.unrelated_locked = true;
+  fixture.identity = "Open-Science (DEV)";
+  Run("exists");
+  Expect(fixture.queries == 1, "unrelated lock prevented a positive primary lookup");
 
   fixture = {};
   fixture.legacy_status = errSecSuccess;
@@ -190,7 +229,7 @@ int main() {
   fixture = {};
   fixture.locked = true;
   Run("access-blocked", "keychain-locked");
-  Expect(fixture.queries == 0, "locked keychain was queried");
+  Expect(fixture.queries == 1, "incomplete search permitted account fallback");
 
   fixture = {};
   fixture.unreadable = true;
@@ -199,7 +238,7 @@ int main() {
 
   fixture = {};
   fixture.locks_after_query = true;
-  Run("access-blocked", "keychain-locked");
+  Run("access-blocked", "keychain-state-changed");
   Expect(fixture.queries == 1, "lock transition permitted a fallback");
 
   fixture = {};
@@ -286,6 +325,72 @@ int main() {
            "invalid attributes were accepted or permitted a fallback");
   }
 
-  std::cout << "passed 28 fixture scenarios\n";
+  // A positive first-owner match is authoritative even if a later database is locked.
+  // The later database is still searched: any observed duplicate must remain a failure.
+  fixture = {};
+  fixture.primary_status = errSecSuccess;
+  fixture.unrelated_locked = true;
+  fixture.matches = 2;
+  Run("error", "ambiguous-account");
+
+  // Neither a missing new identity nor a missing suffixed account is authoritative with locks.
+  fixture = {};
+  fixture.unrelated_locked = true;
+  fixture.legacy_status = errSecSuccess;
+  Run("access-blocked", "keychain-locked");
+  Expect(fixture.accounts.size() == 1, "uncertain absence fell back to bare account");
+
+  fixture = {};
+  fixture.primary_status = errSecSuccess;
+  fixture.second_keychain = true;
+  fixture.owner_second = true;
+  Run("exists"); // All unlocked retains existing search-list support.
+
+  fixture = {};
+  fixture.primary_status = errSecSuccess;
+  fixture.second_keychain = true;
+  fixture.owner_second = true;
+  fixture.locked = true;
+  Run("access-blocked", "keychain-search-incomplete");
+
+  fixture = {};
+  fixture.primary_status = errSecSuccess;
+  fixture.locked = true;
+  Run("access-blocked", "keychain-search-incomplete");
+
+  for (bool after_owner : {false, true}) {
+    fixture = {};
+    fixture.primary_status = errSecSuccess;
+    fixture.list_changes_after_query = !after_owner;
+    fixture.list_changes_after_owner = after_owner;
+    Run("access-blocked", "keychain-search-list-changed");
+  }
+
+  fixture = {};
+  fixture.primary_status = errSecSuccess;
+  fixture.locks_after_query = true;
+  Run("access-blocked", "keychain-state-changed");
+
+  for (bool wrong_type : {false, true}) {
+    fixture = {};
+    fixture.primary_status = errSecSuccess;
+    fixture.missing_reference = !wrong_type;
+    fixture.wrong_reference_type = wrong_type;
+    Run("error", "invalid-item-reference");
+    Expect(!fixture.owner_called, "invalid reference reached native ownership lookup");
+  }
+
+  fixture = {};
+  fixture.primary_status = errSecSuccess;
+  fixture.owner_outside = true;
+  Run("error", "item-keychain-outside-search-list");
+
+  fixture = {};
+  fixture.primary_status = errSecSuccess;
+  fixture.owner_status = errSecAuthFailed;
+  Run("access-blocked", "item-keychain-unavailable");
+  Expect(fixture.queries == 1, "ownership error permitted fallback");
+
+  std::cout << "passed " << scenarios << " fixture scenarios\n";
   return 0;
 }

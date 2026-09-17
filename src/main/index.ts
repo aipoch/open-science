@@ -117,7 +117,12 @@ if (shouldRunArtifactMcpServer) {
       ...diagnosticErrorFields(error),
       ...errorLogFields(error),
       phase: bootstrapPhase,
-      ...(error instanceof CredentialIdentityError ? { recoveryReason: error.reason } : {})
+      ...(error instanceof CredentialIdentityError
+        ? {
+            recoveryReason: error.reason,
+            ...(error.probe ? { identityProbe: error.probe } : {})
+          }
+        : {})
     })
     const { app, dialog } = createRequire(import.meta.url)('electron') as typeof import('electron')
     if (error instanceof CredentialIdentityError) {
@@ -250,6 +255,10 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
   bootstrapPhase = 'credential-ciphertext-validation'
   validateCredentials(safeStorage, (error) => {
     if (!credentialRecoveryPresented) {
+      bootstrapLog.error('credential access failed', {
+        recoveryReason: error.reason,
+        ...(error.probe ? { identityProbe: error.probe } : {})
+      })
       credentialRecoveryPresented = true
       dialog.showErrorBox(
         APP_NAME,

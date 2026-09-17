@@ -3,29 +3,82 @@
 Open-Science keeps its displayed name and existing application ID/signing identity. Credential
 selection is process-local and runs on every launch before Electron initializes OSCrypt. It does
 not persist an old-name preference or migrate research data. Unpublished intermediate PR builds do
-not receive a separate migration, mixed-identity decryption or re-encryption layer. Probe failures,
-missing keys with existing ciphertext, and decryption failures require recovery; they do not authorize
-switching identities, clearing ciphertext or recreating the profile. Existing macOS keys are not
+not receive a separate migration, mixed-identity decryption or re-encryption layer. macOS metadata
+selection can continue after a failed probe; this is not permission to access or create a key. Missing
+confirmed keys with existing ciphertext, failed access rechecks and decryption failures still require
+recovery. Actual access failures never authorize switching identities, clearing ciphertext or
+recreating the profile. Existing macOS keys are not
 renamed, moved or deleted, and system Keychain authorization is never bypassed.
 
 ## Platform support
 
 | Platform/backend                                                 | Identity and startup behavior                                                                                                                                                                                                                                                                                                                                                             |
 | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| macOS, non-MAS file Keychain                                     | Probe `Open-Science` first, then `Open Science` only on authoritative absence. Development uses the corresponding ` (DEV)` names. A matching new identity always wins. Both absent select the new identity for a later actual write.                                                                                                                                                      |
+| macOS, non-MAS file Keychain                                     | Probe `Open-Science` first. If it exists, select it without probing the old name. Otherwise probe `Open Science` and select it only if it exists; otherwise select the new name with existence unconfirmed. Development uses the corresponding ` (DEV)` names. Inventory and actual-access guards remain mandatory.                                                                       |
 | Windows DPAPI                                                    | Keep the existing Electron profile and its `Local State` key. Application names do not identify DPAPI keys. Before Electron starts, validate any existing key through a separate read-only DPAPI operation. Missing key plus existing ciphertext, invalid envelopes, denied access, or failed validation stop startup. A fresh profile without protected history may initialize normally. |
 | Linux OS, Secret Service (`gnome-libsecret`)                     | Supported with the original technical application identity `Open Science` / `Open Science (DEV)`, for both fresh and existing profiles. Requires a working `/usr/bin/busctl`, accessible session bus, unambiguous key metadata and an existing unlocked default collection. No macOS name search or backend fallback.                                                                     |
 | Linux OS, KWallet / KWallet5 / KWallet6, unknown or `basic_text` | Stop with recovery guidance. KWallet key retrieval can replace missing, empty or wrong-type entries; a safe validation adapter is not implemented. Plaintext storage is never selected as a fallback.                                                                                                                                                                                     |
 | Existing explicit Linux headless `--credential-store=file` mode  | Continue using that mode's existing semantics without OS credential access. This feature does not enable it automatically.                                                                                                                                                                                                                                                                |
-| macOS MAS and other OS credential backends                       | Unsupported; stop with recovery guidance.                                                                                                                                                                                                                                                                                                                                                 |
+| macOS MAS                                                        | Metadata probing is unsupported: name selection may finish with existence unconfirmed, but existing-ciphertext and actual-access guards still block unsafe access.                                                                                                                                                                                                                        |
 
-The macOS metadata helper requests only attributes for the exact service `<name> Safe Storage`
-and account `<name> Key`; only an explicit account absence permits checking the legacy bare
-`<name>` account. It distinguishes absence from locked, denied, malformed, duplicate, unsupported,
-and query-error results. It disables Keychain interaction in its own child process, checks that
-suppression succeeded, and requires readable, unlocked search-list Keychains. An unrelated locked
-Keychain therefore deliberately blocks startup. No secret-read, create, update, delete, or unlock
-API is available in this helper.
+macOS identity selection branches only on `status === 'exists'`, in order:
+
+1. A confirmed new identity wins immediately; the legacy probe is skipped.
+2. Any other new result (including a thrown probe) leads to the legacy metadata probe.
+3. A confirmed legacy identity is selected. Otherwise select the new identity with `exists: false`.
+
+Here `exists: false` means **not confirmed**, not "both absent" or "fresh installation". Original
+probe statuses remain in the diagnostics. Selection never throws recovery because of a probe
+status. Existing ciphertext with an unconfirmed selected key is rejected by the bootstrap inventory
+before initialization writes. An unconfirmed macOS identity without ciphertext also receives a
+metadata-only preflight before the first await/profile write: the selected identity must now return
+`exists` or authoritative `not-found`. Otherwise initialization stops with
+`initialization-probe-<status>`. This is necessary because Electron's native network service can call
+OSCrypt directly, outside the JS cipher guard. It performs no secret read, creation or authorization.
+Before the first actual JS use, the access guard rechecks the selected identity: blocked/error/unsupported results stop access; only a definite not-found for an originally
+unconfirmed identity without protected history allows creation. Even a successful identity selection
+can therefore be followed by recovery. `verifyCredentialCiphertexts` and failure latching remain;
+actual denial, missing keys or failed decryption never retry under another identity.
+
+The `credential-identity` logger retains `identity probe started` (application name, exact service,
+account priority), `identity probe completed` (original status, allowlisted reason and valid numeric
+OS status), then `identity selection completed`. The final record contains the selected name,
+`preferred-identity-present`, `legacy-identity-present` or `no-identity-confirmed`, and only executed
+probes in numbered order. When the first probe succeeds, `skippedProbe` explicitly explains why the
+old name was not probed; no old result is invented. Thrown probes retain the fixed `probe-exception`
+code without the exception contents. Selection success is not access/decryption/recovery success.
+Initial selection happens before the file logger is initialized: these records are console diagnostics,
+not replayed into `main.log`. Later probes use the configured logger when available.
+The same start/result logs cover later metadata rechecks. Account priority describes the helper's
+query rule; it does not imply a bare-account query after an uncertain suffixed-account result. Raw
+helper responses and secret content are never logged. Global log redaction remains unchanged.
+
+The macOS metadata helper queries the exact service `<name> Safe Storage` and account `<name> Key`;
+only authoritative account absence permits checking the legacy bare `<name>` account. It requests
+attributes and a temporary item reference to confirm the owning Keychain, never secret data or
+persistent references. The reference and attributes are not serialized. Interaction is disabled and
+verified inside the separate helper process; no secret-read, create, update, delete, or unlock API
+is available to its injected Security boundary.
+
+An unrelated lock no longer automatically invalidates a positive match: with any locked Keychain
+present, the match must belong to the **first, unlocked Keychain** in the original search list.
+Electron's first-match lookup reaches that owner; a later locked database cannot precede it.
+The full list is still queried and any observed duplicate is rejected. This does not prove global
+uniqueness in locked databases. A later owner or a locked owner is conservatively uncertain
+(`keychain-search-incomplete`), even if metadata exists. A not-found result with any locked
+Keychain remains uncertain (`keychain-locked`), so it cannot enable the helper's bare-account
+fallback or key creation. The application-name selection policy above is separate and may still
+select a confirmed legacy identity. An uncertain selected identity still requires recovery at the
+inventory or access boundary. Unlock and retry rather than remove keys or change identity.
+
+Unreadable Keychains, status errors, malformed results, denied queries, unknown ownership and
+observed duplicates remain non-exists probe results. Selection records them; the inventory/access
+guards enforce recovery where needed. Search-list order and status are checked again after each
+lookup and ownership check; changes return `keychain-search-list-changed` or
+`keychain-state-changed`. The same probe runs before the selected identity's first actual access.
+Allowlisted reason codes and numeric OS status survive final log redaction at both startup and
+later recovery; no raw helper response, key, ciphertext, owner path or reference is logged.
+These checks are snapshots, not a lock against external changes between native calls.
 
 Metadata existence does not establish permission to read the secret. Actual encryption/decryption
 continues through Electron and the system authorization rules. Ad-hoc signing or an application

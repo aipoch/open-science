@@ -20,5 +20,6 @@ export const credentialRecoveryMessage = (
       : translate(
           'Open-Science could not safely access existing encrypted data. Unlock the system credential store or restore the original key and profile, then restart. Existing credentials have not been replaced.'
         )
-  return `${title}\n\n${description}\n\nCREDENTIAL_IDENTITY: ${error.reason}`
+  const code = error.probe?.reason ? `${error.reason} / ${error.probe.reason}` : error.reason
+  return `${title}\n\n${description}\n\nCREDENTIAL_IDENTITY: ${code}`
 }

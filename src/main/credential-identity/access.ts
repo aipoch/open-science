@@ -21,9 +21,19 @@ export const createCredentialAccess = (options: {
   let checked = false
   let written = false
   let failure: CredentialIdentityError | undefined
-  const fail = (reason: string): never => {
+  const fail = (reason: string, probe?: IdentityProbeResult): never => {
     if (!failure) {
-      failure = new CredentialIdentityError(reason)
+      failure = new CredentialIdentityError(
+        reason,
+        options.identity.backend === 'mac-keychain' && probe
+          ? {
+              appName: options.identity.appName,
+              status: probe.status,
+              ...(probe.reason !== undefined ? { reason: probe.reason } : {}),
+              ...(probe.osStatus !== undefined ? { osStatus: probe.osStatus } : {})
+            }
+          : undefined
+      )
       options.recover(failure)
     }
     throw failure
@@ -61,7 +71,7 @@ export const createCredentialAccess = (options: {
         result.status !== 'exists' &&
         !(result.status === 'not-found' && !options.identity.exists && !reading)
       )
-        return fail(`access-${result.status}`)
+        return fail(`access-${result.status}`, result)
     }
   }
   return {
