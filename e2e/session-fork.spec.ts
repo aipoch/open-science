@@ -27,10 +27,16 @@ test('forks local and imported research and immediately continues through the re
     .locator('[data-session-id]')
     .filter({ has: page.getByRole('button', { name: `Open actions for ${title}` }) })
   await expect(row.getByRole('img', { name: 'Read-only' })).toHaveCount(0)
-  await page.getByRole('button', { name: 'Continued from chat', exact: true }).click()
-  await expect(page.getByRole('button', { name: 'Continued from chat', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(/^#\d+.*\(2\)$/)
+  const sourceLabel = await page
+    .getByRole('button', { name: /^Continued from chat #\d+$/ })
+    .innerText()
+  const sourceNumber = sourceLabel.match(/#\d+$/)![0]
+  await page.getByRole('button', { name: /^Continued from chat #\d+$/ }).click()
+  await expect(page.getByRole('button', { name: /^Continued from chat #\d+$/ })).toHaveCount(0)
+  await expect(page.getByRole('heading', { level: 1 })).toContainText(sourceNumber)
   await row.locator('[data-slot="session-open-button"]').click()
-  await expect(page.getByRole('button', { name: 'Continued from chat', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: /^Continued from chat #\d+$/ })).toBeVisible()
   for (const [kind, followup] of [
     ['local', 'Continue local fork'],
     ['imported', 'Continue imported fork']

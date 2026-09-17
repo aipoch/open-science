@@ -119,6 +119,7 @@
     "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "副本发布需要恢复（操作 {{operationId}}，会话 {{sessionId}}）。请重启应用恢复此次操作，然后再创建副本。"
   },
   "renderer": {
+    "Continued from chat #{{number}}": "继续自会话 #{{number}}",
     "Continued from chat": "继续自原会话",
     "Open-source license": "开源许可证",
     "Old Shell launch records are blocking this update.": "旧的命令行启动记录阻止了本次更新。",

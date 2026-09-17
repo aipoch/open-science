@@ -1047,6 +1047,22 @@ const WorkspacePage = ({
     openSession(sessionId)
   }
 
+  const openForkSource = async (sessionId: string): Promise<void> => {
+    const navigationRevision = useNavigationStore.getState().explicitNavigationRevision
+    try {
+      const source = await window.api.sessions.loadOne({ projectId: scopedProjectId, sessionId })
+      if (useNavigationStore.getState().explicitNavigationRevision !== navigationRevision) return
+      if (!source || source.archivedAt !== undefined) {
+        setAttachmentError(t('This session was deleted or is unavailable.'))
+        return
+      }
+      openSessionWithoutExportError(sessionId)
+    } catch {
+      if (useNavigationStore.getState().explicitNavigationRevision !== navigationRevision) return
+      setAttachmentError(t('This session was deleted or is unavailable.'))
+    }
+  }
+
   // Forwards visible permission decisions to the runtime bridge.
   const respondToVisiblePermission = (requestId: string, optionId?: string): Promise<void> =>
     respondToPermission(requestId, optionId)
@@ -1526,7 +1542,7 @@ const WorkspacePage = ({
                 }
               }}
               sessionTools={{
-                openSession: openSessionWithoutExportError,
+                openSession: (sessionId) => void openForkSource(sessionId),
                 notebookReference: activeNotebookReference,
                 openNotebook: openNotebookPreview,
                 openJobs: sessionController.actions.openJobList,

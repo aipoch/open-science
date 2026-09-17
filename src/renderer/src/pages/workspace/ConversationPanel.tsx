@@ -452,6 +452,11 @@ const ConversationPanel = ({
   const { total: bookmarkCount, loadError: bookmarkLoadError } = useBookmarks()
   const { activeSession, composerFocusKey, canEditDraft, actionError, sideChatDisabledReason } =
     view
+  const sourceSessionNumber = useSessionStore(
+    (state) =>
+      state.sessions.find((session) => session.id === activeSession?.branchSource?.sessionId)
+        ?.number
+  )
   const hasBookmarkEntry = Boolean(activeSession && (bookmarkCount > 0 || bookmarkLoadError))
   const {
     view: {
@@ -1154,8 +1159,13 @@ const ConversationPanel = ({
           >
             <Menu className="size-5" strokeWidth={2} aria-hidden="true" />
           </button>
-          <h1 className="min-w-0 flex-1 truncate text-[13px] font-semibold text-text-000">
-            {activeSession?.title ?? t('New conversation')}
+          <h1 className="flex min-w-0 flex-1 items-center gap-2 text-[13px] font-semibold text-text-000">
+            {activeSession?.number !== undefined ? (
+              <span className="shrink-0 font-normal text-muted-foreground">
+                #{activeSession.number}
+              </span>
+            ) : null}
+            <span className="truncate">{activeSession?.title ?? t('New conversation')}</span>
           </h1>
           <NotificationBell className="md:hidden" />
           <button
@@ -1195,7 +1205,9 @@ const ConversationPanel = ({
                         sessionTools.openSession?.(activeSession.branchSource!.sessionId)
                       }
                     >
-                      {t('Continued from chat')}
+                      {sourceSessionNumber !== undefined
+                        ? t('Continued from chat #{{number}}', { number: sourceSessionNumber })
+                        : t('Continued from chat')}
                     </button>
                     <span className="h-px flex-1 bg-border" aria-hidden="true" />
                   </div>

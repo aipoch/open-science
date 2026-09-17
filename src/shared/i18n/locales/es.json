@@ -121,6 +121,7 @@
     "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "Es necesario recuperar la publicación de la bifurcación (operación {{operationId}}, sesión {{sessionId}}). Reinicie la aplicación para recuperar este intento antes de volver a bifurcar."
   },
   "renderer": {
+    "Continued from chat #{{number}}": "Continuación de la conversación #{{number}}",
     "Continued from chat": "Continuación de una conversación",
     "Open-source license": "Licencia de código abierto",
     "Old Shell launch records are blocking this update.": "Los registros antiguos de inicio de la línea de comandos bloquean esta actualización.",

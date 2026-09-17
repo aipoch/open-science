@@ -121,6 +121,7 @@
     "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "La publication de la copie doit être rétablie (opération {{operationId}}, session {{sessionId}}). Redémarrez l’application pour récupérer cette opération avant de dupliquer à nouveau."
   },
   "renderer": {
+    "Continued from chat #{{number}}": "Suite de la conversation #{{number}}",
     "Continued from chat": "Suite d’une conversation",
     "Open-source license": "Licence open source",
     "Old Shell launch records are blocking this update.": "D’anciens enregistrements de lancement du Terminal bloquent cette mise à jour.",

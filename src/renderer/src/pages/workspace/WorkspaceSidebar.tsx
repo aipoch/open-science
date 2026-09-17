@@ -15,7 +15,7 @@ import {
   Toolbox,
   X
 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   DropdownMenu,
@@ -372,6 +372,29 @@ const matchProjects = (
     else descriptionMatches.push(match)
   })
   return [...titleMatches, ...descriptionMatches]
+}
+
+const SessionList = ({
+  activeSessionId,
+  visible,
+  children
+}: {
+  activeSessionId: string | undefined
+  visible: boolean
+  children: React.ReactNode
+}): React.JSX.Element => {
+  const listRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!visible) return
+    listRef.current
+      ?.querySelector<HTMLElement>('[aria-current="page"]')
+      ?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
+  }, [activeSessionId, visible])
+  return (
+    <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto py-1">
+      {children}
+    </div>
+  )
 }
 
 // Left navigation owns session selection, creation entry, and workspace settings.
@@ -900,7 +923,13 @@ const WorkspaceSidebarView = ({
                 )
               }}
             >
-              <div className="min-h-0 flex-1 overflow-y-auto py-1">
+              <SessionList
+                activeSessionId={activeSessionId}
+                visible={
+                  (!mobileMode || isMobileOpen) &&
+                  sessions.some((session) => session.id === activeSessionId)
+                }
+              >
                 {sections.map((section) => (
                   <div key={section.label}>
                     <div className="px-2 pb-[5px] pt-3.5 text-[11px] font-medium text-muted-foreground">
@@ -1102,7 +1131,7 @@ const WorkspaceSidebarView = ({
                     })}
                   </div>
                 ))}
-              </div>
+              </SessionList>
             </ActionMenuProvider>
           </SessionHoverPreviewProvider>
 

@@ -202,12 +202,14 @@ const mountProjectSidebar = async (
   openMenu: () => void
   rerenderProjects: (projects: readonly SidebarProject[]) => Promise<void>
   rerenderSessions: (sessions: ChatSession[]) => Promise<void>
+  selectSession: (sessionId: string) => Promise<void>
 }> => {
   const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
   const container = document.createElement('div')
   document.body.appendChild(container)
   const root = createRoot(container)
 
+  let selectedSessionId = 'session-a'
   let renderedProjects = otherProjects
   let renderedSessions = [createSession({ id: 'session-a' })]
   const render = (): void => {
@@ -216,7 +218,7 @@ const mountProjectSidebar = async (
         projectName="Example project"
         otherProjects={renderedProjects}
         sessions={renderedSessions}
-        activeSessionId="session-a"
+        activeSessionId={selectedSessionId}
         canCreateConversation
         canMutateConversations
         canDeleteConversations
@@ -252,6 +254,10 @@ const mountProjectSidebar = async (
       openRadixMenu(container.querySelector<HTMLButtonElement>('[title="Example project"]')),
     rerenderProjects: async (projects) => {
       renderedProjects = projects
+      await act(async () => render())
+    },
+    selectSession: async (sessionId) => {
+      selectedSessionId = sessionId
       await act(async () => render())
     },
     rerenderSessions: async (sessions) => {
@@ -325,6 +331,43 @@ const waitForPreviewDwell = async (): Promise<void> => {
 }
 
 describe('WorkspaceSidebar accessible render', () => {
+  it('reveals the selected session without resetting scroll on session updates', async () => {
+    const previous = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollIntoView')
+    const revealed: HTMLElement[] = []
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: function (this: HTMLElement) {
+        revealed.push(this)
+      }
+    })
+    const sidebar = await mountProjectSidebar([])
+    try {
+      const sessions = Array.from({ length: 60 }, (_, index) =>
+        createSession({ id: `session-${index}`, title: `Session ${index}` })
+      )
+      await sidebar.rerenderSessions(sessions)
+      revealed.length = 0
+      await sidebar.selectSession('session-59')
+      expect(revealed).toHaveLength(1)
+      expect(revealed[0].closest('[data-session-id]')?.getAttribute('data-session-id')).toBe(
+        'session-59'
+      )
+      await sidebar.rerenderSessions(
+        sessions.map((session) => ({ ...session, updatedAt: session.updatedAt + 1 }))
+      )
+      expect(revealed).toHaveLength(1)
+      await sidebar.selectSession('session-0')
+      expect(revealed).toHaveLength(2)
+      expect(revealed[1].closest('[data-session-id]')?.getAttribute('data-session-id')).toBe(
+        'session-0'
+      )
+    } finally {
+      sidebar.cleanup()
+      if (previous) Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', previous)
+      else Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView')
+    }
+  })
+
   it.each([true, false])(
     'marks imported sessions with an accessible read-only icon (details loaded: %s)',
     async (loaded) => {
