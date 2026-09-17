@@ -22,6 +22,57 @@ const currentStatus = JSON.stringify({
 })
 
 describe('module test impact commands', () => {
+  it.each([
+    ['--shard=2/3', '--reporter=blob', '--outputFile=vitest-reports/blob-2.json'],
+    ['--merge-reports=vitest-reports', '--passWithNoTests']
+  ])('preserves module selection and changed coverage when forwarding %j', (...vitestArguments) => {
+    const spawn = vi.fn(() => ({ status: 0 }))
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+    const source = 'src/main/notebook/mcp-server.ts'
+    const plan = createAffectedTestPlan([{ path: source, status: 'modified' }], {
+      status: 'unavailable-manifest-only',
+      testFiles: []
+    })
+    try {
+      runModuleTestCli(
+        [
+          'affected',
+          '--base',
+          'base',
+          '--head',
+          'head',
+          '--coverage-changed',
+          'base',
+          '--',
+          ...vitestArguments
+        ],
+        {
+          execute: (command: string, args: string[]) => {
+            if (command === 'git' && args[0] === 'merge-base') return 'base\n'
+            if (command === 'git' && args[0] === 'diff') return Buffer.from(`M\0${source}\0`)
+            throw new Error('CodeGraph unavailable in CI')
+          },
+          spawn,
+          environment: { npm_execpath: '/npm/bin/npm-cli.js' }
+        }
+      )
+      const merging = vitestArguments[0].startsWith('--merge-reports')
+      expect(spawn.mock.calls[0]?.[1]).toEqual([
+        '/npm/bin/npm-cli.js',
+        ...(merging ? ['exec', '--', 'vitest', 'run'] : ['test', '--']),
+        '--coverage',
+        `--coverage.include=${source}`,
+        ...vitestArguments,
+        ...(merging ? [] : plan.testFiles)
+      ])
+      expect(spawn.mock.calls[0]?.[2]?.env).toMatchObject({
+        VITEST_CHANGED_COVERAGE_THRESHOLDS: '1'
+      })
+    } finally {
+      write.mockRestore()
+    }
+  })
+
   it('selects the standalone workflow contract instead of the global fallback', () => {
     const plan = createAffectedTestPlan(
       [{ path: 'scripts/ci/pr-gate-workflow.test.ts', status: 'modified' }],
