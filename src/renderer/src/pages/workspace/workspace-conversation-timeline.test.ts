@@ -512,3 +512,44 @@ describe('fork turn boundary', () => {
     )
   })
 })
+
+describe('branch turn boundary', () => {
+  it('keeps the selected branch turn before follow-ups even with later inherited provenance', () => {
+    const input = session({
+      branchSource: { sessionId: 'source', headMessageId: 'branch-answer' },
+      messages: [
+        message({ id: 'branch-answer', role: 'agent', sortIndex: 1, completedAt: 200 }),
+        message({
+          id: 'followup',
+          sortIndex: 2,
+          usageOrigin: { sessionId: 'other', messageId: 'other' }
+        })
+      ]
+    })
+    expect(resolveForkBoundaryItemId(input, createWorkspaceConversationTimeline(input))).toBe(
+      'turn-completion-branch-answer'
+    )
+  })
+})
+
+it.each(['missing-head', undefined])(
+  'does not guess a branch boundary when its head is %s',
+  (headMessageId) => {
+    const input = session({
+      branchSource: { sessionId: 'source', headMessageId },
+      messages: [message({ usageOrigin: { sessionId: 'source', messageId: 'old' } })]
+    })
+    expect(
+      resolveForkBoundaryItemId(input, createWorkspaceConversationTimeline(input))
+    ).toBeUndefined()
+  }
+)
+
+it('anchors a branch with a hidden head to its last visible ancestor', () => {
+  const input = session({
+    branchSource: { sessionId: 'source', headMessageId: 'hidden' },
+    messages: [message({ id: 'visible', sortIndex: 1 }), message({ id: 'hidden', sortIndex: 2 })]
+  })
+  const timeline = createWorkspaceConversationTimeline(input).filter((item) => item.id !== 'hidden')
+  expect(resolveForkBoundaryItemId(input, timeline)).toBe('visible')
+})

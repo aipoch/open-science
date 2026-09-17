@@ -195,17 +195,20 @@ vi.mock('./use-session-background-tasks', async (importOriginal) => ({
 
 vi.mock('./WorkspaceMessageScroller', () => ({
   WorkspaceMessageScroller: ({
+    forkSourceContent,
     credentialPending,
     isResumingSession,
     visiblePermissionPending,
     pendingElicitations = []
   }: {
+    forkSourceContent?: React.ReactNode
     credentialPending?: boolean
     isResumingSession?: boolean
     visiblePermissionPending?: boolean
     pendingElicitations?: unknown[]
   }): React.JSX.Element => (
     <>
+      {forkSourceContent}
       {isResumingSession ? (
         <span data-testid="resume-progress-indicator">Resuming session</span>
       ) : null}
@@ -6535,4 +6538,37 @@ it('offers Fork to continue while leaving the imported conversation read-only', 
     button!.click()
   })
   expect(forkSessionMock).toHaveBeenCalledWith(activeSession)
+})
+
+it('shows the branch source chat number and opens that source session', () => {
+  const source: ChatSession = {
+    id: 'branch-source',
+    projectId: 'default',
+    number: 42,
+    title: 'Source',
+    cwd: '',
+    status: 'idle',
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  }
+  useSessionStore.setState({ sessions: [source] })
+  const openSession = vi.fn()
+  renderPanel({
+    view: {
+      activeSession: {
+        ...source,
+        id: 'branch-child',
+        number: 43,
+        branchSource: { sessionId: source.id, headMessageId: 'answer' }
+      }
+    },
+    sessionTools: { openSession }
+  })
+  const sourceLink = [...container.querySelectorAll('button')].find(
+    (button) => button.textContent === 'Continued from chat #42'
+  )
+  expect(sourceLink).toBeDefined()
+  act(() => sourceLink!.click())
+  expect(openSession).toHaveBeenCalledWith('branch-source')
 })

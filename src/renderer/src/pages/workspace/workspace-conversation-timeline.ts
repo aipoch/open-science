@@ -153,9 +153,12 @@ const resolveForkBoundaryItemId = (
   session: ChatSession | undefined,
   timeline: readonly WorkspaceConversationTimelineItem[]
 ): string | undefined => {
-  if (!session?.forkOrigin) return undefined
+  if (!session?.forkOrigin && !session?.branchSource) return undefined
   const headId =
-    session.forkHeadMessageId ?? session.messages.findLast((message) => message.usageOrigin)?.id
+    session.forkHeadMessageId ??
+    (session.forkOrigin
+      ? session.messages.findLast((message) => message.usageOrigin)?.id
+      : session.branchSource?.headMessageId)
   const headIndex = session.messages.findIndex((message) => message.id === headId)
   if (headIndex < 0) return undefined
 
