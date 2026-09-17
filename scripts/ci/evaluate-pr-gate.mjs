@@ -183,10 +183,7 @@ export function runPrGateCli(environment = process.env) {
   if (!environment.PR_GATE_NEEDS) throw new Error('PR_GATE_NEEDS is required')
 
   const plan = JSON.parse(environment.PR_GATE_PLAN)
-  if (
-    plan.macosProfile !== undefined &&
-    !['risk-v1', 'risk-v2'].includes(environment.PR_GATE_PLATFORM_POLICY)
-  ) {
+  if (plan.macosProfile !== undefined && environment.PR_GATE_PLATFORM_POLICY !== 'risk-v1') {
     throw new Error('Risk-based plan requires a compatible workflow')
   }
   const needs = JSON.parse(environment.PR_GATE_NEEDS)

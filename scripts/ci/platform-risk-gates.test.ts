@@ -17,16 +17,16 @@ const changes = (path: string): Array<{ path: string; status: string }> => [
 ]
 
 describe('platform risk execution policy', () => {
-  it('uses a short Mac group and full Windows business journeys on ordinary PRs', () => {
+  it('uses Windows business journeys without Mac on ordinary PRs', () => {
     const plan = platformExecutionPlan(
       full,
       changes('src/renderer/src/pages/home.tsx'),
       'pull_request'
     )
     expect(plan.macosProfile).toBe('smoke')
-    expect(macosGroupsForPlan(plan)).toEqual(['journeys'])
+    expect(macosGroupsForPlan(plan)).toEqual([])
     expect(plan.lanes).toEqual(
-      expect.arrayContaining(['e2e_smoke_macos', 'e2e_functional_windows', 'e2e_workspace_windows'])
+      expect.arrayContaining(['e2e_functional_windows', 'e2e_workspace_windows'])
     )
     expect(plan.lanes).not.toContain('e2e_regressions_macos')
     expect(plan.lanes).not.toContain('e2e_workspace_macos')
@@ -67,13 +67,8 @@ describe('platform risk execution policy', () => {
   ])('expands native coverage for %s', (path) => {
     const plan = platformExecutionPlan(full, changes(path), 'merge_group')
     expect(plan.macosProfile).toBe('expanded')
-    expect(macosGroupsForPlan(plan)).toEqual([
-      'journeys',
-      'presentation',
-      'regressions',
-      'delegation'
-    ])
-    expect(plan.bundles).toContain('windows_e2e')
+    expect(macosGroupsForPlan(plan)).toEqual(['journeys'])
+    expect(plan.bundles).not.toContain('windows_e2e')
   })
   it('keeps unknown and destructive changes conservative', () => {
     expect(
@@ -91,7 +86,7 @@ describe('platform risk execution policy', () => {
       ).macosProfile
     ).toBe('expanded')
   })
-  it('preserves manual/nightly and old plans and leaves docs without desktop jobs', () => {
+  it('preserves explicit manual/nightly suites and leaves docs without desktop jobs', () => {
     expect(platformExecutionPlan(full, changes('ui.ts'), 'workflow_dispatch')).toBe(full)
     expect(platformExecutionPlan(full, changes('ui.ts'), 'schedule')).toBe(full)
     expect(macosGroupsForPlan(full)).toHaveLength(4)
@@ -104,7 +99,7 @@ describe('platform risk execution policy', () => {
     const plan = platformExecutionPlan(
       full,
       changes('src/renderer/src/pages/home.tsx'),
-      'pull_request'
+      'merge_group'
     )
     const conclusions = Object.fromEntries(
       ['preflight', ...plan.bundles].map((name) => [name, 'success'])
@@ -219,13 +214,13 @@ it.each(['pull_request', 'merge_group'])(
     )
     expect(plan.mode).toBe('selective')
     expect(plan.macosProfile).toBe('smoke')
-    expect(macosGroupsForPlan(plan)).toEqual(['journeys'])
+    expect(macosGroupsForPlan(plan)).toEqual(event === 'merge_group' ? ['journeys'] : [])
     expect(report.shadow.testFiles).toContain('scripts/ci/pr-gate-workflow.test.ts')
     if (event === 'merge_group') expect(plan.bundles).not.toContain('windows_e2e')
   }
 )
 
-it('does not give old PR workflows a smoke lane they cannot execute', () => {
+it('applies the platform policy only when explicitly enabled', () => {
   const changes = Buffer.from('M\0src/renderer/src/components/ui/button.tsx\0')
   for (const policy of [undefined, 'risk-v1']) {
     const { plan } = runModuleImpactAuthorityCli(
@@ -234,26 +229,23 @@ it('does not give old PR workflows a smoke lane they cannot execute', () => {
       { execute: () => changes, write: () => undefined }
     )
     expect(plan.macosProfile).toBe(policy ? 'smoke' : undefined)
-    expect(macosGroupsForPlan(plan)).toHaveLength(policy ? 1 : 3)
+    expect(macosGroupsForPlan(plan)).toHaveLength(policy ? 0 : 3)
   }
 })
 
 it.each([
   'src/main/locale/main-process-messages.ts',
   'src/main/connectors/descriptors/genes-ontology.ts'
-])(
-  'keeps known non-native main changes on short Mac while retaining Windows business coverage: %s',
-  (path) => {
-    const { plan } = runModuleImpactAuthorityCli(
-      ['--base', 'a'.repeat(40), '--head', 'b'.repeat(40)],
-      { EVENT_NAME: 'pull_request', PR_GATE_PLATFORM_POLICY: 'risk-v1' },
-      { execute: () => Buffer.from(`M\0${path}\0`), write: () => undefined }
-    )
-    expect(plan.macosProfile).toBe('smoke')
-    expect(plan.bundles).toContain('windows_e2e')
-    expect(macosGroupsForPlan(plan)).toEqual(['journeys'])
-  }
-)
+])('uses Windows business coverage without Mac for known non-native main changes: %s', (path) => {
+  const { plan } = runModuleImpactAuthorityCli(
+    ['--base', 'a'.repeat(40), '--head', 'b'.repeat(40)],
+    { EVENT_NAME: 'pull_request', PR_GATE_PLATFORM_POLICY: 'risk-v1' },
+    { execute: () => Buffer.from(`M\0${path}\0`), write: () => undefined }
+  )
+  expect(plan.macosProfile).toBe('smoke')
+  expect(plan.bundles).toContain('windows_e2e')
+  expect(macosGroupsForPlan(plan)).toEqual([])
+})
 
 it.each(['pull_request', 'merge_group'])(
   'keeps second-instance launch routing on expanded Mac coverage for %s',
@@ -271,9 +263,9 @@ it.each(['pull_request', 'merge_group'])(
       }
     )
     expect(plan.macosProfile).toBe('expanded')
-    expect(plan.bundles).toContain('macos_e2e')
-    expect(plan.lanes).toContain('e2e_regressions_macos')
-    expect(macosGroupsForPlan(plan)).toContain('regressions')
+    expect(macosGroupsForPlan(plan)).toEqual(event === 'merge_group' ? ['journeys'] : [])
+    expect(plan.lanes).not.toContain('e2e_regressions_macos')
+    if (event === 'merge_group') expect(plan.lanes).toContain('e2e_smoke_macos')
   }
 )
 
@@ -344,7 +336,7 @@ it.each(['pull_request', 'merge_group'])('keeps known PR diffs selective for %s'
   }
 })
 
-describe('risk-v2 queue-only Mac policy', () => {
+describe('queue-only Mac policy', () => {
   const inputs = [
     'src/renderer/src/components/ui/button.tsx',
     'src/main/acp/runtime.ts',
@@ -359,7 +351,7 @@ describe('risk-v2 queue-only Mac policy', () => {
   ): ReturnType<typeof runModuleImpactAuthorityCli>['plan'] =>
     runModuleImpactAuthorityCli(
       ['--base', 'a'.repeat(40), '--head', 'b'.repeat(40)],
-      { EVENT_NAME: event, PR_GATE_PLATFORM_POLICY: 'risk-v2' },
+      { EVENT_NAME: event, PR_GATE_PLATFORM_POLICY: 'risk-v1' },
       { execute: () => Buffer.from(`M\0${path}\0`), write: () => undefined }
     ).plan
   it.each(inputs)('keeps PR %s on portable and Windows checks with no Mac bundle', (path) => {
@@ -412,7 +404,7 @@ describe('risk-v2 queue-only Mac policy', () => {
     }
   )
   it.each(['pull_request', 'merge_group'])(
-    'passes the actual gate CLI for %s risk-v2 plans',
+    'passes the actual gate CLI for %s platform plans',
     (event) => {
       const plan = toGitHubOutputPlan(resolve('src/main/acp/runtime.ts', event))
       const needs = Object.fromEntries(
@@ -422,7 +414,7 @@ describe('risk-v2 queue-only Mac policy', () => {
         encoding: 'utf8',
         env: {
           ...process.env,
-          PR_GATE_PLATFORM_POLICY: 'risk-v2',
+          PR_GATE_PLATFORM_POLICY: 'risk-v1',
           PR_GATE_EXECUTION_MODE: 'bundles',
           PR_GATE_PLAN: JSON.stringify(plan),
           PR_GATE_NEEDS: JSON.stringify(needs)

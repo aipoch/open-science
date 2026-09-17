@@ -247,44 +247,11 @@ export function platformExecutionPlan(plan, changes, event) {
     ) ||
     plan.roots.some((root) => /unknown|unowned|unmatched|bootstrap/.test(root))
   const lanes = new Set(plan.lanes)
-  lanes.delete('e2e_smoke_macos')
   const hasDesktop = plan.bundles.includes('macos_e2e')
   if (hasDesktop && event === 'pull_request') {
     lanes.add('e2e_functional_windows')
     lanes.add('e2e_workspace_windows')
   }
-  if (hasDesktop && !sensitive) {
-    for (const lane of lanes) {
-      if (defaultManifest.laneBundles[lane] === 'macos_e2e' && lane !== 'build') lanes.delete(lane)
-    }
-    lanes.add('e2e_smoke_macos')
-  }
-  if (event === 'merge_group' && !sensitive) {
-    for (const lane of lanes) {
-      if (defaultManifest.laneBundles[lane] === 'windows_e2e') lanes.delete(lane)
-    }
-  }
-  const selectedLanes = defaultManifest.laneOrder.filter((lane) => lanes.has(lane))
-  const bundles = new Set(selectedLanes.map((lane) => defaultManifest.laneBundles[lane]))
-  return {
-    ...plan,
-    lanes: selectedLanes,
-    bundles: defaultManifest.bundleOrder.filter((bundle) => bundles.has(bundle)),
-    macosProfile: sensitive ? 'expanded' : 'smoke',
-    reasonChains: [
-      ...plan.reasonChains,
-      `${event}: ${sensitive ? 'platform-sensitive -> expanded native checks' : 'ordinary change -> short macOS core; Windows business coverage on PR'}`
-    ]
-  }
-}
-
-// v2 moves Mac validation to the queue; keep v1 for workflows that cannot yet
-// execute the short core and native checks together on one runner.
-export function queueMacExecutionPlan(plan, changes, event) {
-  const platform = platformExecutionPlan(plan, changes, event)
-  if (!['pull_request', 'merge_group'].includes(event)) return platform
-  const lanes = new Set(platform.lanes)
-  const hasDesktop = platform.bundles.includes('macos_e2e')
   for (const lane of lanes) {
     if (
       defaultManifest.laneBundles[lane] === 'macos_e2e' ||
@@ -300,20 +267,20 @@ export function queueMacExecutionPlan(plan, changes, event) {
   const selectedLanes = defaultManifest.laneOrder.filter((lane) => lanes.has(lane))
   const bundles = new Set(selectedLanes.map((lane) => defaultManifest.laneBundles[lane]))
   return {
-    ...platform,
+    ...plan,
     lanes: selectedLanes,
     bundles: defaultManifest.bundleOrder.filter((bundle) => bundles.has(bundle)),
+    macosProfile: sensitive ? 'expanded' : 'smoke',
     reasonChains: [
       ...plan.reasonChains,
       event === 'pull_request'
-        ? 'risk-v2: portable tests and Windows business E2E; Mac validation deferred to merge queue'
-        : 'risk-v2: one Mac core job with risk-selected native checks; complete Mac regression scheduled twice daily'
+        ? 'pull_request: portable tests and Windows business E2E; Mac validation deferred to merge queue'
+        : `merge_group: one Mac core job${sensitive ? ' with native checks' : ''}; complete Mac regression scheduled twice daily`
     ]
   }
 }
 
-// Derived after module/consumer overlays are resolved. Missing metadata in a trusted old plan
-// is handled conservatively by the workflow, which still runs all four groups.
+// Derive groups after module/consumer expansion and event-specific execution selection.
 export function macosGroupsForPlan(plan) {
   if (!plan.bundles?.includes('macos_e2e')) return []
   if (

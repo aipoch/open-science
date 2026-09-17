@@ -337,13 +337,10 @@ ci(review): unify automated AI reviews
   Queue does not repeat Windows business E2E or complete Mac business/presentation suites. Existing
   selected Windows core checks remain blocking. Full portable fallback still applies to unknown
   owners, destructive changes and global CI inputs.
-- Workflows opt into this split with `PR_GATE_PLATFORM_POLICY=risk-v2`. Existing `risk-v1`
-  workflows retain their former PR/Mac selection until updated, and trusted plans without platform
-  metadata retain legacy behavior. Both policies use existing `macosProfile` values (`smoke` or
-  `expanded`); there is no data migration. A risk-v2 expanded queue plan selects the short core lane
-  plus native checks on one runner, not the complete four-group matrix. Manual `macos-smoke`,
+- The platform policy uses the existing `macosProfile` values (`smoke` or `expanded`). An expanded
+  queue plan selects the short core lane plus native checks on one runner. Manual `macos-smoke`,
   `source-regressions` and `e2e` runs retain their explicitly selected suites for early platform
-  diagnosis. A change introducing a new policy still runs the current trusted base policy.
+  diagnosis. Classification and gate validation continue to use trusted base code.
 - Complete Mac Source Regression runs twice daily on `main`, at **03:37 and 15:37 Singapore time**
   (Asia/Singapore, UTC+8), including when main is unchanged. Each round uses one build and one Mac
   runner for functional/workspace journeys, browser/visual/accessibility and supplemental suites.

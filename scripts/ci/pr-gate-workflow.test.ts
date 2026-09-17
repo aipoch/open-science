@@ -177,6 +177,7 @@ describe('PR Gate workflow', () => {
           }
         })
         expect(prepared.status, prepared.stderr).toBe(0)
+
         expect(
           readFileSync(join(root, 'pr-gate-trusted-classifier/classify-pr-changes.mjs'), 'utf8')
         ).toContain('// current trusted policy')
@@ -730,10 +731,10 @@ describe('PR Gate workflow', () => {
       if (platform === 'windows') expect(producer.if).toBe(consumer.if)
       else {
         expect(producer.if).toContain(
-          "!contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_smoke_macos')"
+          "!(fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke' || (fromJSON(needs.preflight.outputs.plan).macosProfile == 'expanded' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_smoke_macos')))"
         )
         expect(consumer.if).toContain(
-          "contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_smoke_macos') || needs.macos_e2e_setup.result == 'success'"
+          "(fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke' || (fromJSON(needs.preflight.outputs.plan).macosProfile == 'expanded' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_smoke_macos'))) || needs.macos_e2e_setup.result == 'success'"
         )
       }
       expect(producer.strategy).toBeUndefined()
@@ -768,7 +769,7 @@ describe('PR Gate workflow', () => {
         ...(platform === 'macos'
           ? {
               cache:
-                "${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_smoke_macos') && 'npm' || '' }}"
+                "${{ (fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke' || (fromJSON(needs.preflight.outputs.plan).macosProfile == 'expanded' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_smoke_macos'))) && 'npm' || '' }}"
             }
           : {}),
         'package-manager-cache': false
@@ -1348,14 +1349,14 @@ it('runs short Mac setup and tests in one job without web build or snapshot tran
   const install = mac.steps?.find(({ name }) => name === 'Install short Mac dependencies')
   const build = mac.steps?.find(({ id }) => id === 'smoke_build')
   expect(install).toMatchObject({
-    if: "${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_smoke_macos') }}",
+    if: "${{ (fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke' || (fromJSON(needs.preflight.outputs.plan).macosProfile == 'expanded' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_smoke_macos'))) }}",
     run: 'node scripts/ci/npm-ci.mjs'
   })
   expect(build).toMatchObject({ if: install?.if, run: 'npm run build:e2e' })
   expect(mac.steps?.some(({ run }) => run === 'npm run build:web')).toBe(false)
   for (const name of ['Download E2E setup', 'Restore E2E setup']) {
     expect(mac.steps?.find((step) => step.name === name)?.if).toContain(
-      "!contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_smoke_macos')"
+      "!(fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke' || (fromJSON(needs.preflight.outputs.plan).macosProfile == 'expanded' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_smoke_macos')))"
     )
   }
   const core = mac.steps?.find(({ id }) => id === 'e2e_smoke_macos')
@@ -1411,9 +1412,13 @@ it('provides a focused manual plan that exercises the same single-runner Mac job
   }
 })
 
-it('opts into risk-v2 and keeps automated portable tests off macOS for both event types', () => {
+it('keeps the platform policy explicit and keeps automated portable tests off macOS for both event types', () => {
   const classify = workflow.jobs.preflight.steps?.find(({ id }) => id === 'classify')
-  expect(classify?.env?.PR_GATE_PLATFORM_POLICY).toBe('risk-v2')
+  expect(classify?.env?.PR_GATE_PLATFORM_POLICY).toBe('risk-v1')
+  const gate = workflow.jobs.gate.steps?.find(
+    ({ name }) => name === 'Evaluate deterministic gate from trusted base'
+  )
+  expect(gate?.env?.PR_GATE_PLATFORM_POLICY).toBe('risk-v1')
   const related = workflow.jobs.unit.steps?.find(({ id }) => id === 'unit_macos_related')
   for (const event of ['pull_request', 'merge_group']) {
     expect(workflow.jobs.unit['runs-on']).toContain(`github.event_name == '${event}'`)
