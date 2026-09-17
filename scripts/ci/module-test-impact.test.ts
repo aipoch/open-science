@@ -778,8 +778,14 @@ it.each([
   })
 
   expect(plan.mode).toBe('selective')
-  expect(plan.modules).toEqual(expect.arrayContaining(['acp_runtime', 'project_lifecycle']))
+  expect(plan.modules).toContain(
+    path.startsWith('src/main/delegation/') ? 'main_delegation' : 'desktop_composition'
+  )
   expect(plan.capabilityOverlays).toContain('windows_sensitive')
+  if (path.endsWith('.test.ts')) {
+    expect(plan.testFiles).toEqual([path])
+    return
+  }
   expect(plan.testFiles).toEqual(
     expect.arrayContaining([
       'src/main/delegation/process-ownership.test.ts',

@@ -76,7 +76,6 @@ const createDurableDelegatedWork = (
   const stoppingSessions = new Set<string>()
   // Terminal history does not prove that the process owning its workspace exited.
   const cleanupFailures = new Map<string, DelegateExecutionCleanupError>()
-  const retainedBackendClaims = new Map<string, Set<DelegateExecutionBackendClaim>>()
   // A completed Stop also invalidates requests that have not committed their admission yet.
   let stopGeneration = 0
   const sessionStops = new Map<string, number>()
@@ -192,7 +191,7 @@ const createDurableDelegatedWork = (
       createMessageId: () => createId('message')
     })
     let cancelRequested = false
-    let retainBackendClaim = false
+    let cleanupUnconfirmed = false
     let cancellationReason: 'main_agent_stop' | 'session_stop' | 'runtime_interrupted' =
       'runtime_interrupted'
     let context: Awaited<ReturnType<DelegatedWorkDurableRecords['startRuntime']>> | undefined
@@ -319,16 +318,10 @@ const createDurableDelegatedWork = (
           })
         }
       } catch (error) {
-        retainBackendClaim = error instanceof DelegateExecutionCleanupError
+        cleanupUnconfirmed = error instanceof DelegateExecutionCleanupError
         if (error instanceof DelegateExecutionCleanupError) {
           const identity = sessionIdentityOf(session)
           cleanupFailures.set(identity, error)
-          if (executionBackendClaim) {
-            const claims =
-              retainedBackendClaims.get(identity) ?? new Set<DelegateExecutionBackendClaim>()
-            claims.add(executionBackendClaim)
-            retainedBackendClaims.set(identity, claims)
-          }
         }
         rejectHandle(
           handle ? error : new DelegateMessagePreAcceptanceError(toErrorMessage(error), error)
@@ -343,7 +336,7 @@ const createDurableDelegatedWork = (
                 attemptId: attempt.id,
                 endedAt,
                 error,
-                ...(cancelRequested && !retainBackendClaim ? { cancellationReason } : {})
+                ...(cancelRequested && !cleanupUnconfirmed ? { cancellationReason } : {})
               })
             } catch (terminalizeError) {
               const settled = await snapshotChild(child.frameId)
@@ -356,7 +349,7 @@ const createDurableDelegatedWork = (
       } finally {
         permissionOwner.clearAttempt(child.frameId, attempt.id)
         await turnLifecycle.dispose()
-        if (!retainBackendClaim) await executionBackendClaim?.release().catch(() => undefined)
+        await executionBackendClaim?.release().catch(() => undefined)
         await reservation.release(slotId).catch(() => undefined)
         if (running.get(child.frameId)?.attemptId === attempt.id) running.delete(child.frameId)
       }
@@ -639,11 +632,6 @@ const createDurableDelegatedWork = (
       if (cleanupFailure) {
         if (!options.execution.recoverCleanup) throw cleanupFailure
         await options.execution.recoverCleanup()
-        for (const claim of retainedBackendClaims.get(sessionIdentity) ?? []) {
-          await claim.release()
-          retainedBackendClaims.get(sessionIdentity)?.delete(claim)
-        }
-        retainedBackendClaims.delete(sessionIdentity)
         cleanupFailures.delete(sessionIdentity)
       }
       return settled.map((result) => (result as PromiseFulfilledResult<StopOutcome>).value)

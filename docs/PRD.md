@@ -217,7 +217,9 @@ contain no credentials, prompt text, full environment, or arbitrary deletion pat
 Launch, workspace preparation/reuse, Session/Project removal, and quit/update teardown share the
 same owner. Corrupt, unreadable, incomplete, or symlinked receipt storage blocks the affected
 operation. Unconfirmed cleanup preserves files and capacity, including after reconstruction;
-confirmed recovery releases the receipt and retained execution resources. Recovery runs at relevant
+confirmed recovery releases the receipt and retained execution resources. Terminal cleanup releases
+its model bridge/transport references even when process exit remains unconfirmed; shared transports
+stay alive while sibling references exist. Recovery runs at relevant
 explicit lifecycle boundaries, with no polling service or force-clear action. Saved result reads do
 not imply that process cleanup succeeded. Uninstall or manual data-folder removal must not treat
 terminal Attempt status as proof that external processes stopped.

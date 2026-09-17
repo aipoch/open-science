@@ -5090,7 +5090,7 @@ describe('ACP terminal outcomes through durable delegation', () => {
       })
     )
     expect.soft(disposeResources).toHaveBeenCalledTimes(unreaped ? 0 : 1)
-    expect.soft(releaseClaim).toHaveBeenCalledTimes(unreaped ? 0 : 1)
+    expect.soft(releaseClaim).toHaveBeenCalledOnce()
     if (unreaped)
       expect.soft(terminalize).toHaveBeenCalledWith(
         expect.objectContaining({
