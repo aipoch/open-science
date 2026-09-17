@@ -1636,6 +1636,9 @@ describe('Session persistence coordinator architecture', () => {
       'src/shared/renderer-surface-matrix.test.ts',
       'src/main/settings/skill-catalog.test.ts',
       'src/main/session-package/fork.test.ts',
+      'src/main/storage/migration-target-race.test.ts',
+      'src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx',
+      'src/main/storage/brand-location.test.ts',
       'src/main/session-plan/plan-legacy-compatibility.test.ts',
       'src/main/session-plan/plan-context-file.shell.integration.test.ts',
       'src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts'
