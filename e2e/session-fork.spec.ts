@@ -147,6 +147,12 @@ test('changes branch permissions before the first follow-up without changing sou
   await reply.hover()
   await page.getByRole('button', { name: 'Branch in new session', exact: true }).click()
   await expect(page.getByRole('heading', { level: 1 })).not.toHaveText(sourceHeading)
+  const divider = page.getByRole('button', {
+    name: `Continued from chat #${source.number}`,
+    exact: true
+  })
+  await expect(divider).toBeVisible()
+
   await page.getByTestId('composer-controls-trigger').click()
   await page.getByRole('menuitem', { name: /^Permission mode/ }).hover()
   const option = page.getByRole('menuitem', { name: label, exact: true })
@@ -191,4 +197,58 @@ test('changes branch permissions before the first follow-up without changing sou
   )
   expect(original?.permissionProfile).toBe(source.permissionProfile)
   expect(original?.messages).toEqual(source.messages)
+  await expect(divider).toHaveCount(1)
+  const followup = page.getByText('Continue the research', { exact: true })
+  await expect
+    .poll(async () => {
+      const inheritedBox = await reply.first().boundingBox()
+      const dividerBox = await divider.boundingBox()
+      const followupBox = await followup.boundingBox()
+      return Boolean(
+        inheritedBox &&
+        dividerBox &&
+        followupBox &&
+        inheritedBox.y < dividerBox.y &&
+        dividerBox.y < followupBox.y
+      )
+    })
+    .toBe(true)
+  await divider.click()
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(sourceHeading, {
+    useInnerText: true
+  })
+  await expect(divider).toHaveCount(0)
+
+  await page.getByRole('textbox', { name: 'Ask anything' }).fill('Continue from composer branch')
+  await page.getByTestId('branch-send-menu-trigger').click()
+  await page.getByTestId('menu-branch-in-new-session').click()
+  await expect(divider).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Stop generating' })).toHaveCount(0)
+  await expect
+    .poll(async () =>
+      page.evaluate(
+        async (sourceId) =>
+          (await window.api.sessions.loadAll()).sessions.some(
+            (session) =>
+              session.branchSource?.sessionId === sourceId &&
+              session.status === 'idle' &&
+              session.messages.some(
+                (message) => message.content === 'Continue from composer branch'
+              )
+          ),
+        source.id
+      )
+    )
+    .toBe(true)
+  const restarted = await app.restart()
+  await restarted
+    .getByRole('region', { name: 'Recent sessions' })
+    .getByRole('button', { name: /^Continue from composer branch/ })
+    .click()
+  await expect(
+    restarted.getByRole('button', {
+      name: `Continued from chat #${source.number}`,
+      exact: true
+    })
+  ).toBeVisible()
 })

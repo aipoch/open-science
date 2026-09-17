@@ -141,6 +141,23 @@ describe('protein-annotation / InterPro', () => {
     expect(out.summaries.Q00000.entries).toEqual([])
   })
 
+  it.each([
+    { next: null, error: 'pagination incomplete' },
+    { next: 'https://www.ebi.ac.uk/interpro/api/next', error: 'HTTP 204 mid-pagination' }
+  ])('rejects incomplete InterPro results: $error', async ({ next, error }) => {
+    const fetchImpl = mockFetch({
+      '/entry/pfam/': { json: { count: 2, results: [{ accession: 'PF00069' }], next } },
+      '/next': { text: '' }
+    })
+    await expect(
+      engine(fetchImpl).call(
+        tool('search_interpro_entries'),
+        { query: 'kinase', source_db: 'pfam' },
+        {}
+      )
+    ).rejects.toThrow(error)
+  })
+
   it('search_interpro_entries sorts rows by accession and carries the API count', async () => {
     const fetchImpl = mockFetch({
       '/entry/pfam/': {
@@ -324,6 +341,26 @@ describe('protein-annotation / Human Protein Atlas', () => {
 })
 
 describe('protein-annotation / STRING', () => {
+  it('get_string_network rejects blank symbols before making an upstream request', async () => {
+    const fetchImpl = mockFetch({})
+    await expect(
+      engine(fetchImpl).call(tool('get_string_network'), { symbols: [' ', '\t'] }, {})
+    ).rejects.toThrow('no input symbols provided')
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    { id: 'get_string_similarity_scores', expected: { n_pairs: 0, n_self: 0, pairs: [] } },
+    { id: 'get_string_best_similarity_hits', expected: { species_b: null, n_hits: 0, hits: [] } }
+  ])('$id skips homology requests when no input maps', async ({ id, expected }) => {
+    const fetchImpl = mockFetch({ '/json/get_string_ids': { text: '' } })
+    await expect(
+      engine(fetchImpl).call(tool(id), { symbols: ['NOTAGENE'] }, {})
+    ).resolves.toMatchObject({ mapped: [], unmapped: ['NOTAGENE'], ...expected })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(calls(fetchImpl)[0][0]).toContain('/json/get_string_ids')
+  })
+
   it('map_string_ids partitions input into mapped and unmapped by queryIndex', async () => {
     const fetchImpl = mockFetch({
       '/json/version': {
@@ -474,6 +511,64 @@ describe('protein-annotation / STRING', () => {
       }
       return { result, params }
     }
+
+    it.each(['', 'stringId_A\tstringId_B\n9606.p53\t9606.mdm2'])(
+      'handles empty or incomplete network TSV without inventing edges (%j)',
+      async (text) => {
+        const fetchImpl = mockFetch({
+          '/json/version': { text: '' },
+          '/json/get_string_ids': { json: [mapped(0, '9606.p53', 'TP53')] },
+          '/tsv/network': { text }
+        })
+        const result = engine(fetchImpl).call(tool('get_string_network'), { symbols: ['TP53'] }, {})
+        if (text) {
+          await expect(result).rejects.toThrow('network TSV is missing expected columns')
+        } else {
+          await expect(result).resolves.toMatchObject({
+            edges: [],
+            nodes: [{ string_id: '9606.p53', degree: 0 }],
+            summary: { n_nodes: 1, n_edges: 0, mean_score: null }
+          })
+        }
+      }
+    )
+
+    it('keeps the strongest duplicate edge and orders equal-name endpoints by ID', async () => {
+      const rows = [
+        ['9606.c', '9606.a', 'GENE', 'GENE'],
+        ['9606.b', '9606.a', 'GENE', 'GENE'],
+        ['9606.a', '9606.b', 'GENE', 'GENE']
+      ]
+      const fetchImpl = mockFetch({
+        '/json/version': { json: [{ string_version: '12.0' }] },
+        '/json/get_string_ids': {
+          json: [mapped(0, '9606.a', 'GENE'), mapped(0, '9606.ignored', 'OTHER')]
+        },
+        '/tsv/network': {
+          text:
+            networkTsv(rows).replaceAll('\t0.9\t', '\t0.7\t') +
+            '\n' +
+            networkTsv([rows[2]]).split('\n')[1]
+        }
+      })
+      const result = await engine(fetchImpl).call(
+        tool('get_string_network'),
+        { symbols: ['GENE'] },
+        {}
+      )
+      expect(result).toMatchObject({
+        edges: [
+          { string_id_a: '9606.a', string_id_b: '9606.b', score: 0.9 },
+          { string_id_a: '9606.a', string_id_b: '9606.c', score: 0.7 }
+        ],
+        nodes: [
+          { string_id: '9606.a', is_query: true, degree: 2 },
+          { string_id: '9606.b', is_query: false, degree: 1 },
+          { string_id: '9606.c', is_query: false, degree: 1 }
+        ],
+        summary: { n_nodes: 3, n_edges: 2, mean_score: 0.8, min_score: 0.7, max_score: 0.9 }
+      })
+    })
 
     it.each([['TP53'], ['TP53', 'NOTAGENE']])(
       'includes expanded endpoints when the only mapped protein is %s',

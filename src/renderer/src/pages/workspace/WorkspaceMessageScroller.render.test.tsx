@@ -2592,56 +2592,69 @@ describe('WorkspaceMessageScroller unbound completed job deduplication', () => {
   })
 })
 
-it('keeps the fork divider after inherited history when new turns are appended', async () => {
-  const inherited = createMessage({
-    id: 'inherited',
-    role: 'agent',
-    content: 'Inherited answer',
-    sortIndex: 1,
-    completedAt: 2,
-    responseToMessageId: 'original-prompt',
-    usageOrigin: { sessionId: 'original', messageId: 'original-answer' }
-  })
-  const session = createSession({
-    status: 'idle',
-    messages: [inherited],
-    forkHeadMessageId: inherited.id,
-    activities: [
-      {
-        id: 'late-tool',
-        kind: 'tool',
-        title: 'Late inherited activity',
-        status: 'completed',
-        eventIds: [],
-        createdAt: 20,
-        updatedAt: 20,
-        sortIndex: 20,
-        promptMessageId: 'original-prompt'
+it.each(['fork', 'branch'] as const)(
+  'keeps the %s divider after inherited history when new turns are appended',
+  async (kind) => {
+    const inherited = createMessage({
+      id: 'inherited',
+      role: 'agent',
+      content: 'Inherited answer',
+      sortIndex: 1,
+      completedAt: 2,
+      responseToMessageId: 'original-prompt',
+      usageOrigin: { sessionId: 'original', messageId: 'original-answer' }
+    })
+    const session = createSession({
+      status: 'idle',
+      messages: [inherited],
+      forkHeadMessageId: inherited.id,
+      activities: [
+        {
+          id: 'late-tool',
+          kind: 'tool',
+          title: 'Late inherited activity',
+          status: 'completed',
+          eventIds: [],
+          createdAt: 20,
+          updatedAt: 20,
+          sortIndex: 20,
+          promptMessageId: 'original-prompt'
+        }
+      ],
+      forkOrigin: {
+        importId: 'receipt',
+        sourceProjectId: 'default',
+        sourceSessionId: 'original',
+        importedAt: 1,
+        manifestChecksum: 'a'.repeat(64)
       }
-    ],
-    forkOrigin: {
-      importId: 'receipt',
-      sourceProjectId: 'default',
-      sourceSessionId: 'original',
-      importedAt: 1,
-      manifestChecksum: 'a'.repeat(64)
+    })
+    for (const messages of [
+      [inherited],
+      [
+        inherited,
+        createMessage({ id: 'followup', content: 'New followup', sortIndex: 2 }),
+        createMessage({ id: 'reply', role: 'agent', content: 'New answer', sortIndex: 3 })
+      ]
+    ]) {
+      const html = await renderScroller(
+        {
+          ...session,
+          messages,
+          ...(kind === 'branch'
+            ? {
+                forkOrigin: undefined,
+                forkHeadMessageId: undefined,
+                branchSource: { sessionId: 'original', headMessageId: inherited.id }
+              }
+            : {})
+        },
+        { forkSourceContent: 'Fork boundary' }
+      )
+      expect(html.split('Fork boundary')).toHaveLength(2)
+      expect(html.indexOf('Fork boundary')).toBeGreaterThan(html.indexOf('Inherited answer'))
+      if (messages.length > 1)
+        expect(html.indexOf('Fork boundary')).toBeLessThan(html.indexOf('New followup'))
     }
-  })
-  for (const messages of [
-    [inherited],
-    [
-      inherited,
-      createMessage({ id: 'followup', content: 'New followup', sortIndex: 2 }),
-      createMessage({ id: 'reply', role: 'agent', content: 'New answer', sortIndex: 3 })
-    ]
-  ]) {
-    const html = await renderScroller(
-      { ...session, messages },
-      { forkSourceContent: 'Fork boundary' }
-    )
-    expect(html.split('Fork boundary')).toHaveLength(2)
-    expect(html.indexOf('Fork boundary')).toBeGreaterThan(html.indexOf('Inherited answer'))
-    if (messages.length > 1)
-      expect(html.indexOf('Fork boundary')).toBeLessThan(html.indexOf('New followup'))
   }
-})
+)
