@@ -35,6 +35,7 @@ import {
   type ResolvedAgentBackend
 } from '../agent-framework'
 import * as runtimeComposition from '../acp/runtime-composition'
+import * as openCodePreparation from './opencode-runtime-preparation'
 import { createDelegateExecutionBackendLease } from './execution-backend-lease'
 import {
   createProductionDelegatedFrameworkRuntime,
@@ -190,6 +191,16 @@ describe('production delegated framework runtime bridge', () => {
   ] as const)(
     'prepares bound Skills before %s starts and requires tree shutdown to remove them (reaped: %s)',
     async (frameworkId, reaped) => {
+      const prepareOpenCode = openCodePreparation.prepareOpenCodeRuntime
+      let releasePort: (() => void) | undefined
+      const disposePort = vi.fn(() => releasePort?.())
+      const prepareSpy = vi
+        .spyOn(openCodePreparation, 'prepareOpenCodeRuntime')
+        .mockImplementation(async (...args) => {
+          const prepared = await prepareOpenCode(...args)
+          releasePort = prepared.dispose
+          return { ...prepared, dispose: disposePort }
+        })
       const dataRoot = await mkdtemp(join(tmpdir(), 'delegated-bound-skills-'))
       const bundle = join(dataRoot, 'bundle')
       await mkdir(join(bundle, 'research', 'references'), { recursive: true })
@@ -383,6 +394,9 @@ describe('production delegated framework runtime bridge', () => {
             await readFile(join(projection.skillsDirectory, 'research', 'SKILL.md'), 'utf8')
           ).toContain('DELEGATED_RESEARCH_DOCUMENT')
         }
+        if (frameworkId === 'opencode') {
+          expect(disposePort).toHaveBeenCalledTimes(reaped ? 1 : 0)
+        }
         expect(JSON.stringify(admitted)).toBe(original)
       } finally {
         finish()
@@ -390,6 +404,8 @@ describe('production delegated framework runtime bridge', () => {
         child?.kill()
         spawnSpy?.mockRestore()
         runtimeSpy.mockRestore()
+        prepareSpy.mockRestore()
+        releasePort?.()
         await settings.dispose()
         removeAnchoredTree(
           dirname(dataRoot),

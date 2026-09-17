@@ -281,11 +281,12 @@ const createProductionDelegatedFrameworkRuntime = (
               ? { artifactCurrentRunFile: input.artifactCurrentRunFile }
               : {}),
             async releaseResources() {
-              openCodeRuntime?.dispose()
               preparedAttempts.delete(input.attemptId)
               if (releaseResolvedBackend) await releaseResolvedAgentBackendLeases(backend)
             },
             disposeResources() {
+              // Port ownership also outlives a possibly surviving or still-starting child.
+              openCodeRuntime?.dispose()
               // Skill projections are inside this owned tree. Do not run their path-based disposer
               // against files the child could have replaced with links.
               removeRuntimeHome()
