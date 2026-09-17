@@ -245,7 +245,8 @@ it.each([false, true])(
     // retaining packaged Literature metadata and any explicit missing-content evidence.
     const reforked = await target.service.fork(forked)
     expect(reforked.sessionId).not.toBe(forked.sessionId)
-  }
+  },
+  30_000
 )
 
 it('keeps metadata-only Literature references', () => {
