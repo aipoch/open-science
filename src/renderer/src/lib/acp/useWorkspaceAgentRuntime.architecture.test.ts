@@ -38,6 +38,8 @@ import {
   type TypeLiteralNode
 } from 'typescript'
 import { describe, expect, it } from 'vitest'
+
+import { loadModuleImpactManifest } from '../../../../../scripts/ci/load-module-impact.mjs'
 const rendererRoot = resolve(__dirname, '../..')
 const facadePath = resolve(__dirname, 'useWorkspaceAgentRuntime.ts')
 const manifestPath = resolve(__dirname, '../../../../../scripts/ci/module-impact.json')
@@ -848,18 +850,7 @@ describe('workspace runtime architecture', () => {
     ])
   })
   it('keeps the module-impact owner and test closure complete', () => {
-    const manifest = JSON.parse(readSource(manifestPath)) as {
-      modules: {
-        workspace_runtime: {
-          ownerPaths: string[]
-          interfacePaths: string[]
-          consumerModules: string[]
-          testFiles: { owner: string[] }
-          capabilityOverlays: string[]
-          fallbackCapability: string
-        }
-      }
-    }
+    const manifest = loadModuleImpactManifest(manifestPath)
     const workspaceRuntime = manifest.modules.workspace_runtime
     expect(workspaceRuntime.ownerPaths).toEqual([
       'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.ts',

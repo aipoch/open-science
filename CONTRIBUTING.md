@@ -384,8 +384,10 @@ CI workflows, local actions, CI scripts, Dependabot configuration and CODEOWNERS
 of editing individual usernames in the file. The team must be visible and have explicit repository
 write access. The main ruleset requires approval from one owner other than the PR author and
 dismisses stale approvals after new commits. Ordinary application files have no CODEOWNERS entry.
-The exact `scripts/ci/module-impact.json` registration file is exempt from owner approval; other
-CI scripts and manifests remain protected. New modules and additive ownership/test/consumer
+The `scripts/ci/module-impact.json` registration file and JSON records directly under
+`scripts/ci/module-impact/` are exempt from owner approval; other CI scripts and manifests remain
+protected. CI Integrity rejects invalid filenames, nested records, nonregular files and mixed
+inline/sharded layouts. New modules and additive ownership/test/consumer
 registrations can enter the normal merge queue after required checks pass, without a bypass.
 
 Trusted-base CI Integrity validates candidate registration data in both PRs and merge groups.
@@ -412,6 +414,15 @@ including owner, contract and consumer test evidence. Consumer-test membership d
 ownership. New unregistered files and ownership regressions block admission; renames must register
 their new paths. Candidate manifests are read as data by trusted base code, against the Git merge
 base. E2E and CI scripts retain their existing routing and integrity checks.
+
+The registration reader also supports a metadata-only `module-impact.json` containing
+`{"schemaVersion": 1}` plus one module object per `module-impact/<module-id>.json` file.
+The filename supplies the module ID; no shared index or committed aggregate is required.
+Use `loadModuleImpactManifest` from `scripts/ci/load-module-impact.mjs` in tooling and tests
+instead of reading the root JSON directly. The assembled manifest and validation rules are the
+same for both layouts. Do not mix inline modules and shards. The current registration remains
+inline until this reader reaches the trusted default branch; a subsequent PR can then move the
+records without bypassing trusted-base CI. The reader retains old-format Git history support.
 
 The historical inventory is complete. Run `node scripts/ci/audit-module-ownership.mjs` (or `--json`)
 to check every tracked file in these roots, including files untouched by a PR. The inventory test

@@ -1,6 +1,11 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 
 import { execFileSync } from 'node:child_process'
+import {
+  moduleImpactRegistrationPath,
+  isModuleImpactRegistrationPath,
+  loadModuleImpactManifestAtRevision
+} from './load-module-impact.mjs'
 import { readFileSync } from 'node:fs'
 import { isDeepStrictEqual } from 'node:util'
 import {
@@ -12,7 +17,7 @@ import { createAffectedTestPlan } from './module-test-impact.mjs'
 import { isModuleOwnershipPath } from './module-ownership-paths.mjs'
 import { validateModuleImpactManifest } from './validate-module-impact.mjs'
 
-const manifestPath = 'scripts/ci/module-impact.json'
+const manifestPath = moduleImpactRegistrationPath
 const globalRoots = new Set(
   JSON.parse(readFileSync(changeImpactManifestPath, 'utf8'))
     .rules.filter((rule) => rule.role === 'global' || rule.mode === 'full')
@@ -142,7 +147,9 @@ export function checkModuleOwnership({
   const after = new Set(headFiles)
   validateModuleImpactManifest(headManifest, { pathExists: (path) => after.has(path) })
   const changed = new Set(changes.map(({ path }) => path))
-  const manifestChanged = changed.has(manifestPath)
+  const manifestChanged = changes.some(({ path, previousPath }) =>
+    [path, previousPath].filter(Boolean).some(isModuleImpactRegistrationPath)
+  )
   const violations = registrationViolations(baseManifest, headManifest, after)
   const legacyGaps = []
   for (const path of headFiles.filter(isModuleOwnershipPath)) {
@@ -176,12 +183,15 @@ export function moduleOwnershipFromRevisions(base, head, { cwd = process.cwd() }
   const baseFiles = files(mergeBase)
   const headFiles = files(head)
   // Repositories predating the manifest can bootstrap it; never allow its removal.
-  if (!baseFiles.includes(manifestPath) && !headFiles.includes(manifestPath)) {
+  if (
+    !baseFiles.some(isModuleImpactRegistrationPath) &&
+    !headFiles.some(isModuleImpactRegistrationPath)
+  ) {
     return { ok: true, violations: [], legacyGaps: [] }
   }
-  const headManifest = JSON.parse(git('show', `${head}:${manifestPath}`))
-  const baseManifest = baseFiles.includes(manifestPath)
-    ? JSON.parse(git('show', `${mergeBase}:${manifestPath}`))
+  const headManifest = loadModuleImpactManifestAtRevision(head, { cwd })
+  const baseManifest = baseFiles.some(isModuleImpactRegistrationPath)
+    ? loadModuleImpactManifestAtRevision(mergeBase, { cwd })
     : headManifest
   return checkModuleOwnership({
     baseManifest,

@@ -104,17 +104,21 @@ describe('CI Integrity workflow', () => {
 })
 
 describe('module registration approval boundary', () => {
-  it.each(['pull_request', 'merge_group'])(
-    'retains full portable fallback for %s registration',
-    (event) => {
-      const changes = [{ path: 'scripts/ci/module-impact.json', status: 'modified' }]
-      const plan = platformExecutionPlan(classifyChanges(changes), changes, event)
-      expect(plan.mode).toBe('full')
-      expect(plan.bundles).toContain('unit')
-    }
-  )
+  it.each(
+    ['pull_request', 'merge_group'].flatMap((event) =>
+      ['scripts/ci/module-impact.json', 'scripts/ci/module-impact/sample.json'].map((path) => ({
+        event,
+        path
+      }))
+    )
+  )('retains full portable fallback for $event registration at $path', ({ event, path }) => {
+    const changes = [{ path, status: 'modified' }]
+    const plan = platformExecutionPlan(classifyChanges(changes), changes, event)
+    expect(plan.mode).toBe('full')
+    expect(plan.bundles).toContain('unit')
+  })
 
-  it('exempts only the exact registration data file after the CI script owner rule', () => {
+  it('exempts only registration JSON after the CI script owner rule', () => {
     const entries = readFileSync(join(process.cwd(), '.github/CODEOWNERS'), 'utf8')
       .split('\n')
       .map((line) => line.trim())
@@ -126,7 +130,8 @@ describe('module registration approval boundary', () => {
       '/.github/actions/ @aipoch/ci-maintainers',
       '/.github/dependabot.yml @aipoch/ci-maintainers',
       '/scripts/ci/ @aipoch/ci-maintainers',
-      '/scripts/ci/module-impact.json'
+      '/scripts/ci/module-impact.json',
+      '/scripts/ci/module-impact/*.json'
     ])
   })
 })

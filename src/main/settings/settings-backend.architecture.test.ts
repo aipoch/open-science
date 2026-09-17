@@ -33,6 +33,8 @@ import {
 } from 'typescript'
 import { describe, expect, it } from 'vitest'
 
+import { loadModuleImpactManifest } from '../../../scripts/ci/load-module-impact.mjs'
+
 import {
   listProductionSources,
   readProductionSource
@@ -240,20 +242,6 @@ const stringSetValues = (path: string, variableName: string): string[] => {
     if (!isStringLiteralLike(element)) throw new Error(`${variableName} contains a non-string`)
     return element.text
   })
-}
-
-type ModuleImpactManifest = {
-  modules: Record<
-    string,
-    {
-      ownerPaths: string[]
-      interfacePaths: string[]
-      consumerModules: string[]
-      testFiles: { owner: string[]; contract: string[]; consumer: string[] }
-      capabilityOverlays: string[]
-      fallbackCapability: string
-    }
-  >
 }
 
 const productionSourcePaths = productionSources()
@@ -823,7 +811,7 @@ describe('Settings backend ownership architecture', () => {
   })
 
   it('locks dependency-aware impact owners and cross-surface evidence', () => {
-    const manifest = JSON.parse(readSource(manifestPath)) as ModuleImpactManifest
+    const manifest = loadModuleImpactManifest(manifestPath)
     expect(manifest.modules.settings_repository.ownerPaths).toEqual([
       'src/main/settings/repository.ts',
       'src/main/settings/record-codec.ts',

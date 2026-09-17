@@ -19,6 +19,8 @@ import {
 
 import { describe, expect, it } from 'vitest'
 
+import { loadModuleImpactManifest } from '../../../../../scripts/ci/load-module-impact.mjs'
+
 const workspaceDirectory = __dirname
 const repositoryRoot = resolve(workspaceDirectory, '../../../../..')
 const rendererRoot = resolve(workspaceDirectory, '../..')
@@ -309,9 +311,7 @@ describe('workspace page architecture', () => {
   })
 
   it('registers the complete owner boundary and this certification test', () => {
-    const manifest = JSON.parse(readSource(manifestPath)) as {
-      modules: { workspace_page: { ownerPaths: string[]; testFiles: { owner: string[] } } }
-    }
+    const manifest = loadModuleImpactManifest(manifestPath)
     const workspacePage = manifest.modules.workspace_page
 
     for (const ownerPath of Object.values(ownerPaths)) {

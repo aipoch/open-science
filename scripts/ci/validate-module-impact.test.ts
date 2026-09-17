@@ -1,12 +1,14 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
+import { loadModuleImpactManifest } from './load-module-impact.mjs'
+
 import { validateModuleImpactManifest } from './validate-module-impact.mjs'
 
 const readManifest = (): ReturnType<JSON['parse']> =>
-  JSON.parse(readFileSync(resolve('scripts/ci/module-impact.json'), 'utf8'))
+  loadModuleImpactManifest(resolve('scripts/ci/module-impact.json'))
 
 describe('module ownership and test impact manifest', () => {
   it.each(['', '   ', false, 123])('rejects an invalid full validation reason: %s', (reason) => {

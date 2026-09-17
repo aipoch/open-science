@@ -26,6 +26,8 @@ import {
 } from 'typescript'
 import { describe, expect, it } from 'vitest'
 
+import { loadModuleImpactManifest } from '../../../scripts/ci/load-module-impact.mjs'
+
 import { RENDERER_CONTRACT_CATALOG } from '../../shared/renderer-contract-catalog'
 
 const projectRoot = resolve(__dirname, '../../..')
@@ -557,16 +559,7 @@ describe('Compute service architecture', () => {
   })
 
   it('registers the complete facade, owner and cross-surface certification boundary', () => {
-    const manifest = JSON.parse(readSource(manifestPath)) as {
-      modules: {
-        compute_service: {
-          ownerPaths: string[]
-          interfacePaths: string[]
-          consumerModules: string[]
-          testFiles: { owner: string[]; contract: string[]; consumer: string[] }
-        }
-      }
-    }
+    const manifest = loadModuleImpactManifest(manifestPath)
     const computeService = manifest.modules.compute_service
 
     expect(computeService.ownerPaths).toEqual([

@@ -595,7 +595,9 @@ describe('pull request change classification', () => {
   it.each([
     '.github/workflows/pr-gate.yml',
     'scripts/ci/classify-pr-changes.mjs',
-    'scripts/ci/module-impact.json'
+    'scripts/ci/module-impact.json',
+    'scripts/ci/module-impact/sample.json',
+    'scripts/ci/load-module-impact.mjs'
   ])('does not let a workflow test hide the changed CI input %s', (path) => {
     const plan = classifyChanges([
       { path: 'scripts/ci/pr-gate-workflow.test.ts', status: 'modified' },

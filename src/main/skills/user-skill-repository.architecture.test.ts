@@ -27,6 +27,8 @@ import {
 } from 'typescript'
 import { describe, expect, it } from 'vitest'
 
+import { loadModuleImpactManifest } from '../../../scripts/ci/load-module-impact.mjs'
+
 import {
   listProductionSources,
   readProductionSource
@@ -153,20 +155,6 @@ const publicOperations = (): string[] => {
     .sort()
 }
 
-type ModuleImpactManifest = {
-  modules: Record<
-    string,
-    {
-      ownerPaths: string[]
-      interfacePaths: string[]
-      consumerModules: string[]
-      testFiles: { owner: string[]; contract: string[]; consumer: string[] }
-      capabilityOverlays: string[]
-      fallbackCapability: string
-    }
-  >
-}
-
 describe('User Skill repository architecture', () => {
   it('locks the compatibility export and operation inventories', () => {
     expect(exportInventory()).toEqual([
@@ -259,7 +247,7 @@ describe('User Skill repository architecture', () => {
   })
 
   it('declares complete ownership and downstream test impact', () => {
-    const manifest = JSON.parse(readSource(manifestPath)) as ModuleImpactManifest
+    const manifest = loadModuleImpactManifest(manifestPath)
     expect(manifest.modules.user_skills_repository).toEqual({
       ownerPaths: [
         'src/main/skills/user-skill-catalog-observer.ts',

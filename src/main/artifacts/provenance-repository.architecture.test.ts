@@ -26,6 +26,8 @@ import {
 } from 'typescript'
 import { describe, expect, it } from 'vitest'
 
+import { loadModuleImpactManifest } from '../../../scripts/ci/load-module-impact.mjs'
+
 const productionFiles = [
   'artifact-provenance-graph.ts',
   'artifact-reproducibility-execution.ts',
@@ -198,20 +200,6 @@ const topLevelValues = (sourceFile: SourceFile): string[] =>
       )
     )
     .sort()
-
-type ModuleImpactManifest = {
-  modules: Record<
-    string,
-    {
-      ownerPaths: string[]
-      interfacePaths: string[]
-      consumerModules: string[]
-      testFiles: { owner: string[]; contract: string[]; consumer: string[] }
-      capabilityOverlays: string[]
-      fallbackCapability: string
-    }
-  >
-}
 
 describe('Artifact Provenance repository architecture', () => {
   const facadeFile = sourceFileFor('provenance-repository.ts')
@@ -416,9 +404,9 @@ describe('Artifact Provenance repository architecture', () => {
 
   it('keeps owner, interface, consumer and Windows-sensitive impact coverage complete', () => {
     const repositoryRoot = resolve(__dirname, '..', '..', '..')
-    const manifest = JSON.parse(
-      readFileSync(resolve(repositoryRoot, 'scripts', 'ci', 'module-impact.json'), 'utf8')
-    ) as ModuleImpactManifest
+    const manifest = loadModuleImpactManifest(
+      resolve(repositoryRoot, 'scripts', 'ci', 'module-impact.json')
+    )
     const module = manifest.modules.artifact_provenance
 
     expect(module.ownerPaths).toEqual([

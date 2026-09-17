@@ -1,5 +1,13 @@
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -7,7 +15,7 @@ import { load } from 'js-yaml'
 import { describe, expect, it } from 'vitest'
 
 import { evaluatePrGate } from './evaluate-pr-gate.mjs'
-import { runModuleImpactAuthorityCli } from './module-impact-authority.mjs'
+import { loadModuleImpactManifest } from './load-module-impact.mjs'
 
 type Step = {
   'continue-on-error'?: boolean
@@ -184,10 +192,63 @@ describe('PR Gate workflow', () => {
     expect(result.stderr).toContain('unit_macos_related_merge ended with failure')
   })
 
-  it.each(['pull_request', 'merge_group', 'deleted', 'renamed', 'ci-edit', 'unrelated'])(
+  it('retains trusted legacy extraction when the base predates the optional reader', () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'pr-gate-legacy-')))
+    const git = (...args: string[]): string =>
+      execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim()
+    try {
+      mkdirSync(join(root, 'scripts/ci'), { recursive: true })
+      for (const file of [
+        'module-impact-authority.mjs',
+        'module-impact-shadow.mjs',
+        'module-test-impact.mjs',
+        'module-impact.json',
+        'validate-module-impact.mjs',
+        'classify-pr-changes.mjs',
+        'change-impact.json'
+      ])
+        writeFileSync(
+          join(root, 'scripts/ci', file),
+          file.endsWith('.json') ? '{}' : 'process.stdout.write("trusted legacy")\n'
+        )
+      git('init', '--quiet')
+      git('config', 'user.email', 'ci@example.com')
+      git('config', 'user.name', 'CI Test')
+      git('add', '.')
+      git('commit', '--quiet', '-m', 'legacy base')
+      const base = git('rev-parse', 'HEAD')
+      writeFileSync(
+        join(root, 'scripts/ci/load-module-impact.mjs'),
+        'throw new Error("candidate reader")'
+      )
+      const output = join(root, 'outputs')
+      const prepare = workflow.jobs.preflight.steps!.find(({ id }) => id === 'trusted_classifier')!
+      const result = spawnSync('bash', ['-c', prepare.run!], {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, BASE_SHA: base, RUNNER_TEMP: root, GITHUB_OUTPUT: output }
+      })
+      expect(result.status, result.stderr).toBe(0)
+      expect(readFileSync(output, 'utf8')).toContain('source=base')
+      expect(existsSync(join(root, 'pr-gate-trusted-classifier/load-module-impact.mjs'))).toBe(
+        false
+      )
+      expect(
+        execFileSync(
+          process.execPath,
+          [join(root, 'pr-gate-trusted-classifier/module-impact-authority.mjs')],
+          { encoding: 'utf8' }
+        )
+      ).toBe('trusted legacy')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it.each(['pull_request', 'merge_group', 'deleted', 'renamed', 'ci-edit', 'unrelated', 'sharded'])(
     'resolves actual Git history without mixing trusted policy and PR differences: %s',
     (scenario) => {
-      const root = mkdtempSync(join(tmpdir(), 'pr-gate-revisions-'))
+      const root = realpathSync(mkdtempSync(join(tmpdir(), 'pr-gate-revisions-')))
       const git = (...args: string[]): string =>
         execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim()
       const put = (path: string, contents: string): void => {
@@ -205,11 +266,19 @@ describe('PR Gate workflow', () => {
           'module-impact-shadow.mjs',
           'module-test-impact.mjs',
           'module-impact.json',
+          'load-module-impact.mjs',
           'validate-module-impact.mjs',
           'classify-pr-changes.mjs',
           'change-impact.json'
         ]) {
           put(`scripts/ci/${name}`, readFileSync(`scripts/ci/${name}`, 'utf8'))
+        }
+        if (scenario === 'sharded') {
+          const registered = loadModuleImpactManifest()
+          put('scripts/ci/module-impact.json', JSON.stringify({ schemaVersion: 1 }))
+          for (const [id, module] of Object.entries(registered.modules)) {
+            put(`scripts/ci/module-impact/${id}.json`, JSON.stringify(module))
+          }
         }
         put(source, 'export const value = 1\n')
         put(test, '// initial contract\n')
@@ -293,15 +362,33 @@ describe('PR Gate workflow', () => {
         expect(
           readFileSync(join(root, 'pr-gate-trusted-classifier/classify-pr-changes.mjs'), 'utf8')
         ).toContain('// current trusted policy')
-        const { plan } = runModuleImpactAuthorityCli(
-          ['--base', revisions.base, '--head', revisions.head],
+        expect(
+          loadModuleImpactManifest(join(root, 'pr-gate-trusted-classifier/module-impact.json'))
+        ).toEqual(loadModuleImpactManifest())
+        const classified = spawnSync(
+          process.execPath,
+          [
+            join(root, 'pr-gate-trusted-classifier/module-impact-authority.mjs'),
+            '--base',
+            revisions.base,
+            '--head',
+            revisions.head
+          ],
           {
-            EVENT_NAME: scenario === 'merge_group' ? 'merge_group' : 'pull_request',
-            PR_GATE_PLATFORM_POLICY: 'risk-v1'
-          },
-          { cwd: root, write: () => undefined }
+            cwd: root,
+            encoding: 'utf8',
+            env: {
+              ...process.env,
+              EVENT_NAME: scenario === 'merge_group' ? 'merge_group' : 'pull_request',
+              PR_GATE_PLATFORM_POLICY: 'risk-v1',
+              GITHUB_OUTPUT: '',
+              GITHUB_STEP_SUMMARY: ''
+            }
+          }
         )
-        if (scenario === 'pull_request') {
+        expect(classified.status, classified.stderr).toBe(0)
+        const plan = JSON.parse(classified.stdout)
+        if (scenario === 'pull_request' || scenario === 'sharded') {
           expect(git('diff', '--name-only', revisions.base, head).split('\n')).toEqual([
             test,
             source

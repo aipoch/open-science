@@ -4,6 +4,8 @@ import { relative, resolve, sep } from 'node:path'
 import ts from 'typescript'
 import { expect, it } from 'vitest'
 
+import { loadModuleImpactManifest } from './load-module-impact.mjs'
+
 // This guard supplements the explicit IPC/behavioral contracts in the manifest. It does not
 // claim that imports can discover event dispatch, filesystem protocols or dynamic strings.
 it('retains every statically reachable consumer test and declared runtime-loading edge', () => {
@@ -73,9 +75,7 @@ it('retains every statically reachable consumer test and declared runtime-loadin
       add(target, consumer)
     }
   }
-  const { modules } = JSON.parse(
-    readFileSync(resolve('scripts/ci/module-impact.json'), 'utf8')
-  ) as {
+  const { modules } = loadModuleImpactManifest(resolve('scripts/ci/module-impact.json')) as {
     modules: Record<
       string,
       {

@@ -5,6 +5,8 @@ import { resolve } from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
 
+import { loadModuleImpactManifest } from './load-module-impact.mjs'
+
 import {
   collectCodeGraphTests,
   createAffectedTestPlan,
@@ -765,7 +767,7 @@ describe('module test impact commands', () => {
 })
 
 it('uses only declared owner tests to recover colocated implementation ownership', () => {
-  const manifest = JSON.parse(readFileSync(resolve('scripts/ci/module-impact.json'), 'utf8'))
+  const manifest = loadModuleImpactManifest(resolve('scripts/ci/module-impact.json'))
   const graph = { status: 'unavailable-manifest-only', testFiles: [] }
   const module = manifest.modules.genomes_ensembl_connector
   const source = 'src/main/connectors/descriptors/new-known-descriptor.ts'

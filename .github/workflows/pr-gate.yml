@@ -149,6 +149,21 @@ jobs:
           for file in "${required[@]}"; do
             git show "${BASE_SHA}:${file}" > "$trusted_dir/${file##*/}"
           done
+          # Older trusted bases predate the loader; retain their original classifier.
+          if git cat-file -e "${BASE_SHA}:scripts/ci/load-module-impact.mjs" 2>/dev/null; then
+            git show "${BASE_SHA}:scripts/ci/load-module-impact.mjs" > "$trusted_dir/load-module-impact.mjs"
+            # Materialize the trusted manifest through its reader. Never execute candidate code.
+            BASE_SHA="$BASE_SHA" TRUSTED_DIR="$trusted_dir" node --input-type=module <<'NODE'
+          import { writeFileSync } from 'node:fs'
+          import { join } from 'node:path'
+          import { pathToFileURL } from 'node:url'
+          const { loadModuleImpactManifestAtRevision } = await import(
+            pathToFileURL(join(process.env.TRUSTED_DIR, 'load-module-impact.mjs')).href
+          )
+          const manifest = loadModuleImpactManifestAtRevision(process.env.BASE_SHA)
+          writeFileSync(join(process.env.TRUSTED_DIR, 'module-impact.json'), JSON.stringify(manifest))
+          NODE
+          fi
           echo "source=base" >> "$GITHUB_OUTPUT"
 
       - name: Classify change impact

@@ -2,6 +2,8 @@ import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
+
+import { loadModuleImpactManifest } from './load-module-impact.mjs'
 import { auditModuleOwnership } from './audit-module-ownership.mjs'
 import {
   createAffectedTestPlan,
@@ -10,7 +12,7 @@ import {
 } from './module-test-impact.mjs'
 import { isModuleOwnershipPath } from './module-ownership-paths.mjs'
 
-const manifest = JSON.parse(readFileSync(resolve('scripts/ci/module-impact.json'), 'utf8'))
+const manifest = loadModuleImpactManifest(resolve('scripts/ci/module-impact.json'))
 const files = execFileSync('git', ['ls-files', '-z'], { encoding: 'utf8' })
   .split('\0')
   .filter(Boolean)

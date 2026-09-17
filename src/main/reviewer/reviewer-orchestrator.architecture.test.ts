@@ -32,6 +32,8 @@ import {
 } from 'typescript'
 import { describe, expect, it } from 'vitest'
 
+import { loadModuleImpactManifest } from '../../../scripts/ci/load-module-impact.mjs'
+
 import {
   listProductionSources,
   readProductionSource
@@ -196,20 +198,6 @@ const prismaModelFields = (modelName: string): string[] => {
     .split(/\r?\n/)
     .map((line) => line.trim().replaceAll(/\s+/g, ' '))
     .filter((line) => line.length > 0 && !line.startsWith('//') && !line.startsWith('@@'))
-}
-
-type ModuleImpactManifest = {
-  modules: Record<
-    string,
-    {
-      ownerPaths: string[]
-      interfacePaths: string[]
-      consumerModules: string[]
-      testFiles: { owner: string[]; contract: string[]; consumer: string[] }
-      capabilityOverlays: string[]
-      fallbackCapability: string
-    }
-  >
 }
 
 describe('Reviewer orchestrator architecture', () => {
@@ -416,7 +404,7 @@ describe('Reviewer orchestrator architecture', () => {
   })
 
   it('routes interface changes through every cross-surface and downstream certification suite', () => {
-    const manifest = JSON.parse(readSource(manifestPath)) as ModuleImpactManifest
+    const manifest = loadModuleImpactManifest(manifestPath)
     const module = manifest.modules.reviewer_orchestrator
 
     expect(module).toEqual({

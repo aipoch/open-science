@@ -2,10 +2,9 @@
 
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { loadModuleImpactManifest } from './load-module-impact.mjs'
 
-const defaultManifest = JSON.parse(
-  readFileSync(new URL('./module-impact.json', import.meta.url), 'utf8')
-)
+const defaultManifest = loadModuleImpactManifest()
 const changeImpactManifest = JSON.parse(
   readFileSync(new URL('./change-impact.json', import.meta.url), 'utf8')
 )

@@ -50,6 +50,8 @@ import {
 } from 'typescript'
 import { describe, expect, it } from 'vitest'
 
+import { loadModuleImpactManifest } from '../../../scripts/ci/load-module-impact.mjs'
+
 const productionFiles = [
   'coordinator.ts',
   'delegated-question-owner.ts',
@@ -398,20 +400,6 @@ const concreteCoordinatorConsumerFiles = (): string[] =>
     })
     .map((path) => relative(projectRoot, path).split(sep).join('/'))
     .sort()
-
-type ModuleImpactManifest = {
-  modules: Record<
-    string,
-    {
-      ownerPaths: string[]
-      interfacePaths: string[]
-      consumerModules: string[]
-      testFiles: { owner: string[]; contract: string[]; consumer: string[] }
-      capabilityOverlays: string[]
-      fallbackCapability: string
-    }
-  >
-}
 
 describe('Session persistence coordinator architecture', () => {
   const facadeFile = sourceFileFor('coordinator.ts')
@@ -1120,9 +1108,7 @@ describe('Session persistence coordinator architecture', () => {
   })
 
   it('keeps the module-impact manifest closed over owners and certification tests', () => {
-    const manifest = JSON.parse(
-      readFileSync(resolve(projectRoot, 'scripts/ci/module-impact.json'), 'utf8')
-    ) as ModuleImpactManifest
+    const manifest = loadModuleImpactManifest(resolve(projectRoot, 'scripts/ci/module-impact.json'))
     const sessionPersistence = manifest.modules.session_persistence
 
     expect(sessionPersistence.ownerPaths).toEqual([

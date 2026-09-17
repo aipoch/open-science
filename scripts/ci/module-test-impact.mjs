@@ -1,16 +1,15 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { classifyChanges, parseNameStatus } from './classify-pr-changes.mjs'
+import { loadModuleImpactManifest } from './load-module-impact.mjs'
 import { validateModuleImpactManifest } from './validate-module-impact.mjs'
 
-const defaultManifest = JSON.parse(
-  readFileSync(new URL('./module-impact.json', import.meta.url), 'utf8')
-)
+const defaultManifest = loadModuleImpactManifest()
 const testKinds = ['owner', 'contract', 'consumer']
 
 function sorted(values) {
