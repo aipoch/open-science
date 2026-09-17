@@ -9,11 +9,8 @@ vi.mock('./credential-identity/bootstrap', () => ({
 }))
 vi.mock('./storage/electron-profile', () => ({
   resolveBootstrapConfigRoot: () => '/isolated-test',
-  resolveElectronProfile: () => '/isolated-test/profile',
-  profileHasHistory: () => false,
-  pinFreshApplicationLocations: (...args: unknown[]) => fixture.pinLocations(...args)
+  resolveElectronProfile: (...args: unknown[]) => fixture.resolveProfile(...args)
 }))
-vi.mock('./storage/location-evidence', () => ({ directoryHasFiles: () => false }))
 vi.mock('./storage/initialize-location', () => ({
   prepareApplicationLocations: async () => {
     await fixture.prepareLocations()
@@ -120,7 +117,10 @@ const fixture = vi.hoisted(() => {
       throw new Error('Unexpected native process in startup fixture')
     }),
     validateCredentials: vi.fn(),
-    pinLocations: vi.fn(),
+    resolveProfile: vi.fn((...args: unknown[]) => {
+      void args
+      return '/isolated-test/profile'
+    }),
     bundles: new Set<string>(),
     renameBundle: vi.fn((...args: unknown[]) => {
       void args
@@ -392,7 +392,7 @@ beforeEach(() => {
   fixture.selectCredentialIdentity.mockClear()
   fixture.prepareCredentialValidation.mockClear()
   fixture.validateCredentials.mockClear()
-  fixture.pinLocations.mockReset()
+  fixture.resolveProfile.mockReset().mockReturnValue('/isolated-test/profile')
   fixture.prepareLocations.mockReset().mockResolvedValue()
   fixture.electron.app.requestSingleInstanceLock.mockReset().mockReturnValue(true)
   fixture.electron.app.isPackaged = true
@@ -695,20 +695,42 @@ it('reports each IPC cleanup failure and still attempts registry disposal on lif
 it.each(['Open Science.app', 'Open-Science.app'])(
   'a losing second instance launched from %s shares the profile and never initializes writers',
   async (name) => {
-    vi.stubGlobal(
-      'process',
-      Object.defineProperty(Object.create(process), 'execPath', {
-        value: `/virtual/Applications/${name}/Contents/MacOS/Open-Science`
+    const { mkdtemp, mkdir, rm } = await import('node:fs/promises')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const root = await mkdtemp(join(tmpdir(), 'profile-lock-'))
+    const legacy = join(root, 'Open Science')
+    await mkdir(legacy)
+    const actual = await vi.importActual<typeof import('./storage/electron-profile')>(
+      './storage/electron-profile'
+    )
+    fixture.resolveProfile.mockImplementationOnce(() =>
+      actual.resolveElectronProfile({
+        appData: root,
+        configRoot: join(root, 'config'),
+        packaged: true,
+        env: {}
       })
     )
-    fixture.electron.app.requestSingleInstanceLock.mockReturnValue(false)
-    await import('./index')
-    expect(fixture.electron.app.setPath).toHaveBeenCalledWith('userData', '/isolated-test/profile')
-    expect(fixture.electron.app.quit).toHaveBeenCalledOnce()
-    expect(fixture.pinLocations).not.toHaveBeenCalled()
-    expect(fixture.prepareLocations).not.toHaveBeenCalled()
-    expect(fixture.electron.app.setAppLogsPath).not.toHaveBeenCalled()
-    expect(fixture.initializeDiagnostics).not.toHaveBeenCalled()
+    try {
+      vi.stubGlobal(
+        'process',
+        Object.defineProperty(Object.create(process), 'execPath', {
+          value: `/virtual/Applications/${name}/Contents/MacOS/Open-Science`
+        })
+      )
+      fixture.electron.app.requestSingleInstanceLock.mockReturnValue(false)
+      await import('./index')
+      expect(fixture.electron.app.setPath).toHaveBeenCalledWith('userData', legacy)
+      expect(fixture.electron.app.quit).toHaveBeenCalledOnce()
+      expect(fixture.prepareLocations).not.toHaveBeenCalled()
+      expect(fixture.electron.app.setAppLogsPath).not.toHaveBeenCalled()
+      expect(fixture.initializeDiagnostics).not.toHaveBeenCalled()
+      expect(fixture.prepareCredentialValidation).not.toHaveBeenCalled()
+      expect(fixture.validateCredentials).not.toHaveBeenCalled()
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   }
 )
 
@@ -730,10 +752,10 @@ it.each([false, true])(
   }
 )
 
-it('forwards second-instance arguments received during synchronous location pinning', async () => {
+it('forwards second-instance arguments received during synchronous credential preflight', async () => {
   fixture.failAt = 'none'
   const argv = ['electron', 'open-science', '--serve', '--port=44123']
-  fixture.pinLocations.mockImplementation(() => {
+  fixture.prepareCredentialValidation.mockImplementationOnce(() => {
     const listener = fixture.electron.app.on.mock.calls.find(
       ([event]) => event === 'second-instance'
     )![1]
@@ -787,7 +809,6 @@ it.each([
       expect(fixture.electron.dialog.showErrorBox.mock.calls[0][1]).toMatch(/restore|recover/i)
       expect(fixture.configureDesktop).not.toHaveBeenCalled()
       expect(fixture.initializeDiagnostics).not.toHaveBeenCalled()
-      expect(fixture.pinLocations).not.toHaveBeenCalled()
       expect(fixture.validateCredentials).not.toHaveBeenCalled()
       expect(fixture.startupFailure).not.toHaveBeenCalled()
       if (contents !== null) expect(await readFile(path, 'utf8')).toBe(contents)
@@ -807,7 +828,7 @@ it('selects and validates the credential identity before any settings writer', a
     fixture.electron.app.setPath.mock.invocationCallOrder[0]
   )
   expect(fixture.prepareCredentialValidation.mock.invocationCallOrder[0]).toBeLessThan(
-    fixture.pinLocations.mock.invocationCallOrder[0]
+    fixture.prepareLocations.mock.invocationCallOrder[0]
   )
   expect(fixture.validateCredentials.mock.invocationCallOrder[0]).toBeLessThan(
     fixture.prepareLocations.mock.invocationCallOrder[0]
@@ -851,7 +872,6 @@ it('stops synchronously on a failed credential preflight before Electron ready o
     await import('./index')
     await fixture.exited
     expect(readiness).not.toHaveBeenCalled()
-    expect(fixture.pinLocations).not.toHaveBeenCalled()
     expect(fixture.prepareLocations).not.toHaveBeenCalled()
     expect(fixture.electron.dialog.showErrorBox).toHaveBeenCalledWith(
       'Open-Science',
@@ -930,7 +950,6 @@ it.each([
     await import('./index')
     if (scenario === 'second instance') {
       await vi.waitFor(() => expect(fixture.electron.app.quit).toHaveBeenCalled())
-      expect(fixture.pinLocations).not.toHaveBeenCalled()
       expect(fixture.prepareCredentialValidation).not.toHaveBeenCalled()
       expect(cipher.isEncryptionAvailable).not.toHaveBeenCalled()
     } else {
@@ -950,7 +969,6 @@ it.each([
         expect(fixture.prepareLocations).not.toHaveBeenCalled()
         expect(fixture.configureDesktop).not.toHaveBeenCalled()
         if (['missing key', 'locked'].includes(scenario)) {
-          expect(fixture.pinLocations).not.toHaveBeenCalled()
           expect(cipher.isEncryptionAvailable).not.toHaveBeenCalled()
         }
       }
@@ -980,7 +998,6 @@ it('prints credential failure details before a native recovery dialog can be sho
       stack: expect.stringContaining('CredentialIdentityError')
     })
   )
-  expect(fixture.pinLocations).not.toHaveBeenCalled()
 })
 
 it('redacts secrets in detailed startup errors and identifies their phase', async () => {
@@ -1096,7 +1113,6 @@ it.each([
     )
     expect(JSON.parse(line).data.probes[1]).toMatchObject({ reason, osStatus })
     expect(line).not.toContain('private-native-secret')
-    expect(fixture.pinLocations).not.toHaveBeenCalled()
     expect(fixture.prepareCredentialValidation).toHaveBeenCalledOnce()
     readInventory.mockRestore()
   }
@@ -1185,7 +1201,6 @@ it.each(['access-blocked', 'error', 'unsupported'] as const)(
     )
     expect(JSON.parse(line).data.probes[1]).toMatchObject({ reason, osStatus })
     expect(line).not.toContain('private-native-secret')
-    expect(fixture.pinLocations).not.toHaveBeenCalled()
     expect(fixture.prepareLocations).not.toHaveBeenCalled()
     expect(fixture.configureDesktop).not.toHaveBeenCalled()
     expect(fixture.prepareCredentialValidation).toHaveBeenCalledOnce()

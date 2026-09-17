@@ -1,64 +1,12 @@
 import { existsSync, statSync } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
-import { join } from 'node:path'
-import {
-  hasDataRootContent,
-  initDataRoot,
-  resolveConfigRoot,
-  resolveDataRoot
-} from '../storage-root'
+import { hasDataRootContent, initDataRoot, resolveDataRoot } from '../storage-root'
 import { SettingsDocumentStore } from '../settings/document-store'
 import { SettingsRepository } from '../settings/repository'
-import {
-  readElectronProfileRecord,
-  validateElectronProfileLocation,
-  writeElectronProfileRecord
-} from './electron-profile'
 
-// All startup writers share the repository returned by prepareApplicationLocations. IPC keeps this
-// idempotent check as a second defense, including resumption of an interrupted first-run commit.
-export const initializeDataLocation = async (
-  repository: SettingsRepository,
-  existingInstallation?: boolean
-): Promise<void> => {
-  const settings = await repository.getSettings()
-  const record = readElectronProfileRecord(resolveConfigRoot())
-  const pending = record?.bootstrap
-  assertDataLocationRecorded(settings.dataRoot, record, resolveConfigRoot())
-  if (pending && settings.dataRoot && settings.dataRoot !== pending.dataRoot)
-    throw new Error(
-      'The pending data location differs from settings.dataRoot. Restore the intended location before restarting.'
-    )
-  initDataRoot(settings.dataRoot ?? pending?.dataRoot, existingInstallation)
-  if (!settings.dataRoot) {
-    const root = resolveDataRoot()
-    const fresh = pending?.createDataRoot ?? !hasDataRootContent(root)
-    if (fresh) await mkdir(root, { recursive: true })
-    else if (!existsSync(root)) throw new Error(`The saved data location is missing: ${root}`)
-    await repository.pinInitialDataRoot(root, fresh)
-  }
-}
-
-// A completed profile record is written only after settings pinned the chosen data root. If that
-// pointer is now missing, even a unique default containing research may just be an obsolete copy.
-const assertDataLocationRecorded = (
-  dataRoot: string | undefined,
-  record: ReturnType<typeof readElectronProfileRecord>,
-  configRoot: string
-): void => {
-  if (!dataRoot && record && !record.bootstrap)
-    throw new Error(
-      `The completed data location selection is missing from ${join(configRoot, 'settings.json')}. Recover the original settings or restore its verified dataRoot before restarting. Existing research copies cannot identify the current location.`
-    )
-}
-
-export const prepareApplicationLocations = async (options: {
-  configRoot: string
-  profilePath: string
-  existingInstallation: boolean
-}): Promise<{ settingsStore: SettingsDocumentStore; repository: SettingsRepository }> => {
-  const settingsStore = new SettingsDocumentStore(options.configRoot)
-  const repository = new SettingsRepository(settingsStore)
+// Settings is the sole saved location and onboarding state. Reuse the same document owner for
+// locale/IPC writes, and pin a default only when no dataRoot has been saved yet.
+export const initializeDataLocation = async (repository: SettingsRepository): Promise<void> => {
   const settings = await repository.getSettings()
   if (
     settings.dataRoot &&
@@ -67,31 +15,20 @@ export const prepareApplicationLocations = async (options: {
     throw new Error(
       `The saved data location is missing or is not a directory: ${settings.dataRoot}. Reconnect it before restarting.`
     )
-  let record = validateElectronProfileLocation(options.configRoot, options.profilePath)
-  assertDataLocationRecorded(settings.dataRoot, record, options.configRoot)
-  if (record?.bootstrap && settings.dataRoot && settings.dataRoot !== record.bootstrap.dataRoot)
-    throw new Error(
-      'The pending data location differs from settings.dataRoot. Restore the intended location before restarting.'
-    )
-  if (!record?.bootstrap) {
-    initDataRoot(settings.dataRoot, options.existingInstallation)
-    const dataRoot = resolveDataRoot()
-    record = {
-      version: 1,
-      path: options.profilePath,
-      bootstrap: {
-        dataRoot,
-        createDataRoot: !settings.dataRoot && !hasDataRootContent(dataRoot),
-        createProfile: !existsSync(options.profilePath)
-      }
-    }
-    // One durable choice precedes all fresh profile/data directories and all application writers.
-    await writeElectronProfileRecord(options.configRoot, record)
+  initDataRoot(settings.dataRoot)
+  if (!settings.dataRoot) {
+    const root = resolveDataRoot()
+    const fresh = !hasDataRootContent(root)
+    await mkdir(root, { recursive: true })
+    await repository.pinInitialDataRoot(root, fresh)
   }
-  if (record.bootstrap?.createProfile) await mkdir(options.profilePath, { recursive: true })
-  if (!existsSync(options.profilePath) || !statSync(options.profilePath).isDirectory())
-    throw new Error(`The saved Electron profile location is missing: ${options.profilePath}`)
-  await initializeDataLocation(repository, options.existingInstallation)
-  await writeElectronProfileRecord(options.configRoot, { version: 1, path: options.profilePath })
+}
+
+export const prepareApplicationLocations = async (
+  configRoot: string
+): Promise<{ settingsStore: SettingsDocumentStore; repository: SettingsRepository }> => {
+  const settingsStore = new SettingsDocumentStore(configRoot)
+  const repository = new SettingsRepository(settingsStore)
+  await initializeDataLocation(repository)
   return { settingsStore, repository }
 }

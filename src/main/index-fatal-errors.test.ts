@@ -8,11 +8,8 @@ vi.mock('./credential-identity/bootstrap', () => ({
 }))
 vi.mock('./storage/electron-profile', () => ({
   resolveBootstrapConfigRoot: () => '/isolated-test',
-  resolveElectronProfile: () => '/isolated-test/profile',
-  profileHasHistory: () => false,
-  pinFreshApplicationLocations: vi.fn()
+  resolveElectronProfile: () => '/isolated-test/profile'
 }))
-vi.mock('./storage/location-evidence', () => ({ directoryHasFiles: () => false }))
 vi.mock('./storage/initialize-location', () => ({
   prepareApplicationLocations: async () => ({
     settingsStore: {},
@@ -103,7 +100,8 @@ vi.mock('./diagnostics/startup-storage-probe', () => ({
   }))
 }))
 
-vi.mock('./logger', () => ({
+vi.mock('./logger', async (importOriginal) => ({
+  errorLogFields: (await importOriginal<typeof import('./logger')>()).errorLogFields,
   createLogger: vi.fn(() => mocks.log),
   diagnosticErrorFields: vi.fn((error: unknown) => ({ error })),
   flushLogs: vi.fn(async () => undefined),

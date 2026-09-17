@@ -65,17 +65,12 @@ const dataRootForPicked = (picked: string): string => {
   return direct ? resolved : (candidates[0] ?? join(resolved, folder))
 }
 
-// A saved location is authoritative. Without one, only actual data identifies a prior location;
-// interrupted migration targets cannot become the live root by inference.
-const computeDefaultDataRoot = (existingInstallation?: boolean): string => {
+// A saved location is authoritative. Without one, retain main's in-place legacy layout fallback;
+// do not search other directories for a possible lost selection.
+const computeDefaultDataRoot = (): string => {
   const homeDefault = dataRootForParent(defaultDataParent())
   if (configuredDataRoot) return homeDefault
-  return selectDefaultDataRoot(
-    resolveConfigRoot(),
-    defaultDataParent(),
-    app.isPackaged,
-    existingInstallation
-  )
+  return selectDefaultDataRoot(resolveConfigRoot(), defaultDataParent(), app.isPackaged)
 }
 
 // Path equality that respects the platform filesystem: case-insensitive on Windows (NTFS paths are
@@ -101,13 +96,10 @@ const isPathInsideOrEqual = (parent: string, child: string): boolean => {
 let cachedDataRoot: string | undefined
 let configuredDataRoot: string | undefined
 
-const initDataRoot = (
-  settingsDataRoot: string | undefined,
-  existingInstallation?: boolean
-): void => {
+const initDataRoot = (settingsDataRoot: string | undefined): void => {
   cachedDataRoot = undefined
   configuredDataRoot = settingsDataRoot && settingsDataRoot.trim() ? settingsDataRoot : undefined
-  cachedDataRoot = configuredDataRoot ?? computeDefaultDataRoot(existingInstallation)
+  cachedDataRoot = configuredDataRoot ?? computeDefaultDataRoot()
 }
 
 // Before initDataRoot has run (early callers, tests), fall back to computeDefaultDataRoot()

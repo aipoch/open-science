@@ -3019,7 +3019,7 @@ it('keeps the one-time legacy move prompt after startup pins the config-root lay
   await mkdir(join(config, 'workspaces'), { recursive: true })
   await writeFile(join(config, 'workspaces/history.json'), 'legacy research')
   const repository = new SettingsRepository(config)
-  await initializeDataLocation(repository, true)
+  await initializeDataLocation(repository)
   expect((await repository.getSettings()).dataRoot).toBe(config)
   registerStorageIpcHandlers(
     fakeDeps({
@@ -3039,7 +3039,7 @@ it('keeps the one-time legacy move prompt after startup pins the config-root lay
     legacyDataMovePrompt: true
   })
   await invoke('storage:dismiss-legacy-move-prompt')
-  await initializeDataLocation(repository, true)
+  await initializeDataLocation(repository)
   await expect(invoke('storage:get-status')).resolves.toMatchObject({ legacyDataMovePrompt: false })
   expect(await readFile(join(config, 'workspaces/history.json'), 'utf8')).toBe('legacy research')
 })
@@ -3207,9 +3207,9 @@ it.each(['fresh', 'moved', 'empty-legacy'] as const)(
         await writeFile(join(config, 'workspaces/history.json'), 'old research')
       await repository.setDataRoot({ dataRoot: state === 'moved' ? dataRoot : config })
     }
-    await initializeDataLocation(repository, state !== 'fresh')
+    await initializeDataLocation(repository)
     // Startup preparation pins settings, then the IPC owner reuses the completed selection.
-    await initializeDataLocation(repository, true)
+    await initializeDataLocation(repository)
     registerStorageIpcHandlers(
       fakeDeps({
         settingsService: {

@@ -242,27 +242,6 @@ function Get-ResetPlan([string]$Profile, [string]$AppData, [string]$ExplicitData
   $electronProfiles = @('Open-Science', 'Open Science') | ForEach-Object {
     Assert-ResetTarget (Join-Path $AppData $_) $Profile
   }
-  # The brand upgrade persists profile selection independently of settings. Never erase that
-  # pointer while leaving a custom or unresolved profile behind. Such layouts need manual review.
-  $profileRecord = Join-Path $config 'electron-profile.json'
-  if (Test-Path -LiteralPath ($profileRecord + '.bootstrap')) {
-    throw "Electron profile initialization is incomplete. Preserve and review: $profileRecord.bootstrap"
-  }
-  if (Test-Path -LiteralPath $profileRecord) {
-    try {
-      $file = Get-Item -LiteralPath $profileRecord -Force
-      if ($file.PSIsContainer -or $file.Length -gt 16MB -or
-          ($file.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Unsafe profile record.' }
-      $record = Get-Content -LiteralPath $profileRecord -Raw -Encoding UTF8 | ConvertFrom-Json
-      if ($record -isnot [pscustomobject] -or $record.version -ne 1 -or
-          $record.path -isnot [string] -or $record.PSObject.Properties['bootstrap']) {
-        throw 'Invalid or incomplete profile record.'
-      }
-      $recordedProfile = Assert-ResetTarget $record.path $Profile
-      if ($electronProfiles -notcontains $recordedProfile) { throw 'Custom profile requires manual review.' }
-    }
-    catch { throw "Cannot safely reset the saved Electron profile. Preserve and review: $profileRecord. $($_.Exception.Message)" }
-  }
   $settingsPath = Join-Path $config 'settings.json'
   $selected = $null
   if ($ExplicitDataRoot) {

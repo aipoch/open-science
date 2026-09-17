@@ -82,7 +82,7 @@ it('keeps standalone cache ownership checks identical to the installer owner', (
 })
 
 describe.skipIf(process.platform !== 'win32')('Windows data reset', () => {
-  it('includes both brand names and the completed profile record in a confirmed reset', () => {
+  it('includes both data and profile brand names in a confirmed reset', () => {
     const f = fixture()
     const brandedData = join(f.profile, 'Open-Science')
     const brandedProfile = join(f.appData, 'Open-Science')
@@ -91,10 +91,6 @@ describe.skipIf(process.platform !== 'win32')('Windows data reset', () => {
     writeFileSync(
       join(f.profile, '.open-science/settings.json'),
       JSON.stringify({ dataRoot: brandedData })
-    )
-    writeFileSync(
-      join(f.profile, '.open-science/electron-profile.json'),
-      JSON.stringify({ version: 1, path: brandedProfile })
     )
     const preview = success(`${plan(f)} $plan | ConvertTo-Json`)
     for (const path of [f.data, brandedData, brandedProfile, oldProfile]) {
@@ -121,28 +117,6 @@ describe.skipIf(process.platform !== 'win32')('Windows data reset', () => {
     expect(targets.map((target: { Path: string }) => target.Path)).toContain(custom)
     expect(existsSync(custom)).toBe(true)
   })
-
-  it.each(['corrupt', 'custom', 'pending', 'unsupported'])(
-    'preserves all data when the Electron profile record is %s',
-    (kind) => {
-      const f = fixture()
-      const path = join(f.profile, '.open-science/electron-profile.json')
-      const record = {
-        version: kind === 'unsupported' ? 2 : 1,
-        path: kind === 'custom' ? join(f.root, 'custom-profile') : join(f.appData, 'Open-Science')
-      }
-      const contents = kind === 'corrupt' ? '{invalid' : JSON.stringify(record)
-      writeFileSync(path, contents)
-      if (kind === 'pending') writeFileSync(path + '.bootstrap', JSON.stringify(record))
-      const result = run(
-        `${plan(f)} ${stopped} ${confirmed} Invoke-Reset $plan ${quote(f.profile)} 'fixture-user'`
-      )
-      expect(result.status).not.toBe(0)
-      expect(result.stderr).toContain('profile')
-      expect(readFileSync(path, 'utf8')).toBe(contents)
-      expect(existsSync(f.data)).toBe(true)
-    }
-  )
 
   it('discovers both working-cache parent names', () => {
     const f = fixture()

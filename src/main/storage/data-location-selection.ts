@@ -1,7 +1,6 @@
-import { readdirSync, realpathSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { MIGRATABLE_DATA_DIRS } from './data-directories'
-import { hasPendingMigrationMarker } from './migration-marker'
 import { directoryHasFiles, hasLegacyResearchData } from './location-evidence'
 export class DataLocationSelectionError extends Error {
   constructor(message: string) {
@@ -14,68 +13,18 @@ export class DataLocationSelectionError extends Error {
 // migrations intentionally leave it behind at their source.
 export const hasDataRootContent = (root: string): boolean =>
   [...MIGRATABLE_DATA_DIRS, 'runtime'].some((dir) => directoryHasFiles(join(root, dir)))
+// Retain main's pre-dataRoot layout: research lived directly in the configuration root.
+// Do not scan default/custom copies or derive a lost selection from profile state.
 export const selectDefaultDataRoot = (
   configRoot: string,
   parent: string,
-  packaged: boolean,
-  existingInstallation?: boolean
+  packaged: boolean
 ): string => {
-  // A cleanup journal may refer to a prepared or committed switch. Without settings there is no
-  // authoritative pointer to disambiguate those states, even if its source still contains data.
-  let entries: string[] = []
-  try {
-    entries = readdirSync(configRoot)
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-  }
-  if (
-    entries.some(
-      (name) => name === 'data-root-cleanup.json' || name.startsWith('data-root-cleanup.json.')
-    )
-  ) {
-    throw new DataLocationSelectionError(
-      `A data location migration needs recovery. Restore ${join(configRoot, 'settings.json')} with the verified current dataRoot before restarting. Preserve ${join(configRoot, 'data-root-cleanup.json')} for recovery. No new data location was created.`
-    )
-  }
   const folder = packaged ? 'Open-Science' : 'Open-Science-DEV'
   const legacyFolder = packaged ? 'OpenScience' : 'OpenScience-DEV'
-  const homeDefault = join(parent, folder)
-  const roots = [
-    ...new Set([
-      homeDefault,
-      join(parent, legacyFolder),
-      join(configRoot, folder),
-      join(configRoot, legacyFolder),
-      configRoot
-    ])
-  ]
-  const candidates = roots.filter(
-    (root) => !hasPendingMigrationMarker(root) && hasLegacyResearchData(root)
-  )
-  const unrecognized = roots.filter(
-    (root) =>
-      (root !== configRoot || hasDataRootContent(root)) &&
-      !hasPendingMigrationMarker(root) &&
-      !hasLegacyResearchData(root) &&
-      directoryHasFiles(root)
-  )
-  if (unrecognized.length)
-    throw new DataLocationSelectionError(
-      `Cannot verify existing data locations. Select or recover the original folder before restarting:\n${unrecognized.join('\n')}`
-    )
-  const physical = new Map(candidates.map((path) => [realpathSync(path), path]))
-  if (physical.size > 1)
-    throw new DataLocationSelectionError(
-      `Multiple data locations exist. Set dataRoot in ${join(configRoot, 'settings.json')} to the verified existing folder before restarting:\n${candidates.join('\n')}`
-    )
-  if (candidates.length) return candidates[0]
-  // Existing configuration without an identifiable location is a recovery case, not a fresh install.
-  if (
-    (existingInstallation ?? directoryHasFiles(configRoot)) ||
-    roots.some(hasPendingMigrationMarker)
-  )
-    throw new DataLocationSelectionError(
-      `The saved data location is missing. Set dataRoot in ${join(configRoot, 'settings.json')} to the verified existing folder before restarting. No new data location was created.`
-    )
-  return homeDefault
+  const inPlaceLegacy =
+    hasLegacyResearchData(configRoot) &&
+    !existsSync(join(configRoot, folder)) &&
+    !existsSync(join(configRoot, legacyFolder))
+  return inPlaceLegacy ? configRoot : join(parent, folder)
 }

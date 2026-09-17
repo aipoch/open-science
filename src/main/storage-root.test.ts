@@ -202,7 +202,7 @@ describe('computeDefaultDataRoot', () => {
       await writeFile(join(configRoot, marker, 'history.json'), '{}')
 
       if (['models', 'uploads'].includes(marker)) {
-        expect(() => computeDefaultDataRoot()).toThrow(/location|recover/i)
+        expect(computeDefaultDataRoot()).toBe(join(homeDir, 'Open-Science'))
       } else {
         expect(computeDefaultDataRoot()).toBe(configRoot)
       }

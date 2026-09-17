@@ -83,10 +83,9 @@ needed to release OS resources. Small shared cache-parent markers also remain.
   supply the actual `%USERPROFILE%\Open-Science` or legacy `%USERPROFILE%\OpenScience`. It does not recover corrupt settings or
   discover previously configured folders automatically.
 
-- **Electron profile selection is corrupt, incomplete, or custom:** preserve
-  `.open-science\electron-profile.json` and any `.bootstrap` file and request manual
-  review. The tool validates completed records for the two standard profile names;
-  it stops before deletion for other profile layouts, even with `-DataRoot`.
+- **Custom Electron profile:** the tool only includes the two standard profile directories.
+  Profiles selected with `OPEN_SCIENCE_USER_DATA` or derived from a configuration override
+  require manual review; it does not discover or delete arbitrary profiles.
 - **Unsafe path or ownership failure:** nothing is deleted during plan discovery.
   Drive/profile/system roots, network paths, nonstandard custom folder names, and
   target/ancestor junctions are refused. Do not rename folders or rewrite cache

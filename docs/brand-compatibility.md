@@ -24,28 +24,31 @@ the publisher's identity. This change introduces no certificate, trust-store or 
 ## Existing installations
 
 An absolute saved `dataRoot` stays authoritative, including custom paths containing an old brand.
-For a legacy installation that has never completed a recorded selection, startup examines the current and historical default roots and the original
-configuration root for actual research data, using the same legacy ownership evidence as manual
-adoption. Generic `models` and `uploads` contents alone cannot establish application ownership.
-Unrecorded symlinked directories or files are content to preserve, not ownership evidence; startup
-and manual adoption do not follow them to infer a legacy root. An authoritative saved location
-remains unchanged even when it contains links.
-Runtime alone is not evidence of the active data root:
-migration can leave it at the old location. Empty scaffolding does not identify an existing installation. A single verified location is recorded before locale, database, or application writers
-start. Uncommitted migration targets are never adopted by inference. Multiple candidates, unreadable
-locations, damaged settings, and lost pointers with remaining configuration require recovery. A pending
-migration cleanup journal also blocks inference until the original settings pointer is recovered. A
-verified initial bootstrap record can resume onboarding at its original location, including its runtime.
-A completed `electron-profile.json` proves that settings already pinned a location. If that settings
-pointer is missing, startup first reads its durable recovery records; it never infers the current
-root from a unique old default copy. Restore the verified settings selection before restarting.
+`settings.dataRoot` is the only saved research location. Startup retains main's fallback for
+pre-dataRoot installations with research directly in the configuration root; it does not search old
+or custom research copies to reconstruct a lost setting. Generic caches, runtime-only content and
+symlinks do not establish that legacy layout. Without a saved setting or that in-place layout, the
+normal new-brand default applies. There is no extra initialization state or lost-settings recovery
+record. Restore a settings backup to reuse a lost custom selection instead of relying on discovery.
 
-The Electron profile has a separate `electron-profile.json` selection in the configuration root.
-It retains the original physical profile, session cache, and log location. A missing recorded profile
-is never silently recreated, even when an environment override resolves to that same path. Losing the record while historical configuration remains requires
-restoring the original choice. The recovery dialog identifies the relevant file and location.
-Restore the original settings/profile record or set its absolute path to the verified existing
-folder; do not delete the remaining configuration to bypass recovery.
+`settings.onboardingCompletedAt` determines whether onboarding is required. Exiting midway keeps
+the saved data location and runtime; the next launch continues onboarding there. Completing onboarding
+updates the existing settings document, not a profile initialization record.
+
+Electron manages the actual profile directory. `OPEN_SCIENCE_USER_DATA` selects an explicit path;
+a configuration override without it uses `<configRoot>/electron-profile`. Otherwise an existing
+`Open Science` profile (or `Open Science (DEV)`) is reused, even when the new-name directory also
+exists; only a fresh installation uses `Open-Science` (or `Open-Science (DEV)`). Explicit paths must
+be absolute and cannot resolve through an unavailable link or non-directory. Path selection is
+read-only and does not inspect profile initialization state, create auxiliary records, move profiles,
+or clean up records left by earlier builds. A custom profile must continue to be selected through
+its explicit environment configuration. No historical profile selection can be recovered from
+an auxiliary record.
+
+Profile location and credential identity are independent. The credential probes, inventory,
+`verifyCredentialCiphertexts`, and actual-access failure guards remain in force; removing location
+records never authorizes discarding ciphertext, switching identities on failure or bypassing system
+authorization. Missing or invalid credential material can still stop startup.
 
 No brand upgrade relocates research data or rewrites database/session/attachment/runtime paths.
 Settings still supports an explicit, verified change of data location. "Use default location" passes
@@ -54,7 +57,7 @@ picking retains legacy/custom-folder adoption. A generic `models`, `uploads` or 
 does not establish ownership of the selected parent. Brand-named children with research content are
 resolved separately; an unbranded custom root needs an application workspace ownership receipt or
 an authoritative saved selection. Ambiguous or unverified content is preserved and requires explicit
-recovery, rather than being adopted or overwritten. Displayed paths are the real paths. The initial empty default is recorded separately so onboarding may still select an appropriate
+recovery, rather than being adopted or overwritten. Displayed paths are the real paths. The existing settings flag `dataRootIsInitialDefault` lets onboarding select an appropriate
 local drive, while later onboarding runs cannot replace a populated or missing saved root.
 Migration preparation rechecks the confirmed target after asynchronous validation before owner-verified
 cache cleanup. An `environment-inventory` directory name alone grants no deletion rights; unowned
@@ -95,12 +98,10 @@ cache cleanup uses the same ownership, canonical-root, and ACL checks. Existing 
 remain unchanged, including recovery of historical records without a stored workdir. Old activation
 files are sourced in place; two definitions with the same name require an explicit resolution.
 
-The first location selection is recorded synchronously under the single-instance lock, before native
-profile writers and logging can run. An interrupted `.bootstrap` record is consumed only when valid and consistent with the canonical record;
-completed records cannot recreate a missing data directory. Only known process-lock files are ignored
-when distinguishing an untouched profile from historical state. Conflicting or damaged profile records
-are preserved for recovery. Selecting a different completed profile requires an explicit
-`OPEN_SCIENCE_USER_DATA`; a config-root override alone cannot redirect a recorded profile.
+The single-instance lock is acquired before credential preflight, settings initialization and any
+application writer. Arguments received during startup are queued and forwarded after the lifecycle
+is ready. Two installed names do not authorize concurrent writes to a shared profile or data root;
+the development multi-instance switch is only for deliberately isolated instances.
 
 Invalid JSON, unreadable settings, invalid `dataRoot` and unsupported settings versions show a native
 startup error with the settings file, failure reason and recovery steps before renderer or file
@@ -121,7 +122,7 @@ app version; preserve the damaged file and recovery records. Startup never repla
   and file/protocol registration remain; startup does not scan or rewrite old shortcuts, taskbar pins,
   or implicit shell entries. There is no brand-specific shortcut retention/rename notification hook.
   The standalone, explicitly confirmed data-reset tool still recognizes both brand names for data,
-  profiles and runtime cache parents, and blocks deletion on incomplete or damaged profile selections.
+  profiles and runtime cache parents; custom Electron profile paths require manual review.
 - Linux retains package/desktop identifiers. New package metadata and launchers use the new brand.
   Startup does not rewrite user desktop-entry copies. Debian keeps main's normal CLI registration:
   install its own wrapper before removing the exact superseded executable alternative at the same
@@ -177,7 +178,7 @@ alternatives survive. CLI tests cover new-default discovery, refusal to automati
 mixed-name layouts, explicit bindings to those layouts, and preservation of coexisting bindings.
 
 Storage/profile regressions must continue to cover authoritative old/custom selections, fresh defaults,
-development/isolation precedence, missing or corrupt settings, missing profiles, ambiguous roots,
+development/isolation precedence, interrupted onboarding, corrupt settings, saved locations,
 untrusted generic directories/links, and target replacement during migration. These protections are
 independent of the removed system-entry repair. Migration remains a user-confirmed operation.
 

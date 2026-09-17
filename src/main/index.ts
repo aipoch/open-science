@@ -10,13 +10,7 @@ import { parseWebModeOptions } from './web-service/options'
 import { createRequire } from 'node:module'
 import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { directoryHasFiles } from './storage/location-evidence'
-import {
-  pinFreshApplicationLocations,
-  profileHasHistory,
-  resolveBootstrapConfigRoot,
-  resolveElectronProfile
-} from './storage/electron-profile'
+import { resolveBootstrapConfigRoot, resolveElectronProfile } from './storage/electron-profile'
 
 // Only lightweight, Electron-free bootstrap modules are imported statically here. The MCP server
 // modules (and their heavy SDK graph) remain lazy inside the matching execution branch.
@@ -212,8 +206,6 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
     configRoot,
     packaged: app.isPackaged
   })
-  // Capture before profile, logging, or locale bootstrap can create first-launch files.
-  const existingInstallation = directoryHasFiles(configRoot) || profileHasHistory(profilePath)
   app.setPath('userData', profilePath)
   app.setPath('sessionData', profilePath)
   const isolated = Boolean(
@@ -237,14 +229,6 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
   const validateCredentials = prepareCredentialValidation(credentialIdentity, {
     configRoot,
     profilePath
-  })
-  bootstrapPhase = 'pin-application-locations'
-  pinFreshApplicationLocations({
-    configRoot,
-    profilePath,
-    home: app.getPath('home'),
-    packaged: app.isPackaged,
-    existingInstallation
   })
   // A real secret-read phase may request OS authorization. It is not part of the silent probe.
   // No settings recovery, database migration, or BrowserWindow can run before it succeeds.
@@ -293,11 +277,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
   for (const path of packagePathsFromArgv(process.argv, process.cwd())) packageFiles.receive(path)
   const { prepareApplicationLocations } = await import('./storage/initialize-location')
   bootstrapPhase = 'initialize-application-locations'
-  const bootstrapLocations = await prepareApplicationLocations({
-    configRoot,
-    profilePath,
-    existingInstallation
-  })
+  const bootstrapLocations = await prepareApplicationLocations(configRoot)
   preparingLocations = false
   let bindSystemShutdownWindow = (window: InstanceType<typeof BrowserWindow>): void => {
     void window
@@ -492,7 +472,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       // mutation uses one serialization queue and one atomic-write implementation.
       const settingsStore = bootstrapLocations.settingsStore
       const startupSettingsRepository = bootstrapLocations.repository
-      await initializeDataLocation(startupSettingsRepository, existingInstallation)
+      await initializeDataLocation(startupSettingsRepository)
       const startupSettings = await startupSettingsRepository.getSettings()
       const localeOwner = new LocalePreferenceOwner(
         app.getPreferredSystemLanguages(),

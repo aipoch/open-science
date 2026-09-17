@@ -12,8 +12,7 @@ export const hasLegacyResearchData = (root: string): boolean => {
     throw error
   }
   return MIGRATABLE_DATA_DIRS.some(
-    (dir) =>
-      !['models', 'uploads'].includes(dir) && directoryHasFiles(join(root, dir), 0, new Set(), true)
+    (dir) => !['models', 'uploads'].includes(dir) && directoryHasFiles(join(root, dir), 0, true)
   )
 }
 
@@ -22,7 +21,6 @@ export const hasLegacyResearchData = (root: string): boolean => {
 export const directoryHasFiles = (
   root: string,
   depth = 0,
-  ignoredRootEntries: ReadonlySet<string> = new Set(),
   requireRegularFiles = false
 ): boolean => {
   if (depth > 128) throw new Error(`Cannot verify location: ${root}`)
@@ -32,16 +30,10 @@ export const directoryHasFiles = (
     if (!info.isDirectory()) return !requireRegularFiles && info.isFile()
     return readdirSync(root, { withFileTypes: true }).some(
       (entry) =>
-        !(depth === 0 && ignoredRootEntries.has(entry.name)) &&
         entry.name !== '.DS_Store' &&
         entry.name !== 'desktop.ini' &&
         (entry.isDirectory()
-          ? directoryHasFiles(
-              join(root, entry.name),
-              depth + 1,
-              ignoredRootEntries,
-              requireRegularFiles
-            )
+          ? directoryHasFiles(join(root, entry.name), depth + 1, requireRegularFiles)
           : !requireRegularFiles || entry.isFile())
     )
   } catch (error) {

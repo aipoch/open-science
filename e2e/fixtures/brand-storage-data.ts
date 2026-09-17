@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 export const prepareBrandStorageFixture = async (
@@ -20,12 +20,7 @@ export const prepareBrandStorageFixture = async (
         ? join(storageRoot, packaged ? 'OpenScience' : 'OpenScience-DEV')
         : join(testRoot, 'My OpenScience research')
     await rename(settings.dataRoot, next)
-    if (mode === 'legacy') {
-      delete settings.dataRoot
-      // This fixture predates the durable profile/location bootstrap record. Keeping a completed
-      // new-version record would correctly mean a lost selection, not a legacy upgrade.
-      await rm(join(storageRoot, 'electron-profile.json'), { force: true })
-    } else settings.dataRoot = next
+    settings.dataRoot = next
     delete settings.dataRootIsInitialDefault
   }
   delete settings.onboardingCompletedAt

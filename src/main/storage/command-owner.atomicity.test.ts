@@ -80,7 +80,7 @@ describe('storage command owner onboarding persistence', () => {
   })
 
   afterEach(async () => {
-    initDataRoot(undefined, false)
+    initDataRoot(undefined)
     await rm(currentParent, { recursive: true, force: true })
     await rm(targetParent, { recursive: true, force: true })
   })

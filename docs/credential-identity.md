@@ -21,6 +21,13 @@ renamed, moved or deleted, and system Keychain authorization is never bypassed.
 | Existing explicit Linux headless `--credential-store=file` mode  | Continue using that mode's existing semantics without OS credential access. This feature does not enable it automatically.                                                                                                                                                                                                                                                                |
 | macOS MAS                                                        | Metadata probing is unsupported: name selection may finish with existence unconfirmed, but existing-ciphertext and actual-access guards still block unsafe access.                                                                                                                                                                                                                        |
 
+Electron profile paths are selected separately from credential identities. Explicit task overrides
+remain authoritative; otherwise an existing old-name profile directory is reused and a fresh profile
+uses the new brand. Electron creates/manages that directory. No auxiliary location record or
+initialization state is required: settings owns `dataRoot` and `onboardingCompletedAt`. Removing those
+records does not remove the credential inventory/preflight below, or authorize regenerating keys
+for existing ciphertext. Old profile directories and leftover record files are not deleted.
+
 macOS identity selection branches only on `status === 'exists'`, in order:
 
 1. A confirmed new identity wins immediately; the legacy probe is skipped.
