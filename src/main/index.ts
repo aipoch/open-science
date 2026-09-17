@@ -35,7 +35,13 @@ import {
   initializeApplicationDiagnostics,
   reportApplicationStartupFailure
 } from './diagnostics/startup'
-import { createLogger, diagnosticErrorFields, flushLogs, writeFatalLogSync } from './logger'
+import {
+  createLogger,
+  diagnosticErrorFields,
+  errorLogFields,
+  flushLogs,
+  writeFatalLogSync
+} from './logger'
 import { MANAGED_PREVIEW_SCHEME } from './managed-preview-resources'
 import { OFFICE_PREVIEW_RUNTIME_SCHEME_CONFIG } from './office-preview/office-preview-runtime-protocol'
 import {
@@ -55,6 +61,7 @@ const bootstrapLog = createLogger('bootstrap')
 let credentialRecoveryPresented = false
 let electronInitializationStarted = false
 let preparingLocations = false
+let bootstrapPhase = 'electron-bootstrap'
 let startupDiagnostics: DiagnosticOperation | undefined
 let startupFlush: import('./diagnostics/flush').DiagnosticFlush = flushLogs
 
@@ -104,7 +111,14 @@ if (shouldRunArtifactMcpServer) {
     })
 } else {
   void startElectronApp(fileURLToPath(import.meta.url)).catch(async (error: unknown) => {
-    bootstrapLog.error('application startup failed', diagnosticErrorFields(error))
+    // Emit before native recovery UI: pre-ready failures may never reach a window or file sink.
+    // Reuse the bounded secret-redacting formatter, while retaining the credential reason code.
+    bootstrapLog.error('application startup failed', {
+      ...diagnosticErrorFields(error),
+      ...errorLogFields(error),
+      phase: bootstrapPhase,
+      ...(error instanceof CredentialIdentityError ? { recoveryReason: error.reason } : {})
+    })
     const { app, dialog } = createRequire(import.meta.url)('electron') as typeof import('electron')
     if (error instanceof CredentialIdentityError) {
       if (!credentialRecoveryPresented) {
@@ -171,8 +185,10 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
   // backend imports remain behind the lock.
   // Electron captures the OSCrypt identity immediately after the synchronous main entry. The
   // metadata probe must finish before the first await, profile initialization, or secret access.
+  bootstrapPhase = 'credential-store-mode'
   const webMode = parseWebModeOptions(process.argv)
   configureCredentialStore(process.argv, process.platform, webMode.headless)
+  bootstrapPhase = 'credential-identity'
   const credentialIdentity = selectStartupCredentialIdentity({
     platform: process.platform,
     packaged: app.isPackaged,
@@ -183,7 +199,9 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
   })
   app.setName(credentialIdentity.appName)
   preparingLocations = true
+  bootstrapPhase = 'configuration-root'
   const configRoot = resolveBootstrapConfigRoot(app.getPath('home'), app.isPackaged)
+  bootstrapPhase = 'electron-profile'
   const profilePath = resolveElectronProfile({
     appData: app.getPath('appData'),
     configRoot,
@@ -210,10 +228,12 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
     return
   }
   app.on('second-instance', (_event, argv, cwd) => relaySecondInstance(argv, cwd))
+  bootstrapPhase = 'credential-validation-preflight'
   const validateCredentials = prepareCredentialValidation(credentialIdentity, {
     configRoot,
     profilePath
   })
+  bootstrapPhase = 'pin-application-locations'
   pinFreshApplicationLocations({
     configRoot,
     profilePath,
@@ -224,8 +244,10 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
   // A real secret-read phase may request OS authorization. It is not part of the silent probe.
   // No settings recovery, database migration, or BrowserWindow can run before it succeeds.
   electronInitializationStarted = true
+  bootstrapPhase = 'electron-ready'
   await app.whenReady()
   app.setName(app.isPackaged ? APP_NAME : `${APP_NAME} (DEV)`)
+  bootstrapPhase = 'credential-ciphertext-validation'
   validateCredentials(safeStorage, (error) => {
     if (!credentialRecoveryPresented) {
       credentialRecoveryPresented = true
@@ -236,6 +258,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
     }
     app.exit(1)
   })
+  bootstrapPhase = 'application-initialization'
   app.setAppLogsPath(
     process.platform === 'darwin' && !isolated
       ? join(app.getPath('home'), 'Library', 'Logs', basename(profilePath))
@@ -260,6 +283,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
   for (const [argv, cwd] of pendingSecondInstances) relaySecondInstance(argv, cwd)
   for (const path of packagePathsFromArgv(process.argv, process.cwd())) packageFiles.receive(path)
   const { prepareApplicationLocations } = await import('./storage/initialize-location')
+  bootstrapPhase = 'initialize-application-locations'
   const bootstrapLocations = await prepareApplicationLocations({
     configRoot,
     profilePath,
@@ -273,6 +297,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
 
   // Initialize the file sink after credential validation but before assets and the backend graph
   // so later packaged startup failures remain locally diagnosable.
+  bootstrapPhase = 'application-diagnostics'
   const diagnostics = initializeApplicationDiagnostics({
     logDir: app.getPath('logs'),
     version: app.getVersion(),
@@ -359,6 +384,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
   // relay and surfaced once the window exists.
   let openPackageWindow: (() => void) | undefined
   let forwardSecondInstanceDuringStartup: ((argv: string[]) => void) | undefined
+  bootstrapPhase = 'application-startup'
   await orchestrateAppStartup({
     diagnostics: startupDiagnostics,
     // The OS lock is already held. Bind the orchestrator's relay to the pre-logger relay so any

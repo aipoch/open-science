@@ -190,7 +190,8 @@ vi.mock('node:module', async (importOriginal) => {
     }
   }
 })
-vi.mock('./logger', () => ({
+vi.mock('./logger', async (importOriginal) => ({
+  errorLogFields: (await importOriginal<typeof import('./logger')>()).errorLogFields,
   createLogger: () => fixture.log,
   diagnosticErrorFields: (e: unknown) => e,
   flushLogs: vi.fn(),
@@ -955,4 +956,49 @@ it.each([
     Reflect.deleteProperty(fixture.electron, 'safeStorage')
     await rm(root, { recursive: true, force: true })
   }
+})
+
+it('prints credential failure details before a native recovery dialog can be shown', async () => {
+  const { CredentialIdentityError } = await import('./credential-identity/selection')
+  fixture.selectCredentialIdentity.mockReset().mockImplementationOnce(() => {
+    throw new CredentialIdentityError('probe-access-blocked')
+  })
+  await import('./index')
+  await fixture.exited
+  expect(fixture.log.error).toHaveBeenCalledWith(
+    'application startup failed',
+    expect.objectContaining({
+      phase: 'credential-identity',
+      name: 'CredentialIdentityError',
+      recoveryReason: 'probe-access-blocked',
+      error: expect.stringContaining('Credential storage needs recovery'),
+      stack: expect.stringContaining('CredentialIdentityError')
+    })
+  )
+  expect(fixture.pinLocations).not.toHaveBeenCalled()
+})
+
+it('redacts secrets in detailed startup errors and identifies their phase', async () => {
+  fixture.selectCredentialIdentity.mockReset().mockReturnValue({
+    backend: 'mac-keychain',
+    appName: 'Open-Science',
+    exists: true
+  })
+  fixture.prepareCredentialValidation.mockReset().mockImplementationOnce(() => {
+    throw new Error('credential preflight failed: password=local-test-secret')
+  })
+  await import('./index')
+  await fixture.exited
+  const entry = fixture.log.error.mock.calls.find(
+    ([message]) => message === 'application startup failed'
+  )
+  expect(entry?.[1]).toMatchObject({
+    phase: 'credential-validation-preflight',
+    name: 'Error',
+    error: expect.stringContaining('credential preflight failed:')
+  })
+  const { formatLine } = await vi.importActual<typeof import('./logger')>('./logger')
+  expect(formatLine('error', 'bootstrap', 'application startup failed', entry?.[1])).not.toContain(
+    'local-test-secret'
+  )
 })
