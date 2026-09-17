@@ -30,10 +30,13 @@ HANDLE OpenTreeChild(HANDLE parent, const std::wstring& name, bool remove) {
   attributes.Attributes = 0x40;  // OBJ_CASE_INSENSITIVE
   IO_STATUS_BLOCK status{};
   HANDLE handle = INVALID_HANDLE_VALUE;
+  constexpr ULONG disposition = 1;  // FILE_OPEN, not a CreateOptions flag.
+  // No FILE_DIRECTORY_FILE: this open accepts regular files and directories alike.
+  constexpr ULONG options = 0x00200000 | 0x20 | 0x4000;
   // FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_FOR_BACKUP_INTENT.
   const auto result = open(&handle, FILE_READ_DATA | FILE_READ_ATTRIBUTES | SYNCHRONIZE |
       (remove ? DELETE : 0), &attributes, &status, nullptr, 0,
-      FILE_SHARE_READ | FILE_SHARE_WRITE, 1, 0x00200000 | 0x20 | 0x4000, nullptr, 0);
+      FILE_SHARE_READ | FILE_SHARE_WRITE, disposition, options, nullptr, 0);
   if (result < 0) { SetLastError(convert(result)); return INVALID_HANDLE_VALUE; }
   return handle;
 }
