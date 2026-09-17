@@ -1,5 +1,14 @@
 import { existsSync } from 'node:fs'
-import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join } from 'node:path'
 
@@ -17,6 +26,10 @@ import type {
   ProvenanceNotebookRun
 } from '../../shared/artifact-provenance'
 import { NotebookKernelExecutor } from '../notebook/kernel-executor'
+import { stdlibReplayCases } from '../notebook/stdlib-replay.fixture'
+import { NotebookDependencyAnalyzer } from '../notebook/dependency-analysis'
+import type { NotebookRunRecord } from '../../shared/notebook'
+import { sealArtifactProvenanceGraph } from './artifact-provenance-graph'
 import type { NotebookProcessSandbox } from '../notebook/process-sandbox'
 import {
   createNotebookReproductionRuntime,
@@ -1032,6 +1045,147 @@ describe('Artifact reproducibility execution', () => {
       ])
       await rm(linkedRoot, { recursive: true, force: true })
     }
+  )
+
+  it.runIf(reproductionSmokeEnabled).each(stdlibReplayCases)(
+    'captures and replays %s through fresh real Python kernels',
+    async (_name, script) => {
+      const storageRoot = await realpath(await mkdtemp(join(tmpdir(), 'stdlib-capture-')))
+      const sessionRoot = join(storageRoot, 'notebooks', 'project', 'session')
+      const dataRoot = join(sessionRoot, 'data')
+      await mkdir(dataRoot, { recursive: true })
+      await mkdir(join(sessionRoot, 'handoff'), { recursive: true })
+      const executor = new NotebookKernelExecutor({
+        pythonBin: systemPython!,
+        pythonLoopPath: join(process.cwd(), 'resources', 'notebook', 'python_loop.py')
+      })
+      let replay: NotebookKernelExecutor | undefined
+      try {
+        const result = await executor.execute({
+          code: script,
+          runId: 'run-1',
+          language: 'python',
+          fileEvidenceStorageRoot: storageRoot,
+          cwd: dataRoot,
+          notebookSessionRoot: sessionRoot,
+          dataRoot,
+          resolvedInterpreter: { command: systemPython! },
+          runtimeRoot: join(storageRoot, 'runtime')
+        })
+        const observed = result
+        expect(observed.fileEvidence).toBeDefined()
+        expect(result.status, JSON.stringify(result)).toBe('completed')
+        expect(await readFile(join(dataRoot, 'result.txt'), 'utf8')).toBe('6')
+        expect(observed.fileEvidence, JSON.stringify(observed.fileEvidence)).toMatchObject({
+          state: 'available',
+          fileReads: 'complete',
+          writerAttribution: 'complete'
+        })
+        const run: NotebookRunRecord = {
+          runId: 'run-1',
+          cellId: 'cell-1',
+          source: 'agent',
+          kernelKind: 'python',
+          kernelEpochId: 'fresh',
+          environment: 'default-python',
+          kernelDispatched: true,
+          script,
+          status: 'completed',
+          startedAt: 1,
+          endedAt: 2,
+          text: { stdout: result.stdout, stderr: result.stderr, traceback: '', plain: [] },
+          outputs: [],
+          artifacts: [],
+          workingFiles: observed.workingFiles ?? [],
+          inputFiles: [],
+          fileEvidence: observed.fileEvidence
+        }
+        const dependencies = await new NotebookDependencyAnalyzer({
+          storageRoot,
+          repository: { readSessionRuns: async () => [run] }
+        }).project({ projectId: 'project', sessionId: 'session', completedRun: run })
+        const evidenceJson = await readFile(
+          join(storageRoot, observed.fileEvidence!.storageKey!),
+          'utf8'
+        )
+        const evidence = JSON.parse(evidenceJson) as {
+          relations: Array<{
+            relativePath: string
+            generation?: { generationId: string }
+          }>
+        }
+        const generation = evidence.relations.find(
+          (item) => item.relativePath === 'data/result.txt'
+        )?.generation
+        const graph = sealArtifactProvenanceGraph({
+          target: {
+            versionId: 'version-1',
+            filename: 'result.txt',
+            checksum: sha256('6'),
+            sizeBytes: 1,
+            producerRunId: 'run-1',
+            sourceGenerationId: generation?.generationId
+          },
+          notebookActivities: [{ run, runIndex: 0, evidenceJson }],
+          computeActivities: [],
+          notebookDependencies: dependencies
+        })
+        expect(graph.completeness, JSON.stringify(graph.reasonCodes)).toBe('complete')
+        // The existing fixture supplies only environment metadata. File evidence and the graph
+        // above are captured by production code, never replaced with a fabricated complete graph.
+        const { execution } = await fixture(storageRoot, 'python', 'result.txt', Buffer.from('6'))
+        execution.runs[0]!.script = script
+        execution.inputFiles = []
+        execution.provenanceGraph = graph
+        execution.reproducibilityRecipe = sealArtifactReproducibilityRecipe({
+          provenanceGraph: graph,
+          inputFiles: [],
+          runs: execution.runs
+        })
+        expect(execution.reproducibilityRecipe.capture.state).toBe('sealed')
+        await executor.shutdown()
+        const comparison = await executeArtifactReproducibility(
+          {
+            execution,
+            frontierId: 'original-inputs',
+            storageRoot,
+            processSandbox: sandbox
+          },
+          {
+            // Reuse the installed interpreter in a fresh kernel. This tests capture and replay,
+            // not conda lock restoration or the production OS sandbox certification.
+            createRuntime: async () => {
+              replay = new NotebookKernelExecutor({
+                pythonBin: systemPython!,
+                pythonLoopPath: join(process.cwd(), 'resources', 'notebook', 'python_loop.py')
+              })
+              return {
+                execute: async ({ source: code, sessionRoot: replayRoot }) => {
+                  const executed = await replay!.execute({
+                    code,
+                    cwd: join(replayRoot, 'data'),
+                    notebookSessionRoot: replayRoot,
+                    dataRoot: join(replayRoot, 'data'),
+                    resolvedInterpreter: { command: systemPython! },
+                    runtimeRoot: join(storageRoot, 'runtime')
+                  })
+                  return { ...executed, outputs: [] }
+                },
+                shutdown: async () => {
+                  return replay!.shutdown()
+                }
+              }
+            }
+          }
+        )
+        expect(comparison).toMatchObject({ matched: true, completedStepIds: ['step:run-1'] })
+      } finally {
+        await executor.shutdown()
+        await replay?.shutdown()
+        await rm(storageRoot, { recursive: true, force: true })
+      }
+    },
+    30_000
   )
 
   for (const kernelKind of ['python', 'r'] as const) {

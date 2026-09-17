@@ -1,3 +1,4 @@
+import type { ArtifactProducerInputScope } from '../managed-file-versions/service'
 import type { FileReference } from '../../shared/artifacts'
 import type { ArtifactPreviewResult, ReadArtifactPreviewRequest } from '../../shared/artifacts'
 import {
@@ -34,6 +35,7 @@ type ResolveNotebookInputPreviewRequest = {
 
 type OpenNotebookInputRunRequest = GetNotebookTurnInputsRequest & {
   artifactVersionInputs?: readonly string[]
+  producerScope?: ArtifactProducerInputScope
 }
 
 type ResolveNotebookInputRunRequest = Pick<
@@ -184,18 +186,23 @@ class NotebookInputRegistry {
   }
 
   async openRun(request: OpenNotebookInputRunRequest): Promise<NotebookInputRunLease> {
+    if (request.producerScope && request.producerScope.appSessionId !== request.appSessionId)
+      throw new Error('Notebook producer input is unavailable in this Session.')
     const registered = this.turns.get(turnKey(request))?.inputs ?? []
+    const producerInputs = new Set<string>()
     const workflowArtifacts = await Promise.all(
       [...new Set(request.artifactVersionInputs ?? [])].map(async (inputFileVersionId) => {
         const identity = await this.options.resolveArtifactVersionIdentity?.(
           request.projectId,
           inputFileVersionId
         )
+        if (!identity && request.producerScope) producerInputs.add(inputFileVersionId)
         return this.resolveVersion({
           projectId: request.projectId,
           sourceKind: 'artifact-version',
           inputFileVersionId,
-          expectedSourceFileId: identity?.sourceFileId
+          expectedSourceFileId: identity?.sourceFileId,
+          producerScope: !identity ? request.producerScope : undefined
         })
       })
     )
@@ -208,7 +215,8 @@ class NotebookInputRegistry {
       requested.map(async (input) => {
         const validation = await this.options.inputAuthority.validateVersion(
           request.projectId,
-          input
+          input,
+          producerInputs.has(input.inputFileVersionId) ? request.producerScope : undefined
         )
         if (validation.state !== 'available') {
           throw new Error(
@@ -219,7 +227,13 @@ class NotebookInputRegistry {
       })
     )
     return new NotebookInputRunLease(inputs, (input) =>
-      this.options.inputAuthority.stageContent(input, request.appSessionId)
+      this.options.inputAuthority.stageContent(
+        input,
+        request.appSessionId,
+        input.sourceKind === 'artifact-version' && producerInputs.has(input.inputFileVersionId)
+          ? request.producerScope
+          : undefined
+      )
     )
   }
 
