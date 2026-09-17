@@ -1191,13 +1191,11 @@ describe('mandatory product glossary', () => {
 
   it('uses Side-Chat consistently in German', () => {
     expect({
-      add: de.renderer['Add to Side chat'],
       retryRestore: de.renderer['Retry Side chat restore'],
       sendFollowUp: de.renderer['Send Side chat follow up'],
       title: de.renderer['Side chat'],
       followUp: de.renderer['Side chat follow up']
     }).toEqual({
-      add: 'Zum Side-Chat hinzufügen',
       retryRestore: 'Side-Chat-Wiederherstellung erneut versuchen',
       sendFollowUp: 'Folgenachricht im Side-Chat senden',
       title: 'Side-Chat',

@@ -699,6 +699,7 @@
       "src/main/settings/xai-provider-account-owner.test.ts",
       "src/main/side-chat/ipc.test.ts",
       "src/main/side-chat/main-prompt-relay.test.ts",
+      "src/main/side-chat/session-lifetime.test.ts",
       "src/main/skills/conversation-import.test.ts",
       "src/main/specialist/application-commands.test.ts",
       "src/main/specialist/ipc.test.ts",

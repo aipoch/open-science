@@ -598,6 +598,7 @@
       "src/main/settings/xai-provider-account-owner.test.ts",
       "src/main/side-chat/ipc.test.ts",
       "src/main/side-chat/runtime-owner.test.ts",
+      "src/main/side-chat/session-lifetime.test.ts",
       "src/main/skills/conversation-import.test.ts",
       "src/main/skills/export.test.ts",
       "src/main/skills/host-skills-service.test.ts",

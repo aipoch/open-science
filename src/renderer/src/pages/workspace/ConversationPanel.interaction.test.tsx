@@ -3370,7 +3370,7 @@ describe('ConversationPanel composer intake', () => {
   })
 
   it.each(['waiting-for-user', 'waiting-permission'] as const)(
-    'keeps Side chat independent while the main Session is %s',
+    'does not expose a new Side chat entry while the main Session is %s',
     (status) => {
       const onStartSideChat = vi.fn()
       renderPanel({
@@ -3404,23 +3404,16 @@ describe('ConversationPanel composer intake', () => {
         }
       })
 
-      const availableOpen = container.querySelector(
-        '[data-testid="blocked-composer-side-chat"]'
-      ) as HTMLButtonElement
-      expect(availableOpen.disabled).toBe(false)
-      expect(availableOpen.closest('[inert], [aria-hidden="true"]')).toBeNull()
-      const trigger = container.querySelector(
-        '[data-testid="running-side-chat-menu-trigger"]'
-      ) as HTMLButtonElement
-      const item = container.querySelector('[data-testid="menu-side-chat"]') as HTMLButtonElement
-      expect(trigger.disabled).toBe(false)
-      expect(item.getAttribute('aria-disabled')).toBe('false')
-      act(() => item.click())
-      expect(onStartSideChat).toHaveBeenCalledOnce()
+      expect(container.querySelector('[data-testid="blocked-composer-side-chat"]')).toBeNull()
+      expect(
+        container.querySelector('[data-testid="blocking-composer-overlay"]')?.textContent
+      ).not.toContain('New side chat')
+      expectComposerCoveredByBlockingOverlay()
+      expect(onStartSideChat).not.toHaveBeenCalled()
     }
   )
 
-  it('keeps Side chat independent while the main Session is waiting-plan-approval', () => {
+  it('does not expose a new Side chat entry while the main Session is waiting-plan-approval', () => {
     const onStartSideChat = vi.fn()
     renderPanel({
       view: {
@@ -3453,10 +3446,19 @@ describe('ConversationPanel composer intake', () => {
       }
     })
 
-    const item = container.querySelector('[data-testid="menu-side-chat"]') as HTMLButtonElement
-    expect(item.getAttribute('aria-disabled')).toBe('false')
-    act(() => item.click())
-    expect(onStartSideChat).toHaveBeenCalledOnce()
+    expect(container.querySelector('[data-testid="blocked-composer-side-chat"]')).toBeNull()
+    expect(
+      container.querySelector('[data-testid="blocking-composer-overlay"]')?.textContent
+    ).not.toContain('New side chat')
+    expectComposerCoveredByBlockingOverlay()
+    expect(onStartSideChat).not.toHaveBeenCalled()
+  })
+
+  it('does not render an attachment entry in the Side chat composer', () => {
+    renderSidePanel()
+
+    expect(container.querySelector('[data-testid="side-chat-plus-button"]')).toBeNull()
+    expect(container.textContent).not.toContain('Attachments are unavailable in Side chat')
   })
 
   it.each(['unavailable', 'attachment'])(

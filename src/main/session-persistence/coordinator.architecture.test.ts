@@ -1595,6 +1595,7 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/settings/workflows/connectors-diagnostic.test.ts',
       'src/main/side-chat/ipc.test.ts',
       'src/main/side-chat/runtime-owner.test.ts',
+      'src/main/side-chat/session-lifetime.test.ts',
       'src/main/skills/conversation-import.test.ts',
       'src/main/skills/registered-helper-catalog.test.ts',
       'src/main/specialist/application-commands.test.ts',

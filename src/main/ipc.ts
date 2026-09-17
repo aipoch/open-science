@@ -1606,14 +1606,7 @@ const createApplicationModules = async (
         return runtime.hasPendingSideChatInteraction(parentSessionId) ? 'waiting' : 'running'
       }
       return runtime.liveSessionProjectId(parentSessionId) ? 'idle' : 'completed'
-    },
-    appendRelay: ({ projectId, parentSessionId, sideChatId, relay }) =>
-      sessionPersistenceCoordinator.appendSideChatRelay({
-        projectId,
-        sessionId: parentSessionId,
-        sideChatId,
-        relay
-      })
+    }
   })
   const mainPromptSideChatRelay = createMainPromptSideChatRelay({
     relay: sideChatRelay,
@@ -3441,20 +3434,6 @@ const createApplicationModules = async (
       relay: sideChatRelay,
       deliverRelay: (parentSessionId, queued) =>
         mainPromptSideChatRelay.tryInject(parentSessionId, queued),
-      persistence: {
-        save: ({ projectId, parentSessionId, sideChat }) =>
-          sessionPersistenceCoordinator.saveSideChatProjection({
-            projectId,
-            sessionId: parentSessionId,
-            sideChat
-          }),
-        clear: ({ projectId, parentSessionId, sideChatId }) =>
-          sessionPersistenceCoordinator.clearSideChat({
-            projectId,
-            sessionId: parentSessionId,
-            sideChatId
-          })
-      },
       recordUsage: recordAuxiliaryUsage,
       onEvent: (event) => broadcastToRenderers('side-chat:event', event)
     } satisfies ConstructorParameters<typeof SideChatRuntimeOwner>[0],
@@ -3490,20 +3469,14 @@ const createApplicationModules = async (
       }
     }
   })
-  try {
-    const persistedSideChats = await sessionPersistenceCoordinator.loadPersistedSideChats()
-    sideChatRuntime.hydrate(persistedSideChats.sideChats)
-    sideChatRelay.hydrate(persistedSideChats.relays)
-    await sideChatRuntime.sweepStaleProfiles(
-      new Set(persistedSideChats.sideChats.map(({ sideChat }) => sideChat.id)),
-      persistedSideChats.isComplete
-    )
-  } catch (error) {
-    sideChatLog.error('durable Side chat hydration failed', diagnosticErrorFields(error))
-  }
+  // Side chats and undelivered advisories belong to this application run only. Never scan
+  // Session JSON to recover them. Profile cleanup is independent of startup readiness.
+  void sideChatRuntime.sweepStaleProfiles().catch((error) => {
+    sideChatLog.warn('temporary Side chat profile cleanup failed', diagnosticErrorFields(error))
+  })
   composition.phase('side-chat')
   // Start the JobPoller wired to the shared broadcaster only after Project runtime quiescence and
-  // Side Chat recovery are available. Queue startup loads the Session catalog, which may first need
+  // Side Chat ownership are available. Queue startup loads the Session catalog, which may first need
   // to finish a pending Project deletion through those owners before restoring concurrency limits.
   await modules.add(
     {

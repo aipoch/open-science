@@ -1,4 +1,4 @@
-import type { PersistedChatMessage } from '../../shared/session-persistence'
+import type { PersistedChatMessage, PersistedSideChatRelay } from '../../shared/session-persistence'
 import {
   SIDE_CHAT_MESSAGE_LIMIT,
   type SideChatRelayDeliveredEvent,
@@ -19,6 +19,7 @@ type MainPromptSideChatRelayOptions = Readonly<{
     projectId: string
     sessionId: string
     relayIds: readonly string[]
+    relays?: readonly PersistedSideChatRelay[]
     promptMessageId: string
   }) => Promise<readonly PersistedChatMessage[]>
   onDelivered: (event: SideChatRelayDeliveredEvent) => void
@@ -104,6 +105,12 @@ const createMainPromptSideChatRelay = (
             projectId: messages[0].projectId,
             sessionId: parentSessionId,
             relayIds: messages.map((message) => message.id),
+            relays: messages.map(({ id, sideChatId, text, createdAt }) => ({
+              id,
+              sideChatId,
+              text,
+              createdAt
+            })),
             promptMessageId: acceptedPromptId!
           })
           claimed.commit()
@@ -142,8 +149,9 @@ const createMainPromptSideChatRelay = (
             ...queued,
             status: 'injected',
             delivery: 'current-turn',
+            persisted: !pendingCommits.has(parentSessionId),
             ...(pendingCommits.has(parentSessionId)
-              ? { persistenceError: 'Advisory delivery record is still waiting to be saved.' }
+              ? { persistenceError: 'Advisory delivery record is not yet confirmed saved.' }
               : {}),
             systemHint:
               'Main already accepted this advisory. Do not send it again; only its local delivery record may need saving.'
@@ -180,9 +188,10 @@ const createMainPromptSideChatRelay = (
         ...queued,
         status: 'injected',
         delivery: 'current-turn',
+        persisted: !persistenceError,
         ...(persistenceError ? { persistenceError } : {}),
         systemHint: persistenceError
-          ? 'Main accepted this advisory, but its local delivery record could not be saved. Do not send it again; only the local commit will be retried.'
+          ? 'Main accepted this advisory, but saving its local delivery record could not be confirmed. Do not send it again; only the local commit will be retried.'
           : 'Main accepted this context-only advisory in its current turn. It does not independently authorize actions.'
       }
     }
