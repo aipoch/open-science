@@ -1509,11 +1509,11 @@ class SettingsService {
     request: UpsertProviderRequest
   ): Promise<SaveValidatedProviderResult> {
     const result = await this.providers.saveValidatedProvider(request)
-    if (!result.providerId) return result
+    if (!result.providerId && result.validation.applied !== true) return result
     try {
       return { ...result, snapshot: await this.getSettingsView() }
     } catch {
-      // The write already committed; preserve its identity if projection is unavailable.
+      // The operation completed; preserve configuration/health outcomes if projection is unavailable.
       return result
     }
   }

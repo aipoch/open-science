@@ -20,7 +20,8 @@ export const observeProviderFailure = async (
 ): Promise<void> => {
   if (!observer) return
   let category: ProviderFailureObservation['category'] | undefined
-  if (status === 401) category = 'auth'
+  // Match connection validation: both rejected credentials and forbidden access are unusable.
+  if (status === 401 || status === 403) category = 'auth'
   else if ((status === 400 || status === 404) && errorBody) {
     try {
       const error = JSON.parse(errorBody)?.error

@@ -318,7 +318,7 @@ export class ChatProviderCompatibilityBridge {
       endpoint: this.target.wire,
       startedAt
     }
-    if (upstream.status === 401) {
+    if (upstream.status === 401 || upstream.status === 403) {
       await observeProviderFailure(this.target.onProviderFailure, failureTarget, upstream.status)
     }
     const payload = JSON.parse(
@@ -329,7 +329,7 @@ export class ChatProviderCompatibilityBridge {
       )
     ) as Json
     if (!upstream.ok) {
-      if (upstream.status !== 401) {
+      if (upstream.status !== 401 && upstream.status !== 403) {
         await observeProviderFailure(
           this.target.onProviderFailure,
           failureTarget,

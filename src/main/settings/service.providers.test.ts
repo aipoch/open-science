@@ -18,6 +18,48 @@ const { SettingsService } = await import('./service')
 const { SettingsRepository } = await import('./repository')
 
 describe('SettingsService provider facade', () => {
+  it('returns updated health without claiming a configuration commit when unchanged saved credentials fail', async () => {
+    await repository.setAgentFramework('opencode')
+    await service.upsertProvider({
+      id: 'gateway',
+      type: 'custom',
+      name: 'Original',
+      baseUrl: 'https://gateway.example/v1',
+      model: 'model-a',
+      key: 'existing-secret',
+      apiEndpoints: ['openai']
+    })
+    const before = (await service.getSettingsView()).providers[0]
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('Forbidden', { status: 403 }))
+    )
+    try {
+      const result = await service.saveValidatedProvider({
+        id: 'gateway',
+        type: 'custom',
+        name: 'Unsaved rename',
+        requireExisting: true
+      })
+      expect(result.providerId).toBeUndefined()
+      expect(result.validation).toMatchObject({
+        ok: false,
+        category: 'auth',
+        status: 403,
+        applied: true
+      })
+      expect(result.snapshot?.providers[0]).toMatchObject({
+        id: before.id,
+        name: before.name,
+        configRevision: before.configRevision,
+        lastValidationFailure: { category: 'auth', status: 403 }
+      })
+      expect(JSON.stringify(result)).not.toContain('existing-secret')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('returns the committed provider identity when snapshot refresh fails', async () => {
     await repository.setAgentFramework('opencode')
     vi.stubGlobal(

@@ -44,32 +44,38 @@ describe('ChatProviderCompatibilityBridge', () => {
     })
   })
 
-  it('observes a definitive 401 even when the upstream response is not JSON', async () => {
-    const onProviderFailure = vi.fn()
-    const bridge = new ChatProviderCompatibilityBridge(
-      {
-        wire: 'responses',
-        endpoint: 'https://provider.example/v1/responses',
+  it.each([401, 403])(
+    'observes a definitive %s even when the upstream response is not JSON',
+    async (status) => {
+      const onProviderFailure = vi.fn()
+      const bridge = new ChatProviderCompatibilityBridge(
+        {
+          wire: 'responses',
+          endpoint: 'https://provider.example/v1/responses',
+          model: 'upstream-model',
+          onProviderFailure
+        },
+        async () => new Response('credential rejected', { status })
+      )
+      bridges.push(bridge)
+      const connection = await bridge.start()
+      await fetch(`${connection.baseUrl}/v1/chat/completions`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ messages: [] })
+      })
+      expect(onProviderFailure).toHaveBeenCalledExactlyOnceWith({
+        category: 'auth',
+        status,
         model: 'upstream-model',
-        onProviderFailure
-      },
-      async () => new Response('credential rejected', { status: 401 })
-    )
-    bridges.push(bridge)
-    const connection = await bridge.start()
-    await fetch(`${connection.baseUrl}/v1/chat/completions`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${connection.token}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ messages: [] })
-    })
-    expect(onProviderFailure).toHaveBeenCalledExactlyOnceWith({
-      category: 'auth',
-      status: 401,
-      model: 'upstream-model',
-      endpoint: 'responses',
-      startedAt: expect.any(Number)
-    })
-  })
+        endpoint: 'responses',
+        startedAt: expect.any(Number)
+      })
+    }
+  )
 
   it('rejects an oversized successful JSON response before reading its body', async () => {
     let cancelBody: ReturnType<typeof vi.spyOn> | undefined

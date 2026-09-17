@@ -44,6 +44,310 @@ const deferred = <T>(): {
 }
 
 describe('ProviderAccountsModule', () => {
+  it.each(['test', 'save'] as const)(
+    'marks an unchanged saved provider unavailable after %s receives 403 without changing its configuration',
+    async (operation) => {
+      await repository.setAgentFramework('opencode')
+      await module.upsertProvider({
+        id: 'gateway',
+        type: 'custom',
+        name: 'Original',
+        baseUrl: 'https://gateway.example/v1',
+        model: 'model-a',
+        key: 'existing-secret',
+        apiEndpoints: ['openai']
+      })
+      await module.setActiveProvider('gateway', 'model-a')
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(
+          async () =>
+            new Response(
+              JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'OK' } }] })
+            )
+        )
+      )
+      expect((await module.validateProvider({ providerId: 'gateway' })).ok).toBe(true)
+      const before = await repository.getSettings()
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => new Response('Forbidden', { status: 403 }))
+      )
+      const edit = {
+        id: 'gateway',
+        type: 'custom' as const,
+        name: 'Unsaved rename',
+        key: '',
+        requireExisting: true,
+        expectedConfigRevision: before.providers[0].configRevision
+      }
+      const result =
+        operation === 'test'
+          ? await module.validateProvider({ edit })
+          : (await module.saveValidatedProvider(edit)).validation
+      expect(result).toMatchObject({ ok: false, category: 'auth', status: 403, applied: true })
+      const after = await new SettingsRepository(dir).getSettings()
+      expect(after.providers[0].lastValidationFailure).toMatchObject({
+        category: 'auth',
+        status: 403
+      })
+      expect(after.providers[0].lastValidationFailure?.target).toBeUndefined()
+      expect(after.providers[0].lastValidatedAt).toBeUndefined()
+      expect(after).toEqual({
+        ...before,
+        providers: [
+          {
+            ...before.providers[0],
+            lastValidatedAt: undefined,
+            lastValidatedTarget: undefined,
+            lastValidationFailure: after.providers[0].lastValidationFailure
+          }
+        ]
+      })
+    }
+  )
+
+  it.each([
+    { key: 'different-secret' },
+    { baseUrl: 'https://different.example/v1' },
+    { model: 'different-model' },
+    { apiEndpoints: ['responses' as const] }
+  ])('does not poison the saved provider when a changed candidate fails: %j', async (change) => {
+    await repository.setAgentFramework('opencode')
+    await module.upsertProvider({
+      id: 'gateway',
+      type: 'custom',
+      name: 'Original',
+      baseUrl: 'https://gateway.example/v1',
+      model: 'model-a',
+      key: 'existing-secret',
+      apiEndpoints: ['openai']
+    })
+    const before = await repository.getSettings()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('Forbidden', { status: 403 }))
+    )
+    const edit = { id: 'gateway', type: 'custom' as const, requireExisting: true, ...change }
+    expect((await module.validateProvider({ edit })).ok).toBe(false)
+    expect((await module.saveValidatedProvider(edit)).providerId).toBeUndefined()
+    expect(await new SettingsRepository(dir).getSettings()).toEqual(before)
+  })
+
+  it.each([429, 500])(
+    'does not invalidate a saved connection after a transient edit test HTTP %s',
+    async (status) => {
+      await repository.setAgentFramework('opencode')
+      await module.upsertProvider({
+        id: 'gateway',
+        type: 'custom',
+        name: 'Original',
+        baseUrl: 'https://gateway.example/v1',
+        model: 'model-a',
+        key: 'existing-secret',
+        apiEndpoints: ['openai']
+      })
+      await repository.updateProviderValidationIfTargetMatches(
+        'gateway',
+        () => true,
+        { ok: true, category: 'ok' },
+        { model: 'model-a', endpoint: 'openai' }
+      )
+      const before = await repository.getSettings()
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => new Response('Try later', { status }))
+      )
+      const edit = { id: 'gateway', type: 'custom' as const, requireExisting: true }
+      expect((await module.validateProvider({ edit })).ok).toBe(false)
+      expect((await module.saveValidatedProvider(edit)).providerId).toBeUndefined()
+      expect(await new SettingsRepository(dir).getSettings()).toEqual(before)
+    }
+  )
+
+  it.each(['config', 'validation', 'delete'] as const)(
+    'discards a same-target edit failure after a concurrent %s change',
+    async (change) => {
+      await repository.setAgentFramework('opencode')
+      await module.upsertProvider({
+        id: 'gateway',
+        type: 'custom',
+        name: 'Original',
+        baseUrl: 'https://gateway.example/v1',
+        model: 'model-a',
+        key: 'existing-secret',
+        apiEndpoints: ['openai']
+      })
+      const response = deferred<Response>()
+      const started = deferred<void>()
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(() => {
+          started.resolve()
+          return response.promise
+        })
+      )
+      const pending = module.saveValidatedProvider({
+        id: 'gateway',
+        type: 'custom',
+        requireExisting: true
+      })
+      await started.promise
+      if (change === 'config')
+        await module.upsertProvider({
+          id: 'gateway',
+          type: 'custom',
+          model: 'new-model',
+          requireExisting: true
+        })
+      else if (change === 'delete') await module.deleteProvider('gateway')
+      else
+        await repository.updateProviderValidationIfTargetMatches(
+          'gateway',
+          () => true,
+          { ok: true, category: 'ok' },
+          { model: 'model-a', endpoint: 'openai' }
+        )
+      const before = await repository.getSettings()
+      response.resolve(new Response('Forbidden', { status: 403 }))
+      expect((await pending).validation).toMatchObject({ ok: false, applied: false })
+      expect(await new SettingsRepository(dir).getSettings()).toEqual(before)
+    }
+  )
+
+  it('limits unchanged edit missing-model failures to the tested model and route', async () => {
+    await repository.setAgentFramework('opencode')
+    await module.upsertProvider({
+      id: 'gateway',
+      type: 'custom',
+      name: 'Original',
+      baseUrl: 'https://gateway.example/v1',
+      model: 'model-a',
+      key: 'existing-secret',
+      apiEndpoints: ['openai']
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: { message: 'Model model-a not found' } }), {
+            status: 404
+          })
+      )
+    )
+    const result = await module.validateProvider({
+      edit: { id: 'gateway', type: 'custom', requireExisting: true }
+    })
+    expect(result).toMatchObject({ ok: false, category: 'model-not-found', applied: true })
+    expect((await repository.getSettings()).providers[0].lastValidationFailure?.target).toEqual({
+      model: 'model-a',
+      endpoint: 'openai'
+    })
+  })
+
+  it.each(['failure', 'success'] as const)(
+    'does not commit an older successful save over a newer same-connection %s',
+    async (newer) => {
+      await repository.setAgentFramework('opencode')
+      await module.upsertProvider({
+        id: 'gateway',
+        type: 'custom',
+        name: 'Original',
+        baseUrl: 'https://gateway.example/v1',
+        model: 'model-a',
+        key: 'existing-secret',
+        apiEndpoints: ['openai']
+      })
+      const olderResponse = deferred<Response>()
+      const started = deferred<void>()
+      vi.stubGlobal(
+        'fetch',
+        vi
+          .fn()
+          .mockImplementationOnce(() => {
+            started.resolve()
+            return olderResponse.promise
+          })
+          .mockImplementation(async () =>
+            newer === 'failure'
+              ? new Response('Forbidden', { status: 403 })
+              : new Response(
+                  JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'OK' } }] })
+                )
+          )
+      )
+      const pending = module.saveValidatedProvider({
+        id: 'gateway',
+        type: 'custom',
+        name: 'Older rename',
+        requireExisting: true
+      })
+      await started.promise
+      expect(
+        await module.validateProvider(
+          newer === 'failure'
+            ? { edit: { id: 'gateway', type: 'custom', requireExisting: true } }
+            : { providerId: 'gateway' }
+        )
+      ).toMatchObject({ ok: newer === 'success', applied: true })
+      const before = await repository.getSettings()
+      olderResponse.resolve(
+        new Response(
+          JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'OK' } }] })
+        )
+      )
+      await expect(pending).rejects.toThrow('Provider connection status changed')
+      expect(await new SettingsRepository(dir).getSettings()).toEqual(before)
+    }
+  )
+
+  it('checks same-connection validation evidence inside the atomic configuration commit', async () => {
+    await repository.setAgentFramework('opencode')
+    await module.upsertProvider({
+      id: 'gateway',
+      type: 'custom',
+      name: 'Original',
+      baseUrl: 'https://gateway.example/v1',
+      model: 'model-a',
+      key: 'existing-secret',
+      apiEndpoints: ['openai']
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'OK' } }] })
+          )
+      )
+    )
+    const queued = deferred<void>()
+    const release = deferred<void>()
+    const commit = repository.upsertProvider.bind(repository)
+    vi.spyOn(repository, 'upsertProvider').mockImplementationOnce(async (...args) => {
+      queued.resolve()
+      await release.promise
+      return commit(...args)
+    })
+    const pending = module.saveValidatedProvider({
+      id: 'gateway',
+      type: 'custom',
+      name: 'Older rename',
+      requireExisting: true
+    })
+    await queued.promise
+    await repository.updateProviderValidationIfTargetMatches(
+      'gateway',
+      () => true,
+      { ok: false, category: 'auth', status: 403 },
+      undefined
+    )
+    const before = await repository.getSettings()
+    release.resolve()
+    await expect(pending).rejects.toThrow('Provider connection status changed')
+    expect(await new SettingsRepository(dir).getSettings()).toEqual(before)
+  })
+
   it('rejects an invalid new provider without persisting it', async () => {
     vi.stubGlobal(
       'fetch',
@@ -356,7 +660,13 @@ describe('ProviderAccountsModule', () => {
     )
     await module.validateProvider({ providerId: 'gateway' })
     const before = await repository.getSettings()
-    const edit = { id: 'gateway', type: 'custom' as const, name: 'Rename', requireExisting: true }
+    const edit = {
+      id: 'gateway',
+      type: 'custom' as const,
+      name: 'Rename',
+      key: 'different-secret',
+      requireExisting: true
+    }
     expect((await module.validateProvider({ edit })).ok).toBe(false)
     expect((await module.saveValidatedProvider(edit)).providerId).toBeUndefined()
     expect(await repository.getSettings()).toEqual(before)

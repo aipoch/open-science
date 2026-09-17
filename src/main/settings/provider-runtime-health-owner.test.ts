@@ -105,9 +105,14 @@ describe('ProviderRuntimeHealthOwner', () => {
     expect(await repository.getSettings()).toEqual(before)
   })
 
-  it.each(['custom', 'official'] as const)(
-    'updates settings after a real %s provider transport returns a synthetic 401',
-    async (type) => {
+  it.each([
+    ['custom', 401],
+    ['custom', 403],
+    ['official', 401],
+    ['official', 403]
+  ] as const)(
+    'updates settings after a real %s provider transport returns a synthetic %s',
+    async (type, status) => {
       const provider: StoredProvider =
         type === 'custom' ? original : { ...original, type, vendorId: 'openai', model: 'gpt-5.4' }
       await repository.upsertProvider(provider)
@@ -118,7 +123,7 @@ describe('ProviderRuntimeHealthOwner', () => {
         onProviderFailure: (source, failure) => health.observe(source, failure),
         createOpenAiProviderBridge: (targets, initial) =>
           new OpenAiProviderBridge(targets, initial, async () =>
-            Response.json({ error: { message: 'Invalid API key' } }, { status: 401 })
+            Response.json({ error: { message: 'Invalid API key' } }, { status })
           )
       })
       const generation = await transports.acquire({
@@ -138,7 +143,7 @@ describe('ProviderRuntimeHealthOwner', () => {
           body: JSON.stringify({ messages: [{ role: 'user', content: 'Hi' }] })
         })
         expect(response.status).toBe(400)
-        expect(response.headers.get('x-open-science-upstream-status')).toBe('401')
+        expect(response.headers.get('x-open-science-upstream-status')).toBe(String(status))
         expect(providerValidationFailed((await repository.getSettings()).providers[0])).toBe(true)
         expect(published).toHaveBeenCalledOnce()
       } finally {
@@ -163,113 +168,125 @@ describe('ProviderRuntimeHealthOwner', () => {
     expect(await repository.getSettings()).toEqual(before)
   })
 
-  it('retains provider identity through Claude route planning and its real transport', async () => {
-    const provider: StoredProvider = { ...original, apiEndpoints: ['anthropic'] }
-    await repository.upsertProvider(provider)
-    const framework = getAgentFramework('claude-code')
-    const active = projection.resolveRuntimeTarget(provider, { kind: 'configured' }, framework)
-    const plan = new BackendRoutePlanner({ providers: projection }).planBackend({
-      settings: await repository.getSettings(),
-      frameworkId: framework.id,
-      target: active,
-      effortIntent: 'default',
-      conversationSkillImportEnabled: false
-    })
-    const published = vi.fn()
-    const health = new ProviderRuntimeHealthOwner(repository, published)
-    const transports = new ProviderTransportOwner({
-      onProviderFailure: (source, failure) => health.observe(source, failure),
-      createAnthropicProviderBridge: (targets, initial) =>
-        new AnthropicProviderBridge(targets, initial, async () =>
-          Response.json({ error: { message: 'invalid key' } }, { status: 401 })
-        )
-    })
-    const generation = await transports.acquire({ activeTarget: active, plan })
-    try {
-      const config = generation.providerConfiguration!
-      const response = await fetch(`${config.baseUrl}/v1/messages`, {
-        method: 'POST',
-        headers: { ...config.headers, 'content-type': 'application/json' },
-        body: JSON.stringify({
-          model: provider.model,
-          max_tokens: 1,
-          messages: [{ role: 'user', content: 'Hi' }]
-        })
+  it.each([401, 403])(
+    'retains provider identity through Claude route planning for upstream %s',
+    async (status) => {
+      const provider: StoredProvider = { ...original, apiEndpoints: ['anthropic'] }
+      await repository.upsertProvider(provider)
+      const framework = getAgentFramework('claude-code')
+      const active = projection.resolveRuntimeTarget(provider, { kind: 'configured' }, framework)
+      const plan = new BackendRoutePlanner({ providers: projection }).planBackend({
+        settings: await repository.getSettings(),
+        frameworkId: framework.id,
+        target: active,
+        effortIntent: 'default',
+        conversationSkillImportEnabled: false
       })
-      expect(response.status).toBe(400)
-      expect(providerValidationFailed((await repository.getSettings()).providers[0])).toBe(true)
-      expect(published).toHaveBeenCalledOnce()
-    } finally {
-      await generation.release()
+      const published = vi.fn()
+      const health = new ProviderRuntimeHealthOwner(repository, published)
+      const transports = new ProviderTransportOwner({
+        onProviderFailure: (source, failure) => health.observe(source, failure),
+        createAnthropicProviderBridge: (targets, initial) =>
+          new AnthropicProviderBridge(targets, initial, async () =>
+            Response.json({ error: { message: 'invalid key' } }, { status })
+          )
+      })
+      const generation = await transports.acquire({ activeTarget: active, plan })
+      try {
+        const config = generation.providerConfiguration!
+        const response = await fetch(`${config.baseUrl}/v1/messages`, {
+          method: 'POST',
+          headers: { ...config.headers, 'content-type': 'application/json' },
+          body: JSON.stringify({
+            model: provider.model,
+            max_tokens: 1,
+            messages: [{ role: 'user', content: 'Hi' }]
+          })
+        })
+        expect(response.status).toBe(400)
+        expect(providerValidationFailed((await repository.getSettings()).providers[0])).toBe(true)
+        expect(published).toHaveBeenCalledOnce()
+      } finally {
+        await generation.release()
+      }
     }
-  })
+  )
 
   it.each([
-    ['codex', 'openai'],
-    ['codex', 'responses'],
-    ['codebuddy', 'openai'],
-    ['codebuddy', 'responses'],
-    ['codebuddy', 'anthropic'],
-    ['opencode', 'anthropic']
-  ] as const)('publishes confirmed failures through %s / %s', async (frameworkId, endpoint) => {
-    const provider: StoredProvider = { ...original, apiEndpoints: [endpoint] }
-    await repository.upsertProvider(provider)
-    const framework = getAgentFramework(frameworkId)
-    const active = projection.resolveRuntimeTarget(provider, { kind: 'configured' }, framework)
-    const plan = new BackendRoutePlanner({ providers: projection }).planBackend({
-      settings: await repository.getSettings(),
-      frameworkId,
-      target: active,
-      effortIntent: 'default',
-      conversationSkillImportEnabled: false
-    })
-    const published = vi.fn()
-    const health = new ProviderRuntimeHealthOwner(repository, published)
-    const upstream = async (): Promise<Response> =>
-      Response.json({ error: { message: 'invalid key' } }, { status: 401 })
-    const transports = new ProviderTransportOwner({
-      onProviderFailure: (source, failure) => health.observe(source, failure),
-      createOpenAiProviderBridge: (targets, initial) =>
-        new OpenAiProviderBridge(targets, initial, upstream),
-      createAnthropicProviderBridge: (targets, initial) =>
-        new AnthropicProviderBridge(targets, initial, upstream),
-      createResponsesBridge: (source, options) => new ResponsesBridge(source, upstream, options),
-      createNativeResponsesProxy: (source) =>
-        new NativeResponsesCompatibilityProxy(source, upstream),
-      createChatProviderCompatibilityBridge: (source) =>
-        new ChatProviderCompatibilityBridge(source, upstream)
-    })
-    const generation = await transports.acquire({ activeTarget: active, plan })
-    try {
-      const bridge = generation.responsesBridge
-      const local = generation.provider
-      const url = bridge
-        ? `${bridge.baseUrl}/responses`
-        : endpoint === 'anthropic' && frameworkId === 'opencode'
-          ? `${local!.baseUrl}/v1/messages`
-          : `${local!.openaiBaseUrl}/chat/completions`
-      const key = bridge?.token ?? local?.key
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${key}`,
-          'x-api-key': key ?? '',
-          'content-type': 'application/json'
-        },
-        body: JSON.stringify({
-          model: 'model-a',
-          input: 'Hi',
-          max_tokens: 1,
-          messages: [{ role: 'user', content: 'Hi' }]
-        })
+    ['codex', 'openai', 401],
+    ['codex', 'openai', 403],
+    ['codex', 'responses', 401],
+    ['codex', 'responses', 403],
+    ['codebuddy', 'openai', 401],
+    ['codebuddy', 'openai', 403],
+    ['codebuddy', 'responses', 401],
+    ['codebuddy', 'responses', 403],
+    ['codebuddy', 'anthropic', 401],
+    ['codebuddy', 'anthropic', 403],
+    ['opencode', 'anthropic', 401],
+    ['opencode', 'anthropic', 403]
+  ] as const)(
+    'publishes confirmed failures through %s / %s for upstream %s',
+    async (frameworkId, endpoint, status) => {
+      const provider: StoredProvider = { ...original, apiEndpoints: [endpoint] }
+      await repository.upsertProvider(provider)
+      const framework = getAgentFramework(frameworkId)
+      const active = projection.resolveRuntimeTarget(provider, { kind: 'configured' }, framework)
+      const plan = new BackendRoutePlanner({ providers: projection }).planBackend({
+        settings: await repository.getSettings(),
+        frameworkId,
+        target: active,
+        effortIntent: 'default',
+        conversationSkillImportEnabled: false
       })
-      await response.text()
-      expect(providerValidationFailed((await repository.getSettings()).providers[0])).toBe(true)
-      expect(published).toHaveBeenCalledOnce()
-    } finally {
-      await generation.release()
+      const published = vi.fn()
+      const health = new ProviderRuntimeHealthOwner(repository, published)
+      const upstream = async (): Promise<Response> =>
+        Response.json({ error: { message: 'invalid key' } }, { status })
+      const transports = new ProviderTransportOwner({
+        onProviderFailure: (source, failure) => health.observe(source, failure),
+        createOpenAiProviderBridge: (targets, initial) =>
+          new OpenAiProviderBridge(targets, initial, upstream),
+        createAnthropicProviderBridge: (targets, initial) =>
+          new AnthropicProviderBridge(targets, initial, upstream),
+        createResponsesBridge: (source, options) => new ResponsesBridge(source, upstream, options),
+        createNativeResponsesProxy: (source) =>
+          new NativeResponsesCompatibilityProxy(source, upstream),
+        createChatProviderCompatibilityBridge: (source) =>
+          new ChatProviderCompatibilityBridge(source, upstream)
+      })
+      const generation = await transports.acquire({ activeTarget: active, plan })
+      try {
+        const bridge = generation.responsesBridge
+        const local = generation.provider
+        const url = bridge
+          ? `${bridge.baseUrl}/responses`
+          : endpoint === 'anthropic' && frameworkId === 'opencode'
+            ? `${local!.baseUrl}/v1/messages`
+            : `${local!.openaiBaseUrl}/chat/completions`
+        const key = bridge?.token ?? local?.key
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${key}`,
+            'x-api-key': key ?? '',
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            model: 'model-a',
+            input: 'Hi',
+            max_tokens: 1,
+            messages: [{ role: 'user', content: 'Hi' }]
+          })
+        })
+        await response.text()
+        expect(providerValidationFailed((await repository.getSettings()).providers[0])).toBe(true)
+        expect(published).toHaveBeenCalledOnce()
+      } finally {
+        await generation.release()
+      }
     }
-  })
+  )
 
   it('limits missing-model failures to the actual model and protocol, including background models', async () => {
     await new ProviderRuntimeHealthOwner(repository).observe(target(), {

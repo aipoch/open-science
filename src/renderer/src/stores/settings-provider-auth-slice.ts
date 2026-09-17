@@ -127,7 +127,7 @@ export const createProviderAuthSlice = <Store extends ProviderAuthHost>({
 }: ProviderAuthSliceOptions<Store>): ProviderAuthActions => ({
   saveValidatedProvider: async (request) => {
     const result = await getCommands().saveValidatedProvider(request)
-    if (result.providerId && !result.snapshot) {
+    if ((result.providerId || result.validation.applied === true) && !result.snapshot) {
       try {
         reconcileSnapshot(await getCommands().getSettings())
       } catch {

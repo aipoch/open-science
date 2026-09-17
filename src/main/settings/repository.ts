@@ -166,7 +166,13 @@ class SettingsRepository {
   async upsertProvider(
     provider: StoredProvider,
     existingId?: string,
-    configEdit?: { expectedConfigRevision?: number }
+    configEdit?: {
+      expectedConfigRevision?: number
+      expectedValidationState?: Pick<
+        StoredProvider,
+        'lastValidatedAt' | 'lastValidatedTarget' | 'lastValidationFailure'
+      >
+    }
   ): Promise<StoredSettings> {
     return this.mutate((settings) => {
       const index = settings.providers.findIndex((existing) => existing.id === provider.id)
@@ -178,6 +184,21 @@ class SettingsRepository {
         (!source || (source.configRevision ?? 0) !== configEdit.expectedConfigRevision)
       )
         throw new Error('Provider configuration changed. Your draft has not been saved.')
+      if (
+        configEdit?.expectedValidationState &&
+        !isDeepStrictEqual(
+          {
+            lastValidatedAt: source?.lastValidatedAt,
+            lastValidatedTarget: source?.lastValidatedTarget,
+            lastValidationFailure: source?.lastValidationFailure
+          },
+          configEdit.expectedValidationState
+        )
+      ) {
+        throw new Error(
+          'Provider connection status changed. Your changes have not been saved. Test the connection again.'
+        )
+      }
       const revision = Math.max(
         source?.configRevision ?? 0,
         settings.providers[index]?.configRevision ?? 0

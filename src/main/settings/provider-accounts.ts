@@ -444,8 +444,27 @@ class ProviderAccountsModule {
     request: UpsertProviderRequest
   ): Promise<SaveValidatedProviderResult> {
     const prepared = await this.prepareProviderEdit(request)
+    const saved = prepared.settings.providers.find(({ id }) => id === prepared.provider.id)
+    // Validation metadata can change without a configuration revision. A successful probe of the
+    // same connection must not overwrite a newer health observation while waiting to commit.
+    const expectedValidationState =
+      saved &&
+      this.sameValidationTarget(
+        this.resolveProvider(prepared.provider),
+        this.resolveProvider(saved)
+      )
+        ? {
+            lastValidatedAt: saved.lastValidatedAt,
+            lastValidatedTarget: saved.lastValidatedTarget,
+            lastValidationFailure: saved.lastValidationFailure
+          }
+        : undefined
     const validation = await this.validateProviderEdit(prepared.provider, prepared.settings)
     if (!validation.ok) return { validation }
+    if (validation.applied === false)
+      throw new Error(
+        'Provider connection status changed. Your changes have not been saved. Test the connection again.'
+      )
     const target = targetForValidationResult(validation, validation.testedTarget)
     const provider = {
       ...prepared.provider,
@@ -460,7 +479,7 @@ class ProviderAccountsModule {
       await this.repository.upsertProvider(
         provider,
         prepared.requireExisting ? provider.id : undefined,
-        { expectedConfigRevision: prepared.expectedConfigRevision }
+        { expectedConfigRevision: prepared.expectedConfigRevision, expectedValidationState }
       )
     })
     return { validation, providerId: provider.id }
@@ -593,7 +612,19 @@ class ProviderAccountsModule {
     settings: StoredSettings
   ): Promise<ValidateProviderResult & { testedTarget: ProviderValidationTarget }> {
     const provider = this.resolveProvider(candidate)
-    const result = await this.validateResolvedProvider({}, settings, { provider })
+    const saved = settings.providers.find(({ id }) => id === candidate.id)
+    // A failure belongs to the saved connection only when the tested input resolves to that exact
+    // connection. Candidate credentials and routes must never change the original account's health.
+    const storedId =
+      saved && this.sameValidationTarget(provider, this.resolveProvider(saved))
+        ? saved.id
+        : undefined
+    const result = await this.validateResolvedProvider(
+      { model: provider.model },
+      settings,
+      { provider, storedId },
+      'definitive-failures'
+    )
     return {
       ...result,
       testedTarget: {
@@ -630,7 +661,8 @@ class ProviderAccountsModule {
   private async validateResolvedProvider(
     request: ValidateProviderRequest,
     settings: StoredSettings,
-    resolved: { provider: ResolvedProvider; storedId?: string }
+    resolved: { provider: ResolvedProvider; storedId?: string },
+    healthPolicy: 'all' | 'definitive-failures' = 'all'
   ): Promise<ValidateProviderResult> {
     const storedValidationTarget = resolved.storedId
       ? settings.providers.find((provider) => provider.id === resolved.storedId)
@@ -702,10 +734,22 @@ class ProviderAccountsModule {
         }
       : probeResult
 
-    if (!resolved.storedId) return result
-    if (this.providerValidationGenerations.get(resolved.storedId) !== validationGeneration) {
+    if (
+      resolved.storedId &&
+      this.providerValidationGenerations.get(resolved.storedId) !== validationGeneration
+    ) {
       return { ...result, applied: false }
     }
+    if (
+      healthPolicy === 'definitive-failures' &&
+      (result.ok ||
+        !(
+          (result.category === 'auth' && (result.status === 401 || result.status === 403)) ||
+          result.category === 'model-not-found'
+        ))
+    )
+      return result
+    if (!resolved.storedId) return result
 
     const latestSettings = await this.repository.getSettings()
     const stored = latestSettings.providers.find((provider) => provider.id === resolved.storedId)
@@ -756,6 +800,13 @@ class ProviderAccountsModule {
           this.providerValidationGenerations.get(current.id) === validationGeneration &&
           currentSettings.agentFrameworkId === settings.agentFrameworkId &&
           current.keyRef === expectedKeyRef &&
+          (healthPolicy !== 'definitive-failures' ||
+            (current.lastValidatedAt === storedValidationTarget?.lastValidatedAt &&
+              !(
+                result.category === 'model-not-found' &&
+                current.lastValidationFailure?.category === 'auth' &&
+                current.lastValidationFailure.target === undefined
+              ))) &&
           (current.configRevision ?? 0) === (storedValidationTarget?.configRevision ?? 0) &&
           this.sameValidationTarget(resolved.provider, this.resolveProvider(current, currentModel))
         )

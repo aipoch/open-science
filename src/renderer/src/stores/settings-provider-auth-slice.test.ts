@@ -185,6 +185,30 @@ describe('provider auth slice: persistence and validation', () => {
     expect(refreshPreflight).not.toHaveBeenCalled()
   })
 
+  it.each([true, false])(
+    'reconciles a saved connection failure without a configuration commit (snapshot: %s)',
+    async (withSnapshot) => {
+      const { store, commands, reconcileSnapshot } = createHarness()
+      const failed = {
+        ...provider('saved'),
+        lastValidationFailure: { at: 10, category: 'auth' as const, status: 403 }
+      }
+      const next = snapshot([failed])
+      const result = {
+        validation: { ok: false, category: 'auth', status: 403, applied: true },
+        ...(withSnapshot ? { snapshot: next } : {})
+      }
+      commands.saveValidatedProvider.mockResolvedValue(result)
+      commands.getSettings.mockResolvedValue(next)
+      await expect(
+        store.getState().saveValidatedProvider({ id: 'saved', type: 'custom', name: 'saved' })
+      ).resolves.toEqual(result)
+      expect(reconcileSnapshot).toHaveBeenCalledWith(next)
+      expect(store.getState().providers[0].lastValidationFailure?.status).toBe(403)
+      expect(commands.upsertProvider).not.toHaveBeenCalled()
+    }
+  )
+
   it('preserves a committed save identity if the subsequent snapshot refresh fails', async () => {
     const { store, commands } = createHarness()
     const result = { providerId: 'saved', validation: { ok: true, category: 'ok' } }

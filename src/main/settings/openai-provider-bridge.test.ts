@@ -158,7 +158,7 @@ describe('OpenAiProviderBridge', () => {
     [400, { error: { code: 'model_not_found', message: 'synthetic-secret' } }, 'model-not-found'],
     [404, { error: { type: 'model_not_found' } }, 'model-not-found'],
     [400, { error: { type: 'invalid_request_error', message: 'model not found' } }, undefined],
-    [403, { error: { type: 'permission_error' } }, undefined],
+    [403, { error: { type: 'permission_error' } }, 'auth'],
     [404, { error: { type: 'not_found_error' } }, undefined],
     [429, { error: { type: 'rate_limit_error' } }, undefined],
     [500, { error: { type: 'server_error' } }, undefined]

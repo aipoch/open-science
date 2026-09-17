@@ -423,8 +423,11 @@ const rejectThroughProviderBridge = async () => {
     })
   })
   await response.text()
-  if (response.status !== 400 || response.headers.get('x-open-science-upstream-status') !== '401') {
-    throw new Error('Runtime health fixture did not receive the bridged upstream 401.')
+  if (
+    response.status !== 400 ||
+    !['401', '403'].includes(response.headers.get('x-open-science-upstream-status') ?? '')
+  ) {
+    throw new Error('Runtime health fixture did not receive the bridged upstream 401/403.')
   }
   throw acp.RequestError.internalError(
     { errorKind: 'provider-error' },

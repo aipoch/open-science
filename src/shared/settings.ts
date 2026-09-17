@@ -783,6 +783,7 @@ export type SetActiveProviderRequest = {
 // Validation may target a saved provider (key resolved from storage) or an unsaved draft.
 export type ValidateProviderRequest = {
   // Test prospective form values; existing credentials are merged only in main.
+  // A definitive failure of the unchanged saved connection updates its health, not its config.
   edit?: UpsertProviderRequest
   providerId?: string
   draft?: ProviderDraft
@@ -815,7 +816,7 @@ export type ValidateProviderResult = {
   // (`ok: true`) yet discarded — the provider was switched, deleted, or superseded by a newer test
   // while an async sign-in/probe was in flight. Callers that gate navigation on success (onboarding)
   // must treat `applied === false` as "do not advance": the stored provider does not reflect it.
-  // Absent means applied (the ordinary synchronous path).
+  // For prospective edits, absence makes no claim about persisted health; only true confirms it.
   applied?: boolean
   // Set when the user explicitly cancelled a browser sign-in. Distinct from applied:false (provider
   // changed): the login was intentionally stopped, not invalidated by a concurrent edit.
@@ -832,6 +833,7 @@ export type SaveValidatedProviderResult = {
   validation: ValidateProviderResult
   // Present only after the atomic configuration and health write has completed.
   providerId?: string
+  // May also reflect a health-only update after rejected validation, without providerId.
   // Snapshot refresh can fail after a committed write; providerId still records that outcome.
   snapshot?: SettingsSnapshot
 }
