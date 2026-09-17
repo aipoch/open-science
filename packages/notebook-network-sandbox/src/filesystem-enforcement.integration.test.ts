@@ -1,10 +1,12 @@
 import { spawn, spawnSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
+import { findExecutable } from '../runtime/src/platform/executable.js'
 import { NotebookNetworkSandbox } from './index.js'
 import type { NotebookFilesystemPolicy, NotebookSandboxedProcess } from './types.js'
 
@@ -24,10 +26,17 @@ const run = (
     child.on('close', (code) => resolveRun({ code, stderr }))
   })
 
+const python3 =
+  process.platform === 'linux'
+    ? findExecutable('python3', '/usr/local/bin:/usr/bin:/bin')
+    : undefined
+
 const platformSupported = process.platform === 'darwin' || process.platform === 'linux'
 
 describe.runIf(platformSupported)('Notebook filesystem enforcement', () => {
-  it.runIf(process.platform === 'linux').each(['/tmp', '/var/tmp'])(
+  it
+    .runIf(process.platform === 'linux' && Boolean(python3))
+    .each(['/tmp', '/var/tmp'].filter(existsSync))(
     'starts a Python script explicitly granted under masked %s',
     async (temporaryRoot) => {
       const appRoot = await mkdtemp(join(temporaryRoot, '.mount_open-science-'))
@@ -45,7 +54,7 @@ describe.runIf(platformSupported)('Notebook filesystem enforcement', () => {
       await writeFile(secret, 'private temporary data')
       await writeFile(script, 'print("hello")\n')
       // The host can open the exact script that the sandboxed interpreter must execute.
-      const direct = spawnSync('/usr/bin/python3', [script], { encoding: 'utf8' })
+      const direct = spawnSync(python3!, [script], { encoding: 'utf8' })
       expect(direct.status, direct.stderr).toBe(0)
       expect(direct.stdout).toBe('hello\n')
       const sandbox = new NotebookNetworkSandbox({
@@ -57,11 +66,16 @@ describe.runIf(platformSupported)('Notebook filesystem enforcement', () => {
         await sandbox.initialize()
         const wrapped = await sandbox.wrap({
           command:
-            '/usr/bin/python3 "$SCRIPT_PATH" > result.txt && ' +
+            '"$PYTHON_PATH" "$SCRIPT_PATH" > result.txt && ' +
             'test ! -e "$SECRET_PATH" && ' +
             'if printf changed > "$SCRIPT_PATH"; then exit 1; else exit 0; fi',
           cwd: workspace,
-          env: { PATH: '/usr/bin:/bin', SCRIPT_PATH: script, SECRET_PATH: secret },
+          env: {
+            PATH: '/usr/bin:/bin',
+            PYTHON_PATH: python3,
+            SCRIPT_PATH: script,
+            SECRET_PATH: secret
+          },
           filesystem: {
             readOnlyRoots: ['/bin', '/usr/bin', script],
             readWriteRoots: [workspace],
