@@ -44,6 +44,75 @@ const deferred = <T>(): {
 }
 
 describe('ProviderAccountsModule', () => {
+  it.each([
+    { active: false, model: 'old-model' },
+    { active: true, model: 'old-model' },
+    { active: false, model: 'new-model' },
+    { active: true, model: 'new-model' }
+  ])(
+    'uses edited custom credentials and model after persistence ($active, $model)',
+    async ({ active, model }) => {
+      await repository.setAgentFramework('opencode')
+      const original = {
+        id: 'edited-custom',
+        type: 'custom' as const,
+        name: 'Gateway',
+        baseUrl: 'https://old.example/v1',
+        model: 'old-model',
+        key: 'old-key',
+        apiEndpoints: ['openai' as const]
+      }
+      await module.upsertProvider(original)
+      if (active) await module.setActiveProvider(original.id, original.model)
+      const before = (await repository.getSettings()).providers[0]
+      const draft = { ...original, baseUrl: 'https://new.example/v1', model, key: 'new-key' }
+      await module.upsertProvider({
+        ...draft,
+        requireExisting: true,
+        expectedConfigRevision: before.configRevision
+      })
+      const restored = (await new SettingsRepository(dir).getSettings()).providers[0]
+      expect(restored).toMatchObject({ baseUrl: draft.baseUrl, model: draft.model })
+      expect(module.resolveProvider(restored).key).toBe(draft.key)
+      const fetchMock = vi.fn(async (_input: unknown, init?: RequestInit) => {
+        const headers = new Headers(init?.headers)
+        const body = JSON.parse(String(init?.body))
+        const accepted = headers.get('authorization') === 'Bearer new-key' && body.model === model
+        return new Response(
+          JSON.stringify(
+            accepted
+              ? { choices: [{ message: { role: 'assistant', content: 'OK' } }] }
+              : { error: { message: 'invalid credentials for model' } }
+          ),
+          { status: accepted ? 200 : 401 }
+        )
+      })
+      vi.stubGlobal('fetch', fetchMock)
+      try {
+        const result = await module.validateProvider({ providerId: original.id })
+        expect(fetchMock).toHaveBeenCalledWith(
+          'https://new.example/v1/chat/completions',
+          expect.anything()
+        )
+        const sent = fetchMock.mock.calls[0][1]!
+        expect(new Headers(sent.headers).get('authorization')).toBe('Bearer new-key')
+        // An explicit model and an identical newly created provider both work; only the saved
+        // active selection can override the edited record in the ID-only Settings probe.
+        expect(await module.validateProvider({ providerId: original.id, model })).toMatchObject({
+          ok: true
+        })
+        await module.upsertProvider({ ...draft, id: 'new-custom' })
+        expect(await module.validateProvider({ providerId: 'new-custom' })).toMatchObject({
+          ok: true
+        })
+        expect(JSON.parse(String(sent.body)).model).toBe(model)
+        expect(result).toMatchObject({ ok: true })
+      } finally {
+        vi.unstubAllGlobals()
+      }
+    }
+  )
+
   it('publishes only validated API credentials, repeats safely, and refuses replacement', async () => {
     await repository.setAgentFramework('codex')
     const validate = vi

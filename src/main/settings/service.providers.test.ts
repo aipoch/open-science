@@ -17,6 +17,48 @@ const { SettingsService } = await import('./service')
 const { SettingsRepository } = await import('./repository')
 
 describe('SettingsService provider facade', () => {
+  it.each([
+    { framework: 'claude-code', endpoint: 'anthropic', route: 'claude-anthropic' },
+    { framework: 'opencode', endpoint: 'openai', route: 'opencode-openai' },
+    { framework: 'codex', endpoint: 'responses', route: 'codex-responses-compatibility' },
+    { framework: 'codex', endpoint: 'openai', route: 'codex-bridge' },
+    { framework: 'codebuddy', endpoint: 'openai', route: 'codebuddy-openai' }
+  ] as const)(
+    'resolves the saved custom model through $route after an edit',
+    async ({ framework, endpoint, route }) => {
+      await repository.setAgentFramework(framework)
+      const draft = {
+        id: 'custom-edit',
+        type: 'custom' as const,
+        name: 'Custom',
+        baseUrl: 'https://gateway.example/v1',
+        model: 'old-model',
+        apiEndpoints: [endpoint],
+        key: 'synthetic-key'
+      }
+      await service.upsertProvider(draft)
+      await repository.setActiveProvider(draft.id, draft.model)
+      const snapshot = await service.upsertProvider({
+        ...draft,
+        model: 'new-model',
+        key: undefined,
+        requireExisting: true,
+        expectedConfigRevision: 1
+      })
+      expect(snapshot.activeModel).toBe('new-model')
+      const restored = new SettingsService({
+        repository: new SettingsRepository(dir),
+        configRoot: dir
+      })
+      expect(await restored.resolveActiveModelChangeTarget()).toMatchObject({
+        frameworkId: framework,
+        providerId: draft.id,
+        route,
+        model: 'new-model'
+      })
+    }
+  )
+
   let dir: string
   let repository: InstanceType<typeof SettingsRepository>
   let service: InstanceType<typeof SettingsService>

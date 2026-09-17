@@ -54,6 +54,78 @@ afterEach(async () => {
 })
 
 describe('settings repository', () => {
+  it('publishes an active custom model edit and its selection in one mutation', async () => {
+    const dir = await createStorageRoot()
+    const store = new SettingsDocumentStore(dir)
+    const repository = new SettingsRepository(store)
+    await repository.upsertProvider(provider())
+    await repository.setActiveProvider('p1', 'm')
+    const mutate = vi.spyOn(store, 'mutate')
+
+    const saved = await repository.upsertProvider(provider({ model: 'new-model' }), 'p1', {
+      expectedConfigRevision: 0
+    })
+
+    expect(mutate).toHaveBeenCalledTimes(1)
+    expect(saved).toMatchObject({
+      activeProviderId: 'p1',
+      activeModel: 'new-model',
+      providers: [expect.objectContaining({ model: 'new-model', configRevision: 1 })]
+    })
+    expect(await new SettingsRepository(dir).getSettings()).toEqual(saved)
+    expect(JSON.parse(await readFile(join(dir, 'settings.json'), 'utf8'))).toMatchObject({
+      activeModel: 'new-model',
+      providers: [expect.objectContaining({ model: 'new-model' })]
+    })
+    await expect(
+      repository.upsertProvider(provider({ model: 'stale-model' }), 'p1', {
+        expectedConfigRevision: 0
+      })
+    ).rejects.toThrow('Provider configuration changed')
+    expect(await repository.getSettings()).toEqual(saved)
+  })
+
+  it('repairs a historical custom model mismatch only on explicit configuration save', async () => {
+    const dir = await createStorageRoot()
+    const repository = new SettingsRepository(dir)
+    await repository.upsertProvider(provider())
+    await repository.setActiveProvider('p1', 'old-model')
+    expect((await new SettingsRepository(dir).getSettings()).activeModel).toBe('old-model')
+    await repository.upsertProvider(provider({ keyRef: 'enc:replacement' }))
+    expect((await repository.getSettings()).activeModel).toBe('old-model')
+
+    await repository.upsertProvider(provider({ keyRef: 'enc:replacement' }), 'p1', {})
+    expect((await new SettingsRepository(dir).getSettings()).activeModel).toBe('m')
+  })
+
+  it.each([undefined, 'p2'])(
+    'preserves the active selection when editing an inactive custom provider (%s)',
+    async (activeId) => {
+      const repository = new SettingsRepository(await createStorageRoot())
+      await repository.upsertProvider(provider())
+      await repository.upsertProvider(provider({ id: 'p2', model: 'other-model' }))
+      if (activeId) await repository.setActiveProvider(activeId, 'other-model')
+      const before = await repository.getSettings()
+
+      await repository.upsertProvider(provider({ model: 'new-model' }), 'p1', {})
+
+      const saved = await repository.getSettings()
+      expect(saved.activeProviderId).toBe(before.activeProviderId)
+      expect(saved.activeModel).toBe(before.activeModel)
+    }
+  )
+
+  it('preserves independent official model selection on configuration save', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+    const official = provider({ type: 'official', vendorId: 'openai', model: 'gpt-5.4' })
+    await repository.upsertProvider(official)
+    await repository.setActiveProvider(official.id, 'gpt-5.4-mini')
+
+    await repository.upsertProvider({ ...official, name: 'Renamed' }, official.id, {})
+
+    expect((await repository.getSettings()).activeModel).toBe('gpt-5.4-mini')
+  })
+
   it('commits framework, Reviewer, and Subagent routing as one validated mutation', async () => {
     const repository = new SettingsRepository(await createStorageRoot())
     const fixed = {
