@@ -501,6 +501,7 @@ Active-dialog menus and other foreground child layers retain their own ordering.
 - Header: `px-5 py-4`, with `border-b` when needed.
 - Body: `px-5 py-5`; form items use `space-y-4` or `space-y-6`.
 - Footer: `flex justify-end gap-2 px-5 py-4`, with `border-t` when needed.
+- Long editing forms keep the action footer outside the scrolling body so testing, cancel, and save controls remain visible. Keep one primary save action; independent diagnostic actions may sit at the leading edge. Inline operation feedback stays compact above the actions, with technical details collapsed by default and bounded when expanded.
 - Close: `DialogClose` + `Button variant="ghost" size="icon"`, using `size-6` or `size-7`.
 - Overlay: `fixed inset-0 bg-black/50`, using Radix state animations for open and close. Compact workspace confirmations share this overlay.
 - Delete confirmation copy must include the session name and state that session artifacts remain in the project.

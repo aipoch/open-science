@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { redactSensitiveText } from '../../shared/diagnostic-redaction'
 
 import type {
   ChatApiEndpoint,
@@ -290,6 +291,14 @@ const toResult = (
 // Cap on a surfaced provider error so a runaway HTML/error page can't flood the UI.
 const MAX_ERROR_MESSAGE_LENGTH = 300
 
+const safeProviderDiagnostic = (message: string, key?: string): string => {
+  const redacted = redactSensitiveText(key ? message.split(key).join('[redacted]') : message)
+  const collapsed = redacted.replace(/\s+/g, ' ').trim()
+  return collapsed.length > MAX_ERROR_MESSAGE_LENGTH
+    ? `${collapsed.slice(0, MAX_ERROR_MESSAGE_LENGTH)}…`
+    : collapsed
+}
+
 // Digs the human-readable error string out of a parsed error body. Anthropic- and
 // OpenAI/DeepSeek-compatible gateways nest it under `error.message`; some return a bare `message` or
 // a string `error` (e.g. DeepSeek's "Insufficient Balance" on a 402).
@@ -310,7 +319,7 @@ const pickErrorMessage = (parsed: unknown): string | undefined => {
 
 // Turns a provider's raw error body into a short, single-line message, or undefined when it carries
 // nothing usable. Non-JSON bodies (an HTML/plain-text gateway error page) fall back to the raw text.
-const extractProviderErrorMessage = (bodyText: string): string | undefined => {
+const extractProviderErrorMessage = (bodyText: string, key?: string): string | undefined => {
   const trimmed = bodyText.trim()
   if (!trimmed) return undefined
 
@@ -324,23 +333,22 @@ const extractProviderErrorMessage = (bodyText: string): string | undefined => {
   }
   if (!message) return undefined
 
-  const collapsed = message.replace(/\s+/g, ' ').trim()
-  if (!collapsed) return undefined
-
-  return collapsed.length > MAX_ERROR_MESSAGE_LENGTH
-    ? `${collapsed.slice(0, MAX_ERROR_MESSAGE_LENGTH)}…`
-    : collapsed
+  return safeProviderDiagnostic(message, key) || undefined
 }
 
 // Reads and extracts a failed response's error message, tolerating a body that can't be read.
-const readProviderErrorMessage = async (response: Response): Promise<string | undefined> => {
+const readProviderErrorMessage = async (
+  response: Response,
+  key?: string
+): Promise<string | undefined> => {
   try {
     return extractProviderErrorMessage(
       await readBoundedResponseText(
         response,
         PROVIDER_RESOURCE_LIMITS.validationResponseBytes,
         'Provider validation response'
-      )
+      ),
+      key
     )
   } catch (error) {
     if (error instanceof ResponseBodyLimitError) throw error
@@ -524,7 +532,8 @@ const createBoundedValidationFetch =
 
 const validateProviderThroughLocalResponsesAdapter = async (
   adapter: LocalResponsesValidationAdapter,
-  timeoutMs: number
+  timeoutMs: number,
+  key?: string
 ): Promise<ValidateProviderResult> => {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
@@ -562,7 +571,7 @@ const validateProviderThroughLocalResponsesAdapter = async (
       }
       throw error
     }
-    const providerMessage = extractProviderErrorMessage(bodyText)
+    const providerMessage = extractProviderErrorMessage(bodyText, key)
 
     if ((status === 400 || status === 404) && providerMessage) {
       category = isModelNotFoundMessage(providerMessage) ? 'model-not-found' : 'unknown'
@@ -613,7 +622,8 @@ const validateProviderThroughResponsesBridge = async (
       missingToolCallMessage:
         'The provider answered through the bridge, but did not complete the required streaming function tool call.'
     },
-    timeoutMs
+    timeoutMs,
+    provider.key
   )
 }
 
@@ -643,7 +653,8 @@ const validateProviderThroughNativeResponsesCompatibility = async (
       missingToolCallMessage:
         'The provider answered through the compatibility proxy, but did not complete the required namespace function tool call.'
     },
-    timeoutMs
+    timeoutMs,
+    provider.key
   )
 }
 
@@ -699,7 +710,7 @@ const validateCustomProvider = async (
 
     if (response.status < 200 || response.status >= 300) {
       try {
-        providerMessage = await readProviderErrorMessage(response)
+        providerMessage = await readProviderErrorMessage(response, provider.key)
       } catch (error) {
         if (error instanceof ResponseBodyLimitError) {
           return toResult(category, { status: response.status, message: error.message })
@@ -784,7 +795,7 @@ const validateCustomProvider = async (
 }
 
 // Dispatches validation by provider type.
-const validateProvider = (
+const validateProviderUnredacted = (
   provider: ResolvedProvider,
   deps: ValidateProviderDeps = {}
 ): Promise<ValidateProviderResult> => {
@@ -807,6 +818,16 @@ const validateProvider = (
       return fetchImpl(input, { ...init, headers })
     }
   })
+}
+
+const validateProvider = async (
+  provider: ResolvedProvider,
+  deps: ValidateProviderDeps = {}
+): Promise<ValidateProviderResult> => {
+  const result = await validateProviderUnredacted(provider, deps)
+  return result.message
+    ? { ...result, message: safeProviderDiagnostic(result.message, provider.key) }
+    : result
 }
 
 export {

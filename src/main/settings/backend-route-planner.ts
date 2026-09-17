@@ -73,7 +73,9 @@ type BackendTransportPlan =
     }>
   | Readonly<{
       kind: 'claude-anthropic'
-      targets: readonly AnthropicProviderBridgeTarget[]
+      targets: readonly (AnthropicProviderBridgeTarget & {
+        runtimeTarget?: ProviderRuntimeTarget
+      })[]
       initialTargetId: string
     }>
   | Readonly<{
@@ -313,27 +315,32 @@ class BackendRoutePlanner {
       if (!usesAppProviderTransport(active.provider.type)) {
         return Object.freeze({ kind: 'direct' })
       }
-      const targets = candidates.flatMap((candidate): AnthropicProviderBridgeTarget[] => {
-        const model = candidate.effectiveModel ?? candidate.provider.model
-        const baseUrl = normalizeAnthropicBaseUrl(candidate.provider.baseUrl ?? '')
-        return !model || !baseUrl
-          ? []
-          : [
-              Object.freeze({
-                id: claudeTargetId(candidate.providerId, model),
-                baseUrl,
-                ...(candidate.provider.key ? { key: candidate.provider.key } : {}),
-                model,
-                ...(candidate.provider.vendorId === 'apodex'
-                  ? { backgroundModel: 'apodex-1.1-mini' }
-                  : {}),
-                ...(candidate.provider.vendorId &&
-                usesVendorAnthropicApiKeyHeader(candidate.provider.vendorId)
-                  ? { useApiKeyHeader: true }
-                  : {})
-              })
-            ]
-      })
+      const targets = candidates.flatMap(
+        (
+          candidate
+        ): (AnthropicProviderBridgeTarget & { runtimeTarget?: ProviderRuntimeTarget })[] => {
+          const model = candidate.effectiveModel ?? candidate.provider.model
+          const baseUrl = normalizeAnthropicBaseUrl(candidate.provider.baseUrl ?? '')
+          return !model || !baseUrl
+            ? []
+            : [
+                Object.freeze({
+                  id: claudeTargetId(candidate.providerId, model),
+                  runtimeTarget: candidate,
+                  baseUrl,
+                  ...(candidate.provider.key ? { key: candidate.provider.key } : {}),
+                  model,
+                  ...(candidate.provider.vendorId === 'apodex'
+                    ? { backgroundModel: 'apodex-1.1-mini' }
+                    : {}),
+                  ...(candidate.provider.vendorId &&
+                  usesVendorAnthropicApiKeyHeader(candidate.provider.vendorId)
+                    ? { useApiKeyHeader: true }
+                    : {})
+                })
+              ]
+        }
+      )
       const model = active.effectiveModel ?? active.provider.model
       if (!model) return Object.freeze({ kind: 'direct' })
       const initialTargetId = claudeTargetId(active.providerId, model)

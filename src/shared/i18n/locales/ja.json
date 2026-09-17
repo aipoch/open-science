@@ -119,6 +119,9 @@
     "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "複製の公開処理を復旧する必要があります（操作 {{operationId}}、セッション {{sessionId}}）。再度複製する前にアプリを再起動してこの操作を復旧してください。"
   },
   "renderer": {
+    "Provider saved, but the Agent could not reconnect. Your changes do not need to be saved again.": "プロバイダーは保存されましたが、エージェントが再接続できませんでした。変更を再度保存する必要はありません。",
+    "Provider saved, but settings could not be refreshed. Reopen settings to refresh.": "プロバイダーは保存されましたが、設定を更新できませんでした。設定を開き直して更新してください。",
+    "Changes have not been saved.": "変更は保存されていません。",
     "Continued from chat #{{number}}": "会話 #{{number}} から継続",
     "Continued from chat": "元の会話から継続",
     "Open-source license": "オープンソースライセンス",

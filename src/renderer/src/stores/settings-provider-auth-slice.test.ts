@@ -19,6 +19,7 @@ type ProviderCommands = Pick<
   | 'setActiveProvider'
   | 'setAgentFramework'
   | 'validateProvider'
+  | 'saveValidatedProvider'
   | 'cancelCodexLogin'
   | 'cancelClaudeLogin'
   | 'loginIsolatedCodex'
@@ -100,6 +101,7 @@ const createCommands = (): CommandMocks => ({
   deleteProvider: vi.fn().mockResolvedValue(snapshot()),
   setActiveProvider: vi.fn().mockResolvedValue(snapshot()),
   setAgentFramework: vi.fn().mockResolvedValue(snapshot()),
+  saveValidatedProvider: vi.fn(),
   validateProvider: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
   cancelCodexLogin: vi.fn().mockResolvedValue(undefined),
   cancelClaudeLogin: vi.fn().mockResolvedValue(undefined),
@@ -168,6 +170,33 @@ const createHarness = (): {
 }
 
 describe('provider auth slice: persistence and validation', () => {
+  it('keeps saved configuration when prospective validation fails without reconciling or writing', async () => {
+    const { store, commands, reconcileSnapshot, refreshPreflight } = createHarness()
+    const existing = provider('saved')
+    store.setState({ providers: [existing] })
+    const result = { validation: { ok: false, category: 'auth' } }
+    commands.saveValidatedProvider.mockResolvedValue(result)
+    await expect(
+      store.getState().saveValidatedProvider({ id: 'saved', type: 'custom', name: 'changed' })
+    ).resolves.toEqual(result)
+    expect(store.getState().providers).toEqual([existing])
+    expect(commands.upsertProvider).not.toHaveBeenCalled()
+    expect(reconcileSnapshot).not.toHaveBeenCalled()
+    expect(refreshPreflight).not.toHaveBeenCalled()
+  })
+
+  it('preserves a committed save identity if the subsequent snapshot refresh fails', async () => {
+    const { store, commands } = createHarness()
+    const result = { providerId: 'saved', validation: { ok: true, category: 'ok' } }
+    commands.saveValidatedProvider.mockResolvedValue(result)
+    commands.getSettings.mockRejectedValue(new Error('refresh unavailable'))
+    await expect(
+      store.getState().saveValidatedProvider({ type: 'custom', name: 'new' })
+    ).resolves.toEqual({ ...result, refreshFailed: true })
+    expect(commands.saveValidatedProvider).toHaveBeenCalledOnce()
+    expect(commands.upsertProvider).not.toHaveBeenCalled()
+  })
+
   let commands: CommandMocks
   let refreshPreflight: Mock
   let reconcileSnapshot: Mock

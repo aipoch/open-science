@@ -121,6 +121,9 @@
     "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "La publication de la copie doit être rétablie (opération {{operationId}}, session {{sessionId}}). Redémarrez l’application pour récupérer cette opération avant de dupliquer à nouveau."
   },
   "renderer": {
+    "Provider saved, but the Agent could not reconnect. Your changes do not need to be saved again.": "Le fournisseur a été enregistré, mais l’Agent n’a pas pu se reconnecter. Vous n’avez pas besoin d’enregistrer à nouveau vos modifications.",
+    "Provider saved, but settings could not be refreshed. Reopen settings to refresh.": "Le fournisseur a été enregistré, mais les paramètres n’ont pas pu être actualisés. Rouvrez les paramètres pour les actualiser.",
+    "Changes have not been saved.": "Les modifications n’ont pas été enregistrées.",
     "Continued from chat #{{number}}": "Suite de la conversation #{{number}}",
     "Continued from chat": "Suite d’une conversation",
     "Open-source license": "Licence open source",

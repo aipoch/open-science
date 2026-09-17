@@ -119,6 +119,9 @@
     "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "副本发布需要恢复（操作 {{operationId}}，会话 {{sessionId}}）。请重启应用恢复此次操作，然后再创建副本。"
   },
   "renderer": {
+    "Provider saved, but the Agent could not reconnect. Your changes do not need to be saved again.": "供应商已保存，但智能体无法重新连接。无需再次保存更改。",
+    "Provider saved, but settings could not be refreshed. Reopen settings to refresh.": "供应商已保存，但无法刷新设置。请重新打开设置以刷新。",
+    "Changes have not been saved.": "更改尚未保存。",
     "Continued from chat #{{number}}": "继续自会话 #{{number}}",
     "Continued from chat": "继续自原会话",
     "Open-source license": "开源许可证",

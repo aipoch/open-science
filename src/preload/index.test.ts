@@ -659,6 +659,7 @@ describe('preload bridge — public surface inventory', () => {
       'settings.retryConnectorProjection',
       'settings.retryCustomServer',
       'settings.saveGitHubToken',
+      'settings.saveValidatedProvider',
       'settings.scanRepoSkills',
       'settings.selectCustomServerTemplate',
       'settings.selectWslProfile',
