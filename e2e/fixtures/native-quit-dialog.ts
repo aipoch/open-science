@@ -23,7 +23,8 @@ export const captureNativeQuitDialog = async ({
   // Rollup emits a separate catalog file (or gives any chunk a particular name).
   const loadedExport = (name: string): Record<string, unknown> => {
     for (const module of Object.values(requireFromApp.cache)) {
-      if (!module?.filename.startsWith(mainRoot + sep)) continue
+      if (typeof module?.filename !== 'string' || !module.filename.startsWith(mainRoot + sep))
+        continue
       const exports = module.exports as Record<string, unknown>
       if (typeof exports?.[name] === 'function') return exports
     }
