@@ -131,7 +131,7 @@ it('forks all branches with fresh identities, independent files, replay and no S
   const source = (await repository.loadSession('project-1', 'session-1'))!
   const result = await service.fork({ projectId: source.projectId, sessionId: source.id })
   const fork = (await repository.loadSession(result.projectId, result.sessionId))!
-  expect(fork.title).toBe('Study (Fork)')
+  expect(fork.title).toBe('Study(2)')
   expect(fork.id).not.toMatch(/^import-/)
   expect(fork.packageOrigin).toBeUndefined()
   expect(fork.forkOrigin?.sourceSessionId).toBe(source.id)
@@ -719,4 +719,17 @@ it('reforks Notebook files without copying the previous publication ownership ma
   await expect(
     service.importFrom(archive, undefined, undefined, undefined, { projectId: source.projectId })
   ).resolves.toBeDefined()
+})
+
+it('numbers sibling forks and nests the direct source title', async () => {
+  const { repository, service } = await setup()
+  const source = { projectId: 'project-1', sessionId: 'session-1' }
+  const first = await service.fork(source)
+  const second = await service.fork(source)
+  const nested = await service.fork(first)
+  expect((await repository.loadSession(first.projectId, first.sessionId))?.title).toBe('Study(2)')
+  expect((await repository.loadSession(second.projectId, second.sessionId))?.title).toBe('Study(3)')
+  const child = await repository.loadSession(nested.projectId, nested.sessionId)
+  expect(child?.title).toBe('Study(2)(2)')
+  expect(child?.branchSource?.sessionId).toBe(first.sessionId)
 })

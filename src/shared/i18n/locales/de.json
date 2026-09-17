@@ -120,6 +120,7 @@
     "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "Die Veröffentlichung der Abzweigung muss wiederhergestellt werden (Vorgang {{operationId}}, Session {{sessionId}}). Starten Sie die App neu, um diesen Versuch wiederherzustellen, bevor Sie erneut abzweigen."
   },
   "renderer": {
+    "Continued from chat": "Fortgesetzt aus einem Chat",
     "Open-source license": "Open-Source-Lizenz",
     "Old Shell launch records are blocking this update.": "Alte Startaufzeichnungen der Befehlszeile blockieren dieses Update.",
     "Recovery will back up old Shell launch records and retry the update. Project data and settings are preserved.": "Die Wiederherstellung sichert alte Startaufzeichnungen der Befehlszeile und versucht das Update erneut. Projektdaten und Einstellungen bleiben erhalten.",

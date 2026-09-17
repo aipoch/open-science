@@ -107,7 +107,7 @@ import { assertPackageCapacity } from './capacity'
 import { ensureWorkingFileEvidenceProject } from '../notebook/working-file-observer'
 import { SessionPackageDeletion } from './deletion'
 import { createManagedSessionWorkspaceCapability } from '../acp/managed-session-workspace'
-import { createForkSession, ForkRecoveryRequiredError } from './fork-session'
+import { createForkSession, nextForkTitle, ForkRecoveryRequiredError } from './fork-session'
 
 const importJournalSchema = sessionPackageRequestSchema
   .extend({
@@ -1128,10 +1128,19 @@ export class SessionPackageService {
         }
       }
       if (forkSource) {
+        const client = await this.options.getClient()
+        const siblings = await client.session.findMany({
+          where: { projectId },
+          select: { title: true }
+        })
         session = createForkSession(
           session,
           forkSource,
-          (await this.options.getDefaultPermissionProfile?.()) ?? DEFAULT_PERMISSION_PROFILE
+          (await this.options.getDefaultPermissionProfile?.()) ?? DEFAULT_PERMISSION_PROFILE,
+          nextForkTitle(
+            forkSource.title,
+            siblings.map((sibling) => sibling.title)
+          )
         )
       }
       validatePackageLiteratureSession(native.records, session)

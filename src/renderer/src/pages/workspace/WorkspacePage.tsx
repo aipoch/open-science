@@ -1526,6 +1526,7 @@ const WorkspacePage = ({
                 }
               }}
               sessionTools={{
+                openSession: openSessionWithoutExportError,
                 notebookReference: activeNotebookReference,
                 openNotebook: openNotebookPreview,
                 openJobs: sessionController.actions.openJobList,

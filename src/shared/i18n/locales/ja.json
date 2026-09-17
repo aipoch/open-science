@@ -119,6 +119,7 @@
     "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "複製の公開処理を復旧する必要があります（操作 {{operationId}}、セッション {{sessionId}}）。再度複製する前にアプリを再起動してこの操作を復旧してください。"
   },
   "renderer": {
+    "Continued from chat": "元の会話から継続",
     "Open-source license": "オープンソースライセンス",
     "Old Shell launch records are blocking this update.": "古いシェル起動記録が更新を妨げています。",
     "Recovery will back up old Shell launch records and retry the update. Project data and settings are preserved.": "復旧操作では古いシェル起動記録をバックアップし、更新を再試行します。プロジェクトのデータと設定は保持されます。",

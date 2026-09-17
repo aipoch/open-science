@@ -5,12 +5,22 @@ import {
   type PersistedChatSession
 } from '../../shared/session-persistence'
 
+export const nextForkTitle = (sourceTitle: string, existingTitles: readonly string[]): string => {
+  const titles = new Set(existingTitles)
+  for (let index = 2; ; index += 1) {
+    const suffix = `(${index})`
+    const title = `${sourceTitle.slice(0, SESSION_DETAILS_TITLE_MAX_LENGTH - suffix.length)}${suffix}`
+    if (!titles.has(title)) return title
+  }
+}
+
 // The package copier owns data identities and evidence; this policy owns the new Session's
 // execution state. Historical operations stay historical and never acquire live handles.
 export const createForkSession = (
   copied: PersistedChatSession,
   source: PersistedChatSession,
-  permissionProfile: PermissionProfileId
+  permissionProfile: PermissionProfileId,
+  title: string
 ): PersistedChatSession => {
   const now = Date.now()
   const graph = copied.conversationGraph
@@ -29,7 +39,7 @@ export const createForkSession = (
     ...copied,
     packageOrigin: undefined,
     forkOrigin: copied.packageOrigin,
-    title: `${source.title.slice(0, SESSION_DETAILS_TITLE_MAX_LENGTH - 7)} (Fork)`,
+    title,
     description: source.description,
     createdAt: now,
     updatedAt: now,

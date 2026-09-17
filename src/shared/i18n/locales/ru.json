@@ -122,6 +122,7 @@
     "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "Необходимо восстановить публикацию ответвления (операция {{operationId}}, сессия {{sessionId}}). Перезапустите приложение для восстановления этой попытки перед созданием нового ответвления."
   },
   "renderer": {
+    "Continued from chat": "Продолжение чата",
     "Open-source license": "Лицензия открытого исходного кода",
     "Old Shell launch records are blocking this update.": "Старые записи запуска командной строки блокируют обновление.",
     "Recovery will back up old Shell launch records and retry the update. Project data and settings are preserved.": "При восстановлении будет создана резервная копия старых записей запуска командной строки, после чего обновление повторится. Данные проекта и настройки сохранятся.",

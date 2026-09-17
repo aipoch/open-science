@@ -21,12 +21,16 @@ test('forks local and imported research and immediately continues through the re
   await expect(page.getByRole('button', { name: 'Stop generating' })).toHaveCount(0)
   await page.getByRole('button', { name: `Open actions for ${prompt}` }).click()
   await page.getByRole('menuitem', { name: 'Fork', exact: true }).click()
-  const title = `${prompt} (Fork)`
+  const title = `${prompt}(2)`
   await expect(page.getByRole('button', { name: `Open actions for ${title}` })).toBeVisible()
   const row = page
     .locator('[data-session-id]')
     .filter({ has: page.getByRole('button', { name: `Open actions for ${title}` }) })
   await expect(row.getByRole('img', { name: 'Read-only' })).toHaveCount(0)
+  await page.getByRole('button', { name: 'Continued from chat', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Continued from chat', exact: true })).toHaveCount(0)
+  await row.locator('[data-slot="session-open-button"]').click()
+  await expect(page.getByRole('button', { name: 'Continued from chat', exact: true })).toBeVisible()
   for (const [kind, followup] of [
     ['local', 'Continue local fork'],
     ['imported', 'Continue imported fork']
@@ -76,7 +80,7 @@ test('forks local and imported research and immediately continues through the re
   await restarted
     .getByRole('region', { name: 'Recent sessions' })
     .getByRole('button', {
-      name: new RegExp('^Summarize the deterministic fixture\\. \\(Fork\\) \\(Fork\\)')
+      name: new RegExp('^Summarize the deterministic fixture\\.\\(2\\)\\(2\\)')
     })
     .click()
   await expect(restarted.getByRole('textbox', { name: 'Ask anything' })).toBeVisible()
