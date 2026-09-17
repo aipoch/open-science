@@ -1405,6 +1405,7 @@ describe('PR Gate workflow', () => {
       ({ name }) => name === 'Test Windows wheel evidence recovery'
     )
     expect(wheelEvidence?.if).toContain("'windows_runtime'")
+    expect(wheelEvidence?.if).toContain("inputs.dry_run != 'windows-process'")
     expect(wheelEvidence?.env).toMatchObject({ RUN_KERNEL: '1' })
     expect(wheelEvidence?.run).toContain('OPEN_SCIENCE_TEST_PYTHON')
     expect(wheelEvidence?.run).toContain('pip-wheel-evidence.test.ts')

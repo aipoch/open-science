@@ -818,7 +818,7 @@ jobs:
           src/main/notebook/micromamba-cache-powershell.test.ts
           src/main/notebook/micromamba-cache-acl.integration.test.ts
       - name: Test Windows wheel evidence recovery
-        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') }}
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' }}
         shell: pwsh
         env:
           RUN_KERNEL: '1'
