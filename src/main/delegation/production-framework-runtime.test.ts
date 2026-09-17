@@ -9,7 +9,17 @@ import {
 import { describe, expect, it, vi } from 'vitest'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { readFileSync } from 'node:fs'
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 
@@ -1112,6 +1122,26 @@ it('isolates concurrent OpenCode Attempts and a continuation without releasing s
         await readFile(join(child.env.XDG_CONFIG_HOME, 'opencode', 'opencode.json'), 'utf8')
       ).toBe(safeOpenCodeConfig)
     }
+    // A child can replace any runtime directory or add nested links before it exits.
+    const external = join(dataRoot, 'external-private')
+    await mkdir(external, { mode: 0o700 })
+    await writeFile(join(external, 'secret'), 'private data', { mode: 0o600 })
+    const externalMode = (await stat(external)).mode
+    const secretMode = (await stat(join(external, 'secret'))).mode
+    const linkType = process.platform === 'win32' ? 'junction' : 'dir'
+    const firstConfig = join(first[0].backend.env.XDG_CONFIG_HOME, 'opencode')
+    await symlink(external, join(firstConfig, 'skills', 'os-linked'), linkType)
+    const nested = join(firstConfig, 'skills', 'os-example', 'references')
+    await chmod(nested, 0o755)
+    await symlink(external, join(nested, 'linked-directory'), linkType)
+    if (process.platform !== 'win32') {
+      await symlink(join(external, 'secret'), join(nested, 'linked-file'), 'file')
+    }
+    await chmod(nested, 0o555)
+    const secondConfig = join(first[1].backend.env.XDG_CONFIG_HOME, 'opencode')
+    await new ClaudeCodeSkillMaterializer().sync(secondConfig, [])
+    await rm(join(secondConfig, 'skills'), { recursive: true })
+    await symlink(external, join(secondConfig, 'skills'), linkType)
     first[0].fail()
     const failedIndex = Number(
       basename(dirname(first[0].backend.env.XDG_CONFIG_HOME)).slice('isolation-'.length)
@@ -1153,6 +1183,9 @@ it('isolates concurrent OpenCode Attempts and a continuation without releasing s
     if (process.platform !== 'win32') {
       expect((await stat(join(sourceConfig, 'skills', 'os-example'))).mode & 0o222).toBe(0)
     }
+    expect(await readFile(join(external, 'secret'), 'utf8')).toBe('private data')
+    expect((await stat(external)).mode).toBe(externalMode)
+    expect((await stat(join(external, 'secret'))).mode).toBe(secretMode)
     expect(release).toHaveBeenCalledOnce()
     expect(
       JSON.stringify({
@@ -1169,12 +1202,24 @@ it('isolates concurrent OpenCode Attempts and a continuation without releasing s
     await Promise.allSettled(settlements)
     await admission.release()
     spy.mockRestore()
-    for (const config of [
-      sourceConfig,
-      ...controls.map(({ backend: child }) => join(child.env.XDG_CONFIG_HOME, 'opencode'))
-    ]) {
-      await new ClaudeCodeSkillMaterializer().sync(config, [], { directoryLayout: 'agent-facing' })
+    for (const { backend: child } of controls) {
+      const config = join(child.env.XDG_CONFIG_HOME, 'opencode')
+      const skills = join(config, 'skills')
+      const entry = await lstat(skills).catch(() => undefined)
+      if (entry?.isSymbolicLink()) await rm(skills, { force: true })
+      else {
+        await chmod(join(skills, 'os-example', 'references'), 0o755).catch(() => undefined)
+        for (const relativePath of [
+          'os-linked',
+          'os-example/references/linked-directory',
+          'os-example/references/linked-file'
+        ]) {
+          await rm(join(skills, relativePath), { force: true }).catch(() => undefined)
+        }
+      }
+      await new ClaudeCodeSkillMaterializer().sync(config, [])
     }
+    await new ClaudeCodeSkillMaterializer().sync(sourceConfig, [])
     await rm(dataRoot, { recursive: true, force: true })
   }
 })
