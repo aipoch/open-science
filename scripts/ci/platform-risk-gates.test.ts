@@ -203,6 +203,28 @@ it.each(['pull_request', 'merge_group'])(
   }
 )
 
+it.each(['pull_request', 'merge_group'])(
+  'does not let a workflow contract expand an ordinary UI change on %s',
+  (event) => {
+    const { plan, report } = runModuleImpactAuthorityCli(
+      ['--base', 'a'.repeat(40), '--head', 'b'.repeat(40)],
+      { EVENT_NAME: event, PR_GATE_PLATFORM_POLICY: 'risk-v1' },
+      {
+        execute: () =>
+          Buffer.from(
+            'M\0src/renderer/src/components/ui/button.tsx\0M\0scripts/ci/pr-gate-workflow.test.ts\0'
+          ),
+        write: () => undefined
+      }
+    )
+    expect(plan.mode).toBe('selective')
+    expect(plan.macosProfile).toBe('smoke')
+    expect(macosGroupsForPlan(plan)).toEqual(['journeys'])
+    expect(report.shadow.testFiles).toContain('scripts/ci/pr-gate-workflow.test.ts')
+    if (event === 'merge_group') expect(plan.bundles).not.toContain('windows_e2e')
+  }
+)
+
 it('does not give old PR workflows a smoke lane they cannot execute', () => {
   const changes = Buffer.from('M\0src/renderer/src/components/ui/button.tsx\0')
   for (const policy of [undefined, 'risk-v1']) {
