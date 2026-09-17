@@ -15,7 +15,7 @@ test('withdraws a cancelled network approval on an incremental state update', as
   await expect(page.getByTestId('permission-header')).toHaveCount(0)
   await expect(title).toHaveCount(0)
   await expect(page.getByTestId('no-pending-approval')).toBeVisible()
-  await page.evaluate(() => window.scrollTo(0, 0))
+  await page.getByRole('heading', { name: 'TCGA-XENA' }).scrollIntoViewIfNeeded()
   await page.screenshot({ path: testInfo.outputPath('network-approval-cancelled.png') })
   expect(
     await page.evaluate(
