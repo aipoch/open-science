@@ -1783,6 +1783,9 @@ it.each(['managed', 'external'] as const)(
     await writeFile(join(bin, 'Rscript.exe'), '')
     backend.status.mockResolvedValue({ kind: 'setupRequired', platform: 'win32', reasons: [] })
     backend.isWindowsProtectionConfigured.mockResolvedValue(false)
+    const started = vi.fn()
+    const notStarted = vi.fn()
+    const beginSpawn = vi.fn(() => ({ started, notStarted }))
     backend.getWindowsRuntimeAccess.mockResolvedValue({ authorized: false, registered: false })
     backend.wrap.mockImplementation(async (command: { env: NodeJS.ProcessEnv }) => ({
       argv: [
@@ -1795,6 +1798,7 @@ it.each(['managed', 'external'] as const)(
       `
       ],
       env: command.env,
+      beginSpawn,
       annotateStderr: (value: string) => value,
       resetNetworkConnections: backend.resetNetworkConnections,
       setExecutionActive: backend.setExecutionActive,
@@ -1825,6 +1829,9 @@ it.each(['managed', 'external'] as const)(
       })
       expect(result.status, result.stderr).toBe('completed')
       expect(result.stdout).toContain('15')
+      expect(beginSpawn).toHaveBeenCalledOnce()
+      expect(started).toHaveBeenCalledOnce()
+      expect(notStarted).not.toHaveBeenCalled()
       expect(backend.wrap).toHaveBeenCalledWith(
         expect.objectContaining({ windowsProtectionRequired: false })
       )
@@ -1835,6 +1842,53 @@ it.each(['managed', 'external'] as const)(
     }
   }
 )
+
+it('checks sandbox spawn admission before launching the R process', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'os-r-spawn-admission-'))
+  fixtureDirectories.push(root)
+  const marker = join(root, 'spawned')
+  const cleanup = vi.fn().mockResolvedValue({
+    processesTerminated: true,
+    networkClosed: true,
+    temporaryResourcesRemoved: true
+  })
+  const beginSpawn = vi.fn(() => {
+    throw new Error('Windows protection changed before R startup.')
+  })
+  const executor = new NotebookKernelExecutor({
+    processSandbox: {
+      wrap: async () => ({
+        executable: process.execPath,
+        args: ['-e', 'require("node:fs").writeFileSync(' + JSON.stringify(marker) + ', "started")'],
+        env: process.env,
+        beginSpawn,
+        annotateStderr: (value: string) => value,
+        cleanup
+      })
+    }
+  })
+  try {
+    const result = await executor.execute({
+      language: 'r',
+      code: 'sum(1:5)',
+      cwd: root,
+      notebookSessionRoot: root,
+      dataRoot: root,
+      runtimeRoot: root,
+      resolvedInterpreter: { command: process.execPath },
+      sessionId: 'r',
+      projectId: 'p'
+    })
+    expect(result.status).toBe('failed')
+    expect(result.stderr).toContain('Windows protection changed')
+    expect(result.kernelDispatched).toBe(false)
+    expect(beginSpawn).toHaveBeenCalledOnce()
+    expect(existsSync(marker)).toBe(false)
+    expect(cleanup).toHaveBeenCalledWith('spawn-failed', { processesTerminated: true })
+  } finally {
+    await executor.shutdown()
+  }
+})
 
 it('authorizes missing R access before the original Notebook cell is dispatched', async () => {
   const root = await mkdtemp(join(tmpdir(), 'os-r-notebook-access-'))

@@ -1102,7 +1102,11 @@ class NotebookKernelExecutor implements NotebookExecutor {
         : {})
     }
     let child: ChildProcessWithoutNullStreams
+    let spawnAdmission: Readonly<{ started: () => void; notStarted: () => void }> | undefined
     try {
+      // No await may separate this check from spawn: settings mutations must not interleave
+      // between validating the prepared launch and creating its process.
+      spawnAdmission = sandboxed?.beginSpawn?.()
       child = spawn(spawnExecutable, spawnArgs, {
         cwd: spawnCwd,
         env: effectiveSpawnEnv,
@@ -1114,10 +1118,13 @@ class NotebookKernelExecutor implements NotebookExecutor {
         ...(rpcTokenFileDescriptor ? { stdio: ['pipe', 'pipe', 'pipe', 'pipe'] } : {})
       })
     } catch (error) {
+      spawnAdmission?.notStarted()
       if (ownershipIntent) this.processLifecycle?.abandonSpawn(ownershipIntent)
       await cleanupSandbox('spawn-failed', { processesTerminated: true })
       throw error
     }
+    child.once('spawn', () => spawnAdmission?.started())
+    child.once('error', () => spawnAdmission?.notStarted())
     if (this.platform !== 'win32' && this.canTrackPosixProcesses)
       this.registerOwnedProcessGroup(child, processTreeOwnership.token)
     const cleanupFailedSpawn = async (): Promise<void> => {

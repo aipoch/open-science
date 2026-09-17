@@ -125,6 +125,20 @@ let windowsProtectedGatewayPort: number | undefined
 const commandContexts = new Map<string, RuntimeContext>()
 const finishing = new Set<Promise<unknown>>()
 const violations = new ViolationLog()
+// Settings mutations and the final spawn check run in this owner process. A revision change
+// invalidates prepared R launches, including a cancelled/failed mutation (the state may have changed).
+let windowsProtectionRevision = 0
+let windowsProtectionMutations = 0
+const mutateWindowsProtection = async <T>(operation: () => Promise<T>): Promise<T> => {
+  windowsProtectionRevision += 1
+  windowsProtectionMutations += 1
+  try {
+    return await operation()
+  } finally {
+    windowsProtectionMutations -= 1
+    windowsProtectionRevision += 1
+  }
+}
 
 const parentSettings = (config: NetworkRuntimeConfig): ParentProxySettings | undefined => {
   if (!config.parentProxy && !config.trustedCaCertificates?.length) return undefined
@@ -359,9 +373,21 @@ const wrap = async (
       username: `notebook-${request.commandId}`,
       password: randomBytes(32).toString('base64url')
     }
+    let assertWindowsSpawnAdmission: (() => void) | undefined
     let windowsGatewayPort = windowsProtectedGatewayPort
     if (process.platform === 'win32' && request.windowsProtectionRequired !== undefined) {
       if (!request.executable) throw new Error('R admission requires an exact executable.')
+      const revision = windowsProtectionRevision
+      assertWindowsSpawnAdmission = () => {
+        request.signal?.throwIfAborted()
+        if (commandContexts.get(request.commandId) !== context) {
+          throw new Error('R startup preparation was released before process creation.')
+        }
+        if (windowsProtectionMutations > 0 || windowsProtectionRevision !== revision) {
+          throw new Error('Windows protection changed before R startup. Retry the Notebook cell.')
+        }
+      }
+      assertWindowsSpawnAdmission()
       // Recheck journals/receipts and the admitted mode before selecting a launcher. Never turn
       // a protected R admission into an uncontained process when setup changes or breaks.
       const access = await getWindowsRuntimeAccessImpl(
@@ -444,6 +470,15 @@ const wrap = async (
       return { argv: launch.argv, env: launch.env }
     }
     if (process.platform === 'win32') {
+      assertWindowsSpawnAdmission?.()
+      const spawnAdmission = assertWindowsSpawnAdmission
+        ? {
+            beginSpawn: () => {
+              assertWindowsSpawnAdmission()
+              return { started: () => undefined, notStarted: () => undefined }
+            }
+          }
+        : {}
       const launchRequest = {
         command: request.command,
         ...(request.executable ? { executable: request.executable, args: request.args ?? [] } : {}),
@@ -456,21 +491,27 @@ const wrap = async (
       // Standard mode has no AppContainer, but opted-in short-lived workers still need reliable
       // process-tree ownership so a normal leader exit cannot poison the next cleanup attempt.
       if (!windowsGatewayPort && request.superviseProcessTree) {
-        return windowsSupervisedLaunch({
+        return {
+          ...windowsSupervisedLaunch({
+            ...launchRequest,
+            cwd: request.cwd,
+            hostPath: config.windowsHostPath
+          }),
+          ...spawnAdmission
+        }
+      }
+      if (!windowsGatewayPort) return { ...windowsStandardLaunch(launchRequest), ...spawnAdmission }
+      return {
+        ...windowsLaunch({
           ...launchRequest,
           cwd: request.cwd,
-          hostPath: config.windowsHostPath
-        })
+          filesystem,
+          hostPath: config.windowsHostPath,
+          installationId: config.installationId,
+          ownershipRoot: config.windowsOwnershipRoot
+        }),
+        ...spawnAdmission
       }
-      if (!windowsGatewayPort) return windowsStandardLaunch(launchRequest)
-      return windowsLaunch({
-        ...launchRequest,
-        cwd: request.cwd,
-        filesystem,
-        hostPath: config.windowsHostPath,
-        installationId: config.installationId,
-        ownershipRoot: config.windowsOwnershipRoot
-      })
     }
     throw new Error(`Notebook process sandbox does not support ${process.platform}.`)
   } catch (error) {
@@ -616,17 +657,21 @@ const statusForPlatform = async (
 }
 
 const installWindows = (config: NetworkRuntimeConfig): Promise<{ cancelled: boolean }> =>
-  installWindowsAppContainer(
-    config.windowsHostPath,
-    config.installationId,
-    config.windowsOwnershipRoot
+  mutateWindowsProtection(() =>
+    installWindowsAppContainer(
+      config.windowsHostPath,
+      config.installationId,
+      config.windowsOwnershipRoot
+    )
   )
 
 const removeWindows = (config: NetworkRuntimeConfig): Promise<{ cancelled: boolean }> =>
-  removeWindowsAppContainer(
-    config.windowsHostPath,
-    config.installationId,
-    config.windowsOwnershipRoot
+  mutateWindowsProtection(() =>
+    removeWindowsAppContainer(
+      config.windowsHostPath,
+      config.installationId,
+      config.windowsOwnershipRoot
+    )
   )
 
 const isWindowsProtectionConfigured = (config: NetworkRuntimeConfig): Promise<boolean> =>
@@ -653,13 +698,15 @@ const setWindowsRuntimeAccess = (
   authorized: boolean,
   verification?: WindowsRuntimeVerification
 ): Promise<{ cancelled: boolean }> =>
-  setWindowsRuntimeAccessImpl(
-    config.windowsHostPath,
-    config.installationId,
-    config.windowsOwnershipRoot,
-    executable,
-    authorized,
-    verification
+  mutateWindowsProtection(() =>
+    setWindowsRuntimeAccessImpl(
+      config.windowsHostPath,
+      config.installationId,
+      config.windowsOwnershipRoot,
+      executable,
+      authorized,
+      verification
+    )
   )
 
 const NotebookNetworkRuntime = {
