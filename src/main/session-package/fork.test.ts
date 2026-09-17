@@ -16,7 +16,7 @@ import {
 import * as storageRoots from '../storage-root'
 import { afterEach, expect, it, vi } from 'vitest'
 import { join } from 'node:path'
-import { stat, readFile, rm } from 'node:fs/promises'
+import { stat, readFile, rm, mkdir, writeFile } from 'node:fs/promises'
 import {
   createProvenanceTestFixture,
   createArtifactVersionRequest
@@ -689,3 +689,34 @@ it.each(['ask', 'auto', 'full'] as const)(
     }
   }
 )
+
+it('reforks Notebook files without copying the previous publication ownership marker', async () => {
+  const { fixture, service } = await setup()
+  const source = { projectId: 'project-1', sessionId: 'session-1' }
+  const directory = join(fixture.storageRoot, 'notebooks', source.projectId, source.sessionId)
+  await mkdir(join(directory, 'data'), { recursive: true })
+  await writeFile(join(directory, 'data', 'research.txt'), 'Preserve research')
+  const first = await service.fork(source)
+  const second = await service.fork(first)
+  for (const session of [first, second]) {
+    const root = join(fixture.storageRoot, 'notebooks', session.projectId, session.sessionId)
+    expect(await readFile(join(root, 'data', 'research.txt'), 'utf8')).toBe('Preserve research')
+  }
+  const marker = (session: typeof first): Promise<string> =>
+    readFile(
+      join(
+        fixture.storageRoot,
+        'notebooks',
+        session.projectId,
+        session.sessionId,
+        '.session-package-owner'
+      ),
+      'utf8'
+    )
+  expect(await marker(second)).not.toBe(await marker(first))
+  const archive = join(fixture.storageRoot, 'refork.science')
+  await service.exportTo(second, archive)
+  await expect(
+    service.importFrom(archive, undefined, undefined, undefined, { projectId: source.projectId })
+  ).resolves.toBeDefined()
+})

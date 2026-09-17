@@ -575,7 +575,14 @@ export class SessionPackageService {
     assertSettled()
     const client = await this.options.getClient()
     const project = await client.project.findUniqueOrThrow({ where: { id: request.projectId } })
-    const notebookKeys = await notebookStorageKeys(this.options.storageRoot, request)
+    const readNotebookKeys = async (): Promise<string[]> => {
+      const keys = await notebookStorageKeys(this.options.storageRoot, request)
+      // Published forks own this recovery marker. It is not Notebook evidence and must
+      // never replace the fresh destination's marker on refork or export/import.
+      const ownerKey = `notebooks/${request.projectId}/${request.sessionId}/.session-package-owner`
+      return session.forkOrigin ? keys.filter((key) => key !== ownerKey) : keys
+    }
+    const notebookKeys = await readNotebookKeys()
     const notebooks = await readPackageNotebooks(this.options.storageRoot, notebookKeys)
     const bookmarkTargets = options.consumeSnapshot
       ? await readSessionBookmarkTargets(client, request)
@@ -834,10 +841,7 @@ export class SessionPackageService {
         options.onProgress?.({ phase: 'validating' })
         await validatePackageRecords(directory, manifest, records, this.signal)
         assertSettled()
-        if (
-          JSON.stringify(await notebookStorageKeys(this.options.storageRoot, request)) !==
-          JSON.stringify(notebookKeys)
-        )
+        if (JSON.stringify(await readNotebookKeys()) !== JSON.stringify(notebookKeys))
           throw new Error('The Session changed during export. Try again.')
         for (const entry of inventory) {
           if (!entry.storageKey) continue
