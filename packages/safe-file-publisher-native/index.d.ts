@@ -44,4 +44,4 @@ export function removeAnchoredTree(
   relativePath: string,
   dev: bigint,
   ino: bigint
-): void
+): Promise<void>

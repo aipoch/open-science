@@ -1,5 +1,5 @@
 import { Worker } from 'node:worker_threads'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import {
   mkdir,
@@ -306,14 +306,100 @@ describe.skipIf(!nativeBindingAvailable)('anchored runtime tree removal', () => 
     }
     await chmod(nested, 0o555)
     await chmod(target, 0o555)
-    removeAnchoredTree(cleanupRoot, 'attempt', identity)
+    await removeAnchoredTree(cleanupRoot, 'attempt', identity)
     await expect(lstat(target)).rejects.toMatchObject({ code: 'ENOENT' })
     expect(await readFile(join(external, 'private'), 'utf8')).toBe('external content')
     expect((await lstat(join(external, 'private'))).mode).toBe(outside.mode)
     expect(await readdir(external)).toEqual(['private'])
     // Cleanup is idempotent after deletion.
-    removeAnchoredTree(cleanupRoot, 'attempt', identity)
+    await removeAnchoredTree(cleanupRoot, 'attempt', identity)
   })
+
+  it('keeps the event loop responsive while removing a large tree', async () => {
+    cleanupRoot = await mkdtemp(join(tmpdir(), 'runtime-tree-async-'))
+    const target = join(cleanupRoot, 'attempt')
+    await mkdir(target)
+    const identity = await lstat(target, { bigint: true })
+    for (let index = 0; index < 1000; index++) {
+      const directory = join(target, String(index))
+      await mkdir(directory)
+      await writeFile(join(directory, 'copy'), 'runtime copy')
+    }
+    let ticks = 0
+    const timer = setInterval(() => ticks++, 0)
+    try {
+      await removeAnchoredTree(cleanupRoot, 'attempt', identity)
+      expect(ticks).toBeGreaterThan(0)
+    } finally {
+      clearInterval(timer)
+    }
+    await expect(lstat(target)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it.skipIf(process.platform !== 'linux')(
+    'rejects same-device bind mounts before traversal',
+    async (context) => {
+      cleanupRoot = await mkdtemp(join(tmpdir(), 'runtime-tree-mount-'))
+      const probe = ['--user', '--map-root-user', '--mount', 'true']
+      const userNamespace = spawnSync('unshare', probe).status === 0
+      const sudoNamespace =
+        !userNamespace && spawnSync('sudo', ['-n', 'unshare', '--mount', 'true']).status === 0
+      if (!userNamespace && !sudoNamespace) {
+        if (process.env.CI)
+          throw new Error(
+            'Mount-isolation regression requires an available private mount namespace'
+          )
+        context.skip()
+        return
+      }
+      const exercise = `
+      const fs = require('node:fs')
+      const path = require('node:path')
+      const { execFileSync } = require('node:child_process')
+      const assert = require('node:assert/strict')
+      const binding = require(process.argv[1])
+      const root = process.argv[2]
+      ;(async () => {
+        for (const position of ['target', 'ancestor', 'descendant']) {
+          const base = path.join(root, position)
+          const external = path.join(base, 'external')
+          const target = path.join(base, 'runtime', 'attempt')
+          fs.mkdirSync(external, { recursive: true })
+          fs.mkdirSync(target, { recursive: true })
+          fs.writeFileSync(path.join(external, 'keep'), 'must survive')
+          const mount = position === 'target' ? target :
+            position === 'ancestor' ? path.dirname(target) : path.join(target, 'mounted')
+          fs.mkdirSync(mount, { recursive: true })
+          execFileSync('mount', ['--bind', external, mount])
+          try {
+            const identity = fs.lstatSync(position === 'ancestor' ? external : target, { bigint: true })
+            await assert.rejects(binding.removeAnchoredTree(base, 'runtime/attempt', identity.dev, identity.ino), { code: 'EXDEV' })
+            assert.equal(fs.readFileSync(path.join(external, 'keep'), 'utf8'), 'must survive')
+          } finally {
+            execFileSync('umount', [mount])
+            fs.rmSync(base, { recursive: true, force: true })
+          }
+        }
+      })().catch(error => { console.error(error); process.exitCode = 1 })
+    `
+      const command = userNamespace ? 'unshare' : 'sudo'
+      const args = userNamespace
+        ? ['--user', '--map-root-user', '--mount', '--propagation', 'private']
+        : ['-n', 'unshare', '--mount', '--propagation', 'private']
+      execFileSync(
+        command,
+        [
+          ...args,
+          process.execPath,
+          '-e',
+          exercise,
+          require.resolve('@aipoch/safe-file-publisher-native'),
+          cleanupRoot
+        ],
+        { encoding: 'utf8' }
+      )
+    }
+  )
 
   it.each(['identity', 'ancestor', 'root'] as const)('refuses a changed %s', async (change) => {
     cleanupRoot = await mkdtemp(join(tmpdir(), 'runtime-tree-identity-'))
@@ -332,11 +418,13 @@ describe.skipIf(!nativeBindingAvailable)('anchored runtime tree removal', () => 
       await rename(swapped, `${swapped}-old`)
       await symlink(`${swapped}-old`, swapped, process.platform === 'win32' ? 'junction' : 'dir')
     }
-    expect(() => removeAnchoredTree(storage, join('runtime', 'attempt'), identity)).toThrow()
+    await expect(
+      removeAnchoredTree(storage, join('runtime', 'attempt'), identity)
+    ).rejects.toThrow()
     expect(await readFile(join(target, 'keep'), 'utf8')).toBe(
       change === 'identity' ? 'replacement' : 'must survive'
     )
-    expect(() => removeAnchoredTree(storage, '../outside', identity)).toThrow()
+    await expect(removeAnchoredTree(storage, '../outside', identity)).rejects.toThrow()
   })
 
   it('does not escape the held tree while another thread swaps a directory for a link', async () => {
@@ -385,7 +473,7 @@ describe.skipIf(!nativeBindingAvailable)('anchored runtime tree removal', () => 
       await vi.waitFor(() => expect(Atomics.load(control, 1)).toBeGreaterThan(0))
       // Contention may fail closed; successful deletion is not required while a writer is live.
       try {
-        removeAnchoredTree(cleanupRoot, 'attempt', identity)
+        await removeAnchoredTree(cleanupRoot, 'attempt', identity)
       } catch (error) {
         expect(error).toHaveProperty('code')
       }

@@ -71,10 +71,10 @@ export const recoverAnchoredRemoval = (
   )
 }
 
-export const removeAnchoredTree = (
+export const removeAnchoredTree = async (
   rootPath: string,
   relativePath: string,
   identity: Pick<BigIntStats, 'dev' | 'ino'>
-): void => {
-  loadBinding().removeAnchoredTree(rootPath, relativePath, identity.dev, identity.ino)
+): Promise<void> => {
+  await loadBinding().removeAnchoredTree(rootPath, relativePath, identity.dev, identity.ino)
 }

@@ -407,7 +407,7 @@ describe('production delegated framework runtime bridge', () => {
         prepareSpy.mockRestore()
         releasePort?.()
         await settings.dispose()
-        removeAnchoredTree(
+        await removeAnchoredTree(
           dirname(dataRoot),
           basename(dataRoot),
           await lstat(dataRoot, { bigint: true })
@@ -1239,8 +1239,13 @@ it('isolates concurrent OpenCode Attempts and a continuation without releasing s
   }
 })
 
-it.each(['malformed-config', 'unsafe-file-policy', 'capability-failure'] as const)(
-  'fails %s before ACP creation and cleans only its Attempt directory',
+it.each([
+  'malformed-config',
+  'unsafe-file-policy',
+  'capability-failure',
+  'construction-failure'
+] as const)(
+  'fails %s without spawning a child process and cleans only the failed Attempt runtime directory',
   async (failure) => {
     const dataRoot = await mkdtemp(join(tmpdir(), 'opencode-preparation-failure-'))
     const admitted = backend('opencode')
@@ -1258,6 +1263,10 @@ it.each(['malformed-config', 'unsafe-file-policy', 'capability-failure'] as cons
       }
     ]
     const createRuntime = vi.spyOn(runtimeComposition, 'createAcpRuntime')
+    if (failure === 'construction-failure')
+      createRuntime.mockImplementation(() => {
+        throw new Error('Runtime construction failed')
+      })
     const revoke = vi.fn(async () => undefined)
     const capability = vi.fn(async () => {
       if (failure === 'capability-failure') throw new Error('Synthetic capability failure')
@@ -1326,8 +1335,10 @@ it.each(['malformed-config', 'unsafe-file-policy', 'capability-failure'] as cons
         )
       ).rejects.toMatchObject({ code: 'ENOENT' })
       expect(String(failureResult).length).toBeLessThan(1024)
-      expect(createRuntime).not.toHaveBeenCalled()
-      expect(revoke).toHaveBeenCalledTimes(failure === 'unsafe-file-policy' ? 1 : 0)
+      expect(createRuntime).toHaveBeenCalledTimes(failure === 'construction-failure' ? 1 : 0)
+      expect(revoke).toHaveBeenCalledTimes(
+        failure === 'unsafe-file-policy' || failure === 'construction-failure' ? 1 : 0
+      )
       await expect(
         readFile(
           join(

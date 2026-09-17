@@ -21,6 +21,7 @@
 #include <unistd.h>
 #ifdef __linux__
 #include <sys/syscall.h>
+#include <linux/openat2.h>
 #ifndef RENAME_NOREPLACE
 #define RENAME_NOREPLACE (1 << 0)
 #endif

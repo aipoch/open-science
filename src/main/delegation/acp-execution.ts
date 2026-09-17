@@ -49,6 +49,8 @@ type PreparedDelegateExecution = Readonly<{
   permissionProfile?: PermissionProfileId
   capability: DelegateExecutionCapability
   artifactCurrentRunFile?: string
+  // Explicit production evidence: this factory cannot spawn until createSession.
+  runtimeConstructionIsProcessFree?: boolean
   // Non-filesystem leases may be released even when process-tree shutdown is unproven.
   releaseResources?(): Promise<void> | void
   disposeResources?(): Promise<void> | void
@@ -476,7 +478,8 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
           firstError ??= error
         }
       }
-      let reaped = !runtimeCreationStarted
+      let reaped =
+        !runtimeCreationStarted || (!runtime && scope?.runtimeConstructionIsProcessFree === true)
       if (runtime) {
         try {
           reaped = (await runtime.shutdownForQuit()).reaped === true
@@ -497,14 +500,6 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
           reaped &&
           (ownsRuntimeHome || !activeRuntimeHomes.has(scope.runtimeHome)) &&
           (ownsWorkspace || !activeWorkspaces.has(scope.workspace.cwd))
-        if (reaped && ownsRuntimeHome) {
-          activeRuntimeHomes.delete(scope.runtimeHome)
-          ownsRuntimeHome = false
-        }
-        if (reaped && ownsWorkspace) {
-          activeWorkspaces.delete(scope.workspace.cwd)
-          ownsWorkspace = false
-        }
         try {
           await scope.releaseResources?.()
         } catch (error) {
@@ -514,6 +509,14 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
           if (mayDispose) await scope.disposeResources?.()
         } catch (error) {
           firstError ??= error
+        }
+        if (reaped && ownsRuntimeHome) {
+          activeRuntimeHomes.delete(scope.runtimeHome)
+          ownsRuntimeHome = false
+        }
+        if (reaped && ownsWorkspace) {
+          activeWorkspaces.delete(scope.workspace.cwd)
+          ownsWorkspace = false
         }
       }
       listeners.clear()

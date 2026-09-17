@@ -126,9 +126,9 @@ const createProductionDelegatedFrameworkRuntime = (
           input.attemptId
         )
         let runtimeIdentity: Pick<BigIntStats, 'dev' | 'ino'> | undefined
-        const removeRuntimeHome = (): void => {
+        const removeRuntimeHome = async (): Promise<void> => {
           if (runtimeIdentity)
-            removeAnchoredTree(
+            await removeAnchoredTree(
               options.dataRoot,
               relative(options.dataRoot, runtimeHome),
               runtimeIdentity
@@ -272,6 +272,8 @@ const createProductionDelegatedFrameworkRuntime = (
             workspace: { cwd: input.workspaceCwd },
             runtimeHome,
             frameworkId,
+            runtimeConstructionIsProcessFree:
+              frameworkId === 'claude-code' || frameworkId === 'opencode',
             permissionProfile:
               options.resolvePermissionProfile?.(input.session.sessionId) ??
               durable.permissionProfile ??
@@ -284,12 +286,12 @@ const createProductionDelegatedFrameworkRuntime = (
               preparedAttempts.delete(input.attemptId)
               if (releaseResolvedBackend) await releaseResolvedAgentBackendLeases(backend)
             },
-            disposeResources() {
+            async disposeResources() {
               // Port ownership also outlives a possibly surviving or still-starting child.
               openCodeRuntime?.dispose()
               // Skill projections are inside this owned tree. Do not run their path-based disposer
               // against files the child could have replaced with links.
-              removeRuntimeHome()
+              await removeRuntimeHome()
             }
           }
           if (delegatedSpawn) return { ...base, spawn: delegatedSpawn }
@@ -307,7 +309,7 @@ const createProductionDelegatedFrameworkRuntime = (
           preparedAttempts.delete(input.attemptId)
           if (releaseResolvedBackend) await releaseResolvedAgentBackendLeases(backend)
           try {
-            removeRuntimeHome()
+            await removeRuntimeHome()
           } catch {
             /* Preserve the preparation failure. */
           }

@@ -59,6 +59,7 @@ const makeHarness = (
     workspace?(input: DelegateExecutionInput): string
     shutdownResult?(): Promise<{ reaped: boolean }>
     createRuntimeError?: Error
+    dispose?(): Promise<void>
     createSessionError?(executionId: string): Error | undefined
     permissionResponseError?(executionId: string): Error | undefined
     permissionProfile?(
@@ -104,6 +105,7 @@ const makeHarness = (
         },
         disposeResources: async () => {
           cleanup.push(`resources:${input.attemptId}`)
+          await scopePaths.dispose?.()
         }
       }
       prepared.push(scope)
@@ -1207,6 +1209,24 @@ describe('ACP delegate execution production adapter', () => {
     await expect(running.completion).resolves.toMatchObject({ status: 'completed' })
     expect(harness.cleanup).toContain('resources:pending-shutdown')
     await expect(harness.execution.reserve(1)).resolves.toHaveProperty('slotIds')
+  })
+
+  it('holds path ownership until asynchronous disposal finishes', async () => {
+    const disposal = deferred<void>()
+    const harness = makeHarness(2, {
+      runtimeHome: () => '/runtime/disposal-owner',
+      dispose: () => disposal.promise
+    })
+    const reservation = await harness.execution.reserve(2)
+    const running = harness.execution.run(makeInput('disposing'), reservation.slotIds[0])
+    await running.accepted
+    harness.controls.get('disposing')!.complete()
+    await vi.waitFor(() => expect(harness.cleanup).toContain('resources:disposing'))
+    const duplicate = harness.execution.run(makeInput('during-disposal'), reservation.slotIds[1])
+    await expect(duplicate.completion).rejects.toThrow('runtime home is already active')
+    expect(harness.cleanup).not.toContain('resources:during-disposal')
+    disposal.resolve()
+    await expect(running.completion).resolves.toMatchObject({ status: 'completed' })
   })
 
   it('releases unused reservations without freeing a running slot', async () => {
