@@ -107,6 +107,13 @@ export function classifyChanges(changes, manifest = defaultManifest) {
     }
 
     for (const path of paths) {
+      // This Vitest contract verifies the workflow; it is not an executable CI input.
+      if (path === 'scripts/ci/pr-gate-workflow.test.ts') {
+        roots.add('ci_workflow_contract_test')
+        reasonChains.add(`${path} -> workflow contract -> direct portable test`)
+        for (const lane of ['format', 'lint', 'typecheck_node', 'unit_macos']) lanes.add(lane)
+        continue
+      }
       const rules = manifest.rules.filter((rule) =>
         rule.paths.some((pattern) => matchesPath(path, pattern))
       )
