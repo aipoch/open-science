@@ -77,8 +77,8 @@ const sessionSetup = (backend: ResolvedAgentBackend): SessionSetup =>
     ...(backend.sessionOptions ? { sessionOptions: backend.sessionOptions } : {})
   })
 
-// Change permissions only inside the disposable copy. A child-created symlink must
-// never make cleanup chmod Main's catalog or another external directory.
+// Called before a child is spawned or after its process tree is confirmed reaped.
+// Skip remaining symlinks so cleanup does not chmod their external targets.
 const makeRuntimeCopyRemovable = async (path: string): Promise<void> => {
   const entry = await lstat(path).catch((error: NodeJS.ErrnoException) => {
     if (error.code !== 'ENOENT') throw error

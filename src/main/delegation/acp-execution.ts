@@ -470,14 +470,23 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
           firstError ??= error
         }
       }
+      let reaped = !runtime
       if (runtime) {
         try {
-          await runtime.shutdownForQuit()
+          reaped = (await runtime.shutdownForQuit()).reaped
+          if (!reaped) {
+            firstError ??= new Error('Delegated process tree was not reaped; resources retained.')
+          }
         } catch (error) {
           firstError ??= error
         }
       }
-      if (scope) {
+      // Do not chmod/remove child-owned paths or make them reusable while a process
+      // may still mutate them. A failed reap retains the existing path and slot claims.
+      if (scope && reaped) {
+        const sharedScope =
+          (!ownsRuntimeHome && activeRuntimeHomes.has(scope.runtimeHome)) ||
+          (!ownsWorkspace && activeWorkspaces.has(scope.workspace.cwd))
         if (ownsRuntimeHome) {
           activeRuntimeHomes.delete(scope.runtimeHome)
           ownsRuntimeHome = false
@@ -487,13 +496,13 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
           ownsWorkspace = false
         }
         try {
-          await scope.disposeResources?.()
+          if (!sharedScope) await scope.disposeResources?.()
         } catch (error) {
           firstError ??= error
         }
       }
       listeners.clear()
-      releaseSlot(slotId)
+      if (reaped) releaseSlot(slotId)
       if (firstError !== undefined) throw firstError
     }
 

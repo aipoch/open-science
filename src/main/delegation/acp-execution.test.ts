@@ -57,6 +57,7 @@ const makeHarness = (
   scopePaths: Readonly<{
     runtimeHome?(input: DelegateExecutionInput): string
     workspace?(input: DelegateExecutionInput): string
+    shutdown?(): Promise<{ reaped: boolean }>
     createSessionError?(executionId: string): Error | undefined
     permissionResponseError?(executionId: string): Error | undefined
     permissionProfile?(
@@ -151,7 +152,7 @@ const makeHarness = (
         },
         shutdownForQuit: async () => {
           cleanup.push(`shutdown:${scope.executionId}`)
-          return { reaped: true }
+          return scopePaths.shutdown ? await scopePaths.shutdown() : { reaped: true }
         }
       }
     }
@@ -717,7 +718,7 @@ describe('ACP delegate execution production adapter', () => {
   })
 
   it('does not let failed duplicate scope cleanup release a running sibling scope', async () => {
-    const { execution, controls } = makeHarness(3, {
+    const { execution, controls, cleanup } = makeHarness(3, {
       runtimeHome: () => '/runtime/shared'
     })
     const reservation = await execution.reserve(2)
@@ -730,6 +731,8 @@ describe('ACP delegate execution production adapter', () => {
     const stillDuplicate = execution.run(makeInput('scope-third'), nextReservation.slotIds[0])
     await expect(stillDuplicate.completion).rejects.toThrow('runtime home is already active')
 
+    expect(cleanup).not.toContain('resources:scope-duplicate')
+    expect(cleanup).not.toContain('resources:scope-third')
     controls.get('scope-owner')!.complete()
     await expect(first.completion).resolves.toMatchObject({ status: 'completed' })
     const afterRelease = await execution.reserve(1)
@@ -1114,6 +1117,88 @@ describe('ACP delegate execution production adapter', () => {
       'shutdown:cleanup',
       'resources:cleanup'
     ])
+  })
+
+  it.each(['unreaped', 'throws'] as const)(
+    'retains resources and capacity when shutdown %s',
+    async (failure) => {
+      const { execution, controls, cleanup } = makeHarness(1, {
+        shutdown: async () => {
+          if (failure === 'throws') throw new Error('shutdown failed')
+          return { reaped: false }
+        }
+      })
+      const reservation = await execution.reserve(1)
+      const running = execution.run(makeInput('unreaped'), reservation.slotIds[0])
+      const events: string[] = []
+      running.subscribe((event) => events.push(JSON.stringify(event)))
+      await running.accepted
+      controls.get('unreaped')!.complete()
+
+      await expect(running.completion).rejects.toThrow(
+        failure === 'throws' ? 'shutdown failed' : 'process tree was not reaped'
+      )
+      expect(cleanup).toContain('revoke:unreaped')
+      expect(cleanup).not.toContain('resources:unreaped')
+      await expect(execution.reserve(1)).rejects.toMatchObject({ code: 'capacity' })
+      controls.get('unreaped')!.callbacks.onEvent({
+        id: 'late',
+        timestamp: 2,
+        kind: 'message',
+        level: 'info',
+        sessionId: 'provider-unreaped',
+        role: 'assistant',
+        text: 'late unreaped event'
+      })
+      expect(events.join('')).not.toContain('late unreaped event')
+    }
+  )
+
+  it('retains an unreaped runtime claim when another reserved slot attempts the same path', async () => {
+    const { execution, controls, cleanup } = makeHarness(2, {
+      runtimeHome: () => '/runtime/unreaped-shared',
+      shutdown: async () => ({ reaped: false })
+    })
+    const reservation = await execution.reserve(2)
+    const running = execution.run(makeInput('owner'), reservation.slotIds[0])
+    await running.accepted
+    controls.get('owner')!.complete()
+    await expect(running.completion).rejects.toThrow('process tree was not reaped')
+    const duplicate = execution.run(makeInput('duplicate'), reservation.slotIds[1])
+    await expect(duplicate.completion).rejects.toThrow('runtime home is already active')
+    expect(cleanup).not.toContain('resources:owner')
+    expect(cleanup).not.toContain('resources:duplicate')
+    expect(controls.has('duplicate')).toBe(false)
+  })
+
+  it('does not dispose an unreaped runtime after cancellation', async () => {
+    const { execution, cleanup } = makeHarness(1, {
+      shutdown: async () => ({ reaped: false })
+    })
+    const reservation = await execution.reserve(1)
+    const running = execution.run(makeInput('cancel-unreaped'), reservation.slotIds[0])
+    await running.accepted
+    const completion = expect(running.completion).rejects.toThrow('process tree was not reaped')
+    await running.cancel()
+    await completion
+    expect(cleanup).not.toContain('resources:cancel-unreaped')
+    await expect(execution.reserve(1)).rejects.toMatchObject({ code: 'capacity' })
+  })
+
+  it('waits for confirmed teardown before disposing resources and releasing capacity', async () => {
+    const shutdown = deferred<{ reaped: boolean }>()
+    const harness = makeHarness(1, { shutdown: () => shutdown.promise })
+    const reservation = await harness.execution.reserve(1)
+    const running = harness.execution.run(makeInput('pending-shutdown'), reservation.slotIds[0])
+    await running.accepted
+    harness.controls.get('pending-shutdown')!.complete()
+    await vi.waitFor(() => expect(harness.cleanup).toContain('shutdown:pending-shutdown'))
+    expect(harness.cleanup).not.toContain('resources:pending-shutdown')
+    await expect(harness.execution.reserve(1)).rejects.toMatchObject({ code: 'capacity' })
+    shutdown.resolve({ reaped: true })
+    await expect(running.completion).resolves.toMatchObject({ status: 'completed' })
+    expect(harness.cleanup).toContain('resources:pending-shutdown')
+    await expect(harness.execution.reserve(1)).resolves.toHaveProperty('slotIds')
   })
 
   it('fails closed before runtime creation when framework certification fails', async () => {
