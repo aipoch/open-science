@@ -268,11 +268,24 @@ export function executeModuleTestPlan(
   const mergeReports = testArguments.some(
     (argument) => argument === '--merge-reports' || argument.startsWith('--merge-reports=')
   )
-  if (!mergeReports && plan.mode === 'selective' && plan.testFiles.length === 0) return 0
+  const shard = testArguments.some(
+    (argument) => argument === '--shard' || argument.startsWith('--shard=')
+  )
+  if (!mergeReports && !shard && plan.mode === 'selective' && plan.testFiles.length === 0) return 0
   // Report merging executes no tests and needs no generated Prisma client from npm's pretest.
   const npmArguments = mergeReports
     ? ['exec', '--', 'vitest', 'run', ...testArguments]
-    : ['test', '--', ...testArguments, ...(plan.mode === 'full' ? [] : plan.testFiles)]
+    : [
+        'test',
+        '--',
+        ...testArguments,
+        // An empty shard must emit its blob without falling back to unfiltered discovery.
+        ...(plan.mode === 'full'
+          ? []
+          : plan.testFiles.length
+            ? plan.testFiles
+            : ['__no_selected_module_tests__'])
+      ]
   const npmExecPath = environment.npm_execpath
   if (platform === 'win32' && !npmExecPath) {
     throw new Error(

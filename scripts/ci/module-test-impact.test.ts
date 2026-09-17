@@ -22,6 +22,33 @@ const currentStatus = JSON.stringify({
 })
 
 describe('module test impact commands', () => {
+  it('collects an empty shard report without discovering the full suite for an empty selection', () => {
+    const plan = createAffectedTestPlan([], { status: 'unavailable-manifest-only', testFiles: [] })
+    const spawn = vi.fn(() => ({ status: 0 }))
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+    const testArguments = ['--shard=1/3', '--reporter=blob', '--outputFile=reports/blob-1.json']
+    try {
+      expect(plan.testFiles).toEqual([])
+      executeModuleTestPlan(plan, {
+        spawn,
+        testArguments,
+        environment: { npm_execpath: '/npm/bin/npm-cli.js' },
+        nodeExecutable: '/node'
+      })
+      expect(spawn).toHaveBeenCalledWith(
+        '/node',
+        ['/npm/bin/npm-cli.js', 'test', '--', ...testArguments, '__no_selected_module_tests__'],
+        expect.anything()
+      )
+      spawn.mockClear()
+      // Ordinary local invocations still do no work for an empty selection.
+      executeModuleTestPlan(plan, { spawn })
+      expect(spawn).not.toHaveBeenCalled()
+    } finally {
+      write.mockRestore()
+    }
+  })
+
   it.each([
     ['--shard=2/3', '--reporter=blob', '--outputFile=vitest-reports/blob-2.json'],
     ['--merge-reports=vitest-reports', '--passWithNoTests']
