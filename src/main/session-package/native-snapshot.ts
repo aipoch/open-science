@@ -510,15 +510,19 @@ export const remapStorageKey = (key: string, identities: Record<string, string>)
 }
 
 // A dependency package may include an older pinned Version without the source file's newer head.
-// The original head remains in records.json; native navigation uses the newest included Version.
+// The original head remains in records.json; native navigation uses the newest included completed
+// Version. An absent source head is intentional: copying pending evidence must not publish it.
 export const projectIncludedHeads = (source: PackageRecords): PackageRecords => {
   const records = structuredClone(source)
-  for (const [files, versions, ownerKey] of [
-    [records.tables.ArtifactLineage, records.tables.ArtifactVersion, 'artifactId'],
-    [records.tables.UploadFile, records.tables.UploadVersion, 'uploadFileId']
+  for (const [files, versions, ownerKey, completeState] of [
+    [records.tables.ArtifactLineage, records.tables.ArtifactVersion, 'artifactId', 'finalized'],
+    [records.tables.UploadFile, records.tables.UploadVersion, 'uploadFileId', 'ready']
   ] as const) {
     for (const file of files) {
-      const included = versions.filter((version) => version[ownerKey] === file.id)
+      if (file.currentVersionId == null) continue
+      const included = versions.filter(
+        (version) => version[ownerKey] === file.id && version.state === completeState
+      )
       if (!included.some((version) => version.id === file.currentVersionId)) {
         file.currentVersionId =
           included.sort((a, b) => Number(b.versionNumber) - Number(a.versionNumber))[0]?.id ?? null

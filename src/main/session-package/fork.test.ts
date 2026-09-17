@@ -4,6 +4,7 @@ import { SessionPersistenceCoordinator } from '../session-persistence/coordinato
 import { SessionProjectionRepository } from '../session-persistence/projection'
 import { ArchiveCoordinator } from '../archive/coordinator'
 import { ProjectRepository } from '../projects/repository'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { ManagedFileIndexRepository } from '../project-files/repository'
 import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { UploadRepository } from '../uploads/repository'
@@ -212,6 +213,62 @@ it('forks all branches with fresh identities, independent files, replay and no S
   await repository.deleteSession(source.projectId, source.id)
   await rm(version.path)
   expect(await readFile(copiedPath)).toEqual(copiedBytes)
+  await service.close()
+})
+
+it('preserves pending Artifact evidence through repeated forks and database startup', async () => {
+  const { fixture, repository, service } = await setup()
+  await fixture.stagePng('interrupted turn artifact', 'figure.png')
+  const version = await fixture.repository.createVersion(
+    createArtifactVersionRequest({ filename: 'figure.png' })
+  )
+  const source = { projectId: 'project-1', sessionId: 'session-1' }
+  const sourceSession = await repository.loadSession(source.projectId, source.sessionId)
+  const sourceLineage = await fixture.client.artifactLineage.findUniqueOrThrow({
+    where: { id: version.artifactId },
+    include: { versions: true }
+  })
+  expect(sourceLineage.currentVersionId).toBeNull()
+  expect(sourceLineage.versions[0].state).toBe('pending')
+  const sourceBytes = await readFile(version.path)
+  let parent = source
+  const versionIds = new Set([version.versionId])
+  for (let copy = 0; copy < 2; copy++) {
+    const child = await service.fork(parent)
+    const lineages = await fixture.client.artifactLineage.findMany({
+      where: { projectId: child.projectId, sessionId: child.sessionId },
+      include: { versions: true }
+    })
+    expect(lineages).toHaveLength(1)
+    expect(lineages[0].currentVersionId).toBeNull()
+    expect(lineages[0].versions).toHaveLength(1)
+    const copied = lineages[0].versions[0]
+    expect(copied).toMatchObject({
+      state: 'pending',
+      checksum: sourceLineage.versions[0].checksum,
+      messageId: null,
+      managedVisibleAt: null
+    })
+    expect(versionIds.has(copied.id)).toBe(false)
+    versionIds.add(copied.id)
+    expect(await readFile(join(fixture.storageRoot, copied.contentStorageKey))).toEqual(sourceBytes)
+    // A new connection exercises the real startup audit, which previously rejected the Fork.
+    const reopened = createProjectDbClient(fixture.storageRoot)
+    try {
+      await expect(migrateApplicationDatabase(reopened)).resolves.toBeDefined()
+    } finally {
+      await reopened.$disconnect()
+    }
+    parent = child
+  }
+  expect(await repository.loadSession(source.projectId, source.sessionId)).toEqual(sourceSession)
+  expect(
+    await fixture.client.artifactLineage.findUniqueOrThrow({
+      where: { id: version.artifactId },
+      include: { versions: true }
+    })
+  ).toEqual(sourceLineage)
+  expect(await readFile(version.path)).toEqual(sourceBytes)
   await service.close()
 })
 

@@ -6,6 +6,7 @@ import { writeFileSync } from 'node:fs'
 import { c as createTar, x as extractTar } from 'tar'
 import { fileChecksum, packageEntry } from './archive'
 import { ProjectRepository } from '../projects/repository'
+import { migrateApplicationDatabase } from '../projects/prisma-client'
 import { afterEach, expect, it, vi } from 'vitest'
 import {
   createArtifactVersionRequest,
@@ -2526,6 +2527,15 @@ it('imports both immutable Artifact Versions and keeps original evidence distinc
     descriptor: { versionId }
   })
   expect(history.sourceManifest.source.sessionId).toBe('session-1')
+  // An interrupted turn's committed bytes remain pending evidence after copying. Import must
+  // not publish them as the active head and poison the next application's startup audit.
+  await expect(
+    target.client.artifactLineage.findUnique({ where: { id: artifactId } })
+  ).resolves.toMatchObject({ currentVersionId: null })
+  const copiedVersions = await target.client.artifactVersion.findMany({ where: { artifactId } })
+  expect(copiedVersions).toHaveLength(2)
+  expect(copiedVersions.every((version) => version.state === 'pending')).toBe(true)
+  await expect(migrateApplicationDatabase(target.client)).resolves.toBeDefined()
 })
 
 it.each(['pdf-context', 'pdf-annotation', 'text-annotation', 'image-annotation'] as const)(
