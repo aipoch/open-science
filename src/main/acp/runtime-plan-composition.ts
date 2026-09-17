@@ -2,15 +2,22 @@ import type { AcpPromptRequest, AcpRuntimeEventInput } from '../../shared/acp'
 import type {
   ActivePlanProjection,
   GeneratePlanContent,
+  PlanProtectedContextSource,
   PlanResponseCommand,
   PlanResponseIdentity
 } from '../../shared/session-plan/contract'
 import { formatPlanProtectedContext, PlanCommandError } from '../../shared/session-plan/contract'
 import type { SessionPlanStepStatus } from '../../shared/session-persistence'
 import { createLogger, errorLogFields } from '../logger'
-import { renderAppMcpToolReferences } from '../agent-framework/app-mcp-names'
 import type { PlanResponseResult } from '../session-plan/plan-service'
 import { matchesPlanDelivery } from '../session-plan/plan-delivery'
+import { PlanContextFileStore } from '../session-plan/plan-context-file'
+import {
+  SESSION_PLAN_FILE_CHANGED_DURING_PREPARATION,
+  SESSION_PLAN_FILE_REFERENCE,
+  SESSION_PLAN_FILE_UNAVAILABLE
+} from '../session-plan/plan-context-guidance'
+import { renderAppMcpToolReferences } from '../agent-framework/app-mcp-names'
 import type { AcpRuntimeOptions } from './runtime'
 import type { AcpRuntimeBaseOwners } from './runtime-base-composition'
 import type { AcpRuntimeSessionOwners } from './runtime-session-composition'
@@ -47,6 +54,16 @@ const safeLogInfo = (message: string, fields: Record<string, unknown>): void => 
     // Plan state and the original operation result take precedence over diagnostics.
   }
 }
+
+type PlanReferenceRefresh =
+  | Readonly<{ availability: 'disabled' | 'absent' }>
+  | Readonly<{ availability: 'unavailable'; warning: string }>
+  | Readonly<{
+      availability: 'available'
+      reference: string
+      artifactVersionId: string
+      revision: number
+    }>
 
 const waitForPlanApproval = (
   approval: Promise<unknown>,
@@ -89,6 +106,7 @@ const composeAcpRuntimePlanWorkflow = (
   hooks: Readonly<{
     deliveries?: Pick<SessionPlanDeliveryOwner, 'accept' | 'begin' | 'clear' | 'rearmUnaccepted'>
     pauseProvider?: (sessionId: string, sequence: number) => () => void
+    contextFiles?: Pick<PlanContextFileStore, 'refresh'>
   }> = {}
 ) => {
   const service = base.planService
@@ -139,6 +157,79 @@ const composeAcpRuntimePlanWorkflow = (
         'The active Session Plan does not belong to the durable active Message Branch.'
       )
     }
+  }
+  // The file is a derived, session-scoped read view. It never authorizes work or owns Plan state.
+  const contextFiles =
+    hooks.contextFiles ??
+    (service &&
+    options.artifacts?.dataRoot &&
+    options.notebook &&
+    (!options.sessionCapabilityPolicy || options.sessionCapabilityPolicy.role === 'primary')
+      ? new PlanContextFileStore({
+          storageRoot: options.artifacts.dataRoot,
+          readCurrent: async (projectId, sessionId) => {
+            const current = await service.getProjection(projectId, sessionId)
+            return current && (await isVisibleToDurableBranch(projectId, sessionId, current))
+              ? current
+              : undefined
+          }
+        })
+      : undefined)
+  const refreshPlanReference = async (
+    projectId: string,
+    sessionId: string
+  ): Promise<PlanReferenceRefresh> => {
+    if (!contextFiles) return { availability: 'disabled' }
+    try {
+      const refreshed = await contextFiles.refresh(projectId, sessionId)
+      if (!refreshed) return { availability: 'absent' }
+      return {
+        availability: 'available',
+        reference: renderAppMcpToolReferences(
+          base.backendGeneration?.current.framework.id ?? options.framework?.id ?? 'claude-code',
+          SESSION_PLAN_FILE_REFERENCE
+        ),
+        artifactVersionId: refreshed.artifactVersionId,
+        revision: refreshed.revision
+      }
+    } catch (error) {
+      safeLogError('Session Plan context file refresh failed', error)
+      return { availability: 'unavailable', warning: SESSION_PLAN_FILE_UNAVAILABLE }
+    }
+  }
+  const attachPlanReference = async (
+    result: object,
+    projectId: string,
+    sessionId: string,
+    includeAvailable = true
+  ): Promise<void> => {
+    const refreshed = await refreshPlanReference(projectId, sessionId)
+    if (
+      (refreshed.availability === 'available' || refreshed.availability === 'unavailable') &&
+      (includeAvailable || refreshed.availability === 'unavailable')
+    ) {
+      Object.assign(result, {
+        planContext:
+          refreshed.availability === 'available' ? refreshed.reference : refreshed.warning
+      })
+    }
+  }
+  const sourceForProjection = (
+    projection: ActivePlanProjection,
+    refreshed: PlanReferenceRefresh
+  ): PlanProtectedContextSource | undefined => {
+    if (refreshed.availability === 'disabled') return undefined
+    if (refreshed.availability === 'unavailable') {
+      return { kind: 'file-unavailable', warning: refreshed.warning }
+    }
+    if (
+      refreshed.availability === 'available' &&
+      refreshed.artifactVersionId === projection.artifactVersionId &&
+      refreshed.revision === projection.revision
+    ) {
+      return { kind: 'file-reference', reference: refreshed.reference }
+    }
+    return { kind: 'file-unverified', warning: SESSION_PLAN_FILE_CHANGED_DURING_PREPARATION }
   }
   const beginDeliveryReceipt = async (
     projectId: string,
@@ -195,7 +286,12 @@ const composeAcpRuntimePlanWorkflow = (
   }
   const call = async (input: AcpSessionPlanCall): Promise<unknown> => {
     const approvalToken = interactions.approvalTokenFor(input.sessionId)
-    if (!service) throw new Error('Session Plan capability is not configured.')
+    if (!service) {
+      throw new PlanCommandError(
+        'plan-unavailable',
+        'Session Plan capability is not configured. This operation was not attempted. Open Science must provide the capability before another Plan call.'
+      )
+    }
     if (interactions.providerPauseFor(input.sessionId)) {
       throw new PlanCommandError(
         'plan-review-pending',
@@ -205,12 +301,20 @@ const composeAcpRuntimePlanWorkflow = (
     if (input.operation === 'generate') {
       const execution = sessionInteractions.current(input.sessionId)
       if (!execution || execution.kind !== 'prompt') {
-        throw new Error('No active interaction can generate a Session Plan.')
+        throw new PlanCommandError(
+          'interaction-mismatch',
+          'No active prompt interaction can generate a Session Plan. Generation was not attempted. Wait for Open Science to establish the active interaction before another Plan call.'
+        )
       }
       const interactionId = base.artifactTurns?.snapshot(
         base.artifactTurns.handleForExecution(execution.turnToken)
       ).promptMessageId
-      if (!interactionId) throw new Error('No active interaction can generate a Session Plan.')
+      if (!interactionId) {
+        throw new PlanCommandError(
+          'interaction-mismatch',
+          'The active prompt has no durable Message identity for a Session Plan. Generation was not attempted. Open Science must establish that identity before another Plan call.'
+        )
+      }
       interactions.reserveApproval(input.sessionId, interactionId)
       let result: Awaited<ReturnType<NonNullable<typeof service>['generate']>>
       try {
@@ -249,6 +353,7 @@ const composeAcpRuntimePlanWorkflow = (
         artifactVersionId: result.projection.artifactVersionId,
         revision: result.projection.revision
       })
+      await refreshPlanReference(input.projectId, input.sessionId)
       publishProjection(input.sessionId, result.projection)
       const waitingToken = interactions.approvalTokenFor(input.sessionId)
       return waitForPlanApproval(approval, input.signal, () => {
@@ -272,7 +377,11 @@ const composeAcpRuntimePlanWorkflow = (
     }
     if (input.operation === 'approve' || input.operation === 'reject') {
       const projection = await service.getProjection(input.projectId, input.sessionId)
-      if (!projection) throw new Error('The Session has no active Plan.')
+      if (!projection)
+        throw new PlanCommandError(
+          'no-active-plan',
+          'The Session has no active Plan. No decision was submitted.'
+        )
       await assertVisibleToDurableBranch(input.projectId, input.sessionId, projection)
       const identity = {
         projectId: input.projectId,
@@ -332,40 +441,56 @@ const composeAcpRuntimePlanWorkflow = (
           }
           throw error
         })
-      if (
-        result.deliveryCommandId &&
-        (!interactionIsLive ||
-          !(await beginDeliveryReceipt(input.projectId, input.sessionId, result.deliveryCommandId)))
-      ) {
+      await attachPlanReference(result, input.projectId, input.sessionId)
+      try {
+        if (
+          result.deliveryCommandId &&
+          (!interactionIsLive ||
+            !(await beginDeliveryReceipt(
+              input.projectId,
+              input.sessionId,
+              result.deliveryCommandId
+            )))
+        ) {
+          publishProjection(input.sessionId, result.projection)
+          return result
+        }
+        if (decision === 'approved' && requiresHumanFeedback && authorization && !result.changed) {
+          interactions.releaseAgentDecisionAuthorization(
+            input.sessionId,
+            authorization.interactionSequence
+          )
+        }
+        interactions.resolveApproval(input.sessionId, result, approvalToken)
+        if (result.deliveryCommandId) {
+          await clearDeliveryReceipt(input.projectId, input.sessionId, result.deliveryCommandId)
+        }
+        const handedOffProjection = result.deliveryCommandId
+          ? ((await service.getProjection(input.projectId, input.sessionId)) ?? result.projection)
+          : result.projection
+        const handedOffResult = { ...result, projection: handedOffProjection }
+        await attachPlanReference(handedOffResult, input.projectId, input.sessionId)
+        Reflect.deleteProperty(handedOffResult, 'deliveryCommandId')
+        safeLogInfo('Session Plan response accepted', {
+          projectId: input.projectId,
+          sessionId: input.sessionId,
+          artifactVersionId: result.projection.artifactVersionId,
+          revision: handedOffProjection.revision,
+          source: requiresHumanFeedback ? 'agent-after-feedback' : 'agent-delivery',
+          decision,
+          changed: result.changed
+        })
+        publishProjection(input.sessionId, handedOffProjection)
+        return handedOffResult
+      } catch (error) {
+        safeLogError('Committed Session Plan decision handoff failed', error)
         publishProjection(input.sessionId, result.projection)
-        return result
+        return {
+          ...result,
+          deliveryWarning:
+            'The Plan decision is committed, but subsequent delivery processing did not return a confirmed result. Delivery completion is unconfirmed. Do not repeat this decision or regenerate the Plan to repair delivery. Report the interruption; the application must check delivery state before attempting recovery.'
+        }
       }
-      if (decision === 'approved' && requiresHumanFeedback && authorization && !result.changed) {
-        interactions.releaseAgentDecisionAuthorization(
-          input.sessionId,
-          authorization.interactionSequence
-        )
-      }
-      interactions.resolveApproval(input.sessionId, result, approvalToken)
-      if (result.deliveryCommandId) {
-        await clearDeliveryReceipt(input.projectId, input.sessionId, result.deliveryCommandId)
-      }
-      const handedOffProjection = result.deliveryCommandId
-        ? ((await service.getProjection(input.projectId, input.sessionId)) ?? result.projection)
-        : result.projection
-      const handedOffResult = { ...result, projection: handedOffProjection }
-      Reflect.deleteProperty(handedOffResult, 'deliveryCommandId')
-      safeLogInfo('Session Plan response accepted', {
-        projectId: input.projectId,
-        sessionId: input.sessionId,
-        artifactVersionId: result.projection.artifactVersionId,
-        revision: handedOffProjection.revision,
-        source: requiresHumanFeedback ? 'agent-after-feedback' : 'agent-delivery',
-        decision,
-        changed: result.changed
-      })
-      publishProjection(input.sessionId, handedOffProjection)
-      return handedOffResult
     }
     const update = input.input as {
       title: string
@@ -373,36 +498,49 @@ const composeAcpRuntimePlanWorkflow = (
       notes?: string
       expectedArtifactVersionId?: string
     }
-    let result: Awaited<ReturnType<NonNullable<typeof service>['updateStepStatus']>>
-    try {
-      result = await service.updateStepStatus({
-        projectId: input.projectId,
-        sessionId: input.sessionId,
-        title: update.title,
-        status: update.status,
-        ...(update.notes ? { notes: update.notes } : {}),
-        authorizeUpdate: async (projection) => {
-          await assertVisibleToDurableBranch(input.projectId, input.sessionId, projection)
-          if (projection.approval !== 'approved') {
-            throw new PlanCommandError(
-              'plan-not-approved',
-              'The Plan is still pending. Interpret the user Message, then call generate_plan with decision:"approved" or decision:"rejected" before updating steps.'
-            )
-          }
-          if (
-            update.expectedArtifactVersionId !== undefined &&
-            update.expectedArtifactVersionId !== projection.artifactVersionId
-          ) {
-            throw new PlanCommandError('stale-plan', 'A newer Plan Artifact Version is active.')
-          }
-        }
-      })
-    } catch (error) {
-      if (error instanceof PlanCommandError && error.code === 'no-active-plan') {
-        throw new Error('The Session has no active Plan.')
+    const updateInteraction = input.signal
+      ? sessionInteractions.current(input.sessionId)
+      : undefined
+    const assertUpdateInteraction = (): void => {
+      if (
+        input.signal &&
+        (input.signal.aborted ||
+          updateInteraction?.kind !== 'prompt' ||
+          sessionInteractions.current(input.sessionId) !== updateInteraction)
+      ) {
+        throw new PlanCommandError(
+          'interaction-mismatch',
+          'The interaction that requested this Session Plan step update ended. No update was attempted.'
+        )
       }
-      throw error
     }
+    assertUpdateInteraction()
+    const result = await service.updateStepStatus({
+      projectId: input.projectId,
+      sessionId: input.sessionId,
+      title: update.title,
+      status: update.status,
+      ...(update.notes ? { notes: update.notes } : {}),
+      authorizeUpdate: async (projection) => {
+        assertUpdateInteraction()
+        await assertVisibleToDurableBranch(input.projectId, input.sessionId, projection)
+        assertUpdateInteraction()
+        if (projection.approval !== 'approved') {
+          throw new PlanCommandError(
+            'plan-not-approved',
+            projection.approval === 'rejected'
+              ? 'The Plan was rejected. Do not update or approve it again. A replacement Plan requires a new review before execution.'
+              : 'The Plan is pending. Wait for explicit human feedback, then submit the corresponding decision through generate_plan before updating steps.'
+          )
+        }
+        if (
+          update.expectedArtifactVersionId !== undefined &&
+          update.expectedArtifactVersionId !== projection.artifactVersionId
+        ) {
+          throw new PlanCommandError('stale-plan', 'A newer Plan Artifact Version is active.')
+        }
+      }
+    })
     safeLogInfo('Session Plan step status updated', {
       projectId: input.projectId,
       sessionId: input.sessionId,
@@ -412,6 +550,7 @@ const composeAcpRuntimePlanWorkflow = (
       changed: result.changed
     })
     publishProjection(input.sessionId, result.projection)
+    await attachPlanReference(result, input.projectId, input.sessionId, false)
     return result
   }
   const projection = (
@@ -422,7 +561,12 @@ const composeAcpRuntimePlanWorkflow = (
     return service.getProjection(projectId, sessionId)
   }
   const discardUnavailable = async (input: PlanResponseIdentity): Promise<{ revision: number }> => {
-    if (!service) throw new Error('Session Plan capability is not configured.')
+    if (!service) {
+      throw new PlanCommandError(
+        'plan-unavailable',
+        'Session Plan capability is not configured. This operation was not attempted. Open Science must provide the capability before another Plan call.'
+      )
+    }
     const interaction = sessionInteractions.current(input.sessionId)
     const approvalToken = interactions.approvalTokenFor(input.sessionId)
     const assertCurrent = (): void => {
@@ -462,6 +606,7 @@ const composeAcpRuntimePlanWorkflow = (
     if (approvalToken && interactions.approvalTokenFor(input.sessionId) === approvalToken) {
       interactions.rejectApproval(input.sessionId, 'The unavailable Session Plan was discarded.')
     }
+    await refreshPlanReference(input.projectId, input.sessionId)
     return result
   }
   const handoffPausedResponse = <Result extends PlanResponseResult>(
@@ -490,7 +635,12 @@ const composeAcpRuntimePlanWorkflow = (
     return response
   }
   const respond = async (input: PlanResponseCommand): Promise<PlanResponseResult> => {
-    if (!service) throw new Error('Session Plan capability is not configured.')
+    if (!service) {
+      throw new PlanCommandError(
+        'plan-unavailable',
+        'Session Plan capability is not configured. This operation was not attempted. Open Science must provide the capability before another Plan call.'
+      )
+    }
     const approvalInteractionId = interactions.approvalInteractionIdFor(input.sessionId)
     const approvalToken = interactions.approvalTokenFor(input.sessionId)
     const feedbackInteraction =
@@ -591,6 +741,7 @@ const composeAcpRuntimePlanWorkflow = (
       })
     }
     if ('projection' in result) {
+      await attachPlanReference(result, input.projectId, input.sessionId)
       const interaction = sessionInteractions.current(input.sessionId)
       if (interaction?.kind === 'prompt') {
         interactions.releaseAgentDecisionAuthorization(input.sessionId, interaction.sequence)
@@ -638,6 +789,7 @@ const composeAcpRuntimePlanWorkflow = (
         ? ((await service.getProjection(input.projectId, input.sessionId)) ?? result.projection)
         : result.projection
       handedOffResult.projection = handedOffProjection
+      await attachPlanReference(handedOffResult, input.projectId, input.sessionId)
       Reflect.deleteProperty(handedOffResult, 'deliveryCommandId')
       safeLogInfo('Session Plan response accepted', {
         projectId: input.projectId,
@@ -651,6 +803,7 @@ const composeAcpRuntimePlanWorkflow = (
       publishProjection(input.sessionId, handedOffProjection)
       return handedOffResult
     }
+    await attachPlanReference(result, input.projectId, input.sessionId)
     if (!detachedFeedback) {
       if (
         !approvalInteractionId ||
@@ -741,7 +894,7 @@ const composeAcpRuntimePlanWorkflow = (
     return handedOffFeedback
   }
 
-  const preflight = (
+  const preflightPlan = (
     request: AcpPromptRequest,
     mode: AcpPromptTurnMode
   ): AcpPromptTurnPlanContext | Promise<AcpPromptTurnPlanContext> => {
@@ -804,6 +957,39 @@ const composeAcpRuntimePlanWorkflow = (
       return Object.freeze({ active: current })
     })
   }
+  const preflight: AcpPromptTurnPlanWorkflow['preflight'] = (request, mode) => {
+    // Preserve synchronous prompt admission when the optional file projection is disabled.
+    if (!contextFiles) return preflightPlan(request, mode)
+    return (async () => {
+      const projectId = session.sessionEnvironment.projectId(request.sessionId)
+      try {
+        const plan = await preflightPlan(request, mode)
+        const refreshed = await refreshPlanReference(projectId, request.sessionId)
+        const projected = plan.active ?? plan.protectedPending ?? plan.protectedRejected
+        const changedDuringRefresh =
+          projected !== undefined &&
+          (refreshed.availability === 'absent' ||
+            (refreshed.availability === 'available' &&
+              (refreshed.artifactVersionId !== projected.artifactVersionId ||
+                refreshed.revision !== projected.revision)))
+        if (changedDuringRefresh) {
+          const current = await preflightPlan(request, mode)
+          const currentProjection =
+            current.active ?? current.protectedPending ?? current.protectedRejected
+          const retried = await refreshPlanReference(projectId, request.sessionId)
+          if (!currentProjection) return current
+          const source = sourceForProjection(currentProjection, retried)
+          return source ? Object.freeze({ ...current, source }) : current
+        }
+        const source = projected ? sourceForProjection(projected, refreshed) : undefined
+        return source ? Object.freeze({ ...plan, source }) : plan
+      } catch (error) {
+        // Also invalidate a previous branch's read view when admission fails.
+        await refreshPlanReference(projectId, request.sessionId)
+        throw error
+      }
+    })()
+  }
   const admit = (
     _request: AcpPromptRequest,
     interaction: AcpPromptSessionInteractionScope,
@@ -841,6 +1027,7 @@ const composeAcpRuntimePlanWorkflow = (
         sessionId
       )
       if (current) publishProjection(sessionId, current)
+      await refreshPlanReference(session.sessionEnvironment.projectId(sessionId), sessionId)
     } catch (error) {
       safeLogError('Session Plan terminal projection failed', error)
     }
@@ -891,6 +1078,8 @@ const composeAcpRuntimePlanWorkflow = (
       commandId
     })
     await assertVisibleToDurableBranch(projectId, interaction.sessionId, context.projection)
+    const refreshed = await refreshPlanReference(projectId, interaction.sessionId)
+    const source = sourceForProjection(context.projection, refreshed)
     interactions.releaseProviderPause(interaction.sessionId, pause)
     const instruction =
       'kind' in result && result.kind === 'feedback'
@@ -905,7 +1094,7 @@ const composeAcpRuntimePlanWorkflow = (
           ? '\n\nUser Message:\n' + result.text
           : '') +
         '\n\n' +
-        formatPlanProtectedContext(context.projection),
+        formatPlanProtectedContext(context.projection, source),
       dispatch: async () => {
         if (!(await beginDeliveryReceipt(projectId, interaction.sessionId, commandId))) {
           throw new Error('The Plan response could not claim its delivery receipt.')

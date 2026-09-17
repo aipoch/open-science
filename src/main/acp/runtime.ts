@@ -531,6 +531,7 @@ type AcpRuntimePlanOptions = {
   getRpcConnection: (binding: {
     sessionId: string
     projectId: string
+    replaceExisting: false
   }) => Promise<NotebookRpcConnection>
   registerSessionAlias?: (aliasSessionId: string, sessionId: string) => void
   sessions: SessionRuntimeContextCommands &

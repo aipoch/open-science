@@ -38,6 +38,21 @@ const expectRevoked = async (connections: NotebookRpcConnection[]): Promise<void
     })
   }
 }
+const planUrl = (provision: SessionCapabilityProvision): string => {
+  const server = provision.mcpServers.find((candidate) => candidate.name.includes('plan'))
+  if (!server || !('url' in server)) throw new Error('Expected an HTTP Plan MCP server.')
+  return server.url
+}
+const callPlanRoute = (url: string, token: string): Promise<Response> =>
+  fetch(url, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${token}`,
+      'content-type': 'application/json',
+      accept: 'application/json, text/event-stream'
+    },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} })
+  })
 // The provider process is outside this boundary. Exercise the real capability owners and RPC
 // admission used by every tool, including the separate Skill-import/Plan credentials.
 type ProvisionedSession = {
@@ -206,6 +221,92 @@ describe.each(paths)('$name capability handover', (path) => {
     const replacement = await provision(createOwner())
     await replacement.expectUsable()
   })
+})
+
+it('restores the committed Plan HTTP route and RPC credential when replacement provisioning rolls back', async () => {
+  const planCall = vi.fn(async () => ({
+    projection: { artifactVersionId: 'version-1', lifecycle: 'approved' }
+  }))
+  const rpc = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+    transport: 'tcp',
+    planService: { call: planCall }
+  })
+  const host = new AgentMcpHttpHost()
+  cleanups.push(
+    () => rpc.close(),
+    () => host.close()
+  )
+  const connections: NotebookRpcConnection[] = []
+  const owner = new AcpSessionCapabilityOwner({
+    mcpHttpHost: host,
+    plan: {
+      mcpEntryPath: '/app/main.js',
+      getRpcConnection: async ({ sessionId, projectId, replaceExisting }) => {
+        const connection = await rpc.issuePlanConnection(sessionId, projectId, { replaceExisting })
+        connections.push(connection)
+        return connection
+      },
+      registerSessionAlias: (alias, sessionId) => rpc.registerSessionAlias(alias, sessionId)
+    }
+  })
+  const request = {
+    stableAppSessionId: 'session',
+    framework: { ...opencodeFramework, acceptsStdioMcp: false },
+    nativeMcpEnabled: true,
+    bridgeMcpAliasesEnabled: false,
+    policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+    sessionCwd: '/workspace',
+    projectId: 'project'
+  } as const
+  const committed = await owner.provision(request)
+  committed.commit('session')
+  const oldUrl = planUrl(committed)
+  const { token: hostToken } = await host.ensureStarted()
+  expect((await callPlanRoute(oldUrl, hostToken)).status).toBe(200)
+
+  const replacement = await owner.provision(request)
+  const replacementUrl = planUrl(replacement)
+  expect(replacementUrl).not.toBe(oldUrl)
+  expect((await callPlanRoute(oldUrl, hostToken)).status).toBe(404)
+  expect((await callPlanRoute(replacementUrl, hostToken)).status).toBe(200)
+
+  await replacement.release({ ownsStableIdentity: true })
+
+  expect((await callPlanRoute(oldUrl, hostToken)).status).toBe(200)
+  expect((await callPlanRoute(replacementUrl, hostToken)).status).toBe(404)
+  const toolResponse = await fetch(oldUrl, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${hostToken}`,
+      'content-type': 'application/json',
+      accept: 'application/json, text/event-stream'
+    },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/call',
+      params: { name: 'generate_plan', arguments: { decision: 'approved' } }
+    })
+  })
+  expect(toolResponse.status).toBe(200)
+  expect(planCall).toHaveBeenCalledWith(
+    expect.objectContaining({
+      projectId: 'project',
+      sessionId: 'session',
+      operation: 'approve'
+    })
+  )
+  expect((await call(connections[0])).status).not.toBe(401)
+  expect((await call(connections[1])).status).toBe(401)
+
+  const committedReplacement = await owner.provision(request)
+  const committedReplacementUrl = planUrl(committedReplacement)
+  committedReplacement.commit('session')
+  expect((await callPlanRoute(oldUrl, hostToken)).status).toBe(404)
+  expect((await callPlanRoute(committedReplacementUrl, hostToken)).status).toBe(200)
+  expect((await call(connections[0])).status).toBe(401)
+  expect((await call(connections[2])).status).not.toBe(401)
+  owner.revokeSession('session')
 })
 
 it('rejects partial ownership before removing any current capability or invoking Session cleanup', async () => {

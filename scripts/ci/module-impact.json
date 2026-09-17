@@ -408,7 +408,8 @@
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
           "src/main/settings/skill-catalog.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/session-plan/plan-context-file.shell.integration.test.ts"
         ]
       },
       "capabilityOverlays": [],
@@ -2913,7 +2914,9 @@
           "src/renderer/src/stores/settings-connectors-slice.test.ts",
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/settings/responses-bridge.plan-tools.test.ts",
+          "src/main/session-plan/plan-context-file.shell.integration.test.ts"
         ]
       },
       "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
@@ -3655,7 +3658,9 @@
           "src/renderer/src/stores/settings-connectors-slice.test.ts",
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/session-plan/plan-context-file.shell.integration.test.ts",
+          "src/main/settings/responses-bridge.plan-tools.test.ts"
         ]
       },
       "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
@@ -3678,6 +3683,7 @@
         "src/main/settings/provider-loopback-http-host.ts",
         "src/main/settings/provider-transport-owner.ts",
         "src/main/settings/responses-bridge.ts",
+        "src/main/settings/responses-bridge.plan-tools.test.ts",
         "src/main/settings/responses-protocol-types.ts",
         "src/main/settings/responses-request-adapter.ts",
         "src/main/settings/responses-response-adapter.ts",
@@ -3758,7 +3764,8 @@
           "src/main/settings/system-proxy.test.ts",
           "src/main/settings/network-proxy-runtime.test.ts",
           "src/main/settings/environment-check.test.ts",
-          "src/main/settings/environment-check-proxy.test.ts"
+          "src/main/settings/environment-check-proxy.test.ts",
+          "src/main/settings/responses-bridge.plan-tools.test.ts"
         ],
         "contract": [
           "src/main/agent-framework/claude-code.test.ts",
@@ -5057,7 +5064,8 @@
           "src/renderer/src/pages/workspace/previews/preview-pagination-contract.test.tsx",
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/session-plan/plan-context-file.shell.integration.test.ts"
         ]
       },
       "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
@@ -6397,7 +6405,9 @@
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
           "src/main/settings/skill-catalog.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/session-plan/plan-legacy-compatibility.test.ts",
+          "src/main/session-plan/plan-context-file.shell.integration.test.ts"
         ]
       },
       "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
@@ -6825,7 +6835,8 @@
           "src/renderer/src/stores/locale-preference-recovery.render.test.tsx",
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/session-plan/plan-context-file.shell.integration.test.ts"
         ]
       },
       "capabilityOverlays": ["i18n_catalog"],
@@ -8599,7 +8610,8 @@
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
           "src/shared/run-error-classification.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/settings/responses-bridge.plan-tools.test.ts"
         ]
       },
       "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
@@ -9219,7 +9231,8 @@
           "src/shared/renderer-surface-matrix.test.ts",
           "src/main/session-package/fork.test.ts",
           "src/renderer/src/lib/session-fork.test.ts",
-          "src/renderer/src/pages/workspace/session-action-menu.test.ts"
+          "src/renderer/src/pages/workspace/session-action-menu.test.ts",
+          "src/main/session-plan/plan-context-file.shell.integration.test.ts"
         ]
       },
       "capabilityOverlays": [],
@@ -9784,7 +9797,9 @@
           "src/shared/renderer-surface-matrix.test.ts",
           "scripts/ci/e2e-setup-snapshot.test.ts",
           "src/main/process-tree-native-loading.macos.integration.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/session-plan/plan-context-file.shell.integration.test.ts",
+          "src/main/settings/responses-bridge.plan-tools.test.ts"
         ]
       },
       "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
@@ -10127,7 +10142,8 @@
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
           "scripts/ci/e2e-setup-snapshot.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/session-plan/plan-context-file.shell.integration.test.ts"
         ]
       },
       "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
@@ -10577,7 +10593,8 @@
           "src/renderer/src/stores/settings-connectors-slice.test.ts",
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/settings/responses-bridge.plan-tools.test.ts"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -11901,7 +11918,10 @@
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
           "src/main/notebook/dependency-analysis.stdlib-replay.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/session-plan/plan-context-file.shell.integration.test.ts",
+          "src/main/session-plan/plan-legacy-compatibility.test.ts",
+          "src/main/settings/responses-bridge.plan-tools.test.ts"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -12390,7 +12410,8 @@
           "src/main/web-service/task-api.test.ts",
           "src/main/window-find-ipc.test.ts",
           "src/shared/renderer-surface-inventory.test.ts",
-          "src/shared/renderer-surface-matrix.test.ts"
+          "src/shared/renderer-surface-matrix.test.ts",
+          "src/main/session-plan/plan-context-file.shell.integration.test.ts"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -17515,7 +17536,8 @@
           "src/renderer/src/pages/workspace/artifact-publication-preview.integration.test.tsx",
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/acp/runtime-plan-composition.test.ts"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -18024,7 +18046,8 @@
           "src/renderer/src/stores/settings-connectors-slice.test.ts",
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/settings/responses-bridge.plan-tools.test.ts"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -18395,7 +18418,8 @@
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
           "src/main/settings/skill-catalog.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/session-plan/plan-context-file.shell.integration.test.ts"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -18474,7 +18498,8 @@
           "src/main/notebook/no-legacy-bridge.test.ts",
           "src/main/notebook/repl-loop.integration.test.ts",
           "src/main/runtime-electron-wiring.test.ts",
-          "src/main/tasks/task-runner.test.ts"
+          "src/main/tasks/task-runner.test.ts",
+          "src/main/acp/runtime-plan-composition.test.ts"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -20275,7 +20300,8 @@
           "src/main/web-service/http-server.test.ts",
           "src/main/web-service/task-api.test.ts",
           "src/shared/renderer-surface-inventory.test.ts",
-          "src/shared/renderer-surface-matrix.test.ts"
+          "src/shared/renderer-surface-matrix.test.ts",
+          "src/main/acp/runtime-plan-composition.test.ts"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -21476,7 +21502,10 @@
           "src/shared/renderer-surface-matrix.test.ts",
           "src/main/notebook/dependency-analysis.stdlib-replay.test.ts",
           "src/main/settings/skill-catalog.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/session-plan/plan-context-file.shell.integration.test.ts",
+          "src/main/session-plan/plan-context-file.test.ts",
+          "src/main/session-plan/plan-legacy-compatibility.test.ts"
         ]
       },
       "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
@@ -22516,7 +22545,8 @@
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
           "src/main/notebook/dependency-analysis.stdlib-replay.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/session-plan/plan-context-file.shell.integration.test.ts"
         ]
       },
       "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
@@ -23125,7 +23155,13 @@
         "src/main/session-plan/production-plan-service.test.ts",
         "src/main/session-plan/production-plan-service.ts",
         "src/main/session-plan/session-plan-interaction-owner.test.ts",
-        "src/main/session-plan/session-plan-interaction-owner.ts"
+        "src/main/session-plan/session-plan-interaction-owner.ts",
+        "src/main/session-plan/plan-context-file-windows-strategy.ts",
+        "src/main/session-plan/plan-context-file.shell.integration.test.ts",
+        "src/main/session-plan/plan-context-file.test.ts",
+        "src/main/session-plan/plan-context-file.ts",
+        "src/main/session-plan/plan-context-guidance.ts",
+        "src/main/session-plan/plan-legacy-compatibility.test.ts"
       ],
       "interfacePaths": [
         "src/main/session-plan/guidance.ts",
@@ -23133,16 +23169,21 @@
         "src/main/session-plan/plan-mcp-server.ts",
         "src/main/session-plan/plan-service.ts",
         "src/main/session-plan/production-plan-service.ts",
-        "src/main/session-plan/session-plan-interaction-owner.ts"
+        "src/main/session-plan/session-plan-interaction-owner.ts",
+        "src/main/session-plan/plan-context-file.ts",
+        "src/main/session-plan/plan-context-guidance.ts"
       ],
-      "consumerModules": [],
+      "consumerModules": ["workspace_runtime"],
       "testFiles": {
         "owner": [
           "src/main/session-plan/plan-delivery.test.ts",
           "src/main/session-plan/plan-mcp-server.test.ts",
           "src/main/session-plan/plan-service.test.ts",
           "src/main/session-plan/production-plan-service.test.ts",
-          "src/main/session-plan/session-plan-interaction-owner.test.ts"
+          "src/main/session-plan/session-plan-interaction-owner.test.ts",
+          "src/main/session-plan/plan-context-file.shell.integration.test.ts",
+          "src/main/session-plan/plan-context-file.test.ts",
+          "src/main/session-plan/plan-legacy-compatibility.test.ts"
         ],
         "contract": [
           "src/preload/index.test.ts",
@@ -23964,7 +24005,9 @@
           "src/renderer/src/stores/settings-connectors-slice.test.ts",
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/settings/responses-bridge.plan-tools.test.ts",
+          "src/main/session-plan/plan-context-file.shell.integration.test.ts"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -25079,7 +25122,10 @@
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
           "src/main/notebook/dependency-analysis.stdlib-replay.test.ts",
-          "src/main/session-package/fork.test.ts"
+          "src/main/session-package/fork.test.ts",
+          "src/main/session-plan/plan-context-file.shell.integration.test.ts",
+          "src/main/session-plan/plan-legacy-compatibility.test.ts",
+          "src/main/session-plan/plan-context-file.test.ts"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -25569,7 +25615,8 @@
           "src/main/web-service/task-api.test.ts",
           "src/main/window-find-ipc.test.ts",
           "src/shared/renderer-surface-inventory.test.ts",
-          "src/shared/renderer-surface-matrix.test.ts"
+          "src/shared/renderer-surface-matrix.test.ts",
+          "src/main/session-plan/plan-context-file.shell.integration.test.ts"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

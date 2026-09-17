@@ -326,6 +326,17 @@ describe('AgentMcpHttpHost', () => {
       sessionId: routingId
     })
     const planUrl = host.urlFor('plan', routingId)
+    const missingRouteTokenUrl = new URL(planUrl)
+    missingRouteTokenUrl.search = ''
+    const missingRouteToken = await fetch(missingRouteTokenUrl, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json'
+      },
+      body: '{}'
+    })
+    expect(missingRouteToken.status).toBe(404)
     const client = new Client({ name: 'plan-http-test', version: '1.0.0' })
     await client.connect(
       new StreamableHTTPClientTransport(new URL(planUrl), {
@@ -374,6 +385,88 @@ describe('AgentMcpHttpHost', () => {
       body: '{}'
     })
     expect(removed.status).toBe(404)
+  })
+
+  it('does not route an old Plan capability URL to a replacement environment', async () => {
+    const routingId = 'stable-plan-session'
+    const seenTokens: string[] = []
+    rpcServer = createServer((request, response) => {
+      seenTokens.push(request.headers.authorization ?? '')
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(
+        JSON.stringify({
+          result: { projection: { artifactVersionId: 'version-1', lifecycle: 'approved' } }
+        })
+      )
+    })
+    await new Promise<void>((resolve, reject) => {
+      rpcServer?.once('error', reject)
+      rpcServer?.listen(0, '127.0.0.1', resolve)
+    })
+    const rpcAddress = rpcServer.address()
+    if (typeof rpcAddress !== 'object' || rpcAddress === null) {
+      throw new Error('Test Plan RPC server did not return a TCP address.')
+    }
+
+    host = new AgentMcpHttpHost()
+    const { token } = await host.ensureStarted()
+    host.registerPlan(routingId, {
+      endpoint: `http://127.0.0.1:${rpcAddress.port}/plan`,
+      token: 'old-plan-token',
+      projectId: 'project-1',
+      sessionId: routingId
+    })
+    const oldUrl = host.urlFor('plan', routingId)
+    const oldRouteToken = new URL(oldUrl).searchParams.get('token')
+    if (!oldRouteToken) throw new Error('Expected a Plan route token.')
+    const oldClient = new Client({ name: 'old-plan-http-test', version: '1.0.0' })
+    await oldClient.connect(
+      new StreamableHTTPClientTransport(new URL(oldUrl), {
+        requestInit: { headers: { authorization: `Bearer ${token}` } }
+      })
+    )
+
+    const prepareRollback = host.registerPlan(routingId, {
+      endpoint: `http://127.0.0.1:${rpcAddress.port}/plan`,
+      token: 'new-plan-token',
+      projectId: 'project-1',
+      sessionId: routingId
+    })
+    const replacementUrl = host.urlFor('plan', routingId)
+    const replacementClient = new Client({ name: 'replacement-plan-http-test', version: '1.0.0' })
+    await replacementClient.connect(
+      new StreamableHTTPClientTransport(new URL(replacementUrl), {
+        requestInit: { headers: { authorization: `Bearer ${token}` } }
+      })
+    )
+
+    const staleResponse = await fetch(oldUrl, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json'
+      },
+      body: '{}'
+    })
+    expect(staleResponse.status).toBe(404)
+    expect(await staleResponse.text()).not.toContain(oldRouteToken)
+
+    await expect(
+      oldClient.callTool({ name: 'generate_plan', arguments: { approve: true } })
+    ).rejects.toThrow()
+    await replacementClient.callTool({ name: 'generate_plan', arguments: { approve: true } })
+    expect(seenTokens).toEqual(['Bearer new-plan-token'])
+
+    const restorePreviousRoute = prepareRollback()
+    host.unregister(routingId)
+    restorePreviousRoute?.()
+    await oldClient.callTool({ name: 'generate_plan', arguments: { approve: true } })
+    await expect(
+      replacementClient.callTool({ name: 'generate_plan', arguments: { approve: true } })
+    ).rejects.toThrow()
+    expect(seenTokens).toEqual(['Bearer new-plan-token', 'Bearer old-plan-token'])
+    await replacementClient.close()
+    await oldClient.close()
   })
 
   it('serves the linked Literature reader over its bound route', async () => {

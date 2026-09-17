@@ -2,7 +2,10 @@ import type { ActiveSession, PromptResponse, SessionNotification } from '@agentc
 
 import type { AcpPromptRequest } from '../../shared/acp'
 import type { MessageAttribution } from '../../shared/session-persistence'
-import type { ActivePlanProjection } from '../../shared/session-plan/contract'
+import type {
+  ActivePlanProjection,
+  PlanProtectedContextSource
+} from '../../shared/session-plan/contract'
 import { formatPlanProtectedContext } from '../../shared/session-plan/contract'
 import {
   DEFAULT_PERMISSION_PROFILE,
@@ -60,6 +63,7 @@ type AcpPromptTurnPlanContext = Readonly<{
   active?: ActivePlanProjection
   protectedPending?: ActivePlanProjection
   protectedRejected?: ActivePlanProjection
+  source?: PlanProtectedContextSource
 }>
 
 type AcpActivatedPromptTurn = Readonly<{
@@ -440,7 +444,9 @@ class AcpPromptTurnWorkflow {
         skillImportTurnToken: turnToken,
         turnSkill: skill,
         selectedComputeHostIds: env.resolveComputeExecutionTargetIds?.(sessionId) ?? [],
-        ...(planContext ? { protectedContext: formatPlanProtectedContext(planContext) } : {}),
+        ...(planContext
+          ? { protectedContext: formatPlanProtectedContext(planContext, turn.plan.source) }
+          : {}),
         ...(request.turnIntent === 'plan-first'
           ? { turnPromptReminders: [PLAN_FIRST_TURN_PROMPT_REMINDER] }
           : {}),

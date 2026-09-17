@@ -911,6 +911,7 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/provider-loopback-http-host.ts',
       'src/main/settings/provider-transport-owner.ts',
       'src/main/settings/responses-bridge.ts',
+      'src/main/settings/responses-bridge.plan-tools.test.ts',
       'src/main/settings/responses-protocol-types.ts',
       'src/main/settings/responses-request-adapter.ts',
       'src/main/settings/responses-response-adapter.ts',

@@ -37,6 +37,7 @@ import {
 } from './provider-error-replay'
 import { fetchProviderRequest } from './provider-fetch'
 import type { SkillSelectorUsageObservation } from '../agent-framework'
+import { modelFacingAppMcpToolName } from '../agent-framework/app-mcp-names'
 import {
   DEFAULT_MAX_PROVIDER_RESPONSE_BYTES,
   readBoundedResponseText,
@@ -99,6 +100,14 @@ export type ResponsesBridgeOptions = {
 type BridgeFetch = typeof fetch
 const DEFAULT_REASONING_CACHE_MAX_ENTRIES = 4_096
 const DEFAULT_REASONING_CACHE_MAX_CHARACTERS = 8 * 1024 * 1024
+const PLAN_GENERATE_BRIDGE_ALIAS = modelFacingAppMcpToolName(
+  'codex',
+  'open-science-plan',
+  'generate_plan',
+  true
+)
+const REQUEST_LOCAL_PLAN_NAMESPACE = PLAN_GENERATE_BRIDGE_ALIAS.slice(0, -'__generate_plan'.length)
+const REQUEST_LOCAL_PLAN_TOOL_NAMES = new Set(['generate_plan', 'update_step_status'])
 
 // The upstream Chat Completions endpoint. `target.baseUrl` is already the resolved OpenAI base (an
 // official vendor's exact versioned base, or a custom root normalized to `<root>/v1`), so this only
@@ -426,6 +435,22 @@ export class ResponsesBridge {
     const skillTools: ResponsesBridgeNamespacedTool[] = skillLoader
       ? [{ ...skillLoader, namespace: 'mcp__skills' }]
       : []
+    // The Plan MCP server is provisioned per Session, so its namespace is authoritative only for
+    // this request. Forward the two public tools only when Codex advertises that live capability;
+    // never promote them into the bridge-wide fallback catalog.
+    const planNamespace = Array.isArray(body.tools)
+      ? body.tools.find(
+          (tool) => tool?.type === 'namespace' && tool.name === REQUEST_LOCAL_PLAN_NAMESPACE
+        )
+      : undefined
+    const planTools: ResponsesBridgeNamespacedTool[] = Array.isArray(planNamespace?.tools)
+      ? planNamespace.tools
+          .filter(
+            (tool: JsonObject) =>
+              tool?.type === 'function' && REQUEST_LOCAL_PLAN_TOOL_NAMES.has(String(tool.name))
+          )
+          .map((tool: JsonObject) => ({ ...tool, namespace: REQUEST_LOCAL_PLAN_NAMESPACE }))
+      : []
     const namespacedTools = reviewerScoped
       ? (this.target.reviewerScope?.namespacedTools ?? [])
       : toolLessScoped
@@ -434,7 +459,7 @@ export class ResponsesBridge {
           ? hostMessageTools
           : hostMessageBoundaryActive
             ? []
-            : [...(this.target.namespacedTools ?? []), ...skillTools]
+            : [...(this.target.namespacedTools ?? []), ...skillTools, ...planTools]
     // codex-acp ignores disableBuiltInTools metadata and still advertises shell/filesystem tools.
     // For reviewer turns, replace the entire declaration set at the protocol boundary so the model
     // can call only the scope-bounded reviewer HTTP MCP functions.
@@ -464,6 +489,22 @@ export class ResponsesBridge {
     // catalog model); an empty outgoingToolNames with a non-empty incoming set means the bridge
     // filtered them.
     const incomingTools = Array.isArray(body.tools) ? (body.tools as JsonObject[]) : []
+    const incomingNamespaces = incomingTools
+      .filter((tool) => tool?.type === 'namespace')
+      .slice(0, 32)
+      .map((namespace) => ({
+        name:
+          typeof namespace.name === 'string'
+            ? namespace.name.slice(0, 128)
+            : '(missing namespace name)',
+        toolNames: Array.isArray(namespace.tools)
+          ? namespace.tools
+              .slice(0, 64)
+              .map((tool: JsonObject) =>
+                typeof tool?.name === 'string' ? tool.name.slice(0, 128) : '(missing tool name)'
+              )
+          : []
+      }))
     const outgoingTools = Array.isArray(chatRequest.tools)
       ? (chatRequest.tools as JsonObject[])
       : []
@@ -476,6 +517,10 @@ export class ResponsesBridge {
         ...new Set(incomingTools.map((tool) => String(tool?.type ?? '(missing)')))
       ],
       incomingToolCount: incomingTools.length,
+      incomingNamespaces: incomingNamespaces.map((namespace) => namespace.name),
+      incomingNamespaceToolNames: incomingNamespaces.flatMap((namespace) =>
+        namespace.toolNames.map((toolName) => `${namespace.name}/${toolName}`)
+      ),
       outgoingToolNames,
       reviewerScoped,
       hostMessageScoped,

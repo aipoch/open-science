@@ -397,11 +397,14 @@ describe('codexFramework', () => {
     const codexConfigs = configurations.map(({ env }) => JSON.parse(env?.CODEX_CONFIG ?? '{}'))
 
     expect(codexConfigs.map(({ features }) => features)).toEqual(
-      configurations.map(() => ({
+      configurations.map((_configuration, index) => ({
         memories: false,
         multi_agent: false,
         multi_agent_v2: false,
-        code_mode: { direct_only_tool_namespaces: ['mcp__skills'] },
+        code_mode: {
+          direct_only_tool_namespaces:
+            index === 2 ? ['mcp__skills', 'mcp__open_science_plan'] : ['mcp__skills']
+        },
         shell_tool: false
       }))
     )
@@ -676,6 +679,11 @@ describe('codexFramework', () => {
     expect(JSON.parse(config.env?.CODEX_CONFIG ?? '')).toMatchObject({
       model: CODEX_BRIDGE_MODEL,
       developer_instructions: 'Stable bridge guidance.',
+      features: {
+        code_mode: {
+          direct_only_tool_namespaces: ['mcp__skills', 'mcp__open_science_plan']
+        }
+      },
       model_context_window: 128_000,
       model_auto_compact_token_limit: 121_600,
       model_provider: 'open-science',

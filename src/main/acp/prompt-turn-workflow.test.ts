@@ -1357,6 +1357,54 @@ describe('AcpPromptTurnWorkflow', () => {
     expect(harness.finalization.compactIfIdle).toHaveBeenCalledWith('s1')
   })
 
+  it('retains the short Plan reference on a reconstructed continuation without replaying its body', async () => {
+    const reference = 'Plan record: OPEN_SCIENCE_INPUT_DIR/session-plan/current.json'
+    const harness = createHarness({
+      admitPlan: () => ({
+        active: planProjection(),
+        source: { kind: 'file-reference', reference }
+      })
+    })
+    const prompt: AcpPromptRequest = {
+      ...request(),
+      contextReset: true,
+      historyPreamble: 'Recovered work: continue the unfinished analysis.'
+    }
+
+    await harness.workflow.run(prompt, { kind: 'app-continuation' })
+
+    const prepared = harness.preparation.mock.calls[0][0]
+    expect(prepared.protectedContext).toContain(reference)
+    expect(prepared.protectedContext).toContain('approval=approved')
+    expect(prepared.protectedContext).not.toContain('Analyze the result')
+    expect(prepared.protectedContext).not.toContain('Analyze: not_started')
+    expect(prepared.request.historyPreamble).toContain('unfinished analysis')
+  })
+
+  it('retains the admitted Plan summary when its external file is unavailable', async () => {
+    const warning = 'The Plan file is unavailable; do not rely on an earlier copy.'
+    const harness = createHarness({
+      admitPlan: () => ({
+        active: planProjection(),
+        source: { kind: 'file-unavailable', warning }
+      })
+    })
+
+    await harness.workflow.run(request(), { kind: 'user' })
+
+    const prepared = harness.preparation.mock.calls[0][0]
+    expect(prepared.protectedContext).toContain(
+      'expectedArtifactVersionId=plan-version-1 expectedRevision=2'
+    )
+    expect(prepared.protectedContext).toContain('task=Analyze the result')
+    expect(prepared.protectedContext).toContain('- Analyze: not_started')
+    expect(prepared.protectedContext).toContain(
+      'an authoritative summary of the Plan as read for this request'
+    )
+    expect(prepared.protectedContext).toContain('report it as a blocker instead of guessing')
+    expect(prepared.protectedContext).toContain(warning)
+  })
+
   it('reads the current Session Compute execution targets for every Turn preparation', async () => {
     const resolveComputeExecutionTargetIds = vi.fn(() => ['ssh:cedar-gpu'])
     const harness = createHarness({ resolveComputeExecutionTargetIds })

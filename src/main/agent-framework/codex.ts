@@ -36,6 +36,7 @@ import { CODEX_VERSION, spawnCodexWithInstallAdmission } from '../settings/manag
 import { clearSystemProxyEnvironment } from '../settings/system-proxy'
 import { registerOwnedPosixProcessGroup } from '../process-tree'
 import codexNativeModelInstructions from './codex-native-model-instructions.md?raw'
+import { modelFacingAppMcpToolName } from './app-mcp-names'
 import {
   createSkillRuntimeAcpServerConfig,
   OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION
@@ -94,12 +95,26 @@ const CODEX_DISABLED_NATIVE_FEATURES = Object.freeze({
   memories: false,
   multi_agent: false,
   multi_agent_v2: false,
-  // The bounded Skill loader must remain callable without deferred tool discovery, including
-  // through Chat gateways. Leave other namespaces and the model's code-mode default unchanged.
+  // The bounded Skill loader must remain callable without deferred tool discovery.
   code_mode: { direct_only_tool_namespaces: ['mcp__skills'] },
   // Disabling unified_exec alone falls back to shell_command. shell_tool disables both generations
   // so execution stays on the app-owned Notebook bash_execute MCP tool.
   shell_tool: false
+})
+const CODEX_PLAN_BRIDGE_NAMESPACE = modelFacingAppMcpToolName(
+  'codex',
+  'open-science-plan',
+  'generate_plan',
+  true
+).slice(0, -'__generate_plan'.length)
+const CODEX_CHAT_BRIDGE_FEATURES = Object.freeze({
+  ...CODEX_DISABLED_NATIVE_FEATURES,
+  // Chat Completions cannot execute Codex's deferred tool_search protocol. Keep the per-Session
+  // Plan namespace in each request when that MCP capability is actually registered; the bridge
+  // still exposes no Plan tools for Sessions whose request does not contain this namespace.
+  code_mode: {
+    direct_only_tool_namespaces: ['mcp__skills', CODEX_PLAN_BRIDGE_NAMESPACE]
+  }
 })
 const CODEX_DISABLED_NATIVE_MEMORY = Object.freeze({
   generate_memories: false,
@@ -572,6 +587,7 @@ export const createCodexFramework = ({
         key: useLocalResponsesEndpoint ? undefined : provider.key,
         reasoningEffort: ctx.reasoningEffort
       }),
+      ...(useChatBridge ? { features: CODEX_CHAT_BRIDGE_FEATURES } : {}),
       ...(modelCatalogPath ? { model_catalog_json: modelCatalogPath } : {}),
       ...(persistentSystemPrompt ? { developer_instructions: persistentSystemPrompt } : {})
     }

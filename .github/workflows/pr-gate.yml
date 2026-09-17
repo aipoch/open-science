@@ -669,6 +669,7 @@ jobs:
           npx vitest run --project process
           packages/notebook-network-sandbox/src/filesystem-enforcement.integration.test.ts
           packages/notebook-network-sandbox/src/network-enforcement.integration.test.ts
+          src/main/session-plan/plan-context-file.shell.integration.test.ts
 
   windows_core:
     name: Windows core

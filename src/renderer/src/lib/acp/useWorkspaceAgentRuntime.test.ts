@@ -4412,6 +4412,11 @@ describe('workspace agent message sending', () => {
       projectId: 'project-1'
     })
     useSessionStore.getState().finishRun('transport-session-1')
+    const previousRuntimeSegmentCount =
+      useSessionStore.getState().sessions[0]?.conversationGraph?.runtimeSegments.length ?? 0
+    const previousRuntimeSegmentId = useSessionStore
+      .getState()
+      .sessions[0]?.conversationGraph?.runtimeSegments.at(-1)?.id
     useSessionStore.setState((state) => ({
       sessions: state.sessions.map((session) => ({
         ...session,
@@ -4429,6 +4434,11 @@ describe('workspace agent message sending', () => {
       contextReset: true
     })
     const sendPrompt = vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+    const persistedGraphs: NonNullable<PersistedChatSession['conversationGraph']>[] = []
+    const flushPersistence = vi.fn(async () => {
+      const graph = useSessionStore.getState().sessions[0]?.conversationGraph
+      if (graph) persistedGraphs.push(structuredClone(graph))
+    })
     const runtime = {
       state: createSnapshot(['transport-session-1']),
       createSession: vi.fn(),
@@ -4437,12 +4447,16 @@ describe('workspace agent message sending', () => {
       sendPrompt
     }
 
-    await sendWorkspaceMessage(runtime, {
-      sessionId: 'transport-session-1',
-      text: 'Continue selected branch',
-      cwd: '/workspace/project',
-      projectId: 'project-1'
-    })
+    await sendWorkspaceMessage(
+      runtime,
+      {
+        sessionId: 'transport-session-1',
+        text: 'Continue selected branch',
+        cwd: '/workspace/project',
+        projectId: 'project-1'
+      },
+      { flushPersistence }
+    )
 
     expect(shutdown).toHaveBeenCalledWith({
       sessionId: 'transport-session-1',
@@ -4470,6 +4484,29 @@ describe('workspace agent message sending', () => {
       true,
       undefined,
       true
+    )
+    const promptContext = sendPrompt.mock.calls[0]?.[9]
+    const resetSession = useSessionStore.getState().sessions[0]
+    expect(promptContext?.runtimeSegmentId).not.toBe(previousRuntimeSegmentId)
+    expect(resetSession.conversationGraph?.runtimeSegments).toHaveLength(
+      previousRuntimeSegmentCount + 1
+    )
+    expect(
+      resetSession.conversationGraph?.runtimeSegments.some(
+        (segment) => segment.id === promptContext?.runtimeSegmentId
+      )
+    ).toBe(true)
+    expect(
+      persistedGraphs
+        .at(-1)
+        ?.messages.some(
+          (message) =>
+            message.id === promptContext?.promptMessageId &&
+            message.runtimeSegmentId === promptContext?.runtimeSegmentId
+        )
+    ).toBe(true)
+    expect(flushPersistence.mock.invocationCallOrder[0]).toBeLessThan(
+      sendPrompt.mock.invocationCallOrder[0]
     )
     expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBeUndefined()
   })
@@ -4685,7 +4722,6 @@ describe('workspace agent message sending', () => {
       agentBackendId: 'claude-code:anthropic'
     })
     useSessionStore.getState().finishRun('transport-session-1')
-
     const sendPrompt = vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
     const runtime = {
       state: createSnapshot(),
@@ -4735,6 +4771,12 @@ describe('workspace agent message sending', () => {
     expect(drainRuntimeEvents).toHaveBeenCalledOnce()
     expect(drainRuntimeEvents).toHaveBeenCalledWith('transport-session-1')
     expect(sendPrompt.mock.calls[0]?.[5]).toContain('Accepted final answer')
+    const updatedGraph = useSessionStore.getState().sessions[0]?.conversationGraph
+    const drainedRuntimeSegmentId = updatedGraph?.messages.find(
+      (message) => message.content === 'Accepted final answer'
+    )?.runtimeSegmentId
+    expect(drainedRuntimeSegmentId).toEqual(expect.any(String))
+    expect(sendPrompt.mock.calls[0]?.[9]?.runtimeSegmentId).not.toBe(drainedRuntimeSegmentId)
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       status: 'running',
       activeRun: { promptMessageId: expect.any(String) }

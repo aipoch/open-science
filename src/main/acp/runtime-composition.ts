@@ -794,8 +794,8 @@ const createAcpRuntime = ({
           ? {
               plan: {
                 mcpEntryPath,
-                getRpcConnection: ({ sessionId, projectId }) =>
-                  notebookRpcServer.issuePlanConnection(sessionId, projectId),
+                getRpcConnection: ({ sessionId, projectId, replaceExisting }) =>
+                  notebookRpcServer.issuePlanConnection(sessionId, projectId, { replaceExisting }),
                 registerSessionAlias: (aliasSessionId, sessionId) =>
                   notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId),
                 sessions: sessionPersistenceCoordinator,

@@ -1,5 +1,6 @@
 import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
 import { SESSION_PLAN_SYSTEM_PROMPT_APPEND } from '../session-plan/guidance'
+import { SESSION_PLAN_FILE_SYSTEM_PROMPT_APPEND } from '../session-plan/plan-context-guidance'
 import { createLogger } from '../logger'
 import { AcpAppContinuationOwner } from './app-continuation-owner'
 import { AcpClientInteractionOwner } from './client-interaction-owner'
@@ -135,7 +136,16 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
     ...(options.sessionCapabilityPolicy
       ? { capabilityPolicy: options.sessionCapabilityPolicy }
       : {}),
-    ...(base.planService ? { planSystemPromptAppend: SESSION_PLAN_SYSTEM_PROMPT_APPEND } : {})
+    ...(base.planService
+      ? {
+          planSystemPromptAppend: [
+            SESSION_PLAN_SYSTEM_PROMPT_APPEND,
+            ...(options.notebook && options.artifacts?.dataRoot
+              ? [SESSION_PLAN_FILE_SYSTEM_PROMPT_APPEND]
+              : [])
+          ].join('\n\n')
+        }
+      : {})
   })
   const contextUsagePolicy = new AcpContextUsagePolicy({
     backend: () => base.backendGeneration.current,

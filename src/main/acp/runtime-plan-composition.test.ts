@@ -1,11 +1,20 @@
-import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
-import { createPlanMcpServer } from '../session-plan/plan-mcp-server'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
+import {
+  createPlanMcpServer,
+  createPlanMcpServerForEnvironment
+} from '../session-plan/plan-mcp-server'
+import { NotebookLocalRpcServer } from '../notebook/local-rpc-server'
+import { NotebookRuntimeService } from '../notebook/runtime-service'
+import { NotebookRunRepository } from '../notebook/repository'
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const loggerSpies = vi.hoisted(() => ({ info: vi.fn(), error: vi.fn() }))
 vi.mock('../logger', async (importOriginal) => {
@@ -23,7 +32,15 @@ vi.mock('../logger', async (importOriginal) => {
 
 import type { AcpPromptRequest } from '../../shared/acp'
 import type { SessionPlanDelivery, SessionRuntimeContext } from '../../shared/session-persistence'
-import type { ActivePlanProjection, PlanResponseCommand } from '../../shared/session-plan/contract'
+import {
+  derivePlanLifecycle,
+  formatPlanProtectedContext,
+  projectPlanStepStates,
+  type ActivePlanProjection,
+  type PlanResponseCommand
+} from '../../shared/session-plan/contract'
+import { getNotebookInputRoot } from '../notebook/input-staging'
+import type { PlanContextFileStore } from '../session-plan/plan-context-file'
 import { PlanService } from '../session-plan/plan-service'
 import { SessionPlanInteractionOwner } from '../session-plan/session-plan-interaction-owner'
 import { composeAcpRuntimeBaseOwners } from './runtime-base-composition'
@@ -36,6 +53,13 @@ import { composeAcpRuntimeSessionOwners } from './runtime-session-composition'
 import type { AcpPromptTurnMode } from './prompt-turn-workflow'
 
 const projectRoot = resolve(__dirname, '../../..')
+const temporaryRoots: string[] = []
+
+const createTemporaryRoot = async (): Promise<string> => {
+  const root = await mkdtemp(join(tmpdir(), 'runtime-plan-context-'))
+  temporaryRoots.push(root)
+  return root
+}
 
 const pendingProjection = (): ActivePlanProjection => ({
   artifactId: 'artifact-1',
@@ -86,6 +110,10 @@ const createHarness = (
       projection: ActivePlanProjection
       reviewFeedbackMessageId?: string
     }>
+    contextFileStorageRoot?: string
+    contextFiles?: Pick<PlanContextFileStore, 'refresh'>
+    beforeUpdateAuthorization?: () => Promise<void>
+    durablePromptMessageId?: string | null
   }> = {}
 ): {
   workflow: ReturnType<typeof composeAcpRuntimePlanWorkflow>
@@ -93,12 +121,14 @@ const createHarness = (
   sessionInteractions: AcpSessionInteractionOwner
   interaction: AcpPromptSessionInteractionScope
   respond: ReturnType<typeof vi.fn>
+  generate: ReturnType<typeof vi.fn>
   queueSettledDecisionDelivery: ReturnType<typeof vi.fn>
   queueReviewFeedbackDelivery: ReturnType<typeof vi.fn>
   getProjection: ReturnType<typeof vi.fn>
   getDeliveryContext: ReturnType<typeof vi.fn>
   discardUnavailable: ReturnType<typeof vi.fn>
   containsMessageOnActiveBranch: ReturnType<typeof vi.fn>
+  setProjection: (projection: ActivePlanProjection | null) => void
   deliveryState: () => 'queued' | 'delivering' | 'accepted' | undefined
   deliveries: Readonly<{
     accept: ReturnType<typeof vi.fn>
@@ -115,6 +145,7 @@ const createHarness = (
     promptMessageId: 'prompt-1'
   })
   let current = options.initialProjection ?? pendingProjection()
+  let projectionAvailable = true
   let deliveryState: 'queued' | 'delivering' | 'accepted' | undefined
   const generate = vi.fn(async () => {
     interactions.register({
@@ -155,24 +186,37 @@ const createHarness = (
     if (input.beforeDecisionCommit && !input.beforeDecisionCommit()) {
       throw new Error('decision authorization revoked')
     }
-    current =
-      input.decision === 'approved'
-        ? approvedProjection(current.revision + 1)
-        : {
-            ...current,
-            revision: current.revision + 1,
-            approval: 'rejected' as const,
-            lifecycle: 'rejected' as const
-          }
+    current = {
+      ...current,
+      revision: current.revision + 1,
+      approval: input.decision === 'approved' ? ('approved' as const) : ('rejected' as const),
+      lifecycle: input.decision === 'approved' ? ('approved' as const) : ('rejected' as const)
+    }
     deliveryState = 'queued'
     return { projection: current, changed: true, deliveryCommandId: 'receipt-1' }
   })
   const updateStepStatus = vi.fn(
     async (input: {
+      title?: string
+      status?: 'in_progress' | 'completed' | 'blocked' | 'skipped'
+      notes?: string
       authorizeUpdate?: (projection: ActivePlanProjection) => void | Promise<void>
     }) => {
+      await options.beforeUpdateAuthorization?.()
       await input.authorizeUpdate?.(current)
-      current = approvedProjection(current.revision + 1)
+      const title = input.title ?? 'private-step-title-marker'
+      const status = input.status ?? 'in_progress'
+      const stepStatuses = {
+        ...current.stepStatuses,
+        [title]: { status, updatedAt: 42, ...(input.notes ? { notes: input.notes } : {}) }
+      }
+      current = {
+        ...current,
+        revision: current.revision + 1,
+        lifecycle: derivePlanLifecycle(current.document, current.approval, stepStatuses),
+        stepStatuses,
+        stepStates: projectPlanStepStates(current.document, stepStatuses)
+      }
       return { projection: current, changed: true }
     }
   )
@@ -184,7 +228,7 @@ const createHarness = (
     deliveryState = 'queued'
     return { projection: current, changed: true }
   })
-  const getProjection = vi.fn(async () => current)
+  const getProjection = vi.fn(async () => (projectionAvailable ? current : null))
   const getDeliveryContext = vi.fn(async () => {
     if (!options.deliveryContext) throw new Error('No delivery context configured.')
     return options.deliveryContext
@@ -196,6 +240,7 @@ const createHarness = (
     }) => {
       await input.authorizeDiscard?.({ originatingPromptMessageId: 'prompt-1' })
       input.beforePersist?.()
+      projectionAvailable = false
       return { revision: current.revision + 1 }
     }
   )
@@ -243,7 +288,13 @@ const createHarness = (
     {
       plan: {
         sessions: { containsMessageOnActiveBranch }
-      }
+      },
+      ...(options.contextFileStorageRoot
+        ? {
+            artifacts: { dataRoot: options.contextFileStorageRoot },
+            notebook: {}
+          }
+        : {})
     } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[0],
     {
       planService: service,
@@ -252,14 +303,22 @@ const createHarness = (
       sessionInteractions,
       artifactTurns: {
         handleForExecution: vi.fn(() => 'artifact-turn'),
-        snapshot: vi.fn(() => ({ promptMessageId: 'prompt-1' }))
+        snapshot: vi.fn(() =>
+          options.durablePromptMessageId === null
+            ? {}
+            : { promptMessageId: options.durablePromptMessageId ?? 'prompt-1' }
+        )
       }
     } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[1],
     {
       publication,
       sessionEnvironment: { projectId: vi.fn(() => 'project-1') }
     } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[2],
-    { deliveries, pauseProvider: options.pauseProvider }
+    {
+      deliveries,
+      pauseProvider: options.pauseProvider,
+      ...(options.contextFiles ? { contextFiles: options.contextFiles } : {})
+    }
   )
 
   return {
@@ -268,12 +327,17 @@ const createHarness = (
     sessionInteractions,
     interaction,
     respond,
+    generate,
     queueSettledDecisionDelivery,
     queueReviewFeedbackDelivery,
     getProjection,
     getDeliveryContext,
     discardUnavailable,
     containsMessageOnActiveBranch,
+    setProjection: (projection) => {
+      projectionAvailable = projection !== null
+      if (projection) current = projection
+    },
     deliveryState: () => deliveryState,
     deliveries
   }
@@ -281,6 +345,12 @@ const createHarness = (
 
 beforeEach(() => {
   vi.clearAllMocks()
+})
+
+afterEach(async () => {
+  await Promise.all(
+    temporaryRoots.splice(0).map((root) => rm(root, { recursive: true, force: true }))
+  )
 })
 
 describe('ACP Session Plan approval causality', () => {
@@ -541,6 +611,85 @@ describe('ACP Session Plan approval causality', () => {
       await server.close()
     }
   })
+
+  it.each(['available', 'unavailable', 'mismatch'] as const)(
+    'keeps the %s Plan file state in the resumed Provider context after an actual MCP timeout',
+    async (fileState) => {
+      const refresh = vi.fn(async () => {
+        if (fileState === 'unavailable') throw new Error('disk unavailable')
+        return {
+          path: '/private/input/session-plan/current.json',
+          artifactVersionId: 'version-1',
+          revision: fileState === 'mismatch' ? 99 : 2
+        }
+      })
+      const harness = createHarness({
+        pauseProvider: () => vi.fn(),
+        contextFiles: { refresh }
+      })
+      const server = createPlanMcpServer({
+        generate: (input, signal) =>
+          harness.workflow.call({
+            projectId: 'project-1',
+            sessionId: 'session-1',
+            operation: 'generate',
+            input,
+            signal
+          }),
+        approve: vi.fn(),
+        reject: vi.fn(),
+        updateStepStatus: vi.fn()
+      })
+      const client = new Client({ name: `plan-resume-${fileState}`, version: '1.0.0' })
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+      await Promise.all([client.connect(clientTransport), server.connect(serverTransport)])
+      try {
+        const content = { ...pendingProjection().document }
+        Reflect.deleteProperty(content, 'schema_version')
+        await expect(
+          client.callTool({ name: 'generate_plan', arguments: content }, undefined, { timeout: 30 })
+        ).rejects.toThrow(/timed out/i)
+        await harness.workflow.respond({
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          artifactVersionId: 'version-1',
+          expectedRevision: 1,
+          decision: 'approved'
+        })
+        harness.getDeliveryContext.mockResolvedValue({
+          projection: await harness.workflow.projection('project-1', 'session-1'),
+          delivery: { commandId: 'receipt-1' }
+        })
+
+        const resumed = await harness.workflow.prompt.resumeAfterProviderStop!(harness.interaction)
+
+        if (fileState === 'unavailable') {
+          expect(resumed?.content).toContain('task=private-task-summary-marker')
+          expect(resumed?.content).toContain('- private-step-title-marker: not_started')
+          expect(resumed?.content).toContain(
+            'an authoritative summary of the Plan as read for this request'
+          )
+          expect(resumed?.content).toContain('do not guarantee that the Plan remained unchanged')
+        } else {
+          expect(resumed?.content).not.toContain('private-task-summary-marker')
+          expect(resumed?.content).not.toContain('private-step-title-marker')
+        }
+        expect(resumed?.content).toContain('expectedArtifactVersionId=version-1 expectedRevision=2')
+        expect(resumed?.content).toContain(
+          fileState === 'available'
+            ? 'session-plan/current.json'
+            : fileState === 'unavailable'
+              ? 'Plan file is unavailable'
+              : 'changed during request preparation'
+        )
+        expect(refresh).toHaveBeenCalledTimes(3)
+      } finally {
+        harness.interactions.clearAll('Test closed')
+        await client.close()
+        await server.close()
+      }
+    }
+  )
 
   it.each(['approved', 'rejected', 'feedback'] as const)(
     'keeps the application paused after MCP timeout and delivers %s only after Provider stop',
@@ -987,6 +1136,423 @@ describe('ACP Session Plan approval causality', () => {
 })
 
 describe('ACP Runtime Session Plan composition', () => {
+  it('keeps the complete approved Plan file current across replacement and terminal updates', async () => {
+    const storageRoot = await createTemporaryRoot()
+    const harness = createHarness({
+      initialProjection: approvedProjection(4),
+      contextFileStorageRoot: storageRoot
+    })
+    const request: AcpPromptRequest = { sessionId: 'session-1', text: 'Continue the work.' }
+    const contextPath = join(
+      getNotebookInputRoot(storageRoot, 'project-1', 'session-1'),
+      'session-plan',
+      'current.json'
+    )
+
+    const preflight = await harness.workflow.prompt.preflight(request, { kind: 'user' })
+    expect(preflight).toMatchObject({
+      active: { artifactVersionId: 'version-1', revision: 4 },
+      source: {
+        kind: 'file-reference',
+        reference: expect.stringContaining('OPEN_SCIENCE_INPUT_DIR')
+      }
+    })
+    expect(preflight.source?.kind).toBe('file-reference')
+    if (preflight.source?.kind !== 'file-reference') throw new Error('Expected file reference.')
+    expect(preflight.source.reference).toContain('bash_execute')
+    expect(preflight.source.reference).toContain('session-plan/current.json')
+    expect(preflight.source.reference).not.toContain('private-step-description-marker')
+    await expect(readFile(contextPath, 'utf8').then(JSON.parse)).resolves.toMatchObject({
+      schemaVersion: 1,
+      active: true,
+      artifactVersionId: 'version-1',
+      revision: 4,
+      document: {
+        task_summary: 'private-task-summary-marker',
+        phases: [
+          {
+            delegations: [
+              {
+                steps: [
+                  {
+                    title: 'private-step-title-marker',
+                    description: 'private-step-description-marker'
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    })
+
+    const progress = await harness.workflow.call({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      operation: 'updateStepStatus',
+      input: { title: 'private-step-title-marker', status: 'in_progress' }
+    })
+    expect(progress).toMatchObject({
+      projection: {
+        lifecycle: 'in_progress',
+        stepStates: { 'private-step-title-marker': { status: 'in_progress' } }
+      }
+    })
+    expect(progress).not.toHaveProperty('planContext')
+    await expect(readFile(contextPath, 'utf8').then(JSON.parse)).resolves.toMatchObject({
+      active: true,
+      lifecycle: 'in_progress',
+      stepStates: { 'private-step-title-marker': { status: 'in_progress' } }
+    })
+
+    harness.setProjection({
+      ...pendingProjection(),
+      artifactId: 'artifact-2',
+      artifactVersionId: 'version-2',
+      artifactChecksum: 'b'.repeat(64),
+      revision: 6
+    })
+    await expect(harness.workflow.prompt.preflight(request, { kind: 'user' })).resolves.toEqual({})
+    await expect(readFile(contextPath, 'utf8').then(JSON.parse)).resolves.toMatchObject({
+      schemaVersion: 1,
+      active: false,
+      approval: 'pending',
+      lifecycle: 'awaiting_approval',
+      artifactVersionId: 'version-2',
+      revision: 6,
+      document: {
+        task_summary: 'private-task-summary-marker',
+        phases: expect.any(Array)
+      }
+    })
+
+    harness.interactions.authorizeAgentDecision({
+      sessionId: 'session-1',
+      artifactVersionId: 'version-2',
+      interactionSequence: harness.interaction.sequence
+    })
+    const approved = await harness.workflow.call({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      operation: 'approve'
+    })
+    expect(approved).toMatchObject({
+      projection: { approval: 'approved', artifactVersionId: 'version-2' },
+      planContext: expect.stringContaining('session-plan/current.json')
+    })
+    await expect(readFile(contextPath, 'utf8').then(JSON.parse)).resolves.toMatchObject({
+      active: true,
+      approval: 'approved',
+      artifactVersionId: 'version-2'
+    })
+
+    await harness.workflow.call({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      operation: 'updateStepStatus',
+      input: { title: 'private-step-title-marker', status: 'completed' }
+    })
+    await expect(readFile(contextPath, 'utf8').then(JSON.parse)).resolves.toMatchObject({
+      active: false,
+      approval: 'approved',
+      lifecycle: 'completed',
+      artifactVersionId: 'version-2',
+      stepStates: { 'private-step-title-marker': { status: 'completed' } }
+    })
+    await expect(harness.workflow.prompt.preflight(request, { kind: 'user' })).resolves.toEqual({})
+    await expect(readFile(contextPath, 'utf8').then(JSON.parse)).resolves.toMatchObject({
+      active: false,
+      lifecycle: 'completed',
+      artifactVersionId: 'version-2',
+      document: { task_summary: 'private-task-summary-marker' }
+    })
+  })
+
+  it.each([
+    ['a sibling branch', approvedProjection(4), true],
+    ['no current Plan', null, false]
+  ] as const)('tombstones a previous Plan file for %s', async (_case, projection, sibling) => {
+    const storageRoot = await createTemporaryRoot()
+    const harness = createHarness({
+      initialProjection: approvedProjection(3),
+      contextFileStorageRoot: storageRoot
+    })
+    const request: AcpPromptRequest = { sessionId: 'session-1', text: 'Continue.' }
+    const contextPath = join(
+      getNotebookInputRoot(storageRoot, 'project-1', 'session-1'),
+      'session-plan',
+      'current.json'
+    )
+    await harness.workflow.prompt.preflight(request, { kind: 'user' })
+    harness.setProjection(projection)
+    if (sibling) harness.containsMessageOnActiveBranch.mockResolvedValue(false)
+
+    await expect(harness.workflow.prompt.preflight(request, { kind: 'user' })).resolves.toEqual({})
+    await expect(readFile(contextPath, 'utf8').then(JSON.parse)).resolves.toEqual({
+      schemaVersion: 1,
+      active: false
+    })
+  })
+
+  it.each([
+    [
+      'is replaced',
+      {
+        ...approvedProjection(5),
+        artifactId: 'artifact-2',
+        artifactVersionId: 'version-2',
+        artifactChecksum: 'b'.repeat(64)
+      },
+      'version-2'
+    ],
+    ['becomes terminal', { ...approvedProjection(5), lifecycle: 'completed' as const }, undefined]
+  ] as const)(
+    'does not return the first preflight snapshot when the Plan %s during file refresh',
+    async (_case, changed, expectedActiveVersion) => {
+      const storageRoot = await createTemporaryRoot()
+      const first = approvedProjection(4)
+      const harness = createHarness({
+        initialProjection: first,
+        contextFileStorageRoot: storageRoot
+      })
+      harness.getProjection
+        .mockResolvedValueOnce(first)
+        .mockResolvedValueOnce(changed)
+        .mockResolvedValueOnce(changed)
+        .mockResolvedValueOnce(changed)
+
+      const preflight = await harness.workflow.prompt.preflight(
+        { sessionId: 'session-1', text: 'Continue.' },
+        { kind: 'user' }
+      )
+
+      if (expectedActiveVersion) {
+        expect(preflight).toMatchObject({
+          active: { artifactVersionId: expectedActiveVersion, revision: 5 },
+          source: {
+            kind: 'file-reference',
+            reference: expect.stringContaining('session-plan/current.json')
+          }
+        })
+        expect(preflight.source).not.toEqual(
+          expect.objectContaining({
+            warning: expect.stringContaining('changed during request preparation')
+          })
+        )
+      } else {
+        expect(preflight).toEqual({})
+        await expect(
+          readFile(
+            join(
+              getNotebookInputRoot(storageRoot, 'project-1', 'session-1'),
+              'session-plan',
+              'current.json'
+            ),
+            'utf8'
+          ).then(JSON.parse)
+        ).resolves.toMatchObject({ active: false, lifecycle: 'completed', revision: 5 })
+      }
+      expect(harness.getProjection).toHaveBeenCalledTimes(4)
+    }
+  )
+
+  it('publishes the second terminal snapshot when the first refresh was still active', async () => {
+    const storageRoot = await createTemporaryRoot()
+    const first = approvedProjection(4)
+    const refreshedActive = {
+      ...approvedProjection(5),
+      artifactVersionId: 'version-2',
+      artifactChecksum: 'b'.repeat(64)
+    }
+    const currentTerminal = {
+      ...refreshedActive,
+      revision: 6,
+      lifecycle: 'completed' as const
+    }
+    const harness = createHarness({
+      initialProjection: first,
+      contextFileStorageRoot: storageRoot
+    })
+    harness.getProjection
+      .mockResolvedValueOnce(first)
+      .mockResolvedValueOnce(refreshedActive)
+      .mockResolvedValueOnce(currentTerminal)
+      .mockResolvedValueOnce(currentTerminal)
+
+    await expect(
+      harness.workflow.prompt.preflight(
+        { sessionId: 'session-1', text: 'Continue.' },
+        { kind: 'user' }
+      )
+    ).resolves.toEqual({})
+
+    expect(harness.getProjection).toHaveBeenCalledTimes(4)
+    await expect(
+      readFile(
+        join(
+          getNotebookInputRoot(storageRoot, 'project-1', 'session-1'),
+          'session-plan',
+          'current.json'
+        ),
+        'utf8'
+      ).then(JSON.parse)
+    ).resolves.toMatchObject({
+      active: false,
+      artifactVersionId: 'version-2',
+      lifecycle: 'completed',
+      revision: 6
+    })
+  })
+
+  it('bounds repeated preflight changes and exposes the expected identity with mismatch guidance', async () => {
+    const storageRoot = await createTemporaryRoot()
+    const version = (revision: number, suffix: string): ActivePlanProjection => ({
+      ...approvedProjection(revision),
+      artifactId: `artifact-${suffix}`,
+      artifactVersionId: `version-${suffix}`,
+      artifactChecksum: suffix.repeat(64).slice(0, 64)
+    })
+    const first = version(4, 'a')
+    const refreshed = version(5, 'b')
+    const admitted = version(6, 'c')
+    const latestFile = version(7, 'd')
+    const harness = createHarness({
+      initialProjection: first,
+      contextFileStorageRoot: storageRoot
+    })
+    harness.getProjection
+      .mockResolvedValueOnce(first)
+      .mockResolvedValueOnce(refreshed)
+      .mockResolvedValueOnce(admitted)
+      .mockResolvedValueOnce(latestFile)
+
+    const preflight = await harness.workflow.prompt.preflight(
+      { sessionId: 'session-1', text: 'Continue.' },
+      { kind: 'user' }
+    )
+    const projected = preflight.active!
+    const delivered = formatPlanProtectedContext(projected, preflight.source)
+
+    expect(harness.getProjection).toHaveBeenCalledTimes(4)
+    expect(delivered).toContain('expectedArtifactVersionId=version-c expectedRevision=6')
+    expect(delivered).toContain('changed during request preparation')
+    expect(delivered).not.toContain('private-task-summary-marker')
+    await expect(
+      readFile(
+        join(
+          getNotebookInputRoot(storageRoot, 'project-1', 'session-1'),
+          'session-plan',
+          'current.json'
+        ),
+        'utf8'
+      ).then(JSON.parse)
+    ).resolves.toMatchObject({ artifactVersionId: 'version-d', revision: 7 })
+  })
+
+  it('falls back to the admitted Plan snapshot when its file cannot be refreshed', async () => {
+    const harness = createHarness({
+      initialProjection: approvedProjection(4),
+      contextFiles: {
+        refresh: vi.fn(async () => {
+          throw new Error('disk unavailable')
+        })
+      }
+    })
+
+    const preflight = await harness.workflow.prompt.preflight(
+      { sessionId: 'session-1', text: 'Continue.' },
+      { kind: 'user' }
+    )
+    const delivered = formatPlanProtectedContext(preflight.active!, preflight.source)
+
+    expect(preflight.source).toMatchObject({ kind: 'file-unavailable' })
+    expect(delivered).toContain('expectedArtifactVersionId=version-1 expectedRevision=4')
+    expect(delivered).toContain('task=private-task-summary-marker')
+    expect(delivered).toContain('- private-step-title-marker: not_started')
+    expect(delivered).toContain('an authoritative summary of the Plan as read for this request')
+    expect(delivered).toContain('do not guarantee that the Plan remained unchanged')
+    expect(delivered).toContain('report it as a blocker instead of guessing')
+    expect(delivered).toContain('earlier file contents may be stale')
+    expect(delivered).toMatch(/do not repeat generation, approval,? or (?:a )?status update/i)
+  })
+
+  it('preserves a committed step update when Plan file refresh fails', async () => {
+    const refresh = vi.fn(async () => {
+      throw new Error('disk unavailable')
+    })
+    const harness = createHarness({
+      initialProjection: approvedProjection(4),
+      contextFiles: { refresh }
+    })
+
+    const result = await harness.workflow.call({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      operation: 'updateStepStatus',
+      input: { title: 'private-step-title-marker', status: 'in_progress' }
+    })
+
+    expect(result).toMatchObject({
+      changed: true,
+      projection: {
+        approval: 'approved',
+        lifecycle: 'in_progress',
+        stepStates: { 'private-step-title-marker': { status: 'in_progress' } }
+      },
+      planContext: expect.stringContaining('earlier file contents may be stale')
+    })
+    const planContext = (result as { planContext?: unknown }).planContext
+    expect(planContext).toEqual(expect.stringContaining('does not undo committed Plan changes'))
+    expect(planContext).toEqual(
+      expect.stringMatching(/do not repeat generation, approval,? or (?:a )?status updates?/i)
+    )
+    expect(planContext).not.toEqual(expect.stringContaining('authoritative summary'))
+    expect(planContext).not.toEqual(expect.stringContaining('protected Plan context'))
+    expect(refresh).toHaveBeenCalledWith('project-1', 'session-1')
+    expect(loggerSpies.error).toHaveBeenCalledWith(
+      'Session Plan context file refresh failed',
+      expect.any(Object)
+    )
+  })
+
+  it('does not commit a step update after its Plan RPC interaction is cancelled', async () => {
+    const updateEntered = Promise.withResolvers<void>()
+    const continueUpdate = Promise.withResolvers<void>()
+    const harness = createHarness({
+      initialProjection: approvedProjection(4),
+      beforeUpdateAuthorization: async () => {
+        updateEntered.resolve()
+        await continueUpdate.promise
+      }
+    })
+    const controller = new AbortController()
+    const update = harness.workflow.call({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      operation: 'updateStepStatus',
+      input: { title: 'private-step-title-marker', status: 'in_progress' },
+      signal: controller.signal
+    })
+    await updateEntered.promise
+
+    harness.setProjection({
+      ...approvedProjection(8),
+      artifactId: 'artifact-2',
+      artifactVersionId: 'version-2',
+      artifactChecksum: 'b'.repeat(64)
+    })
+    controller.abort()
+    harness.sessionInteractions.release(harness.interaction)
+    continueUpdate.resolve()
+
+    await expect(update).rejects.toMatchObject({ code: 'interaction-mismatch' })
+    await expect(harness.workflow.projection('project-1', 'session-1')).resolves.toMatchObject({
+      artifactVersionId: 'version-2',
+      revision: 8,
+      stepStates: { 'private-step-title-marker': { status: 'not_started' } }
+    })
+  })
+
   it.each(['user', 'application'] as const)(
     'reconstructs an approved durable Plan for an ordinary %s Attempt',
     async (kind) => {
@@ -1023,6 +1589,160 @@ describe('ACP Runtime Session Plan composition', () => {
       )
     }
   )
+
+  it('reconstructs a real service projection while a started peer delegation has a next step', async () => {
+    const interactions = new SessionPlanInteractionOwner()
+    const sessionInteractions = new AcpSessionInteractionOwner()
+    const document = {
+      schema_version: 1 as const,
+      task_summary: 'Analyze two work tracks in parallel',
+      phases: [
+        {
+          name: 'Analysis',
+          delegations: [
+            {
+              name: 'Cohorts',
+              steps: [
+                { title: 'Validate cohorts', description: 'Validate the cohort boundaries.' },
+                { title: 'Compare cohorts', description: 'Compare the validated cohorts.' }
+              ]
+            },
+            {
+              name: 'Evidence',
+              steps: [
+                { title: 'Find evidence', description: 'Find the relevant evidence.' },
+                { title: 'Review evidence', description: 'Review the collected evidence.' }
+              ]
+            }
+          ]
+        }
+      ],
+      desired_outputs: ['Analysis result'],
+      feasibility: { confidence: 'high' as const, rationale: 'Inputs are available.' }
+    }
+    const content = JSON.stringify(document)
+    const checksum = createHash('sha256').update(content).digest('hex')
+    let context: SessionRuntimeContext = {
+      version: 1,
+      revision: 4,
+      plan: {
+        artifactId: 'artifact-1',
+        artifactVersionId: 'version-1',
+        artifactChecksum: checksum,
+        originatingPromptMessageId: 'prompt-1',
+        materializedAt: 1,
+        approval: 'approved',
+        stepStatuses: {}
+      }
+    }
+    const service = new PlanService({
+      interactions,
+      writeArtifactForExecution: vi.fn(),
+      readArtifactVersion: vi.fn(async () => ({ content, checksum })),
+      readRuntimeContext: vi.fn(async () => context),
+      patchRuntimeContext: vi.fn(async ({ expectedRevision, plan }) => {
+        if (expectedRevision !== context.revision) throw new Error('revision conflict')
+        context = { version: 1, revision: context.revision + 1, plan }
+        return context
+      }),
+      isRevisionConflict: (error) =>
+        error instanceof Error && error.message === 'revision conflict',
+      persistUserMessage: vi.fn(),
+      now: () => 42
+    })
+    const identity = {
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      artifactVersionId: 'version-1'
+    }
+    const cohortRunning = await service.updateStepStatus({
+      ...identity,
+      expectedRevision: 4,
+      title: 'Validate cohorts',
+      status: 'in_progress'
+    })
+    const evidenceRunning = await service.updateStepStatus({
+      ...identity,
+      expectedRevision: cohortRunning.projection.revision,
+      title: 'Find evidence',
+      status: 'in_progress'
+    })
+    const cohortBlocked = await service.updateStepStatus({
+      ...identity,
+      expectedRevision: evidenceRunning.projection.revision,
+      title: 'Validate cohorts',
+      status: 'blocked',
+      notes: 'Cohort boundaries are missing.'
+    })
+    const evidenceFound = await service.updateStepStatus({
+      ...identity,
+      expectedRevision: cohortBlocked.projection.revision,
+      title: 'Find evidence',
+      status: 'completed'
+    })
+
+    expect(evidenceFound.projection).toMatchObject({
+      lifecycle: 'in_progress',
+      stepStates: {
+        'Validate cohorts': { status: 'blocked' },
+        'Compare cohorts': { status: 'not_run' },
+        'Find evidence': { status: 'completed' },
+        'Review evidence': { status: 'not_started' }
+      }
+    })
+
+    const containsMessageOnActiveBranch = vi.fn(async () => true)
+    const workflow = composeAcpRuntimePlanWorkflow(
+      {
+        plan: { sessions: { containsMessageOnActiveBranch } }
+      } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[0],
+      {
+        planService: service,
+        planInteractions: interactions,
+        sessionInteractions
+      } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[1],
+      {
+        publication: { pushEvent: vi.fn() },
+        sessionEnvironment: { projectId: vi.fn(() => 'project-1') }
+      } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[2]
+    )
+
+    await expect(
+      workflow.prompt.preflight(
+        { sessionId: 'session-1', text: 'Continue with the peer work track.' },
+        { kind: 'user' }
+      )
+    ).resolves.toMatchObject({
+      active: {
+        artifactVersionId: 'version-1',
+        revision: evidenceFound.projection.revision,
+        lifecycle: 'in_progress',
+        stepStates: { 'Review evidence': { status: 'not_started' } }
+      }
+    })
+    expect(containsMessageOnActiveBranch).toHaveBeenCalledWith('project-1', 'session-1', 'prompt-1')
+
+    const reviewRunning = await service.updateStepStatus({
+      ...identity,
+      expectedRevision: evidenceFound.projection.revision,
+      title: 'Review evidence',
+      status: 'in_progress'
+    })
+    const reviewCompleted = await service.updateStepStatus({
+      ...identity,
+      expectedRevision: reviewRunning.projection.revision,
+      title: 'Review evidence',
+      status: 'completed'
+    })
+
+    expect(reviewCompleted.projection.lifecycle).toBe('blocked')
+    await expect(
+      workflow.prompt.preflight(
+        { sessionId: 'session-1', text: 'Continue after the peer work settled.' },
+        { kind: 'user' }
+      )
+    ).resolves.toEqual({})
+  })
 
   it.each([
     ['pending', pendingProjection()],
@@ -1062,8 +1782,11 @@ describe('ACP Runtime Session Plan composition', () => {
   })
 
   it('admits pending review context only from an exact main-owned delivery receipt', async () => {
+    const storageRoot = await createTemporaryRoot()
     const pending = pendingProjection()
     const harness = createHarness({
+      initialProjection: pending,
+      contextFileStorageRoot: storageRoot,
       deliveryContext: {
         delivery: {
           commandId: 'delivery-1',
@@ -1086,6 +1809,25 @@ describe('ACP Runtime Session Plan composition', () => {
     const admitted = await harness.workflow.prompt.admit(request, harness.interaction, preflight)
 
     expect(admitted.protectedPending).toEqual(pending)
+    expect(admitted.source?.kind).toBe('file-reference')
+    if (admitted.source?.kind !== 'file-reference') throw new Error('Expected file reference.')
+    expect(admitted.source.reference).toContain('OPEN_SCIENCE_INPUT_DIR')
+    expect(admitted.source.reference).toContain('session-plan/current.json')
+    await expect(
+      readFile(
+        join(
+          getNotebookInputRoot(storageRoot, 'project-1', 'session-1'),
+          'session-plan',
+          'current.json'
+        ),
+        'utf8'
+      ).then(JSON.parse)
+    ).resolves.toMatchObject({
+      active: false,
+      approval: 'pending',
+      artifactVersionId: 'version-1',
+      document: { task_summary: 'private-task-summary-marker' }
+    })
     expect(harness.getDeliveryContext).toHaveBeenCalledWith({
       projectId: 'project-1',
       sessionId: 'session-1',
@@ -1103,6 +1845,61 @@ describe('ACP Runtime Session Plan composition', () => {
         interactionSequence: harness.interaction.sequence
       })
     ).toBe(true)
+  })
+
+  it('attaches the read-only Plan record reference to a rejected delivery review', async () => {
+    const storageRoot = await createTemporaryRoot()
+    const rejected = {
+      ...pendingProjection(),
+      revision: 5,
+      approval: 'rejected' as const,
+      lifecycle: 'rejected' as const
+    }
+    const harness = createHarness({
+      initialProjection: rejected,
+      contextFileStorageRoot: storageRoot,
+      deliveryContext: {
+        delivery: {
+          commandId: 'delivery-1',
+          kind: 'rejected-plan',
+          state: 'delivering',
+          originatingPromptMessageId: 'prompt-1',
+          createdAt: 42
+        },
+        projection: rejected
+      }
+    })
+
+    const preflight = await harness.workflow.prompt.preflight(
+      { sessionId: 'session-1', text: 'Review the rejected Plan.' },
+      {
+        kind: 'app-continuation',
+        planDelivery: { projectId: 'project-1', commandId: 'delivery-1' }
+      }
+    )
+
+    expect(preflight).toMatchObject({
+      protectedRejected: { approval: 'rejected', artifactVersionId: 'version-1' },
+      source: {
+        kind: 'file-reference',
+        reference: expect.stringContaining('session-plan/current.json')
+      }
+    })
+    await expect(
+      readFile(
+        join(
+          getNotebookInputRoot(storageRoot, 'project-1', 'session-1'),
+          'session-plan',
+          'current.json'
+        ),
+        'utf8'
+      ).then(JSON.parse)
+    ).resolves.toMatchObject({
+      active: false,
+      approval: 'rejected',
+      lifecycle: 'rejected',
+      document: { task_summary: 'private-task-summary-marker' }
+    })
   })
 
   it('rejects a main-owned Plan delivery whose originating Message is on a sibling branch', async () => {
@@ -1506,13 +2303,64 @@ describe('ACP Runtime Session Plan composition', () => {
     expect(Object.isFrozen(first)).toBe(true)
     expect(Object.isFrozen(first.prompt)).toBe(true)
     expect(first).not.toBe(second)
+    const preflight = first.prompt.preflight(
+      { sessionId: 'session', text: 'Run without a Plan.' },
+      { kind: 'user' }
+    )
+    expect(preflight).not.toBeInstanceOf(Promise)
+    expect(preflight).toEqual({})
     await expect(first.projection('project', 'session')).resolves.toBeNull()
     await expect(
       first.call({ projectId: 'project', sessionId: 'session', operation: 'approve' })
-    ).rejects.toThrow('Session Plan capability is not configured.')
+    ).rejects.toMatchObject({
+      code: 'plan-unavailable',
+      message: expect.stringMatching(/not configured.*not attempted.*Open Science must provide/)
+    })
     await expect(
       first.respond({ projectId: 'project', sessionId: 'session', feedback: 'continue' })
-    ).rejects.toThrow('Session Plan capability is not configured.')
+    ).rejects.toMatchObject({
+      code: 'plan-unavailable',
+      message: expect.stringMatching(/not configured.*not attempted.*Open Science must provide/)
+    })
+  })
+
+  it('does not call Plan generation without an active prompt interaction', async () => {
+    const harness = createHarness()
+    harness.sessionInteractions.release(harness.interaction)
+
+    await expect(
+      harness.workflow.call({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        operation: 'generate',
+        input: {}
+      })
+    ).rejects.toMatchObject({
+      code: 'interaction-mismatch',
+      message: expect.stringMatching(
+        /No active prompt interaction.*not attempted.*Open Science.*active interaction/
+      )
+    })
+    expect(harness.generate).not.toHaveBeenCalled()
+  })
+
+  it('does not call Plan generation when the active prompt has no durable Message identity', async () => {
+    const harness = createHarness({ durablePromptMessageId: null })
+
+    await expect(
+      harness.workflow.call({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        operation: 'generate',
+        input: {}
+      })
+    ).rejects.toMatchObject({
+      code: 'interaction-mismatch',
+      message: expect.stringMatching(
+        /no durable Message identity.*not attempted.*Open Science must establish/
+      )
+    })
+    expect(harness.generate).not.toHaveBeenCalled()
   })
 
   it('keeps Plan state and Prompt policy behind one transport-independent workflow', () => {
@@ -1545,6 +2393,34 @@ describe('explicit unavailable Plan recovery ownership', () => {
     artifactVersionId: 'version-1',
     expectedRevision: 1
   }
+  it('tombstones the readable Plan record after an explicit discard commits', async () => {
+    const storageRoot = await createTemporaryRoot()
+    const harness = createHarness({
+      initialProjection: approvedProjection(1),
+      contextFileStorageRoot: storageRoot
+    })
+    const contextPath = join(
+      getNotebookInputRoot(storageRoot, 'project-1', 'session-1'),
+      'session-plan',
+      'current.json'
+    )
+    await harness.workflow.prompt.preflight(
+      { sessionId: 'session-1', text: 'Continue.' },
+      { kind: 'user' }
+    )
+    await expect(readFile(contextPath, 'utf8').then(JSON.parse)).resolves.toMatchObject({
+      active: true,
+      artifactVersionId: 'version-1'
+    })
+    harness.sessionInteractions.release(harness.interaction)
+
+    await expect(harness.workflow.discardUnavailable(identity)).resolves.toEqual({ revision: 2 })
+    await expect(readFile(contextPath, 'utf8').then(JSON.parse)).resolves.toEqual({
+      schemaVersion: 1,
+      active: false
+    })
+  })
+
   it('allows restored recovery on the active branch without a live prompt', async () => {
     const harness = createHarness()
     harness.sessionInteractions.release(harness.interaction)
@@ -1595,6 +2471,93 @@ describe('explicit unavailable Plan recovery ownership', () => {
     })
     await expect(harness.workflow.discardUnavailable(identity)).rejects.toMatchObject({
       code: 'interaction-mismatch'
+    })
+  })
+})
+
+describe('Agent-visible committed Plan decisions', () => {
+  it.each(['begin', 'resolve', 'clear'] as const)(
+    'preserves a committed decision when %s fails through MCP',
+    async (stage) => {
+      const harness = createHarness()
+      harness.interactions.authorizeAgentDecision({
+        sessionId: 'session-1',
+        artifactVersionId: 'version-1',
+        interactionSequence: harness.interaction.sequence
+      })
+      const secret = 'synthetic-secret-' + 'x'.repeat(8000)
+      if (stage === 'begin') harness.deliveries.begin.mockRejectedValueOnce(new Error(secret))
+      if (stage === 'resolve')
+        vi.spyOn(harness.interactions, 'resolveApproval').mockImplementationOnce(() => {
+          throw new Error(secret)
+        })
+      if (stage === 'clear') harness.deliveries.clear.mockRejectedValueOnce(new Error(secret))
+      const root = await createTemporaryRoot()
+      const notebook = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'project-1',
+        repository: new NotebookRunRepository(root)
+      })
+      const rpc = new NotebookLocalRpcServer(notebook, {
+        transport: 'tcp',
+        planService: { call: harness.workflow.call }
+      })
+      const connection = await rpc.issuePlanConnection('session-1', 'project-1')
+      const server = createPlanMcpServerForEnvironment({
+        ...connection,
+        sessionId: 'session-1',
+        projectId: 'project-1'
+      })
+      const client = new Client({ name: 'plan-contract-test', version: '1' })
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+      await server.connect(serverTransport)
+      await client.connect(clientTransport)
+      try {
+        const response = await client.callTool({
+          name: 'generate_plan',
+          arguments: { decision: 'approved' }
+        })
+        expect(response.isError).not.toBe(true)
+        const text = (response.content as Array<{ type: string; text: string }>)[0].text
+        const result = JSON.parse(text)
+        expect(result).toMatchObject({
+          kind: 'decision',
+          decision: 'approved',
+          artifactVersionId: 'version-1',
+          deliveryCommandId: 'receipt-1',
+          revision: 2
+        })
+        expect(result.deliveryWarning).toContain('decision is committed')
+        expect(result.deliveryWarning).toContain('Do not repeat')
+        expect(text).not.toContain('synthetic-secret')
+        expect(text.length).toBeLessThan(2048)
+        expect(harness.respond).toHaveBeenCalledOnce()
+        await expect(harness.workflow.projection('project-1', 'session-1')).resolves.toMatchObject({
+          approval: 'approved'
+        })
+      } finally {
+        await client.close()
+        await server.close()
+        connection.release?.()
+        await rpc.close()
+      }
+    }
+  )
+  it('does not advise approving a rejected Plan', async () => {
+    const harness = createHarness({
+      initialProjection: { ...pendingProjection(), approval: 'rejected', lifecycle: 'rejected' }
+    })
+    await expect(
+      harness.workflow.call({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        operation: 'updateStepStatus',
+        input: { title: 'private-step-title-marker', status: 'in_progress' }
+      })
+    ).rejects.toMatchObject({
+      code: 'plan-not-approved',
+      message: expect.stringContaining('Do not update or approve it again')
     })
   })
 })

@@ -4176,10 +4176,12 @@ describe('ACP runtime session management', () => {
   const installPromptPlanTestWorkflow = (
     runtime: AcpRuntime,
     planService: unknown,
-    sessions = durablePlanSessions()
+    sessions = durablePlanSessions(),
+    hooks: Parameters<typeof composeAcpRuntimePlanWorkflow>[3] = {}
   ): void => {
     const internals = runtime as unknown as {
       sessionInteractions: unknown
+      backendGeneration: unknown
       artifactTurns: unknown
       publication: unknown
       sessionEnvironment: unknown
@@ -4192,13 +4194,15 @@ describe('ACP runtime session management', () => {
       {
         planService,
         planInteractions,
+        backendGeneration: internals.backendGeneration,
         sessionInteractions: internals.sessionInteractions,
         artifactTurns: internals.artifactTurns
       } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[1],
       {
         publication: internals.publication,
         sessionEnvironment: internals.sessionEnvironment
-      } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[2]
+      } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[2],
+      hooks
     )
     Object.assign(internals, { sessionPlanWorkflow })
     Object.assign(internals.promptTurnWorkflow.options, { plan: sessionPlanWorkflow.prompt })
@@ -6119,12 +6123,12 @@ describe('ACP runtime session management', () => {
     const planPrompt = fakeAgent.prompts[0].text
     expect(planPrompt).toContain('## Plan mode (ACTIVE — MANDATORY)')
     expect(planPrompt).toContain(
-      'Review the Skills available in the current session to confirm the catalog covers the task.'
+      'This turn must follow the shared Session Plan workflow before doing execution work'
     )
-    expect(planPrompt).toContain('complete revised plan')
-    expect(planPrompt).toContain('short exact `title`')
-    expect(planPrompt).toContain('Execution starts only after approval.')
-    expect(planPrompt).not.toContain('The plan is presented to the user for review')
+    expect(planPrompt).toContain('even if you would otherwise judge a Plan optional')
+    expect(planPrompt).toContain('wait for approval before execution starts')
+    expect(planPrompt).not.toContain('Generate `task_summary`, `phases`, `desired_outputs`')
+    expect(planPrompt).not.toContain('A revision must be complete')
     for (const forbidden of [
       'search_skills',
       'ask_user',
@@ -6137,6 +6141,7 @@ describe('ACP runtime session management', () => {
     }
     expect(planPrompt).toContain('Analyze this dataset')
     expect(fakeAgent.prompts[1].text).toBe('Here are more details')
+    expect(fakeAgent.prompts[1].text).not.toContain('Plan mode (ACTIVE — MANDATORY)')
     expect(
       events
         .filter((event) => event.kind === 'message' && event.role === 'user')
@@ -19341,6 +19346,131 @@ describe('ACP runtime session management', () => {
       expect(fakeAgent.prompts[0]?.text).toContain('continue')
     }
   )
+
+  it.each([
+    ['Claude Code', claudeCodeFramework],
+    ['Codex', codexFramework],
+    ['OpenCode', opencodeFramework],
+    ['CodeBuddy', codeBuddyFramework]
+  ] as const)(
+    'delivers a short Plan file reference after %s context reconstruction',
+    async (_name, framework) => {
+      const process = new FakeAgentProcess()
+      const fakeAgent = startFakeAgent(process, ['s1'], {
+        modes:
+          framework.id === 'codex'
+            ? createModes(['read-only', 'agent', 'agent-full-access'], 'agent')
+            : undefined
+      })
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        spawnAgent: () => asAgentProcess(process),
+        framework
+      })
+      const active = restoredPlanProjection('approved', 4)
+      const refresh = vi.fn(async () => ({
+        path: '/private/input/session-plan/current.json',
+        artifactVersionId: active.artifactVersionId,
+        revision: active.revision
+      }))
+      installPromptPlanTestWorkflow(
+        runtime,
+        {
+          getProjection: vi.fn(async () => active)
+        },
+        durablePlanSessions(),
+        { contextFiles: { refresh } }
+      )
+      await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
+      await runtime.sendPrompt({
+        sessionId: 's1',
+        text: 'Continue the approved work.',
+        contextReset: true,
+        historyPreamble: 'Recovered task: continue from the existing approved Plan.',
+        provenanceContext: {
+          promptMessageId: 'resumed-message',
+          messageAncestry: ['plan-origin', 'resumed-message']
+        }
+      })
+      const delivered = fakeAgent.prompts[0]?.text ?? ''
+      expect(delivered).toContain('session-plan/current.json')
+      expect(delivered).toContain('OPEN_SCIENCE_INPUT_DIR')
+      expect(delivered).toContain(
+        framework.id === 'codex'
+          ? '`bash_execute`'
+          : framework.id === 'opencode'
+            ? '`open_science_notebook_bash_execute`'
+            : framework.id === 'claude-code'
+              ? '`mcp__open-science-notebook__bash_execute`'
+              : '`mcp__open_science_notebook__bash_execute`'
+      )
+      expect(delivered).toContain('Recovered task:')
+      expect(delivered).not.toContain(active.document.task_summary)
+      expect(delivered).not.toContain('/private/input')
+      expect(refresh).toHaveBeenCalledWith('project-1', 's1')
+    }
+  )
+
+  it('delivers an authoritative Plan summary when file refresh fails after Session resume loss', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['adopted-provider-session'], {
+      supportsResume: true,
+      resumeNotFound: true
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: opencodeFramework
+    })
+    const active = restoredPlanProjection('approved', 4)
+    installPromptPlanTestWorkflow(
+      runtime,
+      { getProjection: vi.fn(async () => active) },
+      durablePlanSessions(),
+      {
+        contextFiles: {
+          refresh: vi.fn(async () => {
+            throw new Error('disk unavailable')
+          })
+        }
+      }
+    )
+    const resumed = await runtime.resumeSession({
+      sessionId: 'restored-session',
+      providerSessionId: 'missing-provider-session',
+      cwd: '/workspace',
+      projectId: 'project-1',
+      previousFrameworkId: opencodeFramework.id
+    })
+    expect(resumed).toMatchObject({
+      sessionId: 'restored-session',
+      providerSessionId: 'adopted-provider-session',
+      contextReset: true
+    })
+
+    await runtime.sendPrompt({
+      sessionId: resumed.sessionId,
+      text: 'Continue the approved work.',
+      contextReset: resumed.contextReset,
+      historyPreamble: 'Recovered task: continue from the existing approved Plan.',
+      provenanceContext: {
+        promptMessageId: 'resumed-message',
+        messageAncestry: ['plan-origin', 'resumed-message']
+      }
+    })
+
+    const delivered = fakeAgent.prompts[0]?.text ?? ''
+    expect(delivered).toContain('expectedArtifactVersionId=version-1 expectedRevision=4')
+    expect(delivered).toContain(`task=${active.document.task_summary}`)
+    expect(delivered).toContain('- Analyze: not_started')
+    expect(delivered).toContain('an authoritative summary of the Plan as read for this request')
+    expect(delivered).toContain('do not guarantee that the Plan remained unchanged')
+    expect(delivered).toContain('report it as a blocker instead of guessing')
+    expect(delivered).toContain('earlier file contents may be stale')
+    expect(delivered).not.toContain('session-plan/current.json')
+  })
 
   it('fails closed when an approved Plan belongs to a sibling Message Branch', async () => {
     const process = new FakeAgentProcess()
