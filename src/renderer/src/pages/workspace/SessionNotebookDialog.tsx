@@ -61,11 +61,13 @@ const getErrorMessage = (error: unknown): string =>
 const NotebookDialogCell = ({
   run,
   index,
-  showInputData = false
+  showInputData = false,
+  showEnvironmentCaptureWarning = true
 }: {
   run: NotebookRunRecord
   index: number
   showInputData?: boolean
+  showEnvironmentCaptureWarning?: boolean
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const isProblem = isProblemRunStatus(run.status)
@@ -114,7 +116,10 @@ const NotebookDialogCell = ({
         highlightLine={errorLine}
       />
       <NotebookRunOutputs run={run} />
-      <NotebookRunEvidence run={run} />
+      <NotebookRunEvidence
+        run={run}
+        showEnvironmentCaptureWarning={showEnvironmentCaptureWarning}
+      />
     </div>
   )
 }

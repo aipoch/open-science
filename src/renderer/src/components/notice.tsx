@@ -11,6 +11,7 @@ import { useId, type ReactNode, type HTMLAttributes } from 'react'
 import {
   ChevronRight,
   CircleAlert,
+  CircleCheck,
   Info,
   TriangleAlert,
   CircleQuestionMark,
@@ -136,7 +137,9 @@ const Notice = ({
     : noticeDescriptionClassName
   const Icon =
     icon ??
-    (fullPage ? undefined : { info: Info, warning: TriangleAlert, error: CircleAlert }[level])
+    (fullPage
+      ? undefined
+      : { info: Info, success: CircleCheck, warning: TriangleAlert, error: CircleAlert }[level])
   const Heading = compact ? 'h2' : 'h1'
   const trailingAction =
     compact &&

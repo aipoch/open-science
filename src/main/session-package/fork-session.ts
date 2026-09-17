@@ -52,6 +52,8 @@ export const createForkSession = (
     ...copied,
     packageOrigin: undefined,
     forkOrigin: copied.packageOrigin,
+    forkHeadMessageId:
+      createSessionBranchSource(copied).headMessageId ?? copied.messages.at(-1)?.id,
     title,
     description: source.description,
     createdAt: now,

@@ -5842,13 +5842,16 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
 
       <LiteratureDetailBoundary controller={detailController}>
         {({ item: selectedItem, open, generation }) => (
-          // The portaled file preview owns focus while open. A lower modal's scroll lock would
-          // reject its wheel/touch events because the preview is outside the detail content.
-          <Dialog.Root open={open} modal={!previewItem}>
+          <Dialog.Root open={open}>
             {selectedItem ? (
               <Dialog.Portal>
-                <Dialog.Overlay
-                  className={dialogOverlayClassName}
+                {/* Keep the panel and scrim mounted while the portaled preview owns focus.
+                    Only release Radix's scroll lock: changing Root.modal remounts Content. */}
+                {!previewItem ? <Dialog.Overlay className="hidden" /> : null}
+                <div
+                  aria-hidden="true"
+                  data-state={open ? 'open' : 'closed'}
+                  className={cn(dialogOverlayClassName, 'pointer-events-auto')}
                   onPointerDownCapture={(event) => {
                     const dialogBounds = selectedItemDialogRef.current?.getBoundingClientRect()
                     const pointInsideDialog = Boolean(
@@ -5891,7 +5894,6 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                   ref={selectedItemDialogRef}
                   onCloseAutoFocus={(event) => {
                     event.preventDefault()
-                    // Switching modal mode for a child preview must not restore list focus.
                     if (detailController.getSnapshot().open || previewItem) return
                     const initiator = detailInitiatorRef.current
                     if (initiator?.isConnected && !initiator.closest('[inert], [hidden]')) {

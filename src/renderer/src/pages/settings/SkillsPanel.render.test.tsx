@@ -281,8 +281,9 @@ describe('SkillsPanel (list view)', () => {
     const betaSwitch = document.body.querySelector<HTMLElement>('[aria-label="Toggle Beta"]')
     expect(alphaSwitch?.getAttribute('data-state')).toBe('checked')
     expect(alphaSwitch?.className).toContain('data-[state=checked]:bg-primary')
-    expect(alphaSwitch?.className).toContain('ml-1')
-    expect(alphaSwitch?.className).toContain('mr-3')
+    // No per-toggle hit-area margins: the row's control column owns right alignment.
+    expect(alphaSwitch?.className).not.toContain('ml-1')
+    expect(alphaSwitch?.className).not.toContain('mr-3')
     expect(betaSwitch?.getAttribute('data-state')).toBe('unchecked')
     expect(
       alphaSwitch?.querySelector<HTMLElement>('[data-slot="switch-thumb"]')?.className

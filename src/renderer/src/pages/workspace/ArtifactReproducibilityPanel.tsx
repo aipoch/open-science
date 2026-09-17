@@ -142,6 +142,23 @@ const environmentDiagnosticText = (
   }
 }
 
+export const EnvironmentLockDiagnostics = ({
+  diagnostics
+}: {
+  diagnostics: NotebookEnvironmentLockDiagnostic[]
+}): ReactNode => {
+  const { t } = useTranslation()
+  return (
+    <ul className="mt-2 list-disc space-y-1 pl-4 text-xs text-text-200">
+      {diagnostics.map((diagnostic, index) => (
+        <li key={index} className="break-words">
+          {environmentDiagnosticText(diagnostic, t)}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
 const environmentCaptureDetails = (
   capture: NotebookRunEnvironmentLockCapture,
   t: ReturnType<typeof useTranslation>['t']

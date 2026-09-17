@@ -7,7 +7,10 @@ import {
   synchronizeActiveConversationActivities
 } from '../../../../shared/conversation-graph'
 import type { HandoffLifecycleEvent } from '../../../../shared/handoff-lifecycle'
-import { createWorkspaceConversationTimeline } from './workspace-conversation-timeline'
+import {
+  createWorkspaceConversationTimeline,
+  resolveForkBoundaryItemId
+} from './workspace-conversation-timeline'
 
 const message = (overrides: Partial<ChatMessage>): ChatMessage => ({
   id: 'prompt-1',
@@ -425,5 +428,87 @@ describe('workspace conversation timeline', () => {
       'subagent-message-subagent-update',
       'turn-completion-reply-1'
     ])
+  })
+})
+
+describe('fork turn boundary', () => {
+  const inherited = message({
+    id: 'copied-answer',
+    role: 'agent',
+    responseToMessageId: 'prompt-1',
+    sortIndex: 2,
+    completedAt: 200,
+    usageOrigin: { sessionId: 'ancestor', messageId: 'ancestor-answer' }
+  })
+  const fork = (overrides: Partial<ChatSession> = {}): ChatSession =>
+    session({
+      messages: [message({ sortIndex: 1 }), inherited],
+      forkOrigin: {
+        importId: 'copy',
+        sourceProjectId: 'project-1',
+        sourceSessionId: 'source',
+        importedAt: 300,
+        manifestChecksum: 'a'.repeat(64)
+      },
+      forkHeadMessageId: inherited.id,
+      ...overrides
+    })
+
+  it.each([true, false])(
+    'keeps the fork turn before new turns despite a late inherited footer (explicit head: %s)',
+    (explicit) => {
+      const input = fork({
+        forkHeadMessageId: explicit ? inherited.id : undefined,
+        messages: [
+          message({ sortIndex: 1 }),
+          inherited,
+          message({ id: 'new-prompt', sortIndex: 3 })
+        ],
+        activities: [activity({ id: 'late-tool', sortIndex: 4 })]
+      })
+      const timeline = createWorkspaceConversationTimeline(input)
+      expect(timeline.at(-1)?.id).toBe('turn-completion-copied-answer')
+      const boundary = resolveForkBoundaryItemId(input, timeline)
+      expect(boundary).toBe(inherited.id)
+      expect(timeline.findIndex((item) => item.id === boundary)).toBeLessThan(
+        timeline.findIndex((item) => item.id === 'new-prompt')
+      )
+    }
+  )
+
+  it('includes completion details while they still belong before the next turn', () => {
+    const input = fork({ activities: [activity({ sortIndex: 3 })] })
+    expect(resolveForkBoundaryItemId(input, createWorkspaceConversationTimeline(input))).toBe(
+      'turn-completion-copied-answer'
+    )
+  })
+
+  it('uses the stored local head even when another inherited message follows it', () => {
+    const input = fork({
+      messages: [
+        inherited,
+        message({
+          id: 'later',
+          sortIndex: 3,
+          usageOrigin: { sessionId: 'other', messageId: 'other-message' }
+        })
+      ]
+    })
+    expect(resolveForkBoundaryItemId(input, createWorkspaceConversationTimeline(input))).toBe(
+      'turn-completion-copied-answer'
+    )
+  })
+
+  it('does not move the divider to another selected branch without the fork head', () => {
+    const input = fork({
+      messages: [message({ id: 'sibling', usageOrigin: inherited.usageOrigin })]
+    })
+    expect(
+      resolveForkBoundaryItemId(input, createWorkspaceConversationTimeline(input))
+    ).toBeUndefined()
+    const original = fork()
+    expect(resolveForkBoundaryItemId(original, createWorkspaceConversationTimeline(original))).toBe(
+      'turn-completion-copied-answer'
+    )
   })
 })

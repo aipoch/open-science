@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from 'vitest'
 import { ParserEngine } from '../engine'
 import { validateToolArguments } from '../registry'
+import { ConnectorService } from '../service'
+import { renderSkillDoc } from '../skill-doc'
 import type { ToolDescriptor } from '../types'
 import { VARIANTS_GNOMAD_TOOLS } from './variants-gnomad'
 
@@ -18,6 +20,7 @@ async function run(
 ): Promise<{ out: unknown; url: string; query: string; variables: Record<string, unknown> }> {
   const fetchImpl = vi.fn().mockResolvedValueOnce(jsonRes(body))
   const out = await new ParserEngine({ fetchImpl }).call(tool(id), args, {})
+  expect(fetchImpl).toHaveBeenCalledTimes(1)
   const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit]
   const parsed = JSON.parse(init.body as string) as {
     query: string
@@ -220,6 +223,377 @@ describe('variants-gnomad', () => {
         {}
       )
     ).rejects.toThrow(/unknown dataset/)
+  })
+
+  it('get_variant: keeps the original query and response when populations are not requested', async () => {
+    const frequency = { ac: 1, an: 100, af: 0.01, filters: [] }
+    const body = {
+      data: {
+        variant: {
+          variant_id: '19-44908822-C-T',
+          exome: { ...frequency, populations: [{ id: 'eas', ac: 1, an: 20 }] },
+          genome: null
+        }
+      }
+    }
+    const omitted = await run('get_variant', { variant_id: '19-44908822-C-T' }, body)
+    const disabled = await run(
+      'get_variant',
+      { variant_id: '19-44908822-C-T', include_populations: false },
+      body
+    )
+    expect(disabled).toEqual(omitted)
+    expect(omitted.query).toBe(`
+query Variant($variantId: String!, $dataset: DatasetId!) {
+  variant(variantId: $variantId, dataset: $dataset) {
+    variant_id reference_genome chrom pos ref alt rsids
+    exome { ac an af homozygote_count hemizygote_count filters }
+    genome { ac an af homozygote_count hemizygote_count filters }
+  }
+}
+`)
+    expect(omitted.out).toMatchObject({ variant: { exome: frequency, genome: null } })
+    expect((omitted.out as { variant: { exome: unknown } }).variant.exome).toEqual(frequency)
+  })
+
+  it('get_variant: derives population AF from counts and preserves original group IDs and filters', async () => {
+    const body = {
+      data: {
+        variant: {
+          variant_id: '19-44908822-C-T',
+          exome: {
+            ac: 10,
+            an: 1000,
+            af: 0.01,
+            filters: ['RF', 'AC0'],
+            populations: [
+              { id: 'nfe', ac: 1, an: 3_000_000, homozygote_count: 0, hemizygote_count: 0 },
+              { id: 'eas_XX', ac: 1, an: 100 },
+              null,
+              { id: 'eas', ac: 1, an: 300, af: 0.9 }
+            ]
+          },
+          genome: {
+            ac: 2,
+            an: 200,
+            af: 0.01,
+            filters: [],
+            populations: [
+              { id: 'hgdp:Han', ac: 1, an: 10 },
+              { id: '1kg:CHB', ac: 0, an: 20 }
+            ]
+          }
+        }
+      }
+    }
+    const original = structuredClone(body)
+    const result = await run(
+      'get_variant',
+      { variant_id: '19-44908822-C-T', include_populations: true },
+      body
+    )
+    // Real VariantPopulation exposes counts, not af. A mock containing af must not hide a bad query.
+    const selections = [...result.query.matchAll(/populations\s*\{([^}]+)\}/g)]
+    expect(selections).toHaveLength(2)
+    for (const [, fields] of selections) {
+      expect(fields.trim().split(/\s+/)).toEqual([
+        'id',
+        'ac',
+        'an',
+        'homozygote_count',
+        'hemizygote_count'
+      ])
+    }
+    expect(result.variables).toEqual({ variantId: '19-44908822-C-T', dataset: 'gnomad_r4' })
+    const { variant } = result.out as {
+      variant: { exome: Record<string, unknown>; genome: Record<string, unknown> }
+    }
+    expect(variant.exome).toEqual({
+      ac: 10,
+      an: 1000,
+      af: 0.01,
+      filters: ['AC0', 'RF'],
+      populations: [
+        { id: 'eas', ac: 1, an: 300, af: 1 / 300, homozygote_count: null, hemizygote_count: null },
+        { id: 'eas_XX', ac: 1, an: 100, af: 0.01, homozygote_count: null, hemizygote_count: null },
+        {
+          id: 'nfe',
+          ac: 1,
+          an: 3_000_000,
+          af: 1 / 3_000_000,
+          homozygote_count: 0,
+          hemizygote_count: 0
+        }
+      ]
+    })
+    expect(variant.genome.populations).toEqual([
+      { id: '1kg:CHB', ac: 0, an: 20, af: 0, homozygote_count: null, hemizygote_count: null },
+      { id: 'hgdp:Han', ac: 1, an: 10, af: 0.1, homozygote_count: null, hemizygote_count: null }
+    ])
+    expect(body).toEqual(original)
+  })
+
+  it.each([
+    [0, 100, 0],
+    [0, 0, null],
+    [1, 0, null],
+    [null, 100, null],
+    [undefined, 100, null],
+    [1, null, null],
+    [1, undefined, null],
+    [-1, 100, null],
+    [2, 1, null]
+  ])('get_variant: population counts ac=%s an=%s yield af=%s', async (ac, an, af) => {
+    const { out } = await run(
+      'get_variant',
+      { variant_id: '19-44908822-C-T', include_populations: true },
+      {
+        data: {
+          variant: {
+            variant_id: '19-44908822-C-T',
+            genome: { populations: [{ id: 'eas', ac, an }] }
+          }
+        }
+      }
+    )
+    expect(out).toMatchObject({
+      variant: { genome: { populations: [{ id: 'eas', ac: ac ?? null, an: an ?? null, af }] } }
+    })
+  })
+
+  it.each([undefined, null, []])(
+    'get_variant: preserves unavailable or empty populations (%j)',
+    async (populations) => {
+      const { out } = await run(
+        'get_variant',
+        { variant_id: '19-44908822-C-T', include_populations: true },
+        {
+          data: { variant: { variant_id: '19-44908822-C-T', genome: { populations }, exome: null } }
+        }
+      )
+      expect(out).toMatchObject({
+        variant: { exome: null, genome: { populations: populations ?? null } }
+      })
+    }
+  )
+
+  it.each([
+    ['gnomad_r4', '19-44908822-C-T', 'exome'],
+    ['gnomad_r4_non_ukb', '19-44908822-C-T', 'exome'],
+    ['gnomad_r3', '19-44908822-C-T', 'genome'],
+    ['gnomad_r2_1', '19-45412079-C-T', 'exome'],
+    ['exac', '19-45412079-C-T', 'exome']
+  ])(
+    'get_variant: population requests preserve dataset/build routing for %s',
+    async (dataset, variantId, kind) => {
+      const { out, variables } = await run(
+        'get_variant',
+        { variant_id: variantId, dataset, include_populations: true },
+        {
+          data: {
+            variant: {
+              variant_id: variantId,
+              [kind]: { populations: [{ id: 'eas', ac: 0, an: 100 }] }
+            }
+          }
+        }
+      )
+      expect(variables).toEqual({ variantId, dataset })
+      expect(out).toMatchObject({
+        dataset,
+        variant: {
+          [kind]: { populations: [{ id: 'eas', af: 0 }] },
+          [kind === 'exome' ? 'genome' : 'exome']: null
+        }
+      })
+    }
+  )
+
+  it('get_variant: population requests retain not-found and upstream-error behavior', async () => {
+    const args = { variant_id: '19-44908822-C-T', include_populations: true }
+    const { out } = await run('get_variant', args, { errors: [{ message: 'Variant not found' }] })
+    expect(out).toMatchObject({ found: false, variant: null })
+    await expect(
+      run('get_variant', args, {
+        data: { variant: { variant_id: args.variant_id, exome: { ac: 1, an: 10 } } },
+        errors: [{ message: 'population lookup failed' }]
+      })
+    ).rejects.toThrow('population lookup failed')
+  })
+
+  it('get_variant: validates the opt-in parameter and documents it in the generated skill', () => {
+    const descriptor = tool('get_variant')
+    for (const include_populations of [true, false]) {
+      expect(() =>
+        validateToolArguments(descriptor, { variant_id: '19-44908822-C-T', include_populations })
+      ).not.toThrow()
+    }
+    for (const include_populations of ['false', 1, null]) {
+      expect(() =>
+        validateToolArguments(descriptor, { variant_id: '19-44908822-C-T', include_populations })
+      ).toThrow(/include_populations.*boolean/)
+    }
+    for (const other of VARIANTS_GNOMAD_TOOLS.filter(
+      (descriptor) => descriptor.id !== 'get_variant'
+    )) {
+      expect(other.input.properties).not.toHaveProperty('include_populations')
+    }
+    const skill = renderSkillDoc('variants')
+    expect(skill).toContain('"include_populations":{"type":"boolean","default":false')
+    expect(skill).toContain('Set `include_populations: true` when ancestry-specific')
+    expect(descriptor.example).not.toContain('include_populations')
+    expect(skill).toContain(descriptor.example)
+    expect(skill).toContain('do not sum rows')
+    expect(skill).toContain('rarity alone does not establish pathogenicity')
+  })
+
+  describe('get_variant population boundary contracts', () => {
+    const args = { variant_id: '19-44908822-C-T', include_populations: true }
+    const context = { origin: 'agent' as const, sessionId: 'population-contract-session' }
+    const payload = {
+      data: {
+        variant: {
+          variant_id: args.variant_id,
+          exome: null,
+          genome: {
+            ac: 1,
+            an: 3_000_000,
+            af: 1 / 3_000_000,
+            filters: [],
+            populations: [{ id: 'eas', ac: 1, an: 3_000_000, homozygote_count: 0 }]
+          }
+        }
+      }
+    }
+    const response = (): Response => Response.json(payload)
+
+    it.each([undefined, false, true])(
+      'preserves the opt-in shape through service validation and JSON transport (%s)',
+      async (includePopulations) => {
+        const fetchImpl = vi.fn().mockImplementation(async () => response())
+        const settings = {
+          enabledIds: ['variants'],
+          autoAllowIds: ['variants'],
+          blockedToolIds: [] as string[]
+        }
+        const service = new ConnectorService({
+          engine: new ParserEngine({ fetchImpl }),
+          getConnectors: () => settings,
+          resolveApiKey: () => undefined
+        })
+        const input = {
+          variant_id: args.variant_id,
+          ...(includePopulations === undefined ? {} : { include_populations: includePopulations })
+        }
+        const result = await service.call('variants', 'get_variant', input, context)
+        const wireResult = JSON.parse(JSON.stringify(result))
+        expect(wireResult.variant.exome).toBeNull()
+        expect(wireResult.variant.genome).toEqual({
+          ac: 1,
+          an: 3_000_000,
+          af: 1 / 3_000_000,
+          filters: [],
+          ...(includePopulations
+            ? {
+                populations: [
+                  {
+                    id: 'eas',
+                    ac: 1,
+                    an: 3_000_000,
+                    af: 1 / 3_000_000,
+                    homozygote_count: 0,
+                    hemizygote_count: null
+                  }
+                ]
+              }
+            : {})
+        })
+        expect(fetchImpl).toHaveBeenCalledOnce()
+        const request = JSON.parse(fetchImpl.mock.calls[0][1].body)
+        expect(request.query.includes('populations {')).toBe(includePopulations === true)
+        expect(request.variables).toEqual({ variantId: args.variant_id, dataset: 'gnomad_r4' })
+
+        for (const invalid of ['false', 1, null]) {
+          await expect(
+            service.call(
+              'variants',
+              'get_variant',
+              { ...args, include_populations: invalid },
+              context
+            )
+          ).rejects.toThrow(/include_populations.*boolean/)
+        }
+        settings.blockedToolIds.push('variants/get_variant')
+        await expect(service.call('variants', 'get_variant', args, context)).rejects.toThrow(
+          'tool blocked by policy: variants/get_variant'
+        )
+        expect(fetchImpl).toHaveBeenCalledOnce()
+      }
+    )
+
+    it('retries a transient 429 with the same population query and returns the complete result', async () => {
+      const fetchImpl = vi
+        .fn()
+        .mockResolvedValueOnce(new Response('', { status: 429 }))
+        .mockResolvedValueOnce(response())
+      const engine = new ParserEngine({ fetchImpl, retryBackoffMs: 0 })
+      const result = await engine.call(tool('get_variant'), args, {})
+      expect(result).toMatchObject({
+        found: true,
+        variant: { genome: { populations: [{ id: 'eas', af: 1 / 3_000_000 }] } }
+      })
+      expect(fetchImpl).toHaveBeenCalledTimes(2)
+      expect(fetchImpl.mock.calls[1][1].body).toBe(fetchImpl.mock.calls[0][1].body)
+      expect(JSON.parse(fetchImpl.mock.calls[1][1].body).query).toContain('populations {')
+    })
+
+    it('surfaces a long Retry-After without retrying or silently falling back to overall frequencies', async () => {
+      const fetchImpl = vi
+        .fn()
+        .mockResolvedValue(new Response('', { status: 429, headers: { 'Retry-After': '3600' } }))
+      const engine = new ParserEngine({ fetchImpl, totalTimeoutMs: 1000, retryBackoffMs: 0 })
+      await expect(engine.call(tool('get_variant'), args, {})).rejects.toThrow(
+        /HTTP 429.*Retry after/
+      )
+      expect(fetchImpl).toHaveBeenCalledOnce()
+    })
+
+    it('surfaces a population-field GraphQL error without retrying the lean query', async () => {
+      const fetchImpl = vi.fn().mockResolvedValue(
+        Response.json({
+          ...payload,
+          errors: [{ message: 'Cannot return null for non-nullable field VariantPopulation.ac.' }]
+        })
+      )
+      const engine = new ParserEngine({ fetchImpl, retryBackoffMs: 0 })
+      await expect(engine.call(tool('get_variant'), args, {})).rejects.toThrow(
+        /gnomAD GraphQL error:.*VariantPopulation.ac/
+      )
+      expect(fetchImpl).toHaveBeenCalledOnce()
+    })
+
+    it('aborts a timed-out population request without retrying or returning an empty result', async () => {
+      vi.useFakeTimers()
+      try {
+        const fetchImpl = vi.fn(
+          async (_url: string | URL | Request, init?: RequestInit): Promise<Response> =>
+            new Promise((_, reject) => {
+              const signal = init?.signal
+              signal?.addEventListener('abort', () => reject(signal.reason), { once: true })
+            })
+        )
+        const engine = new ParserEngine({ fetchImpl, timeoutMs: 30, retryBackoffMs: 0 })
+        const rejected = expect(engine.call(tool('get_variant'), args, {})).rejects.toMatchObject({
+          name: 'ConnectorRequestTimeoutError'
+        })
+        await vi.advanceTimersByTimeAsync(30)
+        await rejected
+        expect(fetchImpl).toHaveBeenCalledOnce()
+        expect(fetchImpl.mock.calls[0][1]?.signal?.aborted).toBe(true)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
   })
 
   // ---- search_variants ----------------------------------------------------------------------

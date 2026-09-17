@@ -119,7 +119,7 @@ const NetworkProxyForm = ({ onDone }: NetworkProxyFormProps): React.JSX.Element 
                 'HTTP, HTTPS, SOCKS, SOCKS4, or SOCKS5 URL. Embedded credentials are not supported.'
               )}
             >
-              <div className="space-y-1.5">
+              <div className="w-full space-y-1.5">
                 <Input
                   id="network-proxy-server"
                   aria-label={t('Proxy server')}

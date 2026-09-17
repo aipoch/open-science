@@ -2,7 +2,8 @@ import type { ToolContext, ToolDescriptor } from '../types'
 
 // gnomAD is GraphQL-only: every call is a POST of {query, variables} to a single endpoint. Ported
 // from the upstream gnomad_variants library (client/queries/records/tool) — the 10 mirrored MCP
-// methods, with the same lean field selections (the API is complexity-limited) and record shaping.
+// methods, with lean field selections and record shaping. Single-variant lookups can opt into
+// population counts; gene/region listings retain the upstream's compact frequency blocks.
 const GNOMAD_API = 'https://gnomad.broadinstitute.org/api'
 
 // Dataset pins frozen to the 14 short-variant datasets the upstream tool exposes. Default is the
@@ -55,15 +56,24 @@ const MAX_REGION_COORDINATE = 999_999_999
 
 // ---- GraphQL documents (adapted from upstream queries.py) ----------------------------------
 
-const VARIANT_QUERY = `
+function variantQuery(includePopulations: boolean): string {
+  // VariantPopulation has no af field: derive it from ac/an when shaping the response.
+  const populations = includePopulations
+    ? ' populations { id ac an homozygote_count hemizygote_count }'
+    : ''
+  return `
 query Variant($variantId: String!, $dataset: DatasetId!) {
   variant(variantId: $variantId, dataset: $dataset) {
     variant_id reference_genome chrom pos ref alt rsids
-    exome { ac an af homozygote_count hemizygote_count filters }
-    genome { ac an af homozygote_count hemizygote_count filters }
+    exome { ac an af homozygote_count hemizygote_count filters${populations} }
+    genome { ac an af homozygote_count hemizygote_count filters${populations} }
   }
 }
 `
+}
+
+const VARIANT_QUERY = variantQuery(false)
+const VARIANT_QUERY_WITH_POPULATIONS = variantQuery(true)
 
 const VARIANT_SEARCH_QUERY = `
 query VariantSearch($query: String!, $dataset: DatasetId!) {
@@ -179,6 +189,14 @@ query MitochondrialVariantsRegion($start: Int!, $stop: Int!, $dataset: DatasetId
 // ---- Minimal shapes of the gnomAD GraphQL JSON we read --------------------------------------
 
 type FreqBlock = Record<string, unknown> | null
+
+type PopulationCounts = {
+  id: string
+  ac?: number | null
+  an?: number | null
+  homozygote_count?: number | null
+  hemizygote_count?: number | null
+}
 
 type ShortVariant = {
   variant_id: string
@@ -350,13 +368,54 @@ function freqBlock(block: FreqBlock): FreqBlock {
   return out
 }
 
+// Detail-only extension: keep missing populations distinct from an empty list and zero frequency.
+// Population IDs can include overlapping sex strata and hgdp:/1kg: groups; preserve them verbatim.
+function variantFreqBlock(block: FreqBlock, includePopulations: boolean): FreqBlock {
+  const out = freqBlock(block)
+  if (out === null || !includePopulations) return out
+  const populations = block?.populations as Array<PopulationCounts | null> | null | undefined
+  out.populations =
+    populations == null
+      ? null
+      : populations
+          .filter((population): population is PopulationCounts => population !== null)
+          .map((population) => {
+            const ac = population.ac ?? null
+            const an = population.an ?? null
+            const af =
+              typeof ac === 'number' &&
+              Number.isFinite(ac) &&
+              typeof an === 'number' &&
+              Number.isFinite(an) &&
+              ac >= 0 &&
+              an > 0 &&
+              ac <= an
+                ? ac / an
+                : null
+            return {
+              id: population.id,
+              ac,
+              an,
+              af,
+              homozygote_count: population.homozygote_count ?? null,
+              hemizygote_count: population.hemizygote_count ?? null
+            }
+          })
+          .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+  return out
+}
+
 function sortedStrings(xs: string[] | null | undefined): string[] {
   return [...(xs ?? [])].sort()
 }
 
 // Full single-variant record: identity + population frequency blocks (null where the dataset has no
 // such call set, e.g. r3 is genome-only).
-function buildVariantRecord(v: FullVariant, dataset: string): Record<string, unknown> {
+function buildVariantRecord(
+  v: FullVariant,
+  dataset: string,
+  includePopulations: boolean
+): Record<string, unknown> {
   return {
     variant_id: v.variant_id,
     dataset,
@@ -366,8 +425,8 @@ function buildVariantRecord(v: FullVariant, dataset: string): Record<string, unk
     ref: v.ref ?? null,
     alt: v.alt ?? null,
     rsids: sortedStrings(v.rsids),
-    exome: freqBlock(v.exome ?? null),
-    genome: freqBlock(v.genome ?? null)
+    exome: variantFreqBlock(v.exome ?? null, includePopulations),
+    genome: variantFreqBlock(v.genome ?? null, includePopulations)
   }
 }
 
@@ -502,30 +561,37 @@ export const VARIANTS_GNOMAD_TOOLS: ToolDescriptor[] = [
     id: 'get_variant',
     connector: 'variants',
     description:
-      "Look up one gnomAD short variant by ID and return its population frequencies. `variant_id` is `chrom-pos-ref-alt` on the dataset's reference build (GRCh38 for r3/r4, GRCh37 for r2.1/ExAC), e.g. `19-44908822-C-T` (APOE rs7412); use `search_variants` to resolve an rsID first.",
+      "Look up one gnomAD short variant by ID and return overall exome/genome frequencies. `variant_id` is `chrom-pos-ref-alt` on the dataset's reference build (GRCh38 for r3/r4, GRCh37 for r2.1/ExAC), e.g. `19-44908822-C-T` (APOE rs7412); use `search_variants` to resolve an rsID first. Set `include_populations: true` when ancestry-specific counts/frequencies are needed for an individual variant. Retain the dataset, allele counts and quality filters when interpreting frequencies; rarity alone does not establish pathogenicity or an ACMG criterion.",
     input: {
       type: 'object',
       properties: {
         variant_id: { type: 'string' },
-        dataset: { type: 'string', enum: [...DATASETS], default: DEFAULT_DATASET }
+        dataset: { type: 'string', enum: [...DATASETS], default: DEFAULT_DATASET },
+        include_populations: {
+          type: 'boolean',
+          default: false,
+          description: 'Include population counts and derived allele frequencies for this variant'
+        }
       },
       required: ['variant_id']
     },
     required: ['variant_id'],
     returns:
-      '`{ found: bool, variant_id: str, dataset: str, variant: null | { variant_id, dataset, reference_genome, chrom, pos, ref, alt, rsids: [str], exome: { ac, an, af, homozygote_count, hemizygote_count, filters }|null, genome: {...}|null } }`. `exome`/`genome` are null where the dataset has no such call set (e.g. r3 is genome-only).',
+      '`{ found: bool, variant_id: str, dataset: str, variant: null | { variant_id, dataset, reference_genome, chrom, pos, ref, alt, rsids: [str], exome: { ac, an, af, homozygote_count, hemizygote_count, filters, populations?: null | [{ id, ac, an, af, homozygote_count, hemizygote_count }] }|null, genome: {...}|null } }`. `exome`/`genome` are null where the dataset has no such call set (e.g. r3 is genome-only). `populations` is omitted by default; when requested, null means unavailable and [] means an empty upstream list (null rows are omitted). Rows are sorted by the original ID (e.g. eas, nfe); IDs vary by dataset and may include overlapping sex strata and hgdp:/1kg: groups, so do not sum rows. Population af is ac/an without rounding, or null for missing/invalid counts or an=0; ac=0 with an>0 yields af=0. These are observed frequencies, not filtering allele frequencies or combined exome/genome frequencies.',
     example:
       'const result = await host.mcp("variants", "get_variant", {"variant_id": "19-44908822-C-T", "dataset": "gnomad_r4"})',
     run: async (ctx, a) => {
       const variantId = String(a.variant_id)
       const dataset = checkDataset(String(a.dataset ?? DEFAULT_DATASET), DATASETS)
-      const data = gqlData(await postGql(ctx, VARIANT_QUERY, { variantId, dataset }))
+      const includePopulations = a.include_populations === true
+      const query = includePopulations ? VARIANT_QUERY_WITH_POPULATIONS : VARIANT_QUERY
+      const data = gqlData(await postGql(ctx, query, { variantId, dataset }))
       const v = data?.variant ?? null
       return {
         found: v != null,
         variant_id: variantId,
         dataset,
-        variant: v ? buildVariantRecord(v, dataset) : null
+        variant: v ? buildVariantRecord(v, dataset, includePopulations) : null
       }
     }
   },

@@ -7,7 +7,7 @@ import { InlineNotice } from './ui/inline-notice'
 
 afterEach(cleanup)
 
-it.each<NoticeLevel>(['info', 'warning', 'error'])(
+it.each<NoticeLevel>(['info', 'success', 'warning', 'error'])(
   'supports %s without making passive guidance a live alert',
   (level) => {
     render(

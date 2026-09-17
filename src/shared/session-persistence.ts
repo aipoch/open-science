@@ -793,6 +793,8 @@ export type PersistedChatSession = {
   packageOrigin?: import('./session-package').SessionPackageOrigin
   // Copy receipt and recovery identity; unlike packageOrigin this grants no read-only status.
   forkOrigin?: import('./session-package').SessionPackageOrigin
+  // Local message identity at Fork creation; independent of source links and usage attribution.
+  forkHeadMessageId?: string
   id: string
   // App-wide, one-based sequence allocated by SQLite. Historical Session files omit it until the
   // one-time projection backfill assigns numbers in createdAt/id order and rewrites their JSON.
@@ -4485,6 +4487,8 @@ const sanitizeSession = (
     const origin = packageOriginSchema.safeParse(session.forkOrigin)
     if (!origin.success) return undefined
     sanitized.forkOrigin = origin.data
+    const forkHeadMessageId = asString(session.forkHeadMessageId)
+    if (forkHeadMessageId) sanitized.forkHeadMessageId = forkHeadMessageId
   }
   if (pendingHistoryReplay) sanitized.pendingHistoryReplay = pendingHistoryReplay
   if (session.branchContextResetRequired === true) sanitized.branchContextResetRequired = true

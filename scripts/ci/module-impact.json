@@ -3015,7 +3015,9 @@
           "src/main/credential-identity/ciphertext-inventory.test.ts",
           "src/main/credential-identity/linux.test.ts",
           "src/main/storage/migration-target-race.test.ts",
-          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx"
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
+          "src/main/credential-identity/macos.test.ts",
+          "src/main/credential-identity/probe-logging.test.ts"
         ]
       },
       "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
@@ -3255,7 +3257,9 @@
           "src/main/credential-identity/linux.test.ts",
           "src/main/credential-identity/persistence.test.ts",
           "src/main/storage/brand-location.test.ts",
-          "src/main/storage/ipc.test.ts"
+          "src/main/storage/ipc.test.ts",
+          "src/main/credential-identity/macos.test.ts",
+          "src/main/credential-identity/probe-logging.test.ts"
         ]
       },
       "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
@@ -3769,7 +3773,10 @@
           "src/main/credential-identity/ciphertext-inventory.test.ts",
           "src/main/credential-identity/linux.test.ts",
           "src/main/storage/migration-target-race.test.ts",
-          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx"
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
+          "src/main/credential-identity/macos.test.ts",
+          "src/main/credential-identity/probe-logging.test.ts",
+          "src/main/connectors/descriptors/variants-gnomad.test.ts"
         ]
       },
       "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
@@ -4284,7 +4291,10 @@
           "src/main/credential-identity/ciphertext-inventory.test.ts",
           "src/main/credential-identity/linux.test.ts",
           "src/main/storage/migration-target-race.test.ts",
-          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx"
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
+          "src/main/credential-identity/macos.test.ts",
+          "src/main/credential-identity/probe-logging.test.ts",
+          "src/main/connectors/descriptors/variants-gnomad.test.ts"
         ]
       },
       "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
@@ -8745,7 +8755,10 @@
           "src/main/credential-identity/ciphertext-inventory.test.ts",
           "src/main/credential-identity/linux.test.ts",
           "src/main/storage/migration-target-race.test.ts",
-          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx"
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
+          "src/main/credential-identity/macos.test.ts",
+          "src/main/credential-identity/probe-logging.test.ts",
+          "src/main/connectors/descriptors/variants-gnomad.test.ts"
         ]
       },
       "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
@@ -9939,7 +9952,10 @@
           "src/main/storage/brand-location.test.ts",
           "src/main/credential-identity/persistence.test.ts",
           "src/main/credential-identity/ciphertext-inventory.test.ts",
-          "src/main/credential-identity/linux.test.ts"
+          "src/main/credential-identity/linux.test.ts",
+          "src/main/credential-identity/macos.test.ts",
+          "src/main/credential-identity/probe-logging.test.ts",
+          "src/main/connectors/descriptors/variants-gnomad.test.ts"
         ]
       },
       "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
@@ -10740,7 +10756,10 @@
           "src/main/credential-identity/ciphertext-inventory.test.ts",
           "src/main/credential-identity/linux.test.ts",
           "src/main/storage/migration-target-race.test.ts",
-          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx"
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
+          "src/main/credential-identity/macos.test.ts",
+          "src/main/credential-identity/probe-logging.test.ts",
+          "src/main/connectors/descriptors/variants-gnomad.test.ts"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -11196,7 +11215,9 @@
         "src/main/credential-identity/sqlite-snapshot.test.ts",
         "src/main/credential-identity/sqlite-snapshot.ts",
         "src/main/credential-identity/windows-profile-key.test.ts",
-        "src/main/credential-identity/windows-profile-key.ts"
+        "src/main/credential-identity/windows-profile-key.ts",
+        "src/main/credential-identity/macos.test.ts",
+        "src/main/credential-identity/probe-logging.test.ts"
       ],
       "interfacePaths": [
         "src/main/app-lifecycle.ts",
@@ -11328,7 +11349,9 @@
           "src/main/credential-identity/recovery.test.ts",
           "src/main/credential-identity/selection.test.ts",
           "src/main/credential-identity/sqlite-snapshot.test.ts",
-          "src/main/credential-identity/windows-profile-key.test.ts"
+          "src/main/credential-identity/windows-profile-key.test.ts",
+          "src/main/credential-identity/macos.test.ts",
+          "src/main/credential-identity/probe-logging.test.ts"
         ],
         "contract": [
           "src/preload/index.test.ts",
@@ -13007,7 +13030,9 @@
           "src/shared/renderer-surface-matrix.test.ts",
           "src/main/credential-identity/persistence.test.ts",
           "src/main/credential-identity/ciphertext-inventory.test.ts",
-          "src/main/credential-identity/linux.test.ts"
+          "src/main/credential-identity/linux.test.ts",
+          "src/main/credential-identity/macos.test.ts",
+          "src/main/credential-identity/probe-logging.test.ts"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -18240,7 +18265,10 @@
           "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
           "src/main/credential-identity/persistence.test.ts",
           "src/main/credential-identity/ciphertext-inventory.test.ts",
-          "src/main/credential-identity/linux.test.ts"
+          "src/main/credential-identity/linux.test.ts",
+          "src/main/credential-identity/macos.test.ts",
+          "src/main/credential-identity/probe-logging.test.ts",
+          "src/main/connectors/descriptors/variants-gnomad.test.ts"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -23146,7 +23174,8 @@
           "src/renderer/src/pages/settings/PermissionsPanel.render.test.tsx",
           "src/renderer/src/pages/settings/SpecialistEditor.persistence.render.test.tsx",
           "src/shared/renderer-surface-inventory.test.ts",
-          "src/shared/renderer-surface-matrix.test.ts"
+          "src/shared/renderer-surface-matrix.test.ts",
+          "src/main/connectors/descriptors/variants-gnomad.test.ts"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -24209,7 +24238,10 @@
           "src/main/storage/brand-location.test.ts",
           "src/main/credential-identity/persistence.test.ts",
           "src/main/storage/migration-target-race.test.ts",
-          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx"
+          "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
+          "src/main/credential-identity/macos.test.ts",
+          "src/main/credential-identity/probe-logging.test.ts",
+          "src/main/connectors/descriptors/variants-gnomad.test.ts"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -25346,7 +25378,9 @@
           "src/main/cli-install/maintenance.test.ts",
           "src/main/credential-identity/persistence.test.ts",
           "src/main/credential-identity/ciphertext-inventory.test.ts",
-          "src/main/credential-identity/linux.test.ts"
+          "src/main/credential-identity/linux.test.ts",
+          "src/main/credential-identity/macos.test.ts",
+          "src/main/credential-identity/probe-logging.test.ts"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

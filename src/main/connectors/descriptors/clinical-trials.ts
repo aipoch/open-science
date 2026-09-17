@@ -21,6 +21,7 @@ const SEARCH_FIELDS = [
   'PrimaryCompletionDate',
   'LocationCity'
 ].join('|')
+const ELIGIBILITY_FIELDS = [SEARCH_FIELDS, 'MinimumAge', 'MaximumAge', 'Sex'].join('|')
 const INVESTIGATOR_FIELDS = [
   'NCTId',
   'BriefTitle',
@@ -205,30 +206,35 @@ function sponsorParams(a: Record<string, unknown>): Record<string, string> {
   return params
 }
 
-// search_by_eligibility: patient-matching Essie dimensions. min_age matches trials whose MinimumAge
-// <= it (RANGE[MIN, min_age]); max_age matches MaximumAge >= it; sex matches that sex OR all-comers;
-// status defaults to RECRUITING.
+// A missing age bound is unrestricted. A RANGE alone would exclude those studies.
+function eligibilityAgeRange(area: string, lo: string | null, hi: string | null): string {
+  return orJoin(areaRange(area, lo, hi), `NOT ${areaRange(area, null, null)}`)
+}
+
+// One supplied age checks both trial bounds; two ages must both fit the trial's age window.
+// The all-comer literal must be quoted inside a sex-specific filter. An explicit ALL input
+// preserves the existing unrestricted search, just like an omitted sex.
 function eligibilityParams(a: Record<string, unknown>): Record<string, string> {
   const parts: string[] = []
   if (truthy(a.eligibility_keywords)) {
     parts.push(areaPhrase('EligibilityCriteria', String(a.eligibility_keywords)))
   }
-  if (truthy(a.min_age)) parts.push(areaRange('MinimumAge', null, String(a.min_age)))
-  if (truthy(a.max_age)) parts.push(areaRange('MaximumAge', String(a.max_age), null))
-  if (truthy(a.sex)) {
-    const sex = String(a.sex).toUpperCase()
-    if (sex === 'MALE' || sex === 'FEMALE') {
-      parts.push(orJoin(areaTerm('Sex', sex), areaTerm('Sex', 'ALL')))
-    } else {
-      parts.push(areaTerm('Sex', 'ALL'))
-    }
+  const minAge = truthy(a.min_age) ? String(a.min_age) : null
+  const maxAge = truthy(a.max_age) ? String(a.max_age) : null
+  if (minAge || maxAge) {
+    parts.push(eligibilityAgeRange('MinimumAge', null, minAge ?? maxAge))
+    parts.push(eligibilityAgeRange('MaximumAge', maxAge ?? minAge, null))
+  }
+  const sex = truthy(a.sex) ? String(a.sex).toUpperCase() : null
+  if (sex === 'MALE' || sex === 'FEMALE') {
+    parts.push(orJoin(areaTerm('Sex', sex), areaPhrase('Sex', 'ALL')))
   }
   const params: Record<string, string> = {}
   if (parts.length) params['filter.advanced'] = andJoin(...parts)
   if (truthy(a.condition)) params['query.cond'] = String(a.condition)
   const status = enumList(a.status)
   params['filter.overallStatus'] = (status.length ? status : ['RECRUITING']).join('|')
-  if (!parts.length && !truthy(a.condition)) {
+  if (!parts.length && !truthy(a.condition) && sex !== 'ALL') {
     throw new Error(
       'search_by_eligibility needs at least one of: condition, eligibility_keywords, min_age, max_age, sex'
     )
@@ -698,7 +704,7 @@ export const CLINICAL_TRIALS_TOOLS: ToolDescriptor[] = [
     id: 'search_by_eligibility',
     connector: 'clinical-trials',
     description:
-      'Patient-trial matching. DEFAULTS to RECRUITING trials unless status is set. min_age/max_age are the PATIENT\'s age ("65 Years", "6 Months") and match trials whose age window admits the patient; sex matches trials accepting that sex or all comers; eligibility_keywords searches the inclusion/exclusion criteria text (e.g. "HbA1c > 8", "BRCA mutation", "ECOG 0-1"). At least one of condition, eligibility_keywords, min_age, max_age or sex is required. Page with page_token.',
+      'Patient-trial matching. DEFAULTS to RECRUITING trials unless status is set. Supply either min_age or max_age for one patient age ("65 Years", "6 Months"); both trial age bounds are checked. If both are supplied, the trial must admit the entire patient age interval. Missing trial age bounds are unrestricted. sex MALE/FEMALE includes all-comer trials; ALL or omitted sex applies no sex filter. eligibility_keywords searches the inclusion/exclusion criteria text (e.g. "HbA1c > 8", "BRCA mutation", "ECOG 0-1"). At least one of condition, eligibility_keywords, min_age, max_age or sex is required. Page with page_token.',
     input: {
       type: 'object',
       properties: {
@@ -713,7 +719,7 @@ export const CLINICAL_TRIALS_TOOLS: ToolDescriptor[] = [
       }
     },
     returns:
-      'Same shape as search_trials: `{ count, total (always null — count_total is not exposed here), next_page_token, items: [ trial summaries ] }`.',
+      'Same shape as search_trials, with minimum_age, maximum_age and sex (string|null) added to each summary: `{ count, total (always null — count_total is not exposed here), next_page_token, items: [ trial summaries with eligibility bounds ] }`. Null age bounds mean no registered limit on that side. Review get_trial_details for the full eligibility criteria.',
     example:
       'const result = await host.mcp("clinical-trials", "search_by_eligibility", {"condition": "diabetes", "min_age": "65 Years", "sex": "FEMALE"})',
     run: async (ctx, a) => {
@@ -723,9 +729,20 @@ export const CLINICAL_TRIALS_TOOLS: ToolDescriptor[] = [
         pageSize(a, 10),
         a.page_token,
         false,
-        SEARCH_FIELDS
+        ELIGIBILITY_FIELDS
       )
-      return searchResponse(page, false)
+      return {
+        ...searchResponse(page, false),
+        items: (page.studies ?? []).map((study) => {
+          const eligibility = study.protocolSection?.eligibilityModule
+          return {
+            ...trialSummary(study),
+            minimum_age: eligibility?.minimumAge ?? null,
+            maximum_age: eligibility?.maximumAge ?? null,
+            sex: eligibility?.sex ?? null
+          }
+        })
+      }
     }
   }
 ]

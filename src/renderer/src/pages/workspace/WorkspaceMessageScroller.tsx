@@ -82,7 +82,10 @@ import {
   hidesBehindPresentationBarrier
 } from './workspace-conversation-items'
 import type { ActivityExpansionOverrides } from './workspace-tool-activity-groups'
-import { createWorkspaceConversationTimeline } from './workspace-conversation-timeline'
+import {
+  createWorkspaceConversationTimeline,
+  resolveForkBoundaryItemId
+} from './workspace-conversation-timeline'
 import { useSessionJobStore } from '@/stores/session-job-store'
 import { useSessionJobHydration } from '@/lib/compute/useSessionJobHydration'
 import type { GoToTranscriptIntent, ReviewWithChecks } from '../../../../shared/reviewer'
@@ -1458,13 +1461,7 @@ const WorkspaceMessageScrollerImpl = ({
     }
   }
 
-  const forkBoundaryItemId = activeSession?.forkOrigin
-    ? conversationItems.findLast(
-        (item) =>
-          (item.type === 'message' || item.type === 'turn-completion') &&
-          Boolean(item.message.usageOrigin)
-      )?.id
-    : undefined
+  const forkBoundaryItemId = resolveForkBoundaryItemId(activeSession, conversationItems)
   const forkDivider = (itemId: string): ReactNode =>
     forkSourceContent && itemId === forkBoundaryItemId ? (
       <MessageScrollerItem messageId={`fork-source-${currentSessionId}`} className="min-w-0">

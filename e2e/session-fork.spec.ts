@@ -113,3 +113,82 @@ test('forks local and imported research and immediately continues through the re
     )
     .toBe(true)
 })
+
+test('changes branch permissions before the first follow-up without changing source permissions', async ({
+  app
+}) => {
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
+  await page.getByRole('button', { name: 'New project', exact: true }).click()
+  const project = page.getByRole('dialog', { name: 'New project' })
+  await project.getByLabel('Name').fill('Branch permissions')
+  await project.getByRole('button', { name: 'Create project' }).click()
+  const prompt = 'Summarize the deterministic fixture.'
+  await page.getByRole('textbox', { name: 'Ask anything' }).fill(prompt)
+  await page.getByRole('button', { name: 'Send message' }).click()
+  const reply = page.getByText(`Deterministic reply: ${prompt}`, { exact: true })
+  await expect(reply).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Stop generating' })).toHaveCount(0)
+  await expect
+    .poll(async () =>
+      page.evaluate(async () =>
+        (await window.api.sessions.loadAll()).sessions.some((session) =>
+          session.messages.some(
+            (message) => message.role === 'agent' && message.status === 'complete'
+          )
+        )
+      )
+    )
+    .toBe(true)
+  const source = await page.evaluate(async () => (await window.api.sessions.loadAll()).sessions[0])
+  const profile = source.permissionProfile === 'ask' ? 'auto' : 'ask'
+  const label = profile === 'ask' ? 'Ask for approval' : 'Auto-approve edits'
+  const sourceHeading = await page.getByRole('heading', { level: 1 }).innerText()
+  await reply.hover()
+  await page.getByRole('button', { name: 'Branch in new session', exact: true }).click()
+  await expect(page.getByRole('heading', { level: 1 })).not.toHaveText(sourceHeading)
+  await page.getByTestId('composer-controls-trigger').click()
+  await page.getByRole('menuitem', { name: /^Permission mode/ }).hover()
+  const option = page.getByRole('menuitem', { name: label, exact: true })
+  await expect(option).not.toHaveAttribute('aria-disabled', 'true')
+  await option.click()
+  await expect(page.getByTestId('composer-controls-trigger')).toHaveAttribute(
+    'aria-label',
+    new RegExp(label)
+  )
+  await expect
+    .poll(async () =>
+      page.evaluate(
+        async ({ sourceId, profile }) => {
+          const { sessions } = await window.api.sessions.loadAll()
+          const child = sessions.find((session) => session.branchSource?.sessionId === sourceId)
+          return child?.permissionProfile === profile && child.pendingHistoryReplay?.kind === 'all'
+        },
+        { sourceId: source.id, profile }
+      )
+    )
+    .toBe(true)
+  await page.getByRole('textbox', { name: 'Ask anything' }).fill('Continue the research')
+  await page.getByRole('button', { name: 'Send message' }).click()
+  await expect(reply).toHaveCount(2)
+  await expect(page.getByRole('button', { name: 'Stop generating' })).toHaveCount(0)
+  await expect
+    .poll(async () =>
+      page.evaluate(
+        async ({ sourceId, profile }) => {
+          const { sessions } = await window.api.sessions.loadAll()
+          const child = sessions.find((session) => session.branchSource?.sessionId === sourceId)
+          return child?.permissionProfile === profile && child.pendingHistoryReplay === undefined
+        },
+        { sourceId: source.id, profile }
+      )
+    )
+    .toBe(true)
+  const original = await page.evaluate(
+    async (id) =>
+      (await window.api.sessions.loadAll()).sessions.find((session) => session.id === id),
+    source.id
+  )
+  expect(original?.permissionProfile).toBe(source.permissionProfile)
+  expect(original?.messages).toEqual(source.messages)
+})

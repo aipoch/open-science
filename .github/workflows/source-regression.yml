@@ -1,9 +1,9 @@
 name: Source Regression
 
-# Batch supplemental source coverage independently of package certification/publication.
+# Run complete Mac source coverage twice daily, independently of package publication.
 on:
   schedule:
-    - cron: '37 19 * * *' # UTC; overnight in Asia/Singapore
+    - cron: '37 7,19 * * *' # UTC; 03:37 and 15:37 Asia/Singapore
   workflow_dispatch:
 
 permissions:
@@ -15,35 +15,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  plan:
-    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
-    name: Check for untested main changes
-    runs-on: ubuntu-latest
-    outputs:
-      should_test: ${{ steps.decide.outputs.should_test }}
-    steps:
-      - name: Check last successful scheduled revision
-        id: decide
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
-            echo "should_test=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          previous=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/source-regression.yml/runs?branch=main&event=schedule&status=success&per_page=1" --jq '.workflow_runs[0].head_sha // ""' 2>/dev/null || true)
-          if [[ "$previous" == "$GITHUB_SHA" ]]; then
-            echo "should_test=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "should_test=true" >> "$GITHUB_OUTPUT"
-          fi
-
   regression:
-    name: Supplemental source regression (macOS)
-    needs: plan
-    if: needs.plan.outputs.should_test == 'true'
+    name: Complete source regression (macOS)
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
     runs-on: macos-14
     timeout-minutes: 120
     steps:

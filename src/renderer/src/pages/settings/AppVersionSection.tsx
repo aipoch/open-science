@@ -110,7 +110,6 @@ const AppVersionSection = ({
           </div>
         }
         className="pt-0 sm:grid-cols-[minmax(0,1fr)_auto]"
-        controlClassName="w-auto justify-self-end"
       >
         <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
           <Button type="button" variant="outline" onClick={() => void check()} disabled={!canCheck}>
