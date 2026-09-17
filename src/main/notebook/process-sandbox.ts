@@ -41,6 +41,8 @@ export type NotebookSandboxInvocation = Readonly<{
   inheritedFileDescriptorCount?: number
   // Package installers opt in so standard Windows mode can contain helpers in a native Job Object.
   superviseProcessTree?: boolean
+  /** Transient R admission decision; launch must retain this protection requirement. */
+  windowsProtectionRequired?: boolean
   filesystem: Readonly<{
     readOnlyRoots: readonly string[]
     optionalReadOnlyRoots?: readonly string[]
@@ -91,7 +93,7 @@ export class NotebookRuntimeAccessCancelledError extends Error {
 export interface NotebookProcessSandbox {
   ensureRuntimeAccess?(
     request: Pick<NotebookSandboxInvocation, 'runtime' | 'executable' | 'sessionId' | 'signal'>
-  ): Promise<void>
+  ): Promise<Readonly<{ windowsProtectionRequired: boolean }> | void>
   wrap(invocation: NotebookSandboxInvocation): Promise<NotebookSandboxedSpawn>
   requestNetworkAccess?(
     request: NotebookNetworkAccessDecisionRequest

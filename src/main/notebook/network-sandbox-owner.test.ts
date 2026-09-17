@@ -29,6 +29,7 @@ const backend = vi.hoisted(() => ({
   status: vi.fn().mockResolvedValue({ kind: 'ready', warnings: [] }),
   installWindows: vi.fn().mockResolvedValue({ cancelled: false }),
   removeWindows: vi.fn().mockResolvedValue({ cancelled: false }),
+  isWindowsProtectionConfigured: vi.fn().mockResolvedValue(true),
   getWindowsRuntimeAccess: vi.fn().mockResolvedValue({ authorized: true, registered: true }),
   setWindowsRuntimeAccess: vi.fn().mockResolvedValue({ cancelled: false }),
   rKernelProtocolProbe: vi.fn().mockResolvedValue(true),
@@ -49,6 +50,7 @@ vi.mock('@aipoch/notebook-network-sandbox', () => ({
     updateConfiguration = backend.updateConfiguration
     installWindows = backend.installWindows
     removeWindows = backend.removeWindows
+    isWindowsProtectionConfigured = backend.isWindowsProtectionConfigured
     getWindowsRuntimeAccess = backend.getWindowsRuntimeAccess
     setWindowsRuntimeAccess = backend.setWindowsRuntimeAccess
     dispose = backend.dispose
@@ -93,6 +95,7 @@ beforeEach(() => {
   backend.request = undefined
   vi.clearAllMocks()
   backend.status.mockResolvedValue({ kind: 'ready', warnings: [] })
+  backend.isWindowsProtectionConfigured.mockResolvedValue(true)
   backend.getWindowsRuntimeAccess.mockResolvedValue({ authorized: true, registered: true })
   backend.setWindowsRuntimeAccess.mockImplementation(
     async (_executable, authorized: boolean, verification?: Verification) => {
@@ -1769,6 +1772,70 @@ it('does not automatically grant durable permissions to an agent-created R envir
   }
 })
 
+it.each(['managed', 'external'] as const)(
+  'dispatches %s R in unconfigured Windows standard mode without authorization',
+  async (selection) => {
+    const root = await mkdtemp(join(tmpdir(), 'os-r-standard-'))
+    fixtureDirectories.push(root)
+    const bin = join(root, 'runtime', 'envs', '.r', 'Lib', 'R', 'bin')
+    await mkdir(bin, { recursive: true })
+    await writeFile(join(bin, 'R.exe'), '')
+    await writeFile(join(bin, 'Rscript.exe'), '')
+    backend.status.mockResolvedValue({ kind: 'setupRequired', platform: 'win32', reasons: [] })
+    backend.isWindowsProtectionConfigured.mockResolvedValue(false)
+    backend.getWindowsRuntimeAccess.mockResolvedValue({ authorized: false, registered: false })
+    backend.wrap.mockImplementation(async (command: { env: NodeJS.ProcessEnv }) => ({
+      argv: [
+        process.execPath,
+        '-e',
+        `
+        require('node:readline').createInterface({ input: process.stdin }).on('line', (line) => {
+          console.log(JSON.stringify({ req_id: line.split(' ')[0], stdout: '15', stderr: '', error: null, figures: [] }));
+        });
+      `
+      ],
+      env: command.env,
+      annotateStderr: (value: string) => value,
+      resetNetworkConnections: backend.resetNetworkConnections,
+      setExecutionActive: backend.setExecutionActive,
+      cleanup: (_reason: NotebookSandboxCleanupReason, outcome: NotebookSandboxProcessOutcome) =>
+        backend.cleanup(outcome)
+    }))
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: root,
+      platform: 'win32',
+      allowRuntimeAccessPrompt: false,
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn()
+    })
+    const executor = new NotebookKernelExecutor({ processSandbox: owner, platform: 'win32' })
+    try {
+      const result = await executor.execute({
+        language: 'r',
+        code: 'sum(1:5)',
+        cwd: root,
+        notebookSessionRoot: root,
+        dataRoot: root,
+        runtimeRoot: join(root, 'runtime'),
+        ...(selection === 'external' ? { resolvedInterpreter: { command: process.execPath } } : {}),
+        sessionId: 'standard-r',
+        projectId: 'project',
+        timeoutMs: 5000
+      })
+      expect(result.status, result.stderr).toBe('completed')
+      expect(result.stdout).toContain('15')
+      expect(backend.wrap).toHaveBeenCalledWith(
+        expect.objectContaining({ windowsProtectionRequired: false })
+      )
+      expect(backend.setWindowsRuntimeAccess).not.toHaveBeenCalled()
+    } finally {
+      await executor.shutdown()
+      await owner.dispose()
+    }
+  }
+)
+
 it('authorizes missing R access before the original Notebook cell is dispatched', async () => {
   const root = await mkdtemp(join(tmpdir(), 'os-r-notebook-access-'))
   fixtureDirectories.push(root)
@@ -1892,7 +1959,7 @@ it('does not repeat a cancelled UAC prompt and reports cancellation before cell 
         executable: process.execPath,
         sessionId: 'r-session'
       })
-    ).resolves.toBeUndefined()
+    ).resolves.toEqual({ windowsProtectionRequired: true })
   } finally {
     await executor.shutdown()
     await owner.dispose()
@@ -2427,7 +2494,9 @@ describe('R startup authorization admission', () => {
         backend.cleanup(outcome)
     })
     try {
-      await expect(owner.ensureRuntimeAccess(request)).resolves.toBeUndefined()
+      await expect(owner.ensureRuntimeAccess(request)).resolves.toEqual({
+        windowsProtectionRequired: true
+      })
       expect(backend.setWindowsRuntimeAccess).not.toHaveBeenCalled()
     } finally {
       await owner.dispose()

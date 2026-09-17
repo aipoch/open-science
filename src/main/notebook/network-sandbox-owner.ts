@@ -326,6 +326,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         ...(this.platform === 'win32' && invocation.target?.kind !== 'wsl2'
           ? { executable: invocation.executable, args: invocation.args }
           : {}),
+        windowsProtectionRequired: invocation.windowsProtectionRequired,
         cwd: invocation.cwd,
         env,
         ...(invocation.pathEnvironment ? { pathEnvironment: invocation.pathEnvironment } : {}),
@@ -732,7 +733,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
 
   async ensureRuntimeAccess(
     request: Pick<NotebookSandboxInvocation, 'runtime' | 'executable' | 'sessionId' | 'signal'>
-  ): Promise<void> {
+  ): Promise<Readonly<{ windowsProtectionRequired: boolean }> | void> {
     if (this.platform !== 'win32' || request.runtime !== 'r') return
     if (request.signal?.aborted)
       throw new NotebookRuntimeAccessCancelledError('R access preparation was cancelled.')
@@ -751,9 +752,13 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       if (request.signal?.aborted)
         throw new NotebookRuntimeAccessCancelledError('R access preparation was cancelled.')
       const access = await this.getOrCreateSandbox().getWindowsRuntimeAccess(request.executable)
+      const configured = await this.getOrCreateSandbox().isWindowsProtectionConfigured()
+      if (request.signal?.aborted)
+        throw new NotebookRuntimeAccessCancelledError('R access preparation was cancelled.')
+      if (!configured) return { windowsProtectionRequired: false }
       if (access.authorized) {
         this.cancelledRuntimeAccess.delete(key)
-        return
+        return { windowsProtectionRequired: true }
       }
       if (this.cancelledRuntimeAccess.has(key)) throw new NotebookRuntimeAccessCancelledError()
       if (request.signal?.aborted)
@@ -786,10 +791,17 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       if (result.cancelled) throw new NotebookRuntimeAccessCancelledError()
       if (request.signal?.aborted)
         throw new NotebookRuntimeAccessCancelledError('R access preparation was cancelled.')
+      return { windowsProtectionRequired: true }
     })
-    this.runtimeAccessQueue = operation.catch(() => undefined)
+    this.runtimeAccessQueue = operation.then(
+      () => undefined,
+      () => undefined
+    )
     const trackedOperation = operation.then(
-      () => diagnostic.complete(),
+      (admission) => {
+        diagnostic.complete()
+        return admission
+      },
       (error) => {
         if (error instanceof NotebookRuntimeAccessCancelledError) diagnostic.cancel()
         else diagnostic.fail(error)
@@ -800,7 +812,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     if (!signal) return trackedOperation
     // A waiting session can stop immediately. Once elevation starts, keep the native owner and
     // writer lease until its journal is settled; cancellation must not abandon persistent grants.
-    return new Promise<void>((resolve, reject) => {
+    return new Promise<Readonly<{ windowsProtectionRequired: boolean }>>((resolve, reject) => {
       const onAbort = (): void => {
         if (!started) {
           diagnostic.cancel()

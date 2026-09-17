@@ -87,6 +87,8 @@ export type NotebookSandboxCommand = Readonly<{
   inheritedFileDescriptorCount?: number
   // Opt-in ownership for short-lived workers; ordinary persistent kernels keep their current path.
   superviseProcessTree?: boolean
+  /** Transient R admission decision; launch must retain this protection requirement. */
+  windowsProtectionRequired?: boolean
   filesystem?: NotebookFilesystemPolicy
   onNetworkAccessRequest: NotebookNetworkDecisionHandler
 }>

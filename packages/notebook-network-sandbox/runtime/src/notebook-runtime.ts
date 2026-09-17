@@ -23,6 +23,7 @@ import { macosLaunch } from './platform/macos-isolation.js'
 import { wsl2Launch } from './platform/wsl2-isolation.js'
 import {
   checkWindowsAppContainer,
+  isWindowsProtectionConfigured as isWindowsProtectionConfiguredImpl,
   installWindowsAppContainer,
   setWindowsRuntimeAccess as setWindowsRuntimeAccessImpl,
   getWindowsRuntimeAccess as getWindowsRuntimeAccessImpl,
@@ -99,6 +100,7 @@ type NetworkWrapRequest = Readonly<{
   localRpcSocketPath?: string
   inheritedFileDescriptorCount?: number
   superviseProcessTree?: boolean
+  windowsProtectionRequired?: boolean
   filesystem: FilesystemLayoutInput
   signal?: AbortSignal
 }>
@@ -355,7 +357,31 @@ const wrap = async (
       username: `notebook-${request.commandId}`,
       password: randomBytes(32).toString('base64url')
     }
-    const windowsGatewayPort = windowsProtectedGatewayPort
+    let windowsGatewayPort = windowsProtectedGatewayPort
+    if (process.platform === 'win32' && request.windowsProtectionRequired !== undefined) {
+      if (!request.executable) throw new Error('R admission requires an exact executable.')
+      // Recheck journals/receipts and the admitted mode before selecting a launcher. Never turn
+      // a protected R admission into an uncontained process when setup changes or breaks.
+      await getWindowsRuntimeAccessImpl(
+        config.windowsHostPath,
+        config.installationId,
+        config.windowsOwnershipRoot,
+        request.executable
+      )
+      const configured = await isWindowsProtectionConfigured(config)
+      if (configured !== request.windowsProtectionRequired) {
+        throw new Error('Windows protection changed before R startup. Retry the Notebook cell.')
+      }
+      if (request.windowsProtectionRequired) {
+        const check = await refreshWindowsProtection()
+        windowsGatewayPort = windowsProtectedGatewayPort
+        if (check.errors.length > 0 || !windowsGatewayPort) {
+          throw new Error('Windows protected mode is not ready for R: ' + check.errors.join('; '))
+        }
+      } else {
+        windowsGatewayPort = undefined
+      }
+    }
     gateway = await CommandGateway.open({
       decide: (host, port, purpose) => decide(request.commandId, host, port, purpose),
       ...(certificateAuthority
@@ -596,6 +622,13 @@ const removeWindows = (config: NetworkRuntimeConfig): Promise<{ cancelled: boole
     config.windowsOwnershipRoot
   )
 
+const isWindowsProtectionConfigured = (config: NetworkRuntimeConfig): Promise<boolean> =>
+  isWindowsProtectionConfiguredImpl(
+    config.windowsHostPath,
+    config.installationId,
+    config.windowsOwnershipRoot
+  )
+
 const getWindowsRuntimeAccess = (
   config: NetworkRuntimeConfig,
   executable: string
@@ -650,6 +683,7 @@ export {
   removeWindows,
   setWindowsRuntimeAccess,
   getWindowsRuntimeAccess,
+  isWindowsProtectionConfigured,
   statusForPlatform
 }
 export type {
