@@ -406,7 +406,8 @@
           "src/renderer/src/pages/workspace/previews/preview-pagination-contract.test.tsx",
           "src/shared/notebook-network.test.ts",
           "src/shared/renderer-surface-inventory.test.ts",
-          "src/shared/renderer-surface-matrix.test.ts"
+          "src/shared/renderer-surface-matrix.test.ts",
+          "src/main/settings/skill-catalog.test.ts"
         ]
       },
       "capabilityOverlays": [],
@@ -1736,7 +1737,8 @@
           "src/renderer/src/pages/workspace/artifact-publication-preview.integration.test.tsx",
           "src/renderer/src/pages/workspace/previews/preview-pagination-contract.test.tsx",
           "src/shared/renderer-surface-inventory.test.ts",
-          "src/shared/renderer-surface-matrix.test.ts"
+          "src/shared/renderer-surface-matrix.test.ts",
+          "src/main/settings/skill-catalog.test.ts"
         ]
       },
       "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
@@ -4587,7 +4589,8 @@
           "src/renderer/src/pages/workspace/artifact-publication-preview.integration.test.tsx",
           "src/renderer/src/pages/workspace/previews/preview-pagination-contract.test.tsx",
           "src/shared/renderer-surface-inventory.test.ts",
-          "src/shared/renderer-surface-matrix.test.ts"
+          "src/shared/renderer-surface-matrix.test.ts",
+          "src/main/settings/skill-catalog.test.ts"
         ]
       },
       "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
@@ -5332,7 +5335,8 @@
           "src/renderer/src/pages/workspace/artifact-publication-preview.integration.test.tsx",
           "src/renderer/src/pages/workspace/previews/preview-pagination-contract.test.tsx",
           "src/shared/renderer-surface-inventory.test.ts",
-          "src/shared/renderer-surface-matrix.test.ts"
+          "src/shared/renderer-surface-matrix.test.ts",
+          "src/main/settings/skill-catalog.test.ts"
         ]
       },
       "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
@@ -5859,7 +5863,8 @@
           "src/renderer/src/pages/workspace/previews/preview-pagination-contract.test.tsx",
           "src/renderer/web/api-installer.test.ts",
           "src/renderer/web/bootstrap.test.ts",
-          "src/renderer/web/renderer-argument-shape-characterization.test.ts"
+          "src/renderer/web/renderer-argument-shape-characterization.test.ts",
+          "src/main/settings/skill-catalog.test.ts"
         ]
       },
       "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
@@ -6375,7 +6380,8 @@
           "src/renderer/src/pages/workspace/artifact-publication-preview.integration.test.tsx",
           "src/renderer/src/pages/workspace/previews/preview-pagination-contract.test.tsx",
           "src/shared/renderer-surface-inventory.test.ts",
-          "src/shared/renderer-surface-matrix.test.ts"
+          "src/shared/renderer-surface-matrix.test.ts",
+          "src/main/settings/skill-catalog.test.ts"
         ]
       },
       "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
@@ -12146,7 +12152,8 @@
           "src/renderer/src/pages/workspace/artifact-publication-preview.integration.test.tsx",
           "src/renderer/src/pages/workspace/previews/preview-pagination-contract.test.tsx",
           "src/shared/renderer-surface-inventory.test.ts",
-          "src/shared/renderer-surface-matrix.test.ts"
+          "src/shared/renderer-surface-matrix.test.ts",
+          "src/main/settings/skill-catalog.test.ts"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -18337,7 +18344,8 @@
           "src/renderer/src/pages/workspace/artifact-publication-preview.integration.test.tsx",
           "src/renderer/src/pages/workspace/previews/preview-pagination-contract.test.tsx",
           "src/shared/renderer-surface-inventory.test.ts",
-          "src/shared/renderer-surface-matrix.test.ts"
+          "src/shared/renderer-surface-matrix.test.ts",
+          "src/main/settings/skill-catalog.test.ts"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -19485,7 +19493,8 @@
           "src/renderer/src/pages/workspace/previews/preview-pagination-contract.test.tsx",
           "src/renderer/src/pages/workspace/previews/renderers/pdf-figure-selections.test.ts",
           "src/shared/renderer-surface-inventory.test.ts",
-          "src/shared/renderer-surface-matrix.test.ts"
+          "src/shared/renderer-surface-matrix.test.ts",
+          "src/main/settings/skill-catalog.test.ts"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -19827,7 +19836,8 @@
           "src/renderer/src/pages/workspace/artifact-publication-preview.integration.test.tsx",
           "src/renderer/src/pages/workspace/previews/preview-pagination-contract.test.tsx",
           "src/shared/renderer-surface-inventory.test.ts",
-          "src/shared/renderer-surface-matrix.test.ts"
+          "src/shared/renderer-surface-matrix.test.ts",
+          "src/main/settings/skill-catalog.test.ts"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -20124,7 +20134,8 @@
           "src/renderer/src/pages/workspace/managed-version-diff-presentation.test.ts",
           "src/renderer/src/pages/workspace/previews/preview-pagination-contract.test.tsx",
           "src/shared/renderer-surface-inventory.test.ts",
-          "src/shared/renderer-surface-matrix.test.ts"
+          "src/shared/renderer-surface-matrix.test.ts",
+          "src/main/settings/skill-catalog.test.ts"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -20528,7 +20539,8 @@
           "src/renderer/src/pages/workspace/artifact-publication-preview.integration.test.tsx",
           "src/renderer/src/pages/workspace/previews/preview-pagination-contract.test.tsx",
           "src/shared/renderer-surface-inventory.test.ts",
-          "src/shared/renderer-surface-matrix.test.ts"
+          "src/shared/renderer-surface-matrix.test.ts",
+          "src/main/settings/skill-catalog.test.ts"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -21408,7 +21420,8 @@
           "src/renderer/src/pages/workspace/previews/preview-pagination-contract.test.tsx",
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
-          "src/main/notebook/dependency-analysis.stdlib-replay.test.ts"
+          "src/main/notebook/dependency-analysis.stdlib-replay.test.ts",
+          "src/main/settings/skill-catalog.test.ts"
         ]
       },
       "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
@@ -23211,7 +23224,8 @@
           "src/main/web-service/task-api.test.ts",
           "src/main/window-find-ipc.test.ts",
           "src/shared/renderer-surface-inventory.test.ts",
-          "src/shared/renderer-surface-matrix.test.ts"
+          "src/shared/renderer-surface-matrix.test.ts",
+          "src/main/settings/skill-catalog.test.ts"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
@@ -24057,7 +24071,8 @@
           "src/main/web-service/task-api.test.ts",
           "src/main/window-find-ipc.test.ts",
           "src/shared/renderer-surface-inventory.test.ts",
-          "src/shared/renderer-surface-matrix.test.ts"
+          "src/shared/renderer-surface-matrix.test.ts",
+          "src/main/settings/skill-catalog.test.ts"
         ]
       },
       "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
