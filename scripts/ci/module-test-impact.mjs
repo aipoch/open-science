@@ -145,7 +145,9 @@ export function createAffectedTestPlan(changes, graph, manifest = defaultManifes
   }
 
   const modules = expandConsumers(manifest, [...seeds])
-  const fullModule = modules.find((moduleId) => manifest.modules[moduleId].fullTestReason)
+  const fullModule = [...modules, ...testModules].find(
+    (moduleId) => manifest.modules[moduleId].fullTestReason
+  )
   if (fullModule) {
     return fullPlan(`${fullModule} -> ${manifest.modules[fullModule].fullTestReason} -> full`)
   }

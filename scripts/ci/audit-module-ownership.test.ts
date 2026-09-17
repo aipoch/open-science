@@ -138,3 +138,33 @@ it.each(['certification-contract', 'execution-contract'])(
     expect(plan.testFiles).toContain('src/main/delegation/acp-execution.test.ts')
   }
 )
+
+it.each([
+  'shared_application_contracts',
+  'shared_conversation_contracts',
+  'shared_workspace_contracts'
+])('retains intentional full validation for edited tests in %s', (moduleId) => {
+  const module = manifest.modules[moduleId]
+  const path = module.ownerPaths.find(
+    (path: string) => /\.test\.tsx?$/.test(path) && !module.interfacePaths.includes(path)
+  )
+  expect(path).toBeDefined()
+  const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph)
+  expect(plan.mode).toBe('full')
+  expect(plan.reasonChains.join('\n')).toContain(module.fullTestReason)
+})
+
+it.each([
+  'packages/process-tree-native/src/process_tree_native.cc',
+  'packages/process-tree-native/index.cjs',
+  'packages/process-tree-native/index.d.ts'
+])('retains dynamic native loading coverage for %s', (path) => {
+  const test = 'src/main/process-tree-native-loading.macos.integration.test.ts'
+  const edges = JSON.parse(
+    readFileSync(resolve('scripts/ci/module-runtime-consumers.json'), 'utf8')
+  )
+  expect(edges['packages/process-tree-native/index.cjs']).toContain(test)
+  const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph)
+  expect(plan.mode).toBe('selective')
+  expect(plan.testFiles).toContain(test)
+})

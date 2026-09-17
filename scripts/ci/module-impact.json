@@ -9749,7 +9749,8 @@
           "src/renderer/src/stores/settings-connectors-slice.test.ts",
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
-          "scripts/ci/e2e-setup-snapshot.test.ts"
+          "scripts/ci/e2e-setup-snapshot.test.ts",
+          "src/main/process-tree-native-loading.macos.integration.test.ts"
         ]
       },
       "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
