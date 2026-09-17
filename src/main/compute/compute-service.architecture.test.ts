@@ -31,7 +31,6 @@ import { RENDERER_CONTRACT_CATALOG } from '../../shared/renderer-contract-catalo
 const projectRoot = resolve(__dirname, '../../..')
 const mainRoot = resolve(projectRoot, 'src/main')
 const manifestPath = resolve(projectRoot, 'scripts/ci/module-impact.json')
-const architectureTestPath = 'src/main/compute/compute-service.architecture.test.ts'
 const computePaths = {
   connectionBroker: resolve(mainRoot, 'compute/connection-broker.ts'),
   facade: resolve(mainRoot, 'compute/compute-service.ts'),

@@ -46,7 +46,6 @@ const orchestrationRoot = resolve(mainRoot, 'orchestration')
 const manifestPath = resolve(projectRoot, 'scripts/ci/module-impact.json')
 const prismaSchemaPath = resolve(projectRoot, 'prisma/schema.prisma')
 const sharedReviewerPath = resolve(projectRoot, 'src/shared/reviewer.ts')
-const architectureTestPath = 'src/main/reviewer/reviewer-orchestrator.architecture.test.ts'
 const reviewerPaths = {
   facade: resolve(mainRoot, 'reviewer/orchestrator.ts'),
   assessmentOwner: resolve(mainRoot, 'reviewer/review-assessment-owner.ts'),
