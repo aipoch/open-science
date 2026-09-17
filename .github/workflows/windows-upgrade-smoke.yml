@@ -238,5 +238,7 @@ jobs:
           node-version: 22
       - name: Install test dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Generate test database client
+        run: npx prisma generate
       - name: Test actual Windows baseline selection and installer observation
         run: npx vitest run scripts/windows-upgrade-baseline.test.ts scripts/windows-updater-certification.test.ts
