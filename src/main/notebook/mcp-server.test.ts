@@ -443,6 +443,81 @@ describe('notebook MCP server config', () => {
     }
   )
 
+  it.each(['decision', 'cancellation'])(
+    'keeps network approval pending past the MCP inactivity timeout until %s',
+    async (outcome) => {
+      const server = createNotebookMcpServer({
+        endpoint: 'http://127.0.0.1:4567',
+        token: 'secret-token',
+        projectId: 'default-project',
+        sessionId: 'session-1',
+        workspaceCwd: '/workspace'
+      })
+      const client = new ModelContextProtocolClient({ name: 'network-wait-test', version: '1.0.0' })
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+      await Promise.all([server.connect(serverTransport), client.connect(clientTransport)])
+      const originalFetch = globalThis.fetch
+      const cancellation = new AbortController()
+      let rpcSignal: AbortSignal | null | undefined
+      let finishRpc: ((response: Response) => void) | undefined
+      globalThis.fetch = vi.fn(
+        (_input, init) =>
+          new Promise<Response>((resolve, reject) => {
+            finishRpc = resolve
+            rpcSignal = init?.signal
+            rpcSignal?.addEventListener('abort', () => reject(new Error('RPC cancelled')), {
+              once: true
+            })
+          })
+      )
+      vi.useFakeTimers()
+      let failure: unknown
+      const onprogress = vi.fn()
+      const call = client
+        .callTool(
+          {
+            name: 'request_network_access',
+            arguments: {
+              hostname: 'tcga-xena-hub.s3.us-east-1.amazonaws.com',
+              runtime: 'python',
+              reason: 'Download the dataset.'
+            }
+          },
+          undefined,
+          { onprogress, signal: cancellation.signal, timeout: 60_000, resetTimeoutOnProgress: true }
+        )
+        .catch((error) => {
+          failure = error
+        })
+      try {
+        await vi.advanceTimersByTimeAsync(61_000)
+        expect(failure).toBeUndefined()
+        expect(onprogress).toHaveBeenCalledTimes(2)
+        if (outcome === 'cancellation') {
+          cancellation.abort()
+          await call
+          await vi.advanceTimersByTimeAsync(0)
+          expect(failure).toBeDefined()
+          expect(rpcSignal?.aborted).toBe(true)
+        } else {
+          finishRpc?.(
+            new Response(JSON.stringify({ result: { status: 'allowed' } }), { status: 200 })
+          )
+          await expect(call).resolves.toMatchObject({ content: [{ type: 'text' }] })
+        }
+        await vi.advanceTimersByTimeAsync(60_000)
+        expect(onprogress).toHaveBeenCalledTimes(2)
+      } finally {
+        finishRpc?.(new Response(JSON.stringify({ result: { status: 'denied' } }), { status: 200 }))
+        await call
+        vi.useRealTimers()
+        globalThis.fetch = originalFetch
+        await client.close()
+        await server.close()
+      }
+    }
+  )
+
   it('exposes bounded memory discovery, search, and append-only agent tools', () => {
     const tools = Object.fromEntries(NOTEBOOK_RPC_TOOLS.map((tool) => [tool.name, tool]))
 
@@ -904,6 +979,7 @@ describe('notebook_execute tool', () => {
   })
 
   it.each([
+    ['requestNetworkAccess', true],
     ['execute', true],
     ['executeControl', true],
     ['executeShell', true],

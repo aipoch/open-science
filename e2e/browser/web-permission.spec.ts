@@ -1,5 +1,29 @@
 import { expect, test } from '@playwright/test'
 
+test('withdraws a cancelled network approval on an incremental state update', async ({
+  page
+}, testInfo) => {
+  await page.setViewportSize({ width: 1000, height: 550 })
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.goto('/web-permission.html?network=1&lang=zh-Hans')
+  const title = page.getByText('连接到 tcga-xena-hub.s3.us-east-1.amazonaws.com？', { exact: true })
+  await expect(page.getByTestId('permission-header')).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('network-approval-pending.png') })
+  await page.evaluate(() =>
+    (window as unknown as { cancelNetworkApproval: () => void }).cancelNetworkApproval()
+  )
+  await expect(page.getByTestId('permission-header')).toHaveCount(0)
+  await expect(title).toHaveCount(0)
+  await expect(page.getByTestId('no-pending-approval')).toBeVisible()
+  await page.evaluate(() => window.scrollTo(0, 0))
+  await page.screenshot({ path: testInfo.outputPath('network-approval-cancelled.png') })
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { webPermissionResponses: unknown[] }).webPermissionResponses
+    )
+  ).toEqual([])
+})
+
 test('shows the web-reading scope and keeps Once available', async ({ page }) => {
   await page.goto('/web-permission.html')
   await expect(page.getByText('Allow web reading?', { exact: true })).toBeVisible()

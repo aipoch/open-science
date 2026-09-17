@@ -214,7 +214,15 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
     },
     setTimer: base.setTimer,
     clearTimer: base.clearTimer,
-    onPermissionSettled: callbacks.onPermissionSettled,
+    onPermissionSettled: (requestId, state) => {
+      try {
+        callbacks.onPermissionSettled?.(requestId, state)
+      } finally {
+        // RPC cancellation settles through the broker without a renderer response command.
+        // Incremental tool events do not publish the updated pending-permission list.
+        publication.emitState()
+      }
+    },
     onToolPermissionSettled: (request, state, context) => {
       const frameworkId = sessionRegistry
         .lookup(request.sessionId)
