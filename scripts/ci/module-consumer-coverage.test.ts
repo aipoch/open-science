@@ -115,5 +115,8 @@ it('retains every statically reachable consumer test and declared runtime-loadin
     for (const path of visited)
       if (isTest(path) && !declared.has(path)) missing.push(`${id} -> ${path}`)
   }
-  expect(missing, 'Add missing owner/contract/consumer evidence to module-impact.json').toEqual([])
+  expect(
+    missing,
+    'Add missing owner/contract/consumer evidence to scripts/ci/module-impact/<module-id>.json'
+  ).toEqual([])
 }, 60_000)

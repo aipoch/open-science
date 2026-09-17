@@ -159,7 +159,8 @@ export function checkModuleOwnership({
       violations.push({
         path,
         rule: 'module-ownership-new',
-        message: 'Register this new file and its tests/consumers in scripts/ci/module-impact.json.'
+        message:
+          'Register this new file and its tests/consumers in scripts/ci/module-impact/<module-id>.json.'
       })
     } else if (covered(path, baseManifest)) {
       violations.push({

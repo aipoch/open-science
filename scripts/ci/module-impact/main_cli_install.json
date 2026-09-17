@@ -1,0 +1,47 @@
+{
+  "ownerPaths": [
+    "src/main/cli-install/ipc.test.ts",
+    "src/main/cli-install/ipc.ts",
+    "src/main/cli-install/launcher.test.ts",
+    "src/main/cli-install/launcher.ts",
+    "src/main/cli-install/maintenance.test.ts"
+  ],
+  "interfacePaths": ["src/main/cli-install/ipc.ts"],
+  "consumerModules": [],
+  "testFiles": {
+    "owner": [
+      "src/main/cli-install/ipc.test.ts",
+      "src/main/cli-install/launcher.test.ts",
+      "src/main/cli-install/maintenance.test.ts"
+    ],
+    "contract": [
+      "src/preload/index.test.ts",
+      "src/renderer/web/api-installer.test.ts",
+      "src/shared/renderer-contract-catalog.test.ts"
+    ],
+    "consumer": [
+      "src/main/acp/runtime.test.ts",
+      "src/main/application-command-client.test.ts",
+      "src/main/application-command-composition.test.ts",
+      "src/main/application-command-electron-adapter.test.ts",
+      "src/main/host-application-commands.test.ts",
+      "src/main/index-fatal-errors.test.ts",
+      "src/main/index-startup-failure.test.ts",
+      "src/main/ipc-surfaces/desktop-utilities.test.ts",
+      "src/main/literature/scale-regressions.test.ts",
+      "src/main/remote-access/ipc.test.ts",
+      "src/main/remote-access/pairing.test.ts",
+      "src/main/remote-access/service.test.ts",
+      "src/main/runtime-electron-wiring.test.ts",
+      "src/main/settings/bootstrap.integration.test.ts",
+      "src/main/web-service/artifact-download.integration.test.ts",
+      "src/main/web-service/controller.test.ts",
+      "src/main/web-service/http-server.test.ts",
+      "src/main/web-service/task-api.test.ts",
+      "src/shared/renderer-surface-inventory.test.ts",
+      "src/shared/renderer-surface-matrix.test.ts"
+    ]
+  },
+  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
+  "fallbackCapability": "main_runtime"
+}

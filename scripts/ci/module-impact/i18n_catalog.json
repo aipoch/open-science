@@ -1,0 +1,30 @@
+{
+  "ownerPaths": [
+    "src/shared/i18n/locales/de.json",
+    "src/shared/i18n/locales/es.json",
+    "src/shared/i18n/locales/fr.json",
+    "src/shared/i18n/locales/ja.json",
+    "src/shared/i18n/locales/ko.json",
+    "src/shared/i18n/locales/ru.json",
+    "src/shared/i18n/locales/zh-Hans.json",
+    "src/shared/i18n/locales/zh-Hant.json"
+  ],
+  "interfacePaths": [
+    "src/shared/i18n/locales/de.json",
+    "src/shared/i18n/locales/es.json",
+    "src/shared/i18n/locales/fr.json",
+    "src/shared/i18n/locales/ja.json",
+    "src/shared/i18n/locales/ko.json",
+    "src/shared/i18n/locales/ru.json",
+    "src/shared/i18n/locales/zh-Hans.json",
+    "src/shared/i18n/locales/zh-Hant.json"
+  ],
+  "consumerModules": [],
+  "testFiles": {
+    "owner": ["src/renderer/src/i18n/resources.test.ts"],
+    "contract": ["src/main/locale/owner.test.ts"],
+    "consumer": []
+  },
+  "capabilityOverlays": ["i18n_catalog"],
+  "fallbackCapability": "shared_contract"
+}

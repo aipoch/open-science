@@ -1,0 +1,32 @@
+{
+  "ownerPaths": [
+    "src/renderer/src/test-utils/compute-job.ts",
+    "src/renderer/src/test-utils/css-highlights.ts",
+    "src/renderer/src/test-utils/dialog-form.ts"
+  ],
+  "interfacePaths": [
+    "src/renderer/src/test-utils/compute-job.ts",
+    "src/renderer/src/test-utils/css-highlights.ts",
+    "src/renderer/src/test-utils/dialog-form.ts"
+  ],
+  "consumerModules": [],
+  "testFiles": {
+    "owner": [],
+    "contract": [],
+    "consumer": [
+      "src/renderer/src/components/JobDetailModal.render.test.tsx",
+      "src/renderer/src/components/job-observation-ui.test.tsx",
+      "src/renderer/src/lib/compute/job-analysis-trigger.test.ts",
+      "src/renderer/src/pages/home/home-dialogs.render.test.tsx",
+      "src/renderer/src/pages/settings/ClaudeIsolatedSignInModal.render.test.tsx",
+      "src/renderer/src/pages/workspace/SessionBackgroundActivity.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceActivityGroup.annotations.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceMessageScroller.annotations.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspacePlanActivityRecord.test.tsx",
+      "src/renderer/src/pages/workspace/annotations/TextAnnotationSurface.test.tsx",
+      "src/renderer/src/stores/session-job-store.test.ts"
+    ]
+  },
+  "capabilityOverlays": [],
+  "fallbackCapability": "renderer_view"
+}

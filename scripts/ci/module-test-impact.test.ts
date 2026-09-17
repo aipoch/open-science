@@ -153,7 +153,7 @@ describe('module test impact commands', () => {
       [{ path: 'src/main/compute/compute-job-lifecycle.ts', status: 'added' }],
       { status: 'current', testFiles: [] }
     )
-    expect(affected.modules).toEqual(['workspace_page', 'compute_service'])
+    expect(affected.modules).toEqual(['compute_service', 'workspace_page'])
     expect(affected.testFiles).toEqual(
       expect.arrayContaining([
         'src/main/compute/compute-job-lifecycle.test.ts',
@@ -176,7 +176,7 @@ describe('module test impact commands', () => {
     })
 
     expect(affected.mode).toBe('selective')
-    expect(affected.modules).toEqual(['workspace_page', 'compute_service'])
+    expect(affected.modules).toEqual(['compute_service', 'workspace_page'])
     expect(affected.testFiles).toEqual(
       expect.arrayContaining([
         'src/main/compute/compute-service.architecture.test.ts',
@@ -279,10 +279,10 @@ describe('module test impact commands', () => {
 
     expect(plan.mode).toBe('selective')
     expect(plan.modules).toEqual([
-      'artifact_storage',
       'artifact_provenance',
-      'session_persistence',
-      'project_lifecycle'
+      'artifact_storage',
+      'project_lifecycle',
+      'session_persistence'
     ])
     expect(plan.testFiles).toContain('src/main/reviewer/ipc.test.ts')
     expect(plan.reasonChains).toContain('artifact_storage -> artifact_provenance')

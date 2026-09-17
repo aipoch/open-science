@@ -56,7 +56,7 @@ describe('module ownership and test impact manifest', () => {
     const cyclicManifest = readManifest()
     cyclicManifest.modules.workspace_page.consumerModules = ['session_renderer']
     expect(() => validateModuleImpactManifest(cyclicManifest)).toThrow(
-      'Module-impact consumer cycle: session_renderer -> workspace_runtime -> workspace_page -> session_renderer'
+      'Module-impact consumer cycle: acp_runtime -> reviewer_orchestrator -> workspace_runtime -> workspace_page -> session_renderer -> workspace_runtime'
     )
   })
 

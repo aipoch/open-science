@@ -63,7 +63,8 @@ describe('module registration layouts', () => {
   afterEach(() => rmSync(root, { recursive: true, force: true }))
 
   it('preserves every repository record and representative selection after splitting', () => {
-    const original = loadModuleImpactManifest()
+    put(moduleImpactRegistrationPath, loadModuleImpactManifest())
+    const original = local()
     split(original)
     const sharded = local()
     expect(sharded).toEqual(original)
@@ -213,7 +214,10 @@ describe('module registration layouts', () => {
     )
   })
 
-  it('keeps the checked-in registration inline during the reader rollout', () => {
-    expect(JSON.parse(readFileSync(moduleImpactRegistrationPath, 'utf8')).modules).toBeDefined()
+  it('keeps checked-in root metadata separate from module records', () => {
+    expect(JSON.parse(readFileSync(moduleImpactRegistrationPath, 'utf8'))).toEqual({
+      schemaVersion: 1
+    })
+    expect(Object.keys(loadModuleImpactManifest().modules).length).toBeGreaterThan(0)
   })
 })

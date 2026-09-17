@@ -156,7 +156,7 @@ ci/ai-pr-review
 
 僅目錄相近不能作為影響證據。若檔案混合多項職責，應視為影響介面，或使用完整備援。
 
-`test:module` 僅支援 `scripts/ci/module-impact.json` 宣告的模組 ID。它會執行該模組精選的擁有者、契約及代表性使用端測試；對介面變更而言，它不是完整下游驗證。介面或其使用端可能變更時，請使用 `test:affected` 或精確 head 的 PR Gate 計畫。
+`test:module` 僅支援由 `scripts/ci/module-impact/` 下檔案名稱定義的模組 ID。它會執行該模組精選的擁有者、契約及代表性使用端測試；對介面變更而言，它不是完整下游驗證。介面或其使用端可能變更時，請使用 `test:affected` 或精確 head 的 PR Gate 計畫。
 
 ### 完整備援
 

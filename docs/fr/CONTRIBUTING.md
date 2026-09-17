@@ -218,8 +218,8 @@ La seule proximité de répertoire n'est pas une preuve d'impact. Si un fichier
 mélange plusieurs responsabilités, traitez-le comme affectant une Interface ou
 utilisez le repli complet.
 
-`test:module` ne prend en charge que les identifiants de Module déclarés dans
-`scripts/ci/module-impact.json`. Il exécute les tests propriétaires, de contrat
+`test:module` ne prend en charge que les identifiants de Module définis par les noms de fichiers dans
+`scripts/ci/module-impact/`. Il exécute les tests propriétaires, de contrat
 et de consommateurs représentatifs sélectionnés pour ce Module ; ce n'est pas
 une vérification aval complète pour un changement d'Interface. Utilisez
 `test:affected` ou le plan PR Gate à head exact lorsqu'une Interface ou ses

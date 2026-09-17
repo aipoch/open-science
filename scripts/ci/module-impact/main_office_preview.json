@@ -1,0 +1,47 @@
+{
+  "ownerPaths": [
+    "src/main/office-preview/office-preview-electron.test.ts",
+    "src/main/office-preview/office-preview-electron.ts",
+    "src/main/office-preview/office-preview-ipc-lifecycle.test.ts",
+    "src/main/office-preview/office-preview-ipc.test.ts",
+    "src/main/office-preview/office-preview-ipc.ts",
+    "src/main/office-preview/office-preview-navigation.test.ts",
+    "src/main/office-preview/office-preview-oopif-supervisor.test.ts",
+    "src/main/office-preview/office-preview-runtime-protocol.test.ts",
+    "src/main/office-preview/office-preview-runtime-protocol.ts",
+    "src/main/office-preview/office-preview-supervisor.ts"
+  ],
+  "interfacePaths": [
+    "src/main/office-preview/office-preview-electron.ts",
+    "src/main/office-preview/office-preview-ipc.ts",
+    "src/main/office-preview/office-preview-runtime-protocol.ts",
+    "src/main/office-preview/office-preview-supervisor.ts"
+  ],
+  "consumerModules": [],
+  "testFiles": {
+    "owner": [
+      "src/main/office-preview/office-preview-electron.test.ts",
+      "src/main/office-preview/office-preview-ipc-lifecycle.test.ts",
+      "src/main/office-preview/office-preview-ipc.test.ts",
+      "src/main/office-preview/office-preview-navigation.test.ts",
+      "src/main/office-preview/office-preview-oopif-supervisor.test.ts",
+      "src/main/office-preview/office-preview-runtime-protocol.test.ts"
+    ],
+    "contract": [
+      "src/preload/index.test.ts",
+      "src/renderer/web/api-installer.test.ts",
+      "src/shared/renderer-contract-catalog.test.ts",
+      "src/shared/renderer-surface-matrix.test.ts"
+    ],
+    "consumer": [
+      "src/main/index-fatal-errors.test.ts",
+      "src/main/index-startup-failure.test.ts",
+      "src/main/ipc-surfaces/office-preview.test.ts",
+      "src/main/reviewer/paged-preview-electron.test.ts",
+      "src/main/runtime-electron-wiring.test.ts",
+      "src/main/windows.test.ts"
+    ]
+  },
+  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
+  "fallbackCapability": "main_runtime"
+}

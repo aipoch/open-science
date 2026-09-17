@@ -271,7 +271,12 @@ describe('PR Gate workflow', () => {
           'classify-pr-changes.mjs',
           'change-impact.json'
         ]) {
-          put(`scripts/ci/${name}`, readFileSync(`scripts/ci/${name}`, 'utf8'))
+          put(
+            `scripts/ci/${name}`,
+            name === 'module-impact.json'
+              ? JSON.stringify(loadModuleImpactManifest())
+              : readFileSync(`scripts/ci/${name}`, 'utf8')
+          )
         }
         if (scenario === 'sharded') {
           const registered = loadModuleImpactManifest()

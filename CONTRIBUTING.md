@@ -229,7 +229,7 @@ Before handoff, derive the minimum set from the final material diff:
 Directory proximity alone is not impact evidence. If a file mixes responsibilities, treat it as
 Interface-affecting or use the full fallback.
 
-`test:module` supports only the Module IDs declared in `scripts/ci/module-impact.json`. It runs that
+`test:module` supports the Module IDs given by filenames in `scripts/ci/module-impact/`. It runs that
 Module's curated owner, contract, and representative consumer tests; it is not complete downstream
 verification for an Interface change. Use `test:affected` or the exact-head PR Gate plan when an
 Interface or its consumers may have changed.
@@ -409,20 +409,21 @@ trigger while its check is required.
 Keep required code-owner review and stale-approval dismissal enabled while relying on this policy.
 CI Integrity checks exact module ownership under `src/` and `packages/`, covering all tracked code,
 native sources, runtime helpers, assets and fixtures regardless of file extension.
-Register each file in exactly one module's `ownerPaths` in `scripts/ci/module-impact.json`,
+Register each file in exactly one module's `ownerPaths` in `scripts/ci/module-impact/<module-id>.json`,
 including owner, contract and consumer test evidence. Consumer-test membership does not establish
 ownership. New unregistered files and ownership regressions block admission; renames must register
 their new paths. Candidate manifests are read as data by trusted base code, against the Git merge
 base. E2E and CI scripts retain their existing routing and integrity checks.
 
-The registration reader also supports a metadata-only `module-impact.json` containing
+Registrations use a metadata-only `module-impact.json` containing
 `{"schemaVersion": 1}` plus one module object per `module-impact/<module-id>.json` file.
 The filename supplies the module ID; no shared index or committed aggregate is required.
 Use `loadModuleImpactManifest` from `scripts/ci/load-module-impact.mjs` in tooling and tests
 instead of reading the root JSON directly. The assembled manifest and validation rules are the
-same for both layouts. Do not mix inline modules and shards. The current registration remains
-inline until this reader reaches the trusted default branch; a subsequent PR can then move the
-records without bypassing trusted-base CI. The reader retains old-format Git history support.
+same for both layouts. Edit the affected module file directly; adding a module requires only a new
+`<module-id>.json` file, with a lowercase ID matching `[a-z][a-z0-9_]*`. Keep all existing ownership,
+test and consumer evidence when moving registrations. Do not add an inline module list or mix
+inline modules and shards. The reader retains old-format Git history support.
 
 The historical inventory is complete. Run `node scripts/ci/audit-module-ownership.mjs` (or `--json`)
 to check every tracked file in these roots, including files untouched by a PR. The inventory test

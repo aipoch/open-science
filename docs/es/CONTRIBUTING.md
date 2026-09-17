@@ -168,7 +168,7 @@ Antes de la entrega, obtenga el conjunto mínimo correspondiente al diff materia
 
 La proximidad entre directorios no constituye por sí sola evidencia de impacto. Si un archivo combina responsabilidades, trátelo como un cambio de interfaz o utilice la comprobación completa de respaldo.
 
-`test:module` solo admite los ID de módulo declarados en `scripts/ci/module-impact.json`. Ejecuta las pruebas seleccionadas del módulo responsable, del contrato y de un consumidor representativo; no constituye una verificación completa posterior a un cambio de interfaz. Use `test:affected` o el plan de PR Gate del `HEAD` exacto cuando una interfaz o sus consumidores puedan haber cambiado.
+`test:module` solo admite los ID de módulo definidos por los nombres de archivo en `scripts/ci/module-impact/`. Ejecuta las pruebas seleccionadas del módulo responsable, del contrato y de un consumidor representativo; no constituye una verificación completa posterior a un cambio de interfaz. Use `test:affected` o el plan de PR Gate del `HEAD` exacto cuando una interfaz o sus consumidores puedan haber cambiado.
 
 ### Comprobación completa de respaldo
 

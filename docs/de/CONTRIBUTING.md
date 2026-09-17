@@ -168,7 +168,7 @@ Leiten Sie vor der Übergabe den erforderlichen Mindestsatz aus dem endgültigen
 
 Die Nähe im Verzeichnisbaum allein ist kein Nachweis für Auswirkungen. Wenn eine Datei mehrere Zuständigkeiten vermischt, behandeln Sie die Änderung als schnittstellenrelevant oder verwenden Sie den vollständigen Fallback.
 
-`test:module` unterstützt nur die in `scripts/ci/module-impact.json` deklarierten Modul-IDs. Der Befehl führt die kuratierten Owner-, Vertrags- und repräsentativen Consumer-Tests dieses Moduls aus; für eine Schnittstellenänderung ist dies keine vollständige nachgelagerte Verifizierung. Verwenden Sie `test:affected` oder den Plan von PR Gate für den exakten Head, wenn sich eine Schnittstelle oder ihre Consumer geändert haben könnten.
+`test:module` unterstützt nur die durch Dateinamen in `scripts/ci/module-impact/` festgelegten Modul-IDs. Der Befehl führt die kuratierten Owner-, Vertrags- und repräsentativen Consumer-Tests dieses Moduls aus; für eine Schnittstellenänderung ist dies keine vollständige nachgelagerte Verifizierung. Verwenden Sie `test:affected` oder den Plan von PR Gate für den exakten Head, wenn sich eine Schnittstelle oder ihre Consumer geändert haben könnten.
 
 ### Vollständiger Fallback
 
