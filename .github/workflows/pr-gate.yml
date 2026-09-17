@@ -23,11 +23,11 @@ on:
           - e2e
           - source-regressions
           - macos-smoke
-      base_sha:
-        description: Base commit for module-coverage dry-run (full SHA)
+      comparison_base_sha:
+        description: Test-selection diff base for module-coverage (full SHA; runs dispatch ref)
         type: string
-      head_sha:
-        description: Head commit for module-coverage dry-run (full SHA)
+      comparison_head_sha:
+        description: Test-selection diff head (full SHA; only CI files may differ from dispatch ref)
         type: string
 
 permissions:
@@ -70,8 +70,8 @@ jobs:
           PULL_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PULL_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           DRY_RUN_MODE: ${{ inputs.dry_run || 'classified' }}
-          INPUT_BASE_SHA: ${{ inputs.base_sha }}
-          INPUT_HEAD_SHA: ${{ inputs.head_sha }}
+          INPUT_COMPARISON_BASE_SHA: ${{ inputs.comparison_base_sha }}
+          INPUT_COMPARISON_HEAD_SHA: ${{ inputs.comparison_head_sha }}
         run: |
           set -euo pipefail
 
@@ -82,8 +82,8 @@ jobs:
             base_sha="$MERGE_BASE_SHA"
             head_sha="$MERGE_HEAD_SHA"
           elif [[ "$EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN_MODE" == "module-coverage" ]]; then
-            base_sha="$INPUT_BASE_SHA"
-            head_sha="$INPUT_HEAD_SHA"
+            base_sha="$INPUT_COMPARISON_BASE_SHA"
+            head_sha="$INPUT_COMPARISON_HEAD_SHA"
           elif git rev-parse HEAD^ >/dev/null 2>&1; then
             base_sha="$(git rev-parse HEAD^)"
             head_sha="$(git rev-parse HEAD)"
@@ -98,6 +98,15 @@ jobs:
           fi
           git cat-file -e "${base_sha}^{commit}"
           git cat-file -e "${head_sha}^{commit}"
+          if [[ "$EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN_MODE" == "module-coverage" ]]; then
+            # Replay the original selection using updated CI code, never a different application.
+            # Checking out comparison head would discard the runner fix being validated.
+            git merge-base --is-ancestor "$head_sha" HEAD
+            if ! git diff --quiet "$head_sha" HEAD -- . ':!scripts/ci/**' ':!.github/**'; then
+              echo "Module dry-run dispatch ref must match comparison head outside CI files" >&2
+              exit 1
+            fi
+          fi
           # Keep policy at the current trusted base, but classify only the PR contribution.
           trusted_base_sha="$base_sha"
           if [[ "$EVENT_NAME" == "pull_request" ]]; then

@@ -72,6 +72,44 @@ const manifest = JSON.parse(
 ) as { bundleOrder: string[]; laneBundles: Record<string, string>; laneOrder: string[] }
 
 describe('PR Gate workflow', () => {
+  it('rejects module dry-runs against changed application code while allowing CI-only fixes', () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'module-coverage-source-'))
+    const git = (...args: string[]): string =>
+      execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
+    const revisions = workflow.jobs.preflight.steps?.find(({ id }) => id === 'revisions')
+    try {
+      git('init', '--quiet')
+      git('config', 'user.email', 'ci@example.com')
+      git('config', 'user.name', 'CI Test')
+      writeFileSync(join(cwd, 'app.ts'), 'export const value = 1\n')
+      git('add', '.')
+      git('commit', '--quiet', '-m', 'application baseline')
+      const comparisonHead = git('rev-parse', 'HEAD')
+      mkdirSync(join(cwd, 'scripts/ci'), { recursive: true })
+      writeFileSync(join(cwd, 'scripts/ci/runner.mjs'), '// updated runner\n')
+      git('add', '.')
+      git('commit', '--quiet', '-m', 'CI-only fix')
+      const env = {
+        ...process.env,
+        EVENT_NAME: 'workflow_dispatch',
+        DRY_RUN_MODE: 'module-coverage',
+        INPUT_COMPARISON_BASE_SHA: comparisonHead,
+        INPUT_COMPARISON_HEAD_SHA: comparisonHead,
+        GITHUB_OUTPUT: join(cwd, 'output')
+      }
+      const matching = spawnSync('bash', ['-c', revisions!.run!], { cwd, env, encoding: 'utf8' })
+      expect(matching.status, matching.stderr).toBe(0)
+      writeFileSync(join(cwd, 'app.ts'), 'export const value = 2\n')
+      git('add', 'app.ts')
+      git('commit', '--quiet', '-m', 'different application')
+      const mismatched = spawnSync('bash', ['-c', revisions!.run!], { cwd, env, encoding: 'utf8' })
+      expect(mismatched.status).toBe(1)
+      expect(mismatched.stderr).toContain('must match comparison head outside CI files')
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
   it('replays explicit module dry-run revisions through the real revision and plan scripts', () => {
     const dir = mkdtempSync(join(tmpdir(), 'module-coverage-plan-'))
     const base = execFileSync('git', ['rev-parse', 'HEAD^'], { encoding: 'utf8' }).trim()
@@ -83,8 +121,8 @@ describe('PR Gate workflow', () => {
       ...process.env,
       EVENT_NAME: 'workflow_dispatch',
       DRY_RUN_MODE: 'module-coverage',
-      INPUT_BASE_SHA: base,
-      INPUT_HEAD_SHA: head,
+      INPUT_COMPARISON_BASE_SHA: base,
+      INPUT_COMPARISON_HEAD_SHA: head,
       GITHUB_OUTPUT: output
     }
     try {
@@ -103,7 +141,7 @@ describe('PR Gate workflow', () => {
         bundles: ['policy', 'unit']
       })
       const invalid = spawnSync('bash', ['-c', revisions!.run!], {
-        env: { ...env, INPUT_HEAD_SHA: '--bad-revision' },
+        env: { ...env, INPUT_COMPARISON_HEAD_SHA: '--bad-revision' },
         encoding: 'utf8'
       })
       expect(invalid.status).toBe(1)
@@ -365,12 +403,13 @@ describe('PR Gate workflow', () => {
             'macos-smoke'
           ]
         },
-        base_sha: {
-          description: 'Base commit for module-coverage dry-run (full SHA)',
+        comparison_base_sha: {
+          description: 'Test-selection diff base for module-coverage (full SHA; runs dispatch ref)',
           type: 'string'
         },
-        head_sha: {
-          description: 'Head commit for module-coverage dry-run (full SHA)',
+        comparison_head_sha: {
+          description:
+            'Test-selection diff head (full SHA; only CI files may differ from dispatch ref)',
           type: 'string'
         }
       }
