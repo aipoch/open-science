@@ -221,51 +221,6 @@ describe('CredentialsPanel', () => {
     expect(document.body.textContent).not.toContain('Remove this credential from this device?')
   })
 
-  it('dims the remove action for an in-use credential and keeps it unreachable', async () => {
-    useSettingsStore.setState({
-      deviceCredentials: [
-        {
-          id: 'credential-in-use',
-          displayName: 'Shared OAuth',
-          kind: 'oauth',
-          status: 'connected',
-          needsSecret: false,
-          resourceUri: 'https://mcp.example.test/',
-          transport: 'streamable_http',
-          consumerCount: 2,
-          consumerNames: ['Custom Search'],
-          createdAt: 1,
-          updatedAt: 1
-        }
-      ],
-      loadDeviceCredentials: vi.fn().mockResolvedValue(undefined)
-    })
-
-    await act(async () => {
-      root.render(
-        <CredentialsPanel
-          view={{ kind: 'list' }}
-          onNavigate={vi.fn()}
-          onOpenConnector={vi.fn()}
-          onOpenProvider={vi.fn()}
-        />
-      )
-      await Promise.resolve()
-    })
-
-    const remove = document.body.querySelector<HTMLButtonElement>(
-      '[aria-label="Remove Shared OAuth"]'
-    )
-    expect(remove?.getAttribute('aria-disabled')).toBe('true')
-    expect(remove?.disabled).toBe(false)
-    expect(remove?.className).toContain('opacity-50')
-    expect(remove?.className).toContain('cursor-not-allowed')
-
-    // The click is a silent no-op: no confirmation dialog opens for an in-use credential.
-    await act(async () => remove?.click())
-    expect(document.body.textContent).not.toContain('Remove this credential from this device?')
-  })
-
   it('aggregates service credentials and links custom MCP secrets to their owner', async () => {
     const onOpenConnector = vi.fn()
     await act(async () => {

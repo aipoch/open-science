@@ -6,7 +6,6 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { ProjectDeletionCleanupNotice } from '@/components/ProjectDeletionCleanupNotice'
 import { SessionCatalogRecoveryAlert } from '@/components/SessionCatalogRecoveryAlert'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type { SessionCatalogRecovery } from '@/lib/session-persistence/session-persistence'
 import { DeleteProjectDialog } from '@/pages/home/DeleteProjectDialog'
 import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
@@ -17,12 +16,6 @@ import type { ChatSession } from '@/stores/session-store'
 import { useSessionStore } from '@/stores/session-store'
 import type { Project } from '../../../../shared/projects'
 import { sessionRevision } from '../../../../shared/session-persistence'
-import {
-  getSettingsPreviewState,
-  setSettingsPreviewState,
-  simulatePreviewCall,
-  useSettingsPreviewState
-} from './visual-preview/preview-store'
 
 export type ArchivedView = { kind: 'list' } | { kind: 'project'; projectId: string }
 
@@ -44,22 +37,16 @@ const ArchivedPanel = ({
   onNavigate,
   catalogRecovery = { kind: 'ready' },
   hasCompleteSessionCatalog = true,
-  canDeleteProjects: canDeleteProjectsProp = true,
+  canDeleteProjects = true,
   onRetryCatalogRecovery
 }: ArchivedPanelProps): React.JSX.Element => {
   const { t } = useTranslation()
   const formatDate = useDateTimeFormat()
-  // Visual-preview seam (see visual-preview/preview-store.ts): fixture projects/sessions replace
-  // the store reads and every mutation resolves locally; null in normal operation.
-  const preview = useSettingsPreviewState()
-  const storeProjects = useProjectStore((state) => state.projects)
+  const projects = useProjectStore((state) => state.projects)
   const updateProjectArchive = useProjectStore((state) => state.updateProjectArchive)
   const deleteProject = useProjectStore((state) => state.deleteProject)
-  const storeSessions = useSessionStore((state) => state.sessions)
+  const sessions = useSessionStore((state) => state.sessions)
   const updateSessionArchive = useSessionStore((state) => state.updateSessionArchive)
-  const projects = preview ? preview.archived.projects : storeProjects
-  const sessions = preview ? preview.archived.sessions : storeSessions
-  const canDeleteProjects = preview ? preview.archived.canDeleteProjects : canDeleteProjectsProp
   const [projectToDelete, setProjectToDelete] = useState<Project | undefined>()
   const [sessionToDelete, setSessionToDelete] = useState<ChatSession | undefined>()
   const [busyKeys, setBusyKeys] = useState<Set<string>>(() => new Set())
@@ -107,23 +94,6 @@ const ArchivedPanel = ({
     if (busyKeys.has(key)) return
     beginOperation(key)
     setPanelError(undefined)
-    if (preview) {
-      void simulatePreviewCall('projects.updateArchive (restore)')
-        .then(() => {
-          const current = getSettingsPreviewState().archived
-          setSettingsPreviewState({
-            archived: {
-              ...current,
-              projects: current.projects.map((candidate) =>
-                candidate.id === project.id ? { ...candidate, archivedAt: undefined } : candidate
-              )
-            }
-          })
-          onNavigate({ kind: 'list' })
-        })
-        .finally(() => finishOperation(key))
-      return
-    }
     void updateProjectArchive({
       id: project.id,
       archived: false,
@@ -142,22 +112,6 @@ const ArchivedPanel = ({
     if (busyKeys.has(key)) return
     beginOperation(key)
     setPanelError(undefined)
-    if (preview) {
-      void simulatePreviewCall('sessions.updateArchive (restore)')
-        .then(() => {
-          const current = getSettingsPreviewState().archived
-          setSettingsPreviewState({
-            archived: {
-              ...current,
-              sessions: current.sessions.map((candidate) =>
-                candidate.id === session.id ? { ...candidate, archivedAt: undefined } : candidate
-              )
-            }
-          })
-        })
-        .finally(() => finishOperation(key))
-      return
-    }
     void updateSessionArchive({
       projectId: session.projectId,
       sessionId: session.id,
@@ -178,21 +132,6 @@ const ArchivedPanel = ({
     beginOperation(key)
     setPanelError(undefined)
     setSessionDeleteError(undefined)
-    if (preview) {
-      void simulatePreviewCall('sessions.deleteSession')
-        .then(() => {
-          const current = getSettingsPreviewState().archived
-          setSettingsPreviewState({
-            archived: {
-              ...current,
-              sessions: current.sessions.filter((candidate) => candidate.id !== session.id)
-            }
-          })
-          setSessionToDelete(undefined)
-        })
-        .finally(() => finishOperation(key))
-      return
-    }
     void window.api.sessions
       .deleteSession({
         projectId: session.projectId,
@@ -233,23 +172,6 @@ const ArchivedPanel = ({
     if (busyKeys.has(key)) return
     beginOperation(key)
     setProjectDeleteError(undefined)
-    if (preview) {
-      void simulatePreviewCall('projects.deleteProject')
-        .then(() => {
-          const current = getSettingsPreviewState().archived
-          setSettingsPreviewState({
-            archived: {
-              ...current,
-              projects: current.projects.filter((candidate) => candidate.id !== project.id),
-              sessions: current.sessions.filter((candidate) => candidate.projectId !== project.id)
-            }
-          })
-          setProjectToDelete(undefined)
-          onNavigate({ kind: 'list' })
-        })
-        .finally(() => finishOperation(key))
-      return
-    }
     void (async () => {
       await deleteProject(project.id)
       useSessionStore.getState().removeSessionsForProject(project.id)
@@ -280,56 +202,36 @@ const ArchivedPanel = ({
         </p>
       </div>
       {session.archivedAt !== undefined ? (
-        // Disabled buttons fire no pointer events, so the explanation lives in a Radix Tooltip on
-        // the wrapper span instead of a native title attribute.
-        <TooltipProvider delayDuration={200}>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span className="inline-flex" data-visual-change="disabled-action-explanations">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={projectArchived || busyKeys.has(`session:${session.id}`)}
-                  onClick={() => restoreSession(session)}
-                >
-                  <RotateCcw className="size-3.5" aria-hidden="true" />
-                  {t('Restore')}
-                </Button>
-              </span>
-            </TooltipTrigger>
-            {projectArchived ? (
-              <TooltipContent>{t('Restore the project first.')}</TooltipContent>
-            ) : null}
-          </Tooltip>
-        </TooltipProvider>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={projectArchived || busyKeys.has(`session:${session.id}`)}
+          title={projectArchived ? t('Restore the project first.') : undefined}
+          onClick={() => restoreSession(session)}
+        >
+          <RotateCcw className="size-3.5" aria-hidden="true" />
+          {t('Restore')}
+        </Button>
       ) : null}
-      <TooltipProvider delayDuration={200}>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span className="inline-flex">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="text-danger-000 hover:text-danger-000"
-                disabled={!canDeleteProjects || busyKeys.has(`session:${session.id}`)}
-                onClick={() => {
-                  setPanelError(undefined)
-                  setSessionDeleteError(undefined)
-                  setSessionToDelete(session)
-                }}
-              >
-                <Trash2 className="size-3.5" aria-hidden="true" />
-                {t('Delete')}
-              </Button>
-            </span>
-          </TooltipTrigger>
-          {!canDeleteProjects ? (
-            <TooltipContent>{t('Retry project recovery before deleting projects.')}</TooltipContent>
-          ) : null}
-        </Tooltip>
-      </TooltipProvider>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="text-danger-000 hover:text-danger-000"
+        disabled={!canDeleteProjects || busyKeys.has(`session:${session.id}`)}
+        title={
+          canDeleteProjects ? undefined : t('Retry project recovery before deleting projects.')
+        }
+        onClick={() => {
+          setPanelError(undefined)
+          setSessionDeleteError(undefined)
+          setSessionToDelete(session)
+        }}
+      >
+        <Trash2 className="size-3.5" aria-hidden="true" />
+        {t('Delete')}
+      </Button>
     </div>
   )
 
@@ -371,32 +273,22 @@ const ArchivedPanel = ({
                 <RotateCcw className="size-3.5" aria-hidden="true" />
                 {t('Restore project')}
               </Button>
-              <TooltipProvider delayDuration={200}>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span className="inline-flex">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="text-danger-000 hover:text-danger-000"
-                        disabled={
-                          !canDeleteProjects || busyKeys.has(`project:${selectedProject.id}`)
-                        }
-                        onClick={() => openProjectDeleteDialog(selectedProject)}
-                      >
-                        <Trash2 className="size-3.5" aria-hidden="true" />
-                        {t('Delete project')}
-                      </Button>
-                    </span>
-                  </TooltipTrigger>
-                  {!canDeleteProjects ? (
-                    <TooltipContent>
-                      {t('Retry project recovery before deleting projects.')}
-                    </TooltipContent>
-                  ) : null}
-                </Tooltip>
-              </TooltipProvider>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="text-danger-000 hover:text-danger-000"
+                disabled={!canDeleteProjects || busyKeys.has(`project:${selectedProject.id}`)}
+                title={
+                  canDeleteProjects
+                    ? undefined
+                    : t('Retry project recovery before deleting projects.')
+                }
+                onClick={() => openProjectDeleteDialog(selectedProject)}
+              >
+                <Trash2 className="size-3.5" aria-hidden="true" />
+                {t('Delete project')}
+              </Button>
             </div>
           </div>
           <section className="space-y-2">

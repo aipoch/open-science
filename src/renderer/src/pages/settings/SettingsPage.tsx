@@ -107,8 +107,6 @@ import { localizeProviderResourceMessage } from './validation-message'
 import { loadSettingsPanel } from './settings-panel-loader'
 import { SettingsGlobalSearch } from './SettingsGlobalSearch'
 import type { SettingsWriteErrorCode } from '../../../../shared/settings'
-import { isSettingsVisualPreview } from './visual-preview/preview-store'
-import { SettingsVisualPreviewRoot } from './visual-preview/index'
 
 const AgentPanel = lazy(async () => ({ default: (await import('./AgentPanel')).AgentPanel }))
 const GeneralPanel = lazy(async () => ({ default: (await import('./GeneralPanel')).GeneralPanel }))
@@ -445,17 +443,6 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     isMobileNavOpenRef.current = next
     setIsMobileNavOpenState(next)
   }, [])
-  // Visual preview (design-review scaffolding, off by default): the flag is evaluated each time
-  // the dialog opens, so removing the flag and reopening Settings fully restores normal
-  // operation. See visual-preview/preview-store.ts for enter/exit instructions.
-  const [previewActivation, setPreviewActivation] = useState(() => ({
-    open,
-    active: open && isSettingsVisualPreview()
-  }))
-  if (previewActivation.open !== open) {
-    setPreviewActivation({ open, active: open && isSettingsVisualPreview() })
-  }
-  const settingsVisualPreview = previewActivation.active
   const mobileNavRef = useRef<HTMLElement | null>(null)
   const mobileNavTriggerRef = useRef<HTMLButtonElement | null>(null)
   const mobileNavWasOpenRef = useRef(false)
@@ -2068,10 +2055,6 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
           >
             <ActionToastStack ref={undoHostRef} />
           </div>
-
-          {settingsVisualPreview ? (
-            <SettingsVisualPreviewRoot navigatePanel={navigatePanel} />
-          ) : null}
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>

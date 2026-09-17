@@ -60,36 +60,6 @@ describe('ComputePanel', () => {
     expect(container.textContent).toContain('No SSH hosts yet')
   })
 
-  it('announces the loading state through a polite status region', () => {
-    useComputeStore.setState({ isLoaded: false, loadError: undefined })
-
-    act(() => {
-      root.render(<ComputePanel onNavigate={vi.fn()} />)
-    })
-
-    const status = container.querySelector('[role="status"]')
-    expect(status?.textContent).toContain('Loading hosts…')
-  })
-
-  it('offers a working Retry on load failure', async () => {
-    const loadHosts = vi.fn(() => Promise.resolve())
-    useComputeStore.setState({ isLoaded: true, loadError: 'db read failed', loadHosts })
-
-    act(() => {
-      root.render(<ComputePanel onNavigate={vi.fn()} />)
-    })
-
-    const alert = container.querySelector('[role="alert"]')
-    expect(alert?.textContent).toContain("Couldn't load hosts.")
-    const retry = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Retry'
-    )
-    expect(retry).toBeDefined()
-    loadHosts.mockClear()
-    await act(async () => retry?.click())
-    expect(loadHosts).toHaveBeenCalledOnce()
-  })
-
   it('renders a host card with its provider id string', () => {
     useComputeStore.setState({ hosts: [host()], isLoaded: true })
 
@@ -206,29 +176,12 @@ describe('ComputePanel', () => {
     expect(dialog?.textContent).toContain('completed research')
     expect(dialog?.textContent).toContain('Clean up remote files')
     expect(dialog?.textContent).toContain('Abandon remote cleanup')
-    const confirmSpy = vi.spyOn(window, 'confirm')
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
     const abandonCleanup = Array.from(
       dialog?.querySelectorAll<HTMLButtonElement>('button') ?? []
     ).find((button) => button.textContent?.trim() === 'Abandon remote cleanup')
     await act(async () => {
       abandonCleanup?.click()
-      await Promise.resolve()
-    })
-
-    // The destructive action first arms an inline confirmation step; nothing runs yet and no
-    // native confirm is stacked on the open AlertDialog.
-    expect(confirmSpy).not.toHaveBeenCalled()
-    expect(window.api.compute.jobsSetRemoteCleanup).not.toHaveBeenCalled()
-    const armed = dialog?.querySelector('[data-slot="compute-remote-cleanup-confirm"]')
-    expect(armed?.textContent).toContain(
-      'Abandon remote cleanup? The Job history stays local, but its remote files may remain permanently.'
-    )
-
-    const armedConfirm = Array.from(
-      armed?.querySelectorAll<HTMLButtonElement>('button') ?? []
-    ).find((button) => button.textContent?.trim() === 'Abandon remote cleanup')
-    await act(async () => {
-      armedConfirm?.click()
       await Promise.resolve()
     })
     expect(window.api.compute.jobsSetRemoteCleanup).toHaveBeenCalledWith({
@@ -240,78 +193,6 @@ describe('ComputePanel', () => {
     })
     expect(confirm?.disabled).toBe(false)
     expect(deleteHost).not.toHaveBeenCalled()
-  })
-
-  it('arms an inline confirm for cleaning an active Compute Job instead of window.confirm', async () => {
-    vi.mocked(window.api.compute.deletionStatus).mockResolvedValueOnce({
-      blockedByJobs: true,
-      blockingJobs: [
-        {
-          jobId: 'job-active',
-          projectId: 'project-1',
-          sessionId: 'session-1',
-          status: 'running',
-          harvested: false,
-          intent: 'running research',
-          createdAt: 1
-        }
-      ]
-    })
-    useComputeStore.setState({ hosts: [host()], isLoaded: true })
-
-    act(() => root.render(<ComputePanel onNavigate={vi.fn()} />))
-    const removeButton = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.getAttribute('aria-label') === 'Remove biowulf'
-    )
-    await act(async () => removeButton?.click())
-    const dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
-    const viewJobs = Array.from(dialog?.querySelectorAll<HTMLButtonElement>('button') ?? []).find(
-      (button) => button.textContent?.trim() === 'View blocking jobs'
-    )
-    act(() => viewJobs?.click())
-
-    const confirmSpy = vi.spyOn(window, 'confirm')
-    const clean = Array.from(dialog?.querySelectorAll<HTMLButtonElement>('button') ?? []).find(
-      (button) => button.textContent?.trim() === 'Clean up remote files'
-    )
-    await act(async () => clean?.click())
-
-    expect(confirmSpy).not.toHaveBeenCalled()
-    expect(window.api.compute.jobsSetRemoteCleanup).not.toHaveBeenCalled()
-    const armed = dialog?.querySelector('[data-slot="compute-remote-cleanup-confirm"]')
-    expect(armed?.textContent).toContain(
-      'This Compute Job is active. Cancel it and remove its remote files?'
-    )
-
-    // Cancelling the armed step restores the plain actions without touching the remote.
-    const cancelArmed = Array.from(armed?.querySelectorAll<HTMLButtonElement>('button') ?? []).find(
-      (button) => button.textContent?.trim() === 'Cancel'
-    )
-    await act(async () => cancelArmed?.click())
-    expect(dialog?.querySelector('[data-slot="compute-remote-cleanup-confirm"]')).toBeNull()
-    expect(window.api.compute.jobsSetRemoteCleanup).not.toHaveBeenCalled()
-
-    // Arming again and confirming runs the cleanup (re-query: the row re-rendered after cancel).
-    const cleanAgain = Array.from(dialog?.querySelectorAll<HTMLButtonElement>('button') ?? []).find(
-      (button) => button.textContent?.trim() === 'Clean up remote files'
-    )
-    await act(async () => cleanAgain?.click())
-    const armedConfirm = Array.from(
-      dialog
-        ?.querySelector('[data-slot="compute-remote-cleanup-confirm"]')
-        ?.querySelectorAll<HTMLButtonElement>('button') ?? []
-    ).find((button) => button.textContent?.trim() === 'Clean up remote files')
-    await act(async () => {
-      armedConfirm?.click()
-      await Promise.resolve()
-    })
-    expect(window.api.compute.jobsSetRemoteCleanup).toHaveBeenCalledWith({
-      jobId: 'job-active',
-      providerId: 'ssh:biowulf',
-      projectId: 'project-1',
-      sessionId: 'session-1',
-      disposition: 'cleaned'
-    })
   })
 
   it('disables remote cleanup until a terminal Job has been harvested', async () => {

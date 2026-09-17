@@ -124,39 +124,6 @@ describe('ArchivedPanel', () => {
     })
   })
 
-  it('wraps disabled session actions for tooltip explanations instead of native title', async () => {
-    useProjectStore.setState({
-      ...createInitialProjectState(),
-      projects: [{ ...project, archivedAt: 2 }],
-      isLoaded: true
-    })
-    await act(async () =>
-      root.render(
-        <ArchivedPanel
-          view={{ kind: 'project', projectId: project.id }}
-          onNavigate={vi.fn()}
-          canDeleteProjects={false}
-        />
-      )
-    )
-
-    const restore = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Restore'
-    )
-    expect(restore?.disabled).toBe(true)
-    expect(restore?.getAttribute('title')).toBeNull()
-    expect(
-      restore?.closest('span[data-visual-change="disabled-action-explanations"]')
-    ).not.toBeNull()
-
-    const deleteButton = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Delete'
-    )
-    expect(deleteButton?.disabled).toBe(true)
-    expect(deleteButton?.getAttribute('title')).toBeNull()
-    expect(deleteButton?.closest('span.inline-flex')).not.toBeNull()
-  })
-
   it('delegates archived project selection to Settings navigation', async () => {
     const onNavigate = vi.fn()
     useProjectStore.setState({
@@ -368,8 +335,7 @@ describe('ArchivedPanel', () => {
     )
     expect(buttons).toHaveLength(2)
     buttons.forEach((button, index) => {
-      // The button is wrapped in a tooltip span, so the row is the nearest enclosing div.
-      expect(button.closest('div')?.textContent).toContain(projects[index].name)
+      expect(button.parentElement?.textContent).toContain(projects[index].name)
     })
   })
 

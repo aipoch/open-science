@@ -47,12 +47,6 @@ import {
 } from '@/components/ui/dialog-chrome'
 import { cn } from '@/lib/utils'
 import { SettingsIconAction, SettingsSection } from './SettingsLayout'
-import {
-  getSettingsPreviewState,
-  setSettingsPreviewState,
-  simulatePreviewCall,
-  useSettingsPreviewState
-} from './visual-preview/preview-store'
 
 const REMOTE_IT_DOWNLOAD_URL = 'https://www.remote.it/download/'
 const REMOTE_ACCESS_FRESH_MS = 60_000
@@ -235,11 +229,8 @@ const BrowserAccessSteps = ({ t }: { t: TFunction }): React.JSX.Element => (
 export const RemoteControlPanel: RemoteControlPanelComponent = () => {
   const { t } = useTranslation()
   const formatDate = useDateTimeFormat()
-  // Visual-preview seam (see visual-preview/preview-store.ts): the snapshot starts from fixtures
-  // and no real remoteAccess call is issued; null in normal operation.
-  const preview = useSettingsPreviewState()
 
-  const initialSnapshot = preview ? preview.remote.snapshot : freshRemoteAccessSnapshot()
+  const initialSnapshot = freshRemoteAccessSnapshot()
   const [snapshot, setSnapshot] = useState<RemoteAccessSnapshot | null>(initialSnapshot ?? null)
   const [busy, setBusy] = useState<string | null>(initialSnapshot ? null : 'loading')
   const [actionError, setActionError] = useState<string | undefined>()
@@ -280,9 +271,6 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
   }
 
   useEffect(() => {
-    // Visual preview: the fixture snapshot is already in state; skip the real load and the
-    // change subscription entirely so no remoteAccess IPC can escape.
-    if (preview) return
     let active = true
     remoteAccessPanelMounts += 1
     mountedRef.current = true
@@ -321,7 +309,7 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
       }
       unsubscribe()
     }
-  }, [preview])
+  }, [])
 
   useEffect(() => {
     if (busy !== null || !operationTriggerRef.current) return
@@ -372,39 +360,6 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
   const approve = (requestId: string, decision: RemotePairingDecision): void => {
     const request = snapshot?.pendingRequests.find((entry) => entry.id === requestId)
     const requestLabel = request ? `${request.browser} · ${request.platform}` : null
-    if (preview) {
-      setBusy(`approve:${requestId}`)
-      void simulatePreviewCall(`remoteAccess.approve (${decision})`).then(() => {
-        const nextSnapshot = (current: RemoteAccessSnapshot): RemoteAccessSnapshot => {
-          const approved = current.pendingRequests.find((entry) => entry.id === requestId)
-          return {
-            ...current,
-            pendingRequests: current.pendingRequests.filter((entry) => entry.id !== requestId),
-            trustedBrowsers:
-              decision === 'always' && approved
-                ? [
-                    {
-                      id: approved.id,
-                      browser: approved.browser,
-                      platform: approved.platform,
-                      createdAt: Date.now(),
-                      lastSeenAt: Date.now(),
-                      expiresAt: Date.now() + 180 * 86_400_000
-                    },
-                    ...current.trustedBrowsers
-                  ]
-                : current.trustedBrowsers
-          }
-        }
-        setSnapshot((current) => (current ? nextSnapshot(current) : current))
-        setSettingsPreviewState({
-          remote: { snapshot: nextSnapshot(getSettingsPreviewState().remote.snapshot) }
-        })
-        setBusy(null)
-        if (decision === 'always' && requestLabel) setTrustNotice(requestLabel)
-      })
-      return
-    }
     void run(`approve:${requestId}`, () =>
       window.api.remoteAccess.approve({ requestId, decision })
     ).then((ok) => {
@@ -413,22 +368,6 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
   }
 
   const confirmRevokeAll = (): void => {
-    if (preview) {
-      setBusy('revokeAll')
-      void simulatePreviewCall('remoteAccess.revokeBrowser (all)').then(() => {
-        const nextSnapshot = (current: RemoteAccessSnapshot): RemoteAccessSnapshot => ({
-          ...current,
-          trustedBrowsers: []
-        })
-        setSnapshot((current) => (current ? nextSnapshot(current) : current))
-        setSettingsPreviewState({
-          remote: { snapshot: nextSnapshot(getSettingsPreviewState().remote.snapshot) }
-        })
-        setBusy(null)
-        setRevokeAllArmed(false)
-      })
-      return
-    }
     const browserIds = snapshot?.trustedBrowsers.map((browser) => browser.id) ?? []
     // Sequential so each revoke operates on the snapshot returned by the previous one.
     void run('revokeAll', async () => {
@@ -441,21 +380,6 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
   }
 
   const reject = (requestId: string): void => {
-    if (preview) {
-      setBusy(`reject:${requestId}`)
-      void simulatePreviewCall('remoteAccess.reject').then(() => {
-        const nextSnapshot = (current: RemoteAccessSnapshot): RemoteAccessSnapshot => ({
-          ...current,
-          pendingRequests: current.pendingRequests.filter((entry) => entry.id !== requestId)
-        })
-        setSnapshot((current) => (current ? nextSnapshot(current) : current))
-        setSettingsPreviewState({
-          remote: { snapshot: nextSnapshot(getSettingsPreviewState().remote.snapshot) }
-        })
-        setBusy(null)
-      })
-      return
-    }
     void run(`reject:${requestId}`, () => window.api.remoteAccess.reject({ requestId }))
   }
 
@@ -464,22 +388,6 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
   const confirmRevoke = (): void => {
     const browser = browserToRevoke
     if (!browser) return
-    if (preview) {
-      setBusy(`revoke:${browser.id}`)
-      void simulatePreviewCall(`remoteAccess.revokeBrowser (${browser.browser})`).then(() => {
-        const nextSnapshot = (current: RemoteAccessSnapshot): RemoteAccessSnapshot => ({
-          ...current,
-          trustedBrowsers: current.trustedBrowsers.filter((entry) => entry.id !== browser.id)
-        })
-        setSnapshot((current) => (current ? nextSnapshot(current) : current))
-        setSettingsPreviewState({
-          remote: { snapshot: nextSnapshot(getSettingsPreviewState().remote.snapshot) }
-        })
-        setBusy(null)
-        setBrowserToRevoke(null)
-      })
-      return
-    }
     void run(`revoke:${browser.id}`, () =>
       window.api.remoteAccess.revokeBrowser({ browserId: browser.id })
     ).finally(() => setBrowserToRevoke(null))
@@ -942,7 +850,6 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
 
         {snapshot.canManagePairing && accessUsesPairing ? (
           <SettingsSection
-            data-visual-change="remote-pairing-first"
             title={
               <>
                 {t('Pairing requests')}
@@ -1059,7 +966,6 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
         {showTrustedBrowsers ? (
           <SettingsSection
             title={t('Trusted browsers')}
-            data-visual-change="remote-revoke-confirmation"
             description={t(
               'Trusted browsers can reconnect until their listed expiration while the same remote address remains available. They remain stored but inactive while remote access is off. Revoking one takes effect on its next request or WebSocket reconnect.'
             )}
@@ -1069,7 +975,6 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
                   type="button"
                   variant="ghost"
                   size="sm"
-                  data-slot="remote-revoke-all-trigger"
                   disabled={busy !== null}
                   onClick={() => setRevokeAllArmed(true)}
                   className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
@@ -1134,7 +1039,6 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
             <AlertDialog.Overlay className={dialogOverlayClassName} />
             <AlertDialog.Content
               className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))] p-0')}
-              data-visual-change="remote-revoke-confirmation"
             >
               <div className={dialogHeaderClassName}>
                 <AlertDialog.Title className={dialogTitleClassName}>
@@ -1187,7 +1091,6 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
             <AlertDialog.Overlay className={dialogOverlayClassName} />
             <AlertDialog.Content
               className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))] p-0')}
-              data-visual-change="remote-revoke-all"
             >
               <div className={dialogHeaderClassName}>
                 <AlertDialog.Title className={dialogTitleClassName}>
