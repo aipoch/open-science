@@ -1103,7 +1103,8 @@ describe('Compute service architecture', () => {
       'src/renderer/web/renderer-argument-shape-characterization.test.ts',
       'src/shared/renderer-surface-inventory.test.ts',
       'src/shared/renderer-surface-matrix.test.ts',
-      'src/main/session-package/fork.test.ts'
+      'src/main/session-package/fork.test.ts',
+      'src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts'
     ])
   })
 

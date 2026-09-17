@@ -1637,7 +1637,8 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/settings/skill-catalog.test.ts',
       'src/main/session-package/fork.test.ts',
       'src/main/session-plan/plan-legacy-compatibility.test.ts',
-      'src/main/session-plan/plan-context-file.shell.integration.test.ts'
+      'src/main/session-plan/plan-context-file.shell.integration.test.ts',
+      'src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts'
     ])
     expect(sessionPersistence.capabilityOverlays).toEqual([
       'windows_sensitive',
