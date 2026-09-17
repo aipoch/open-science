@@ -5417,40 +5417,96 @@ describe('ACP runtime session management', () => {
     expect(process.killed).toBe(true)
   })
 
-  it('restarts a stuck agent when prompt cancellation times out', async () => {
+  it.each([false, true])(
+    'restarts a stuck agent when cancellation times out (blocked write: %s)',
+    async (blockedWrite) => {
+      const process = new FakeAgentProcess()
+      const promptGate = createDeferred()
+      const fakeAgent = startFakeAgent(process, ['cancel-timeout-session'], {
+        onPrompt: () => promptGate.promise
+      })
+      let fireCancelTimeout: (() => void) | undefined
+      const events: string[] = []
+      const runtime = new AcpRuntime({
+        appVersion: '0.2.0',
+        defaultCwd: '/workspace',
+        spawnAgent: () => asAgentProcess(process),
+        cancelTimeoutMs: 1,
+        setTimer: (callback) => {
+          fireCancelTimeout = callback
+          return 1 as unknown as ReturnType<typeof setTimeout>
+        },
+        clearTimer: vi.fn(),
+        callbacks: { onEvent: (event) => events.push(event.title ?? '') }
+      })
+      const session = await runtime.createSession({ cwd: '/workspace' })
+      const prompt = runtime.sendPrompt({ sessionId: session.sessionId, text: 'stay pending' })
+      void prompt.catch(() => undefined)
+      await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+
+      if (blockedWrite) {
+        const connection = (
+          runtime as unknown as {
+            connection: { agent: { notify: (method: unknown, params: unknown) => Promise<void> } }
+          }
+        ).connection
+        vi.spyOn(connection.agent, 'notify').mockImplementationOnce(() => new Promise(() => {}))
+        const cancellation = runtime.cancelPrompt({ sessionId: session.sessionId })
+        const rejected = expect(cancellation).rejects.toThrow('not confirmed')
+        expect(fireCancelTimeout).toBeDefined()
+        fireCancelTimeout?.()
+        await rejected
+        expect(fakeAgent.cancelledSessions).toEqual([])
+        expect(events).not.toContain('Prompt cancellation requested')
+      } else {
+        await runtime.cancelPrompt({ sessionId: session.sessionId })
+        await vi.waitFor(() =>
+          expect(fakeAgent.cancelledSessions).toEqual(['cancel-timeout-session'])
+        )
+        expect(fireCancelTimeout).toBeDefined()
+        fireCancelTimeout?.()
+      }
+
+      await vi.waitFor(() => expect(runtime.getSnapshot().status).toBe('closed'))
+      expect(process.killed).toBe(true)
+      expect(events).toContain('Prompt cancellation timed out')
+      promptGate.resolve()
+    }
+  )
+
+  it('confirms Stop from the prompt finalizer when the cancellation write is still pending', async () => {
     const process = new FakeAgentProcess()
     const promptGate = createDeferred()
-    const fakeAgent = startFakeAgent(process, ['cancel-timeout-session'], {
+    const fakeAgent = startFakeAgent(process, ['cancel-terminal-session'], {
       onPrompt: () => promptGate.promise
     })
-    let fireCancelTimeout: (() => void) | undefined
     const events: string[] = []
     const runtime = new AcpRuntime({
       appVersion: '0.2.0',
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
-      cancelTimeoutMs: 1,
-      setTimer: (callback) => {
-        fireCancelTimeout = callback
-        return 1 as unknown as ReturnType<typeof setTimeout>
-      },
-      clearTimer: vi.fn(),
       callbacks: { onEvent: (event) => events.push(event.title ?? '') }
     })
     const session = await runtime.createSession({ cwd: '/workspace' })
-    const prompt = runtime.sendPrompt({ sessionId: session.sessionId, text: 'stay pending' })
-    void prompt.catch(() => undefined)
+    const prompt = runtime.sendPrompt({ sessionId: session.sessionId, text: 'finish naturally' })
     await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
-
-    await runtime.cancelPrompt({ sessionId: session.sessionId })
-    await vi.waitFor(() => expect(fakeAgent.cancelledSessions).toEqual(['cancel-timeout-session']))
-    expect(fireCancelTimeout).toBeDefined()
-    fireCancelTimeout?.()
-
-    await vi.waitFor(() => expect(runtime.getSnapshot().status).toBe('closed'))
-    expect(process.killed).toBe(true)
-    expect(events).toContain('Prompt cancellation timed out')
+    const connection = (
+      runtime as unknown as {
+        connection: { agent: { notify: (method: unknown, params: unknown) => Promise<void> } }
+      }
+    ).connection
+    vi.spyOn(connection.agent, 'notify').mockImplementationOnce(() => new Promise(() => {}))
+    const cancellation = runtime.cancelPrompt({ sessionId: session.sessionId })
+    const outcome = cancellation.then(
+      () => 'confirmed',
+      (error) => error
+    )
     promptGate.resolve()
+    await prompt
+    await expect(outcome).resolves.toBe('confirmed')
+    expect(events).not.toContain('Prompt cancellation requested')
+    expect(events).not.toContain('Prompt cancellation timed out')
+    await runtime.disconnect()
   })
 
   it('terminates the remaining process and clears sessions after an unexpected protocol close', async () => {

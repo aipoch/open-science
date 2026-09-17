@@ -736,6 +736,8 @@ const createAcpRuntime = ({
                   notebookRpcServer.setArtifactTurnBinding(sessionId, binding),
                 clearArtifactTurnBinding: (sessionId, ownerExecutionId) =>
                   notebookRpcServer.clearArtifactTurnBinding(sessionId, ownerExecutionId),
+                prepareTurnInputs: (request) =>
+                  notebookRpcServer.prepareNotebookTurnInputs(request),
                 registerTurnInputs: (request) =>
                   notebookRpcServer.registerNotebookTurnInputs(request),
                 peekHandoffContext: peekNotebookHandoffContext

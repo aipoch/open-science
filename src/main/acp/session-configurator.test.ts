@@ -211,6 +211,36 @@ describe('AcpSessionConfigurator', () => {
     expect(Object.isFrozen(profile.availableModeIds)).toBe(true)
   })
 
+  it('forwards refresh cancellation to the permission RPC', async () => {
+    const request = vi.fn(async () => ({}))
+    const cancellationSignal = new AbortController().signal
+    const configurator = new AcpSessionConfigurator({
+      assertCurrentConnection: vi.fn(),
+      diagnosticContext: () => ({})
+    })
+    await configurator.configurePermissionProfile({
+      backend: backendView({ modelRequired: false }),
+      connection: { agent: { request } } as unknown as ClientConnection,
+      session: {
+        sessionId: 'session-1',
+        modes: {
+          currentModeId: 'default',
+          availableModes: [
+            { id: 'default', name: 'Default' },
+            { id: 'bypassPermissions', name: 'Full' }
+          ]
+        }
+      } as unknown as ActiveSession,
+      permissionProfile: 'full',
+      cancellationSignal
+    })
+    expect(request).toHaveBeenCalledWith(
+      acp.methods.agent.session.setMode,
+      { sessionId: 'session-1', modeId: 'bypassPermissions' },
+      { cancellationSignal }
+    )
+  })
+
   it.each([
     {
       failure: 'the required model is unavailable',

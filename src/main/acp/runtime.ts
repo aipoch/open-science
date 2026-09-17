@@ -498,6 +498,13 @@ type AcpRuntimeNotebookOptions = {
     }
   ) => void
   clearArtifactTurnBinding?: (sessionId: string, ownerExecutionId: string) => void | Promise<void>
+  prepareTurnInputs?: (request: {
+    projectId: string
+    appSessionId: string
+    promptMessageId: string
+    uploads: UploadedAttachment[]
+    references: FileReference[]
+  }) => Promise<{ inputs: readonly NotebookPromptInput[]; commit: () => void }>
   registerTurnInputs?: (request: {
     projectId: string
     appSessionId: string
@@ -842,8 +849,8 @@ class AcpRuntime {
       },
       sessionCwd: (sessionId) => this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().cwd,
       prepareFollowUp: (request) => this.prepareNativeFollowUpContent(request),
-      ...(this.options.notebook?.registerTurnInputs
-        ? { registerTurnInputs: this.options.notebook.registerTurnInputs }
+      ...(this.options.notebook?.prepareTurnInputs
+        ? { prepareTurnInputs: this.options.notebook.prepareTurnInputs }
         : {}),
       publishUserMessage: ({ sessionId, messageId, text, uploads, parts }) =>
         this.publication.pushEvent({
@@ -1897,7 +1904,7 @@ class AcpRuntime {
             level: 'error',
             sessionId: request.sessionId,
             title: 'Prompt cancellation timed out',
-            text: 'The agent did not stop, so its process was stopped and will restart on the next prompt.'
+            text: 'Cancellation was not confirmed before the deadline. The agent connection is being closed; process termination is not yet confirmed.'
           })
           void this.disconnect()
         }

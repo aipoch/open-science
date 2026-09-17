@@ -33,6 +33,7 @@ import {
 import type {
   NotebookInputRegistry,
   NotebookInputRunLease,
+  PreparedNotebookTurnInputs,
   RegisterNotebookTurnInputsRequest
 } from './input-registry'
 import type {
@@ -261,7 +262,7 @@ type NotebookLocalRpcServerOptions = {
     releaseAllWriteReservations?(): Promise<void>
   }
   inputRegistry?: Pick<NotebookInputRegistry, 'registerTurn' | 'getTurnInputs' | 'clearSession'> &
-    Partial<Pick<NotebookInputRegistry, 'openRun'>>
+    Partial<Pick<NotebookInputRegistry, 'openRun' | 'prepareTurn'>>
   hostArtifacts?: {
     list(options: unknown, context: { projectId: string; sessionId: string }): Promise<unknown>
     resolvePath(
@@ -1565,6 +1566,16 @@ class NotebookLocalRpcServer {
       if (ownedTurns.size === 0) this.artifactTurnBindingsByExecution.delete(sessionId)
     }
     if (binding.stopFailure) throw binding.stopFailure
+  }
+
+  async prepareNotebookTurnInputs(
+    request: RegisterNotebookTurnInputsRequest
+  ): Promise<PreparedNotebookTurnInputs> {
+    if (!this.inputRegistry) return { inputs: [], commit: () => {} }
+    if (!this.inputRegistry.prepareTurn) {
+      throw new Error('Notebook input preparation is unavailable.')
+    }
+    return this.inputRegistry.prepareTurn(request)
   }
 
   async registerNotebookTurnInputs(

@@ -21,6 +21,11 @@ type RegisterNotebookTurnInputsRequest = {
   materializeOnly?: boolean
 }
 
+type PreparedNotebookTurnInputs = {
+  inputs: readonly NotebookPromptInput[]
+  commit: () => void
+}
+
 type GetNotebookTurnInputsRequest = Pick<
   RegisterNotebookTurnInputsRequest,
   'projectId' | 'appSessionId' | 'promptMessageId'
@@ -118,10 +123,23 @@ class NotebookInputRunLease {
 
 class NotebookInputRegistry {
   private readonly turns = new Map<string, RegisteredTurn>()
+  private readonly sessionGenerations = new Map<string, symbol>()
 
   constructor(private readonly options: NotebookInputRegistryOptions) {}
 
   async registerTurn(request: RegisterNotebookTurnInputsRequest): Promise<NotebookPromptInput[]> {
+    const prepared = await this.prepareTurn(request)
+    if (!request.materializeOnly) prepared.commit()
+    return [...prepared.inputs]
+  }
+
+  // Finish storage work before provider submission; acceptance only publishes the prepared record.
+  async prepareTurn(
+    request: RegisterNotebookTurnInputsRequest
+  ): Promise<PreparedNotebookTurnInputs> {
+    const sessionId = request.appSessionId
+    const generation = this.sessionGenerations.get(sessionId) ?? Symbol(sessionId)
+    this.sessionGenerations.set(sessionId, generation)
     const inputs: NotebookRunInputFile[] = []
     for (const upload of request.uploads) {
       if (!upload.versionId) {
@@ -177,8 +195,22 @@ class NotebookInputRegistry {
         })
       )
     )
-    if (!request.materializeOnly) this.turns.set(key, { fingerprint, inputs: deduplicated })
-    return promptInputs
+    let committed = false
+    return {
+      inputs: promptInputs,
+      commit: () => {
+        if (committed) return
+        if (this.sessionGenerations.get(sessionId) !== generation) {
+          throw new Error('Notebook input Session was cleared before registration committed.')
+        }
+        const current = this.turns.get(key)
+        if (current && current.fingerprint !== fingerprint) {
+          throw new Error('Notebook turn inputs conflict with an existing immutable registration.')
+        }
+        this.turns.set(key, { fingerprint, inputs: deduplicated })
+        committed = true
+      }
+    }
   }
 
   getTurnInputs(request: GetNotebookTurnInputsRequest): NotebookRunInputFile[] {
@@ -238,6 +270,7 @@ class NotebookInputRegistry {
   }
 
   clearSession(appSessionId: string): void {
+    this.sessionGenerations.delete(appSessionId)
     for (const key of this.turns.keys()) {
       const parsed = JSON.parse(key) as [string, string, string]
       if (parsed[1] === appSessionId) this.turns.delete(key)
@@ -310,6 +343,7 @@ export type {
   NotebookInputPreviewTarget,
   NotebookInputRegistryOptions,
   OpenNotebookInputRunRequest,
+  PreparedNotebookTurnInputs,
   RegisterNotebookTurnInputsRequest,
   ResolveNotebookInputRunRequest,
   ResolveNotebookInputPreviewRequest

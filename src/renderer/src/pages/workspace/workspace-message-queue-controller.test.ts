@@ -3,6 +3,8 @@ import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { AcpNativeFollowUpWorkflow } from '../../../../main/acp/native-follow-up-workflow'
+
 import type { ChatSession } from '@/stores/session-store'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
 
@@ -2344,5 +2346,63 @@ describe('workspace message queue controller', () => {
       { sessionId: 'session-a', messageId: 'compute-message' }
     ])
     expect(sendMessage).toHaveBeenCalledOnce()
+  })
+})
+
+describe('Send now with the native follow-up lifecycle', () => {
+  it('releases a stopped turn without waiting for preparation or sending the old payload twice', async () => {
+    let currentSession = session('running')
+    const turn = new AbortController()
+    let finishPreparation!: (value: { prompt: []; close: () => void }) => void
+    const close = vi.fn()
+    const request = vi.fn(async () => ({ outcome: 'injected' }))
+    const workflow = new AcpNativeFollowUpWorkflow({
+      connection: () => ({ agent: { request } }) as never,
+      capabilities: () => ({ close: true, delete: true, resume: true, steering: true }),
+      frameworkId: () => 'claude-code',
+      openCodeUsageApi: () => undefined,
+      activeProviderSessionId: () => 'provider-1',
+      hasLivePrompt: () => currentSession.status === 'running',
+      hasPendingPermission: () => false,
+      livePrompt: () => ({ turnToken: 'turn-1', signal: turn.signal }),
+      sessionCwd: () => '/workspace',
+      publishUserMessage: vi.fn(),
+      prepareFollowUp: () =>
+        new Promise((resolve) => {
+          finishPreparation = resolve
+        })
+    })
+    const sendMessage = vi.fn(async () => ({ sessionId: 'session-a', messageId: 'sent' }))
+    const input = options(currentSession, {
+      getSession: () => currentSession,
+      runtime: {
+        sendMessage,
+        cancelRun: vi.fn(),
+        steerFollowUp: (input) => workflow.steerFollowUp(input)
+      }
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+    act(() => hook.result.current.lifecycle.enqueue(admission('continue')))
+    let sending!: Promise<void>
+    act(() => {
+      sending = hook.result.current.actions.sendNow(hook.result.current.items[0].id)
+    })
+    currentSession = session('idle')
+    hook.rerender({ ...input, activeSession: currentSession, promptInFlightSessionIds: [] })
+    await act(async () => {
+      turn.abort()
+      await sending
+    })
+    await vi.waitFor(() => expect(hook.result.current.items).toEqual([]))
+    expect(sendMessage).toHaveBeenCalledOnce()
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: 'continue' }))
+    expect(request).not.toHaveBeenCalled()
+    await act(async () => {
+      finishPreparation({ prompt: [], close })
+    })
+    expect(close).toHaveBeenCalledOnce()
+    expect(sendMessage).toHaveBeenCalledOnce()
+    expect(request).not.toHaveBeenCalled()
   })
 })
