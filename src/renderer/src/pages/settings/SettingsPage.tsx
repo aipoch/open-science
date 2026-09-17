@@ -2112,7 +2112,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       <ErrorNotice
                         inline
                         role={statusOk ? 'status' : 'alert'}
-                        level={statusOk ? 'success' : 'warning'}
+                        level={statusOk ? 'success' : 'error'}
                         description={statusMessage}
                       />
                     ) : null}

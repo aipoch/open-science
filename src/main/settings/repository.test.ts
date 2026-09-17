@@ -55,6 +55,44 @@ afterEach(async () => {
 })
 
 describe('settings repository', () => {
+  it('does not treat a failed validation write as recovery of an in-flight request', async () => {
+    const store = new SettingsDocumentStore(await createStorageRoot())
+    const repository = new SettingsRepository(store)
+    await repository.upsertProvider(
+      provider({
+        lastValidatedAt: 1,
+        lastValidatedTarget: { model: 'a', endpoint: 'openai' }
+      })
+    )
+    vi.spyOn(store, 'mutate').mockImplementationOnce(async (update) => {
+      update(await store.read())
+      throw new Error('Synthetic write failure')
+    })
+    await expect(
+      repository.updateProviderValidationIfTargetMatches(
+        'p1',
+        () => true,
+        { ok: true, category: 'ok' },
+        { model: 'b', endpoint: 'openai' }
+      )
+    ).rejects.toThrow('Synthetic write failure')
+    expect(
+      await repository.updateProviderValidationIfTargetMatches(
+        'p1',
+        () => true,
+        { ok: false, category: 'model-not-found', status: 404 },
+        { model: 'b', endpoint: 'openai' },
+        2
+      )
+    ).toBe(true)
+    expect(
+      providerValidationFailed((await repository.getSettings()).providers[0], {
+        model: 'b',
+        endpoint: 'openai'
+      })
+    ).toBe(true)
+  })
+
   it('publishes an active custom model edit and its selection in one mutation', async () => {
     const dir = await createStorageRoot()
     const store = new SettingsDocumentStore(dir)

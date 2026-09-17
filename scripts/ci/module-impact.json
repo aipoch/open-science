@@ -27443,7 +27443,8 @@
           "src/renderer/src/stores/settings-store.test.ts",
           "src/renderer/web/bootstrap.test.ts",
           "src/renderer/web/renderer-argument-shape-characterization.test.ts",
-          "src/renderer/src/lib/session-fork.test.ts"
+          "src/renderer/src/lib/session-fork.test.ts",
+          "src/renderer/src/pages/settings/ProviderTestResultCard.test.tsx"
         ]
       },
       "capabilityOverlays": [],
@@ -28514,7 +28515,8 @@
           "src/renderer/src/stores/specialist-store.upload.test.ts",
           "src/renderer/src/stores/theme-store.test.ts",
           "src/renderer/web/bootstrap.test.ts",
-          "src/renderer/web/renderer-argument-shape-characterization.test.ts"
+          "src/renderer/web/renderer-argument-shape-characterization.test.ts",
+          "src/renderer/src/pages/settings/ProviderTestResultCard.test.tsx"
         ]
       },
       "capabilityOverlays": [],
@@ -29803,7 +29805,9 @@
         "src/renderer/src/pages/settings/useWslSetupStatus.test.ts",
         "src/renderer/src/pages/settings/useWslSetupStatus.ts",
         "src/renderer/src/pages/settings/validation-message.test.ts",
-        "src/renderer/src/pages/settings/validation-message.ts"
+        "src/renderer/src/pages/settings/validation-message.ts",
+        "src/renderer/src/pages/settings/ProviderTestResultCard.tsx",
+        "src/renderer/src/pages/settings/ProviderTestResultCard.test.tsx"
       ],
       "interfacePaths": [
         "src/renderer/src/pages/settings/AppVersionSection.tsx",
@@ -29902,7 +29906,8 @@
           "src/renderer/src/pages/settings/storage-i18n.render.test.tsx",
           "src/renderer/src/pages/settings/token-usage-analytics.test.ts",
           "src/renderer/src/pages/settings/useWslSetupStatus.test.ts",
-          "src/renderer/src/pages/settings/validation-message.test.ts"
+          "src/renderer/src/pages/settings/validation-message.test.ts",
+          "src/renderer/src/pages/settings/ProviderTestResultCard.test.tsx"
         ],
         "contract": [],
         "consumer": [

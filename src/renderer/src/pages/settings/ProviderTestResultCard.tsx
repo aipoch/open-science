@@ -2,7 +2,7 @@ import { useTranslation } from 'react-i18next'
 import { AlertTriangle, CheckCircle2, ChevronRight, Pencil } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
-import { noticeTitleClassName } from '@/components/ui/notice-chrome'
+import { noticeTitleClassName, noticeToneClassNames } from '@/components/ui/notice-chrome'
 
 import type { ValidateProviderResult } from '../../../../shared/settings'
 import { CATEGORY_KEYS, describeValidation } from './validation-message'
@@ -41,9 +41,7 @@ const ProviderTestResultCard = ({ result }: ProviderTestResultCardProps): React.
           aria-hidden="true"
           className={cn(
             'flex size-9 shrink-0 items-center justify-center rounded-full',
-            ok
-              ? 'bg-status-info-surface text-status-info-foreground dark:bg-status-info-dark-surface dark:text-status-info-dark-foreground'
-              : 'bg-status-warning-surface text-status-warning-foreground dark:bg-status-warning-dark-surface dark:text-status-warning-dark-foreground'
+            noticeToneClassNames[ok ? 'success' : 'warning']
           )}
         >
           <Icon className="size-[18px]" strokeWidth={1.8} />

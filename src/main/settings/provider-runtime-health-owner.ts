@@ -20,12 +20,12 @@ export class ProviderRuntimeHealthOwner {
         ) &&
         current.type === target.providerType &&
         (current.configRevision ?? 0) === target.configRevision &&
-        tryDecryptKey(current.keyRef) === target.provider.key &&
-        // Discard requests that began before the latest explicit successful validation.
-        // Failure timestamps cannot guard this: concurrent model failures must accumulate.
-        (current.lastValidatedAt ?? 0) < failure.startedAt,
+        tryDecryptKey(current.keyRef) === target.provider.key,
       { ok: false, category: failure.category, status: failure.status },
-      failure.category === 'auth' ? undefined : { model: failure.model, endpoint: failure.endpoint }
+      failure.category === 'auth'
+        ? undefined
+        : { model: failure.model, endpoint: failure.endpoint },
+      failure.startedAt
     )
     if (applied) await this.onChanged?.()
   }

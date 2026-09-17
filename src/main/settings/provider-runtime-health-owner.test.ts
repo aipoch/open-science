@@ -344,7 +344,7 @@ describe('ProviderRuntimeHealthOwner', () => {
       })
     ).toBe(true)
   })
-  it('accumulates concurrent model failures while keeping older requests from undoing a later validation', async () => {
+  it('keeps independent model failures when another model is validated successfully', async () => {
     const health = new ProviderRuntimeHealthOwner(repository)
     const failure = {
       category: 'model-not-found' as const,
@@ -367,7 +367,7 @@ describe('ProviderRuntimeHealthOwner', () => {
     stored = (await repository.getSettings()).providers[0]
     expect(providerValidationFailed(stored, { model: 'model-a', endpoint: 'openai' })).toBe(false)
     expect(providerValidationFailed(stored, { model: 'model-b', endpoint: 'openai' })).toBe(true)
-    expect(providerValidationFailed(stored, { model: 'model-c', endpoint: 'openai' })).toBe(false)
+    expect(providerValidationFailed(stored, { model: 'model-c', endpoint: 'openai' })).toBe(true)
     await health.observe(target(), { ...failure, model: 'model-c', startedAt: Date.now() + 1 })
     stored = (await repository.getSettings()).providers[0]
     expect(providerValidationFailed(stored, { model: 'model-c', endpoint: 'openai' })).toBe(true)

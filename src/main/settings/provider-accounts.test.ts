@@ -348,6 +348,109 @@ describe('ProviderAccountsModule', () => {
     expect(await new SettingsRepository(dir).getSettings()).toEqual(before)
   })
 
+  it('preserves an unrelated failed model when saving the same explicitly entered key', async () => {
+    await repository.setAgentFramework('opencode')
+    await module.upsertProvider({
+      id: 'gateway',
+      type: 'custom',
+      name: 'Gateway',
+      baseUrl: 'https://gateway.example/v1',
+      model: 'model-a',
+      key: 'existing-secret',
+      apiEndpoints: ['openai']
+    })
+    await repository.updateProviderValidationIfTargetMatches(
+      'gateway',
+      () => true,
+      { ok: false, category: 'model-not-found', status: 404 },
+      { model: 'model-b', endpoint: 'openai' }
+    )
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'OK' } }] })
+          )
+      )
+    )
+    const result = await module.saveValidatedProvider({
+      id: 'gateway',
+      type: 'custom',
+      name: 'Renamed gateway',
+      key: 'existing-secret',
+      requireExisting: true
+    })
+    expect(result.providerId).toBe('gateway')
+    const saved = (await new SettingsRepository(dir).getSettings()).providers[0]
+    expect(saved.name).toBe('Renamed gateway')
+    expect(saved.lastValidatedTarget).toEqual({ model: 'model-a', endpoint: 'openai' })
+    expect(saved.lastValidationFailure).toMatchObject({
+      category: 'model-not-found',
+      target: { model: 'model-b', endpoint: 'openai' }
+    })
+  })
+
+  it('rejects saved-provider success that predates runtime failure but permits a later recovery', async () => {
+    await repository.setAgentFramework('opencode')
+    await module.upsertProvider({
+      id: 'gateway',
+      type: 'custom',
+      name: 'Gateway',
+      baseUrl: 'https://gateway.example/v1',
+      model: 'model-a',
+      key: 'existing-secret',
+      apiEndpoints: ['openai']
+    })
+    const started = deferred<void>()
+    const response = deferred<Response>()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        started.resolve()
+        return response.promise
+      })
+    )
+    const pending = module.validateProvider({ providerId: 'gateway' })
+    await started.promise
+    await repository.updateProviderValidationIfTargetMatches(
+      'gateway',
+      () => true,
+      { ok: false, category: 'auth', status: 403 },
+      undefined
+    )
+    response.resolve(
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { role: 'assistant', content: 'OK' } }]
+        })
+      )
+    )
+    expect(await pending).toMatchObject({ ok: true, applied: false })
+    expect((await repository.getSettings()).providers[0].lastValidationFailure).toMatchObject({
+      category: 'auth',
+      status: 403
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              choices: [{ message: { role: 'assistant', content: 'OK' } }]
+            })
+          )
+      )
+    )
+    expect(await module.validateProvider({ providerId: 'gateway' })).toMatchObject({
+      ok: true,
+      applied: true
+    })
+    expect(
+      (await new SettingsRepository(dir).getSettings()).providers[0].lastValidationFailure
+    ).toBeUndefined()
+  })
+
   it('rejects an invalid new provider without persisting it', async () => {
     vi.stubGlobal(
       'fetch',

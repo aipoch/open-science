@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util'
 import { BootstrapError } from '../../shared/bootstrap'
 import { ensureCodexAuthHome } from './codex-auth'
 import type {
@@ -468,7 +469,11 @@ class ProviderAccountsModule {
     const target = targetForValidationResult(validation, validation.testedTarget)
     const provider = {
       ...prepared.provider,
-      ...buildProviderValidationPatch(prepared.provider, validation, target)
+      ...buildProviderValidationPatch(
+        expectedValidationState && saved ? saved : prepared.provider,
+        validation,
+        target
+      )
     }
     await this.auth.serializeAccountMutation(async () => {
       const current = await this.repository.getSettings()
@@ -800,6 +805,16 @@ class ProviderAccountsModule {
           this.providerValidationGenerations.get(current.id) === validationGeneration &&
           currentSettings.agentFrameworkId === settings.agentFrameworkId &&
           current.keyRef === expectedKeyRef &&
+          (!result.ok ||
+            (current.lastValidatedAt === storedValidationTarget?.lastValidatedAt &&
+              isDeepStrictEqual(
+                current.lastValidatedTarget,
+                storedValidationTarget?.lastValidatedTarget
+              ) &&
+              isDeepStrictEqual(
+                current.lastValidationFailure,
+                storedValidationTarget?.lastValidationFailure
+              ))) &&
           (healthPolicy !== 'definitive-failures' ||
             (current.lastValidatedAt === storedValidationTarget?.lastValidatedAt &&
               !(
