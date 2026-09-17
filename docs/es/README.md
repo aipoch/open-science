@@ -1,7 +1,7 @@
 <h1 align="center">AIPOCH Open-Science</h1>
 
 <p align="center">
-  Entorno de investigación con IA de código abierto, centrado en la ejecución local e independiente del modelo, para una ciencia reproducible.
+  Entorno de investigación con IA para una ciencia reproducible — de código abierto, centrado en la ejecución local e independiente del modelo.
 </p>
 
 <p align="center">
@@ -45,7 +45,7 @@
 
 > Este documento es una traducción del `README.md` en inglés. En caso de discrepancia, prevalece la [versión en inglés](../../README.md).
 
-AIPOCH Open-Science es un entorno local y de código abierto, desarrollado por [AIPOCH](https://aipoch.com/open-science) para científicos e investigadores, compatible con distintos modelos de IA. Permite realizar investigaciones reproducibles e inspeccionables con agentes científicos de IA, ejecutar Python y R, conectarse a fuentes de datos científicos y trabajar en macOS, Windows y Linux. Cree un proyecto, describa su objetivo de investigación en lenguaje natural y permita que los agentes lean archivos, busquen en la web, ejecuten código, consulten fuentes de datos científicos y produzcan informes, tablas y figuras con procedencia rastreable, todo en un mismo espacio de trabajo.
+AIPOCH Open-Science es un entorno de investigación con IA para científicos e investigadores, desarrollado por [AIPOCH](https://aipoch.com/open-science) con un enfoque de código abierto, centrado en la ejecución local e independiente del modelo. Permite realizar investigaciones reproducibles e inspeccionables con agentes científicos de IA, ejecutar Python y R, conectarse a fuentes de datos científicos y trabajar en macOS, Windows y Linux. Cree un proyecto, describa su objetivo de investigación en lenguaje natural y permita que los agentes lean archivos, busquen en la web, ejecuten código, consulten fuentes de datos científicos y produzcan informes, tablas y figuras con procedencia rastreable, todo en un mismo espacio de trabajo.
 
 AIPOCH Open-Science respalda la investigación computacional y con uso intensivo de datos en todas las disciplinas, incluidos el aprendizaje automático, la estadística, las ciencias biológicas, la química, la ciencia de los materiales, la física y las ciencias ambientales. Acompaña todo el proceso de investigación, desde la revisión bibliográfica y el desarrollo de hipótesis hasta la ejecución de código, el análisis de datos, la simulación, la visualización y la producción de resultados rastreables.
 
@@ -60,11 +60,9 @@ AIPOCH Open-Science respalda la investigación computacional y con uso intensivo
 - [Inicio rápido](#-inicio-rápido)
 - [Recorrido por el producto](#recorrido-por-el-producto)
 - [Rendimiento en benchmarks](#rendimiento-en-benchmarks)
-- [Por qué AIPOCH Open-Science](#por-qué-aipoch-open-science)
 - [Capacidades principales](#capacidades-principales)
 - [Proveedores de modelos](#proveedores-de-modelos)
 - [Datos, permisos y confianza](#datos-permisos-y-confianza)
-- [Estado del proyecto](#estado-del-proyecto)
 - [Desarrollo y empaquetado](#desarrollo-y-empaquetado)
 - [Preguntas frecuentes](#preguntas-frecuentes)
 - [Participe](#participe)
@@ -73,22 +71,18 @@ AIPOCH Open-Science respalda la investigación computacional y con uso intensivo
 
 ## 🚀 Inicio rápido
 
-Ejecute AIPOCH Open-Science en tres pasos: descargue el instalador para su plataforma, complete la configuración guiada de primera ejecución y cree un proyecto de investigación.
-
 ### 1. Descargue la aplicación
 
 Abra la [última versión](https://github.com/aipoch/open-science/releases/latest), expanda **Assets** y elija el instalador para su equipo:
 
-| Su equipo                             | Elija                                      |
-| ------------------------------------- | ------------------------------------------ |
-| macOS: Apple Silicon (M1 o posterior) | El DMG de macOS para Apple Silicon / ARM64 |
-| macOS: Intel                          | El DMG de macOS para Intel/x64             |
-| Windows x64                           | El instalador de Windows x64               |
-| Linux x64                             | El paquete AppImage o Debian de Linux x64  |
+| Su equipo                                 | Elija                                      |
+| ----------------------------------------- | ------------------------------------------ |
+| macOS 12+: Apple Silicon (M1 o posterior) | El DMG de macOS para Apple Silicon / ARM64 |
+| macOS 12+: Intel                          | El DMG de macOS para Intel/x64             |
+| Windows x64                               | El instalador de Windows x64               |
+| Linux x64                                 | El paquete AppImage o Debian de Linux x64  |
 
-Revise los activos y la información de verificación publicada en la página de lanzamiento. Consulte [Verificación de su descarga](../../SECURITY.md#verifying-your-download) antes de la instalación si necesita validar un paquete.
-
-> Si macOS o Windows muestra una advertencia de desarrollador no identificado o de editor desconocido, verifique que el paquete provenga de la página oficial de lanzamientos antes de continuar.
+Descargue desde la página oficial de versiones; consulte la [verificación de descargas](../../SECURITY.md#verifying-your-download) si es necesario.
 
 En macOS, también puede instalar la aplicación con [Homebrew](https://brew.sh):
 
@@ -96,17 +90,13 @@ En macOS, también puede instalar la aplicación con [Homebrew](https://brew.sh)
 brew install --cask open-science
 ```
 
-Homebrew selecciona automáticamente el paquete para Apple Silicon o Intel.
+En Windows, reinstalar conserva los datos de investigación. Para una limpieza completa, consulte la [herramienta de restablecimiento](../../scripts/windows-reset/README.md), que elimina permanentemente los datos locales tras la confirmación.
 
 ### 2. Complete la configuración inicial
 
-El primer lanzamiento tiene cinco pasos guiados:
+Siga el asistente: **Entorno → Ubicación de datos → Entorno de ejecución del agente → Proveedor de modelo → Entorno de ejecución de Notebook**.
 
-1. **Entorno** comprueba la compatibilidad, el almacenamiento de aplicaciones, el almacenamiento seguro de credenciales y el acceso a la red.
-2. **Ubicación de datos** permite elegir dónde se almacenan los artefactos, Notebooks, cargas y entornos de gran tamaño.
-3. **Entorno de ejecución del agente** selecciona y prepara Claude Code, OpenCode o Codex. Los entornos de ejecución gestionados por la aplicación se pueden instalar sin necesidad de Node.js, npm o una contraseña de administrador.
-4. **Proveedor de modelo** conecta y prueba el modelo que desea utilizar. Elija un proveedor integrado, una puerta de enlace personalizada o un inicio de sesión de suscripción Claude o Codex existente.
-5. **Entorno de ejecución de Notebook** prepara opcionalmente entornos Python y R administrados por la aplicación o habilita intérpretes detectados y registrados manualmente.
+Complete las comprobaciones obligatorias del entorno y del runtime del agente y pruebe la conexión al modelo. Python/R Notebook es opcional; Notebook y la ubicación de datos pueden ajustarse más adelante en Configuración.
 
 <table>
 <tr>
@@ -119,17 +109,11 @@ El primer lanzamiento tiene cinco pasos guiados:
 </tr>
 </table>
 
-La ejecución de Notebook es opcional. Todas las comprobaciones obligatorias del entorno y del entorno de ejecución del agente deben superarse antes de que **Continuar** esté disponible, y la conexión con el modelo debe validarse antes de finalizar la configuración. Puede conservar los valores predeterminados de Notebook y de la ubicación de datos, y cambiarlos más adelante en Configuración.
-
 ### 3. Iniciar un proyecto de investigación
 
-1. Haga clic en **Nuevo proyecto** y asigne al proyecto un nombre de investigación estable y una descripción opcional.
-2. Abra una sesión y describa el objetivo, los datos de entrada, las restricciones, los resultados deseados y cómo se debe verificar el resultado.
-3. Adjunte archivos fuente, seleccione un modelo verificado y elija un modo de aprobación.
-4. Envíe la tarea. Inspeccione la actividad de las herramientas del agente, apruebe las acciones confidenciales y abra los artefactos generados en el panel de vista previa.
-5. Para explorar una dirección diferente, edite un mensaje de usuario anterior y vuelva a enviarlo en una rama nueva; utilice los controles de revisión del mensaje para regresar a cualquiera de las rutas.
-6. Abra la vista **Procedencia** de un artefacto para inspeccionar sus versiones y la evidencia disponible detrás del resultado seleccionado.
-7. Continúe el trabajo en sesiones posteriores. Utilice `@` para hacer referencia a un archivo de proyecto existente y `/` para seleccionar explícitamente una habilidad habilitada.
+1. Haga clic en **Nuevo proyecto**, abra una sesión y describa el objetivo de investigación, las entradas y los resultados esperados.
+2. Adjunte archivos, elija un modelo y un modo de aprobación y envíe la tarea. Use `@` para referenciar archivos del proyecto o `/` para elegir una habilidad.
+3. Revise la actividad de las herramientas y las solicitudes de aprobación, previsualice los resultados y consulte la evidencia disponible en **Procedencia**.
 
 > Las capturas de pantalla de este archivo README ilustran el flujo de trabajo. Las etiquetas, catálogos y otros detalles de la interfaz pueden diferir de la versión que instale.
 
@@ -181,49 +165,35 @@ AIPOCH Open-Science obtuvo la puntuación de clasificación más alta en la comp
   <img src="../images/readme/biomnibench-public50-leaderboard.png" alt="Comparación BiomniBench-DA Public 50 que muestra a AIPOCH Open-Science en primer lugar con una puntuación de 79.05" width="1200" />
 </p>
 
-## Por qué AIPOCH Open-Science
-
-AIPOCH Open-Science reúne chats, Notebooks, scripts locales, bases de datos científicas, archivos y herramientas de informes en un entorno de investigación de IA persistente y local-first donde la ejecución permanece vinculada a las pruebas.
-
-- **Ejecución persistente.** Los proyectos, sesiones, archivos, vistas previas e historial sobreviven a los reinicios, mientras que los agentes aprobados pueden ejecutar comandos, Python y R y generar artefactos.
-- **Resultados rastreables.** Las versiones de artefactos inmutables conservan pruebas de producción verificables y señalan claramente la información no disponible.
-- **Elección independiente del modelo.** Conecte proveedores de nube integrados, puertas de enlace personalizadas compatibles o suscripciones de Claude y Codex, y elija el modelo y el esfuerzo de razonamiento de cada sesión.
-- **Control local-first.** La aplicación y el estado del proyecto permanecen en su equipo; las llamadas externas utilizan únicamente los servicios que configure o apruebe.
-- **Abierto y extensible.** El código independiente bajo Apache-2.0, las habilidades, los conectores, la actividad de las herramientas y los archivos generados son inspeccionables, y puede añadir habilidades y conectores MCP.
-
 ## Capacidades principales
 
 AIPOCH Open-Science combina gestión de proyectos, ejecución de agentes multimodelo, Notebooks de Python y R, conectores de datos científicos, versiones inmutables de artefactos con procedencia y control humano autorizado en un espacio de trabajo local. La aplicación instalada y las [notas de la versión más recientes](https://github.com/aipoch/open-science/releases/latest) son la fuente de referencia para los catálogos actuales, los detalles de empaquetado y las opciones recién incorporadas.
 
-| Área                                                   | Capacidad central                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Proyectos y sesiones**                               | Cree y organice proyectos con sesiones fijadas, ramas de mensajes y conversaciones laterales persistentes, y detalles de sesión editables. Edite prompts completados para convertirlos en ramas de mensajes persistentes y seleccionables sin eliminar la ruta posterior original, y recupere el trabajo reciente, los borradores, el historial de conversación y el estado de vista previa. Las conversaciones laterales se abren como pestañas de vista previa independientes — ejecute varias junto a la conversación principal, que sigue siendo interactiva, inícielas como borradores que heredan el modelo actual, y mueva anotaciones entre ellas. Exporte una sesión como un paquete de investigación `.science` autocontenido e impórtela en otro proyecto o equipo — con las ramas de conversación, las versiones de archivos, los registros de Notebook y la evidencia de verificación incluidas.                                                                                                                                                                                                                                                                                                                                     |
-| **Flujo de trabajo del agente**                        | Las sesiones en lenguaje natural ofrecen respuestas transmitidas y actividad de herramientas agrupada por finalidad, con controles de aprobación y detención, seguimientos en cola, compactación de contexto y recuperación tras reinicios. Ramifique el trabajo terminado en sesiones nuevas y use aclaraciones estructuradas, anotaciones de texto, imagen y PDF, contexto de lectura de PDF vinculados, memoria del proyecto, referencias de sesión y planes sujetos a revisión, y marcadores privados con notas sobre texto de conversación, vistas previas y pasajes de PDF que persisten entre reinicios. Una búsqueda global categorizada alcanza proyectos, sesiones, cuerpos de mensajes, archivos cargados y generados, y la biblioteca de literatura, con filtros estándar y avanzados y vistas previas contextuales de detalle que saltan al mensaje coincidente. Las notificaciones, el estado en directo, los detalles de tiempo y tokens, la paleta de comandos, las vistas previas de fuentes y el cambio de proyecto mantienen visibles y manejables las investigaciones largas.                                                                                                                                                 |
-| **Modelos y backends de agentes**                      | Use proveedores cloud integrados, como Apodex, NVIDIA Build con un catálogo seleccionado compatible con agentes, y los catálogos de modelos más recientes de OpenAI y Anthropic (GPT-6 Astra y Claude Fable 5.1), gateways personalizados compatibles o inicios de sesión de suscripción de Claude y Codex. Seleccione Claude Code, OpenCode, Codex o el entorno CodeBuddy sin inicio de sesión como backend de agente, con validación de compatibilidad de modelos y API, entrada multimodal de imágenes, controles de razonamiento y políticas específicas de subagente, revisor y Vision. Los entornos de ejecución gestionados por la aplicación se actualizan in situ — la CLI de Codex gestionada ofrece actualizaciones probadas desde Configuración, con las versiones de la CLI y del adaptador mostradas por separado.                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| **Especialistas y delegación**                         | Cree agentes especialistas personales con capacidades acotadas, personalización conversacional, importación/exportación de paquetes y transferencia inmediata desde el agente principal. El mercado de paquetes firmados admite fuentes de GitHub oficiales y aprobadas por el usuario, importaciones que detectan conflictos y 64 iconos de capacidades integrados; la delegación para producción añade mensajería duradera, recuperación y un interruptor de delegación por sesión.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| **Python, R, Notebooks y HPC**                         | Ejecute kernels persistentes de Python, R y REPL junto con comandos de shell registrados, en entornos sin conexión administrados o con sus propios intérpretes. Trabaje localmente o conéctese mediante SSH a hosts remotos y envíe ejecuciones de Notebook a clústeres HPC mediante Slurm; el acceso de red protegido, las credenciales cifradas, la inspección de paquetes y variables, el terminal compartido y el historial progresivo permiten controlar y observar el cómputo. El trabajo largo de Notebook, REPL y shell puede ejecutarse en segundo plano — liberando el turno del agente al tiempo que se conservan la identidad exacta de la ejecución, la cancelación y la procedencia, y entregando los resultados automáticamente tanto en las ejecuciones locales como en los trabajos de cómputo remotos. En Windows x64, una vista previa opcional de Bash en WSL2 dirige los comandos de shell a través de un entorno WSL2 cuya preparación se comprueba. Los entornos de ejecución de R propios pueden instalar los paquetes que falten en una biblioteca personal aprobada mediante consentimiento, y los bloqueos de dependencias capturados exportan un script de restauración para la restauración condicional de paquetes. |
-| **Revisión bibliográfica y gestión de referencias**    | Importe referencias mediante DOI, PubMed ID, arXiv ID o archivos — un único PDF a través del editor de metadatos, o muchos a la vez con progreso por archivo, gestión de duplicados y reintento —, y vea de un vistazo el total de referencias de la biblioteca activa; organice colecciones, vincule referencias a proyectos y recupere los PDF descargados desde la papelera. Busque en paralelo texto completo de acceso abierto en Europe PMC, PMC, OpenAlex, arXiv y Unpaywall, consulte metadatos de la editorial y enlaces a conjuntos de datos por DOI, combine registros duplicados sin perder adjuntos ni enlaces y dé formato a las citas a partir de metadatos guardados con procedencia de artefactos. Extraiga localmente figuras y tablas de los PDF — recortes reconstruidos, leyendas y encabezados combinados — y copie o exporte tablas de investigación como HTML, TSV o Markdown, o deje que el agente liste y lea directamente las figuras, tablas y algoritmos extraídos de los PDF vinculados.                                                                                                                                                                                                                            |
-| **Archivos científicos y vistas previas**              | Adjunte archivos de hasta 10 GB mediante carga en streaming, organice y busque en una biblioteca de proyecto, referencie cargas, salidas y carpetas locales con `@` y `@path`, y exporte archivos, conversaciones o sesiones `.ipynb`. Previsualice en línea o a pantalla completa datos científicos, PDF con búsqueda, archivos de Office, imágenes TIFF y otras, código fuente, estructuras y reacciones moleculares e historial de Notebook, con procedencia y navegación a la fuente.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| **Artefactos y procedencia**                           | Conserve versiones inmutables de artefactos por sesión con contenido verificado por suma, código productor, historial de ejecución, entradas exactas, inventario del entorno, contexto de ramas de mensajes, linaje y evidencia de revisión. Los archivos editables Markdown, texto, scripts y código fuente publican una versión nueva que conserva la procedencia con cada guardado y permiten compararla con la anterior. Verifique cualquier versión capturada reproduciendo su receta sellada en un entorno aislado y comparando los archivos reproducidos con el original — comprobaciones byte a byte, comparaciones acotadas de imágenes y tablas, reglas científicas opcionales y registros de verificación exportables.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| **Habilidades científicas y conectores de datos**      | Amplíe los flujos de investigación con **22 habilidades integradas destacadas** y **24 conectores de investigación integrados**. Cree habilidades de forma conversacional o a partir de trabajo terminado, importe paquetes y fuentes de GitHub y añada conectores MCP locales o remotos personalizados con permisos por herramienta e importación/exportación de configuración. Explore el mercado verificado de habilidades mediante catálogos firmados — descubra habilidades por categoría y autor con instalación en un clic, actualizaciones de versión e instalación por lotes con selección filtrada y progreso con posibilidad de reintento — y gestione conectores de forma masiva desde Configuración. Las habilidades de aplicación centrales permanecen siempre habilitadas, de modo que los puntos de entrada integrados siguen funcionando, y la CLI sin interfaz gráfica y el Task SDK pueden listar, inspeccionar y habilitar o deshabilitar conectores. Las etiquetas entre recursos, una etiqueta protegida de Favoritos y los filtros con búsqueda organizan habilidades, conectores y especialistas.                                                                                                                         |
-| **Datos locales, privacidad, permisos y verificación** | Mantenga locales los datos del proyecto, el estado de la aplicación y las cachés de Notebook en un almacenamiento configurable y migrable; use los modos de proxy del sistema, manual o directo y un panel de tokens con un mapa de calor de actividad de 30 días y atribución por ejecución. Controle las acciones con `Ask for approval`, `Auto-approve edits` o `Full access`, concesiones acotadas, credenciales centralizadas (con un modo explícito de almacenamiento en archivo para las implementaciones de Linux sin interfaz gráfica), dominios de cálculo aprobados por el usuario y políticas por conector y herramienta. Los medios remotos en la salida del modelo se cargan solo tras una activación explícita, las imágenes enviadas a los modelos se normalizan, y los endpoints remotos de modelos deben usar HTTPS. Un revisor opcional audita transcripciones, registros de ejecución y artefactos, informa de resultados de aprobado/advertencia/error y puede ejecutar un bucle de corrección acotado con evidencia duradera.                                                                                                                                                                                               |
+| Área                                                | Capacidad central                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Habilidades científicas**                         | Amplíe la investigación con **23 habilidades integradas** y **525 habilidades** del [Skills Marketplace](https://github.com/aipoch/openscience-skill-marketplace), con instalación y actualizaciones en un clic. Cree habilidades mediante conversación o trabajo completado e importe paquetes o fuentes de GitHub. Las aportaciones se publican tras revisión; una importación local no las publica.                                                                                                                                                              |
+| **Conectores**                                      | Acceda a recursos científicos con **24 conectores integrados** o añada conectores MCP locales y remotos personalizados. Gestione permisos por herramienta e importe o exporte configuraciones.                                                                                                                                                                                                                                                                                                                                                                      |
+| **Especialistas y delegación**                      | Instale **10 especialistas** del [Specialist Marketplace](https://github.com/aipoch/openscience-specialist-marketplace) o cree especialistas personales para recibir tareas del agente principal. Los paquetes admiten importación y exportación; las aportaciones se revisan antes de publicarse y las importaciones locales no las publican.                                                                                                                                                                                                                      |
+| **Modelos y backends de agentes**                   | Use modelos en la nube, pasarelas compatibles o inicios de sesión de suscripciones Claude y Codex. Elija Claude Code, OpenCode, Codex o CodeBuddy como backend, con pruebas de conexión, entrada de imágenes y ajustes de razonamiento.                                                                                                                                                                                                                                                                                                                             |
+| **Proyectos, sesiones y paquetes de investigación** | Organice proyectos con sesiones fijadas, ramas de mensajes, conversaciones laterales e historial recuperable. Traslade un **paquete de investigación `.science` portátil** a otro proyecto o equipo con ramas de conversación, versiones de archivos seleccionadas, registros de Notebook y evidencia de verificación. Las importaciones son de solo lectura, sin ejecutar código ni restaurar credenciales; se excluyen conversaciones laterales y marcadores, y los archivos dependen de la selección de exportación.                                             |
+| **Agente revisor**                                  | Active la revisión automática opcional para comprobar, en un contexto separado, las respuestas, registros de ejecución y evidencias de archivos relacionados con un turno completado del agente. Obtenga comprobaciones fundamentadas con resultados de aprobación, advertencia o fallo, con un número limitado de ciclos de corrección por el agente principal y nueva revisión cuando se detecten problemas. Se conservan los registros de revisión y el estado de resolución de los problemas; la revisión se limita a los registros disponibles para ese turno. |
+| **Python, R, Notebooks y HPC**                      | Ejecute Python, R, Notebook y shell localmente con entornos gestionados o intérpretes propios, con ejecución en segundo plano e historial. SSH y Slurm requieren el host, software, recursos y permisos descritos en la FAQ de cálculo remoto.                                                                                                                                                                                                                                                                                                                      |
+| **Biblioteca de referencias**                       | Importe y gestione referencias y PDF con colecciones, etiquetas, vínculos a proyectos, notas y fusión de duplicados. Busque textos completos de acceso abierto, lea PDF, extraiga figuras y tablas y utilice fuentes de la biblioteca en las conversaciones para el análisis asistido por IA. Genere bibliografías con el estilo de cita elegido y exporte referencias en BibTeX o RIS.                                                                                                                                                                             |
+| **Archivos científicos y vistas previas**           | Suba archivos de hasta **10 GiB cada uno**, organice los archivos del proyecto y previsualice datos científicos, PDF, documentos Office, imágenes, código y estructuras moleculares. El límite de subida no garantiza que un modelo lea todo el archivo: contexto, análisis de adjuntos y vistas previas tienen límites propios. Los archivos grandes suelen necesitar lectura o análisis por bloques mediante código.                                                                                                                                              |
+| **Artefactos y procedencia**                        | Conserve versiones inmutables de resultados con código generador, entradas, historial de ejecución, entorno y evidencia de revisión disponibles. En el escritorio, reproduzca versiones aptas con una receta completa, las entradas necesarias y un entorno utilizable, compare salidas y exporte registros de verificación. La falta de evidencia puede impedir la verificación, y reproducir resultados no demuestra validez científica.                                                                                                                          |
 
 ## Proveedores de modelos
 
 AIPOCH Open-Science es independiente del modelo a nivel de producto: conéctelo a los principales proveedores de LLM en la nube, una puerta de enlace personalizada o reutilice una suscripción Claude o Codex existente. Actualmente, la disponibilidad del proveedor depende del backend del agente seleccionado y de los protocolos API que admite. Hay cuatro formas de conectar un modelo:
 
-| Modo proveedor                     | Cómo funciona                                                                                                                                                                                                                                                                                                                                                                            |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Proveedores de nube integrados** | Elija de la lista de proveedores que muestra la aplicación instalada y autentíquese con la clave solicitada.                                                                                                                                                                                                                                                                             |
-| **Puerta de enlace personalizada** | Proporcione una URL base compatible, una clave API y un ID de modelo exacto. El formato API predeterminado (Messages, Chat Completions o Responses) se deriva del framework de agentes activo, por lo que una nueva puerta de enlace personalizada es compatible desde el primer momento.                                                                                                |
-| **Suscripción de Codex**           | Seleccione el framework de agentes Codex y luego elija Suscripción de Codex como tipo de proveedor.                                                                                                                                                                                                                                                                                      |
-| **Suscripción de Claude**          | Inicie sesión con una suscripción de Claude en dos modos: **compartido** (un inicio de sesión en el navegador que almacena las credenciales en el perfil predeterminado `~/.claude`) o **aislado** (un flujo `claude setup-token` gestionado por la aplicación bajo un `CLAUDE_CONFIG_DIR` propio y completamente aislado de `~/.claude/`, con la opción alternativa de pegar un token). |
+| Modo proveedor                     | Cómo funciona                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Proveedores de nube integrados** | Elija de la lista de proveedores que muestra la aplicación instalada y autentíquese con la clave solicitada.                                                                                                                                                                                                                                                                                                                                                                 |
+| **Puerta de enlace personalizada** | Indique la URL base, el ID exacto del modelo y un protocolo API compatible con el backend elegido (Messages, Chat Completions o Responses), y pruebe la conexión. Las pasarelas remotas requieren HTTPS y clave API. Las direcciones de loopback como `localhost`, `127.0.0.1` o `[::1]` permiten HTTP sin clave; hay ajustes predefinidos para Ollama, LM Studio, llama.cpp y vLLM. El formato API predeterminado no garantiza la compatibilidad del servidor o del modelo. |
+| **Suscripción de Codex**           | Seleccione el framework de agentes Codex y luego elija Suscripción de Codex como tipo de proveedor.                                                                                                                                                                                                                                                                                                                                                                          |
+| **Suscripción de Claude**          | Inicie sesión con una suscripción de Claude en dos modos: **compartido** (un inicio de sesión en el navegador que almacena las credenciales en el perfil predeterminado `~/.claude`) o **aislado** (un flujo `claude setup-token` gestionado por la aplicación bajo un `CLAUDE_CONFIG_DIR` propio y completamente aislado de `~/.claude/`, con la opción alternativa de pegar un token).                                                                                     |
 
-Se eliminó el proveedor heredado **Local Claude**. Las entradas locales de Claude guardadas anteriormente se eliminan durante la actualización; añada **Suscripción de Claude** y autentíquese mediante el inicio de sesión compartido en el navegador o el flujo aislado `claude setup-token`.
-
-Los proveedores de nube integrados actualmente incluyen OpenAI, Anthropic, Grok (xAI), DeepSeek, Zhipu AI (GLM) con un endpoint específico para GLM Coding Plan, Kimi (Moonshot), MiniMax, StepFun con un endpoint de suscripción específico para Step Plan, Xiaomi MIMO, SenseNova, Volcengine Ark, Bailian (Alibaba Cloud) con un endpoint de suscripción específico para Bailian for Plan, Tencent TokenHub, además de endpoints de suscripción específicos para Tencent Coding Plan y Token Plan, y la puerta de enlace de agregación OpenRouter, entre otros; algunos son específicos de la región.
-
-Los proveedores, los modelos disponibles y los endpoints regionales pueden evolucionar independientemente de este README. Considere el selector de proveedores y la prueba de conexión de la aplicación instalada como la fuente de verdad.
+Los proveedores integrados incluyen OpenAI, Anthropic, DeepSeek, NVIDIA Build y otros. Los modelos y puntos de acceso regionales dependen de la versión instalada y del backend elegido; consulte el selector y la prueba de conexión de la aplicación.
 
 ## Datos, permisos y confianza
 
@@ -234,25 +204,20 @@ El flujo de datos externos aún es posible y debe revisarse:
 - Las solicitudes al modelo envían el prompt y el contexto necesarios al proveedor del modelo seleccionado.
 - Las búsquedas web y los conectores remotos envían sus parámetros mostrados a servicios externos.
 - Los conectores locales pueden ejecutar comandos de confianza en el equipo.
+- La aplicación también puede contactar con servidores de actualización, catálogos del mercado y servicios de descarga de entornos o modelos.
 - Los archivos adjuntos, las referencias `@`, los registros y los informes generados pueden contener datos de investigación confidenciales.
 
 Elija el perfil de permiso más limitado que se ajuste a la tarea:
 
-| Modo                                  | Comportamiento                                                                                          | Uso recomendado                                                              |
-| ------------------------------------- | ------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| **Solicitar aprobación**              | Solicita aprobación antes de editar archivos, ejecutar comandos, acceder a la red o llamar a conectores | Flujos de trabajo nuevos, datos confidenciales y scripts desconocidos        |
-| **Aprobar ediciones automáticamente** | Permite editar el espacio de trabajo; sigue solicitando aprobación para comandos, red y conectores      | Edición de archivos de confianza con acceso externo controlado               |
-| **Acceso completo**                   | Permite automáticamente las ediciones, los comandos, el acceso a la red y los conectores                | Trabajo desatendido, de plena confianza y con un alcance claramente definido |
+| Modo                                  | Comportamiento                                                                                                                                                               | Uso recomendado                                                              |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| **Solicitar aprobación**              | Solicita aprobación para las acciones no cubiertas por permisos acotados existentes o políticas de herramientas de confianza de la aplicación                                | Flujos de trabajo nuevos, datos confidenciales y scripts desconocidos        |
+| **Aprobar ediciones automáticamente** | Usa la revisión automática nativa del backend cuando existe; en caso contrario, solo autoriza automáticamente operaciones claramente de bajo riesgo en el espacio de trabajo | Edición de archivos de confianza con acceso externo controlado               |
+| **Acceso completo**                   | Permite automáticamente las ediciones, los comandos, el acceso a la red y los conectores                                                                                     | Trabajo desatendido, de plena confianza y con un alcance claramente definido |
+
+El perfil efectivo depende del backend y de los permisos existentes. También se aplican las políticas de conectores, herramientas y red de cálculo; compruebe el modo efectivo que muestra la aplicación.
 
 Revise los parámetros del conector y la actividad de la herramienta antes de aprobarlos. Nunca incluya claves API, tokens de acceso, identificadores de pacientes, datos no publicados o rutas locales confidenciales en capturas de pantalla o registros de problemas públicos.
-
-## Estado del proyecto
-
-AIPOCH Open-Science es una aplicación de escritorio desarrollada activamente disponible para macOS, Windows y Linux. El desarrollo se centra en flujos de trabajo de investigación locales confiables, capacidades científicas extensibles, artefactos de investigación rastreables y ejecución controlada por el usuario.
-
-Consulte la [última versión](https://github.com/aipoch/open-science/releases/latest) para conocer las descargas actuales y los cambios específicos de la versión. Para conocer las capacidades publicadas, parciales y planificadas, consulte el [Mapa de capacidades](../../ROADMAP.md#capability-map).
-
-AIPOCH Open-Science facilita la ejecución de investigaciones y el mantenimiento de registros; los investigadores siguen siendo responsables de los métodos, la interpretación, la privacidad y la validez científica.
 
 ## Desarrollo y empaquetado
 
@@ -262,7 +227,7 @@ Requisitos previos para desarrollar desde el código fuente:
 
 - Node.js 22 (consulte [`.nvmrc`](../../.nvmrc)) con npm
 - Git
-- Python 3 solo si desea la ejecución de Notebook
+- La ejecución de Notebook es opcional y usa entornos Python/R gestionados por la aplicación o un intérprete compatible que usted configure.
 
 ```bash
 git clone https://github.com/aipoch/open-science.git
@@ -271,25 +236,7 @@ npm install
 npm run dev
 ```
 
-`npm install` genera automáticamente el cliente Prisma e instala las dependencias nativas Electron. `npm run dev` crea los paquetes principales/precargados Electron, inicia el renderizador y abre la aplicación de escritorio. Los datos de desarrollo están aislados en `~/.open-science-project`.
-
-Comandos útiles:
-
-| Comando                | Propósito                                                                    |
-| ---------------------- | ---------------------------------------------------------------------------- |
-| `npm run dev`          | Iniciar la aplicación de desarrollo                                          |
-| `npm run dev:web`      | Aplicación de desarrollo + interfaz de usuario web de host local (127.0.0.1) |
-| `npm run dev:headless` | Backend de desarrollo + interfaz de usuario web, sin ventana Electron        |
-| `npm run lint`         | Ejecute ESLint                                                               |
-| `npm run typecheck`    | Comprobar los tipos del código principal y del renderizador                  |
-| `npm test`             | Ejecute la suite Vitest                                                      |
-| `npm run build`        | Verifique el tipo y cree la aplicación                                       |
-| `npm run build:web`    | Cree la interfaz de usuario web localhost opcional                           |
-| `npm run build:mac`    | Empaquetar las compilaciones de macOS                                        |
-| `npm run build:win`    | Empaquetar las compilaciones de Windows                                      |
-| `npm run build:linux`  | Empaquetar las compilaciones de Linux                                        |
-
-La salida empaquetada está escrita en `dist/`.
+Consulte la [referencia de comandos de desarrollo y empaquetado](development-quick-reference.md) y la [guía de contribución](../../CONTRIBUTING.md) para los comandos de compilación y el flujo de desarrollo.
 
 ### Modos web y sin interfaz gráfica en localhost
 
@@ -315,26 +262,6 @@ La CLI sin interfaz gráfica y el SDK de Node.js sin dependencias utilizan el mi
 
 ## Preguntas frecuentes
 
-### ¿Qué es AIPOCH Open-Science y quién lo desarrolla?
-
-R: AIPOCH Open-Science es un entorno de trabajo de investigación independiente y de código abierto (Apache-2.0), desarrollado por el equipo de AIPOCH. **AIPOCH Open-Science** es el nombre completo del producto y **Open-Science** es su nombre abreviado. Ambos nombres se refieren al mismo producto de AIPOCH.
-
-### ¿Qué debo hacer la primera vez que abro AIPOCH Open-Science?
-
-R: Complete los cinco pasos de configuración: **Entorno**, **Ubicación de datos**, **Entorno de ejecución del agente**, **Proveedor de modelo** y **Entorno de ejecución de Notebook**. Corrija las filas obligatorias marcadas como **Acción necesaria**, instale o repare el agente seleccionado si se ofrece esa opción y pruebe la conexión con el modelo. La configuración de Notebook y una ubicación de datos personalizada son opcionales.
-
-### ¿Qué es una clave API y dónde consigo una?
-
-R: Una clave API es una credencial secreta emitida por un proveedor de modelos. Cree o copie una desde la consola de API o para desarrolladores de ese proveedor. El proveedor podrá facturar las solicitudes realizadas con la clave. Trátela como una contraseña: nunca la comparta ni la envíe a un repositorio.
-
-### ¿Necesito una clave API?
-
-R: No, si reutiliza el inicio de sesión de una suscripción existente: una suscripción de Claude mediante un inicio de sesión compartido en el navegador o un flujo aislado `claude setup-token` gestionado por la aplicación, o una suscripción de ChatGPT/Codex en el backend de Codex. Los proveedores de nube integrados y las puertas de enlace personalizadas requieren sus propias claves.
-
-### ¿Qué proveedores de modelos puedo utilizar?
-
-R: Abra el selector de proveedores durante la configuración o en **Configuración → Modelo** para ver las opciones admitidas por la aplicación instalada y el backend del agente seleccionado. Puede utilizar un proveedor de nube integrado, una puerta de enlace personalizada compatible, una suscripción de Claude mediante un inicio de sesión compartido o aislado, o una suscripción de Codex en el backend de Codex.
-
 ### ¿Por qué falla la prueba de conexión del modelo?
 
 R: Compruebe que la clave API no tenga caracteres omitidos ni espacios, verifique la URL base y la región, use el ID exacto del modelo indicado por el proveedor y confirme el acceso a la red y el saldo de la cuenta. Para una suscripción de Claude, vuelva a iniciar sesión en el navegador compartido o actualice la credencial aislada `claude setup-token`, según el modo seleccionado.
@@ -343,13 +270,9 @@ R: Compruebe que la clave API no tenga caracteres omitidos ni espacios, verifiqu
 
 R: El paso actual no cumple la condición requerida. Corrija cualquier fila del entorno marcada como **Acción necesaria**, instale o repare el entorno de ejecución del agente seleccionado o valide el proveedor del modelo, según el paso activo. La configuración de Notebook es opcional y solo afecta a la ejecución de Notebook.
 
-### La configuración está completa. ¿Cómo inicio una tarea de investigación?
-
-R: Cree o abra un proyecto, inicie una sesión, adjunte los archivos fuente y describa el objetivo, las restricciones, el resultado esperado y los criterios de validación. Utilice `@` para hacer referencia a un archivo de proyecto y `/` para seleccionar una habilidad habilitada.
-
 ### ¿Cómo ejecuto trabajos en un clúster HPC remoto?
 
-R: Habilite la habilidad **Computación remota (SSH)** en **Configuración → Habilidades**, registre su clúster en **Configuración → Cálculo**, inicie una sesión y seleccione la habilidad con `/remote-compute-ssh`. La habilidad se encarga de registrar el host, ejecutar comandos breves mediante SSH y enviar trabajos de forma totalmente asíncrona. Cuando termina un trabajo, la aplicación inicia automáticamente un turno de análisis, por lo que no es necesario escribir un bucle de sondeo.
+R: **Computación remota (SSH)** permanece siempre habilitada y no necesita activarse en Configuración. Registre un host de cálculo SSH en **Configuración → Cálculo**, hágalo disponible para la sesión actual y utilice lenguaje natural o `/remote-compute-ssh`. Se necesita un host SSH accesible, autenticación válida, permisos sobre los directorios necesarios y el software, las dependencias y los recursos de cálculo que requiera la tarea. Direct SSH no requiere planificador; el modo Slurm exige un entorno Slurm operativo y permiso para enviar trabajos. “Siempre habilitada” se refiere a la habilidad, no a la disponibilidad permanente de cada host registrado.
 
 ### ¿Existe una interfaz de línea de comandos?
 
@@ -357,6 +280,7 @@ R: Sí. Instálela con un solo clic desde **Configuración → General → Herra
 
 ```bash
 # Inicie el servicio en segundo plano
+open-science init
 open-science start --no-open
 
 # Cree un proyecto y ejecute una tarea usando su nombre exacto
@@ -382,10 +306,6 @@ R: Abra el artefacto generado y elija **Procedencia**. Seleccione una versión p
 
 R: Sí. Edite un mensaje de usuario completo y reenvíelo para crear una nueva rama desde ese punto. Los turnos posteriores originales permanecen disponibles y las flechas de revisión junto al mensaje permiten cambiar entre las rutas alternativas.
 
-### ¿Los datos de mi investigación permanecen en mi equipo?
-
-R: Los proyectos, sesiones, archivos, configuraciones y credenciales configuradas se almacenan localmente de forma predeterminada. Es posible que el contenido necesario para solicitudes de modelo, búsquedas web o llamadas de conector aún se envíe al servicio externo que seleccionó, así que revise las entradas confidenciales y las políticas del proveedor antes de ejecutar una tarea.
-
 ## Participe
 
 AIPOCH Open-Science agradece informes de errores, propuestas de funciones, debates sobre diseño, preguntas de la comunidad y contribuciones a través de GitHub, Discord, X y el sitio web de AIPOCH. Elija el canal que mejor se adapte a su objetivo, luego siga la guía de contribución vinculada y el recordatorio de seguridad de publicación pública antes de compartir los detalles del proyecto.
@@ -398,9 +318,11 @@ AIPOCH Open-Science agradece informes de errores, propuestas de funciones, debat
 | [X / @aipoch_ai](https://x.com/aipoch_ai)                                | Anuncios de versiones y novedades sobre el desarrollo público                        |
 | [Sitio web de AIPOCH Open-Science](https://aipoch.com/open-science)      | Descripción general oficial del producto y descargas                                 |
 
-Antes de abrir una incidencia pública, elimine de los registros y las capturas de pantalla las claves API, los tokens, las rutas de archivos privados, los datos no publicados, los identificadores de pacientes y cualquier otro material confidencial. Consulte [CONTRIBUTING.md](CONTRIBUTING.md) para conocer el flujo de trabajo de desarrollo.
+Antes de abrir una incidencia pública, elimine de los registros y las capturas de pantalla las claves API, los tokens, las rutas de archivos privados, los datos no publicados, los identificadores de pacientes y cualquier otro material confidencial. Consulte [CONTRIBUTING.md](../../CONTRIBUTING.md) para conocer el flujo de trabajo de desarrollo.
 
 > **Dar Star al repositorio:** Si este proyecto le ha resultado útil, agradeceríamos que le diera Star en GitHub. Ayuda a sostener el desarrollo y solo lleva un segundo.
+
+Las capacidades entregadas, parciales y previstas aparecen en el [mapa de capacidades](../../ROADMAP.md#capability-map).
 
 ## Licencia
 
