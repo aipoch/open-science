@@ -274,6 +274,7 @@ const runProcess = (executable, args, options = {}, terminate = terminateProcess
     child.stderr?.setEncoding('utf8')
     child.stdout?.on('data', (chunk) => {
       stdout += chunk
+      options.onStdout?.(stdout)
     })
     child.stderr?.on('data', (chunk) => {
       stderr += chunk

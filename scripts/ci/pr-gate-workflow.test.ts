@@ -1139,6 +1139,7 @@ describe('PR Gate workflow', () => {
       ({ name }) => name === 'Test Windows-specific behavior'
     )
     for (const testFile of [
+      'scripts/windows-updater-certification.test.ts',
       'src/main/windows.test.ts',
       'src/main/windows-icon-assets.test.ts',
       'src/main/windows-powershell.test.ts',

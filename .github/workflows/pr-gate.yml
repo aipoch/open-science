@@ -714,6 +714,7 @@ jobs:
         run: >-
           npx vitest run
           scripts/ci/run-windows-browser-diagnostics.test.ts
+          scripts/windows-updater-certification.test.ts
           src/main/windows.test.ts
           src/main/windows-icon-assets.test.ts
           src/main/windows-powershell.test.ts
