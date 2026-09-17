@@ -1155,8 +1155,9 @@ jobs:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/renderer-layout-windows
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/renderer-layout-windows.json
         # NetLog traced blank fixtures to Windows WSAENOBUFS during parallel asset connects.
+        # One worker needs the combined budget of the former two-worker suite.
         shell: node scripts/ci/run-windows-browser-diagnostics.mjs {0}
-        run: npm run test:e2e:browser -- --workers=1 --fail-on-flaky-tests --global-timeout=300000
+        run: npm run test:e2e:browser -- --workers=1 --fail-on-flaky-tests --global-timeout=600000
       - name: Run functional journeys
         id: e2e_functional_windows
         if: ${{ steps.setup.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_functional_windows') }}
