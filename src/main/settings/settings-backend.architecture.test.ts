@@ -498,7 +498,7 @@ describe('Settings backend ownership architecture', () => {
         isNpmAvailable listAgentHomeSkills listConnectors listDeviceCredentials listHostSkills listSkillMarketplace listSkills listSpecialistSkillCatalog listUserSkills
         dispose loginClaudeShared loginIsolatedClaude loginIsolatedClaudeBrowser loginIsolatedCodex
         logoutClaudeShared logoutIsolatedClaude logoutIsolatedCodex logoutXaiOAuth markOnboardingComplete
-        markPathsNormalized migrateAgentHomeSkillIdentities openWslTerminal previewAgentHomeSkill previewCustomServerTemplateExport
+        markPathsNormalized migrateAgentHomeSkillIdentities openWslTerminal prepareDelegatedSkills previewAgentHomeSkill previewCustomServerTemplateExport
         previewCustomServerTemplateImport previewGitHubSkill previewSkillArchive previewSkillZip
         createWslSupportHandoff probeWslSetup provisionedConnectorSkillNames publishHostSkill refreshProviderModels registeredHelperCatalog rememberCodexAutoHttpsFallback removeCustomServer removeDeviceCredential removeGitHubToken removeNotebookNetwork
         removeManualInterpreter resolveActiveModelChangeTarget resolveActiveReasoningEffort restoreLocalShellRuntimePreference
