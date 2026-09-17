@@ -253,6 +253,8 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
   private readonly log: Logger
   private lastStatusSignature: string | undefined
   private runtimeAccessQueue: Promise<void> = Promise.resolve()
+  private runtimeAccessRevision = 0
+  private pendingRuntimeAccessChanges = 0
   private readonly cancelledRuntimeAccess = new Set<string>()
 
   constructor(private readonly options: NotebookNetworkSandboxOwnerOptions) {
@@ -294,6 +296,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
 
   async wrap(invocation: NotebookSandboxInvocation): Promise<NotebookSandboxedSpawn> {
     assertProcessTreeSupport(this.platform)
+    const runtimeAccessRevision = this.runtimeAccessRevision
     await this.initialize()
     const target = invocation.target ?? { kind: 'native' as const }
     await this.reconcilePendingCommandCleanups(target)
@@ -521,7 +524,23 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       ...(wrapped.confirmProcessTreeTermination
         ? { confirmProcessTreeTermination: wrapped.confirmProcessTreeTermination }
         : {}),
-      ...(wrapped.beginSpawn ? { beginSpawn: wrapped.beginSpawn } : {}),
+      ...(this.platform === 'win32' && invocation.windowsProtectionRequired !== undefined
+        ? {
+            beginSpawn: () => {
+              if (
+                this.pendingRuntimeAccessChanges > 0 ||
+                this.runtimeAccessRevision !== runtimeAccessRevision
+              ) {
+                throw new Error('R runtime access changed before startup. Retry the Notebook cell.')
+              }
+              return (
+                wrapped.beginSpawn?.() ?? { started: () => undefined, notStarted: () => undefined }
+              )
+            }
+          }
+        : wrapped.beginSpawn
+          ? { beginSpawn: wrapped.beginSpawn }
+          : {}),
       beginExecution: () => {
         if (cleanupPromise) throw new Error('Notebook sandbox process is already closed.')
         if (executionActive) throw new Error('Notebook sandbox execution is already active.')
@@ -844,6 +863,9 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     executable: string,
     authorized: boolean
   ): Promise<{ cancelled: boolean }> {
+    // Invalidate prepared launches at enqueue time, before a preceding UAC operation settles.
+    this.runtimeAccessRevision += 1
+    this.pendingRuntimeAccessChanges += 1
     const operationId = randomUUID()
     const diagnostic = startDiagnosticOperation(this.log, {
       operation: 'r-runtime-access',
@@ -870,17 +892,21 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       () => undefined,
       () => undefined
     )
-    return operation.then(
-      (result) => {
-        if (result.cancelled) diagnostic.cancel()
-        else diagnostic.complete()
-        return result
-      },
-      (error) => {
-        diagnostic.fail(error)
-        throw error
-      }
-    )
+    return operation
+      .finally(() => {
+        this.pendingRuntimeAccessChanges -= 1
+      })
+      .then(
+        (result) => {
+          if (result.cancelled) diagnostic.cancel()
+          else diagnostic.complete()
+          return result
+        },
+        (error) => {
+          diagnostic.fail(error)
+          throw error
+        }
+      )
   }
 
   private async applyWindowsRuntimeAccess(

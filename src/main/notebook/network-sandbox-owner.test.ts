@@ -2442,6 +2442,64 @@ describe('R startup authorization admission', () => {
     }
   })
 
+  it('invalidates a prepared R launch as soon as a settings revocation is queued', async () => {
+    const owner = createOwner()
+    const invocation = {
+      ...request,
+      args: [],
+      env: {},
+      cwd: tmpdir(),
+      commandText: 'cat(1)',
+      projectId: 'project',
+      windowsProtectionRequired: true,
+      windowsRuntimeAccessRequired: true,
+      filesystem: {
+        readOnlyRoots: [],
+        readWriteRoots: [],
+        deniedReadRoots: [],
+        deniedWriteRoots: []
+      }
+    }
+    const prepared = await owner.wrap(invocation)
+    let settle!: (value: { cancelled: boolean }) => void
+    backend.setWindowsRuntimeAccess.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          settle = resolve
+        })
+    )
+    const authorization = owner.setWindowsRuntimeAccess(request.executable, true)
+    let revocation: Promise<unknown> | undefined
+    try {
+      await vi.waitFor(() => expect(backend.setWindowsRuntimeAccess).toHaveBeenCalledOnce())
+      revocation = owner.setWindowsRuntimeAccess(request.executable, false)
+      expect(backend.setWindowsRuntimeAccess).toHaveBeenCalledTimes(1)
+      expect(() => prepared.beginSpawn?.()).toThrow('R runtime access changed before startup')
+      const pending = await owner.wrap(invocation)
+      try {
+        expect(() => pending.beginSpawn?.()).toThrow('R runtime access changed before startup')
+      } finally {
+        await pending.cleanup('spawn-failed', { processesTerminated: true })
+      }
+      settle({ cancelled: true })
+      await authorization
+      await revocation
+      expect(() => prepared.beginSpawn?.()).toThrow('R runtime access changed before startup')
+      const fresh = await owner.wrap(invocation)
+      try {
+        expect(() => fresh.beginSpawn?.()).not.toThrow()
+      } finally {
+        await fresh.cleanup('spawn-failed', { processesTerminated: true })
+      }
+    } finally {
+      settle?.({ cancelled: true })
+      await authorization
+      await revocation
+      await prepared.cleanup('spawn-failed', { processesTerminated: true })
+      await owner.dispose()
+    }
+  })
+
   it('does not grant permissions when protected execution is unavailable', async () => {
     const owner = createOwner()
     backend.getWindowsRuntimeAccess.mockResolvedValue({ authorized: false, registered: false })
