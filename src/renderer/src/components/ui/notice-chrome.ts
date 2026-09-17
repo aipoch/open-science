@@ -23,15 +23,18 @@ export {
 }
 
 // Shared semantic presentation; these existing tones do not represent business state.
-type NoticeLevel = 'info' | 'warning' | 'error'
+type NoticeLevel = 'info' | 'success' | 'warning' | 'error'
 type ErrorNoticeTone = 'teal' | 'amber' | 'red'
 const noticeIconClassNames: Record<NoticeLevel, string> = {
   info: 'text-status-info-foreground dark:text-status-info-dark-foreground',
+  success: 'text-status-success-foreground dark:text-status-success-dark-foreground',
   warning: 'text-status-warning-foreground dark:text-status-warning-dark-foreground',
   error: 'text-status-failure-foreground dark:text-status-failure-dark-foreground'
 }
 const noticeToneClassNames: Record<NoticeLevel, string> = {
   info: 'bg-status-info-surface text-status-info-foreground dark:bg-status-info-dark-surface dark:text-status-info-dark-foreground',
+  success:
+    'bg-status-success-surface text-status-success-foreground dark:bg-status-success-dark-surface dark:text-status-success-dark-foreground',
   warning:
     'bg-status-warning-surface text-status-warning-foreground dark:bg-status-warning-dark-surface dark:text-status-warning-dark-foreground',
   error:

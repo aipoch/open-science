@@ -1986,9 +1986,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                         />
                         {statusMessage ? (
                           statusOk ? (
-                            <p className="mt-3 text-sm text-primary" role="alert">
+                            <InlineNotice level="success" role="status" className="mt-3">
                               {statusMessage}
-                            </p>
+                            </InlineNotice>
                           ) : (
                             <InlineNotice level="error" role="alert" className="mt-3">
                               {statusMessage}

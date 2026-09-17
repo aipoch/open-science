@@ -259,6 +259,10 @@ describe('GeneralPanel About', () => {
     })
     await flush()
 
+    // The dialog header bar is the single panel title; the panel itself starts with sections.
+    expect(container.querySelector('[data-slot="settings-panel-header"]')).toBeNull()
+    expect(container.querySelector('h2')).toBeNull()
+
     const sections = Array.from(container.querySelectorAll('[data-slot="settings-section"]'))
     expect(sections.at(0)?.querySelector('h3')?.textContent).toBe('About')
   })
@@ -311,6 +315,27 @@ describe('GeneralPanel notifications', () => {
 
     expect(notificationsApi.sendTest).toHaveBeenCalledOnce()
     expect(container.textContent).toContain('Test notification shown.')
+  })
+
+  it('reserves the test-notification feedback slot so a result causes no layout shift', async () => {
+    await act(async () => {
+      root.render(<GeneralPanel />)
+    })
+    await flush()
+
+    const button = findButton(/Send test notification/)
+    const status = button?.parentElement?.querySelector<HTMLElement>('[role="status"]')
+    expect(status).not.toBeNull()
+    expect(status?.className).toContain('invisible')
+    expect(status?.parentElement?.className).toContain('min-h-[30px]')
+
+    await act(async () => {
+      button?.click()
+    })
+    await flush()
+
+    expect(status?.className).not.toContain('invisible')
+    expect(status?.textContent).toContain('Test notification shown.')
   })
 })
 

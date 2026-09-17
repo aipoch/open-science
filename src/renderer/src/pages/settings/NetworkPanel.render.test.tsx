@@ -120,6 +120,51 @@ describe('NetworkPanel offline retry', () => {
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'list' })
   })
 
+  it('cancels immediately when the mirror draft is clean, but confirms before discarding edits', async () => {
+    const onNavigate = vi.fn()
+    useSettingsStore.setState({ packageMirror: { condaChannel: 'https://mirror.example/conda' } })
+    await act(async () => {
+      root.render(<NetworkPanel view={{ kind: 'mirror' }} onNavigate={onNavigate} />)
+      await Promise.resolve()
+    })
+
+    const discardConfirmation = (): HTMLElement | null =>
+      document.body.querySelector('[data-testid="package-mirror-discard-confirmation"]')
+
+    // Clean draft: Cancel returns to the list without asking.
+    await act(async () => buttonWithText('Cancel').click())
+    expect(discardConfirmation()).toBeNull()
+    expect(onNavigate).toHaveBeenCalledWith({ kind: 'list' })
+
+    // Dirty draft: Cancel asks first; Keep editing preserves the draft.
+    onNavigate.mockClear()
+    await changeInput(
+      container.querySelector<HTMLInputElement>('[aria-label="Conda channel mirror"]')!,
+      'https://mirror.example/edited'
+    )
+    await act(async () => buttonWithText('Cancel').click())
+    expect(onNavigate).not.toHaveBeenCalled()
+    expect(discardConfirmation()?.textContent).toContain(
+      'Your edits to the package mirror have not been saved. Discard them and go back?'
+    )
+
+    await act(async () => {
+      discardConfirmation()?.querySelector<HTMLButtonElement>('button:first-of-type')?.click()
+    })
+    expect(discardConfirmation()).toBeNull()
+    expect(onNavigate).not.toHaveBeenCalled()
+    expect(
+      container.querySelector<HTMLInputElement>('[aria-label="Conda channel mirror"]')?.value
+    ).toBe('https://mirror.example/edited')
+
+    // Confirming discards the draft and returns to the list.
+    await act(async () => buttonWithText('Cancel').click())
+    await act(async () => {
+      discardConfirmation()?.querySelector<HTMLButtonElement>('button:last-of-type')?.click()
+    })
+    expect(onNavigate).toHaveBeenCalledWith({ kind: 'list' })
+  })
+
   it('hides unavailable Notebook network controls and falls back from the domains view', async () => {
     const onNavigate = vi.fn()
     await act(async () => {
