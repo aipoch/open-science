@@ -657,6 +657,28 @@ describe('R admission launch protection', () => {
     expect(windowsStandardLaunch).not.toHaveBeenCalled()
   })
 
+  it.each([false, true])(
+    'rejects a revoked durable R grant (registered: %s)',
+    async (registered) => {
+      vi.mocked(getWindowsRuntimeAccess).mockResolvedValue({ authorized: false, registered })
+      await expect(
+        NotebookNetworkRuntime.wrap({
+          ...request(true),
+          windowsRuntimeAccessRequired: true
+        })
+      ).rejects.toThrow('R runtime access changed')
+      expect(windowsLaunch).not.toHaveBeenCalled()
+      expect(windowsStandardLaunch).not.toHaveBeenCalled()
+    }
+  )
+
+  it('preserves protected admission proven by OS access without a durable grant', async () => {
+    vi.mocked(getWindowsRuntimeAccess).mockResolvedValue({ authorized: false, registered: false })
+    await NotebookNetworkRuntime.wrap({ ...request(true), windowsRuntimeAccessRequired: false })
+    expect(windowsLaunch).toHaveBeenCalledOnce()
+    expect(windowsStandardLaunch).not.toHaveBeenCalled()
+  })
+
   it('rejects pending ownership operations before a standard R launch', async () => {
     vi.mocked(isWindowsProtectionConfigured).mockResolvedValue(false)
     vi.mocked(getWindowsRuntimeAccess).mockRejectedValueOnce(

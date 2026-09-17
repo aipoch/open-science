@@ -89,6 +89,8 @@ export type NotebookSandboxCommand = Readonly<{
   superviseProcessTree?: boolean
   /** Transient R admission decision; launch must retain this protection requirement. */
   windowsProtectionRequired?: boolean
+  /** A durable grant used for admission must still be authorized at launch. */
+  windowsRuntimeAccessRequired?: boolean
   filesystem?: NotebookFilesystemPolicy
   onNetworkAccessRequest: NotebookNetworkDecisionHandler
 }>

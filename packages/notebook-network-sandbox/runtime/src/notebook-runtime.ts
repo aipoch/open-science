@@ -101,6 +101,8 @@ type NetworkWrapRequest = Readonly<{
   inheritedFileDescriptorCount?: number
   superviseProcessTree?: boolean
   windowsProtectionRequired?: boolean
+  /** A durable grant used for admission must still be authorized at launch. */
+  windowsRuntimeAccessRequired?: boolean
   filesystem: FilesystemLayoutInput
   signal?: AbortSignal
 }>
@@ -362,12 +364,17 @@ const wrap = async (
       if (!request.executable) throw new Error('R admission requires an exact executable.')
       // Recheck journals/receipts and the admitted mode before selecting a launcher. Never turn
       // a protected R admission into an uncontained process when setup changes or breaks.
-      await getWindowsRuntimeAccessImpl(
+      const access = await getWindowsRuntimeAccessImpl(
         config.windowsHostPath,
         config.installationId,
         config.windowsOwnershipRoot,
         request.executable
       )
+      if (request.windowsRuntimeAccessRequired && !access.authorized) {
+        throw new Error(
+          'R runtime access changed before startup. Authorize and verify R access again.'
+        )
+      }
       const configured = await isWindowsProtectionConfigured(config)
       if (configured !== request.windowsProtectionRequired) {
         throw new Error('Windows protection changed before R startup. Retry the Notebook cell.')

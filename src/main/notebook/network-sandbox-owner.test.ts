@@ -1905,6 +1905,12 @@ it('authorizes missing R access before the original Notebook cell is dispatched'
     })
     expect(result.status, result.stderr).toBe('completed')
     expect(result.stdout).toContain('R_CELL_COMPLETED')
+    expect(backend.wrap).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        windowsProtectionRequired: true,
+        windowsRuntimeAccessRequired: true
+      })
+    )
     expect(backend.setWindowsRuntimeAccess).toHaveBeenCalledExactlyOnceWith(
       process.execPath,
       true,
@@ -1959,7 +1965,7 @@ it('does not repeat a cancelled UAC prompt and reports cancellation before cell 
         executable: process.execPath,
         sessionId: 'r-session'
       })
-    ).resolves.toEqual({ windowsProtectionRequired: true })
+    ).resolves.toEqual({ windowsProtectionRequired: true, windowsRuntimeAccessRequired: true })
   } finally {
     await executor.shutdown()
     await owner.dispose()
@@ -2495,7 +2501,8 @@ describe('R startup authorization admission', () => {
     })
     try {
       await expect(owner.ensureRuntimeAccess(request)).resolves.toEqual({
-        windowsProtectionRequired: true
+        windowsProtectionRequired: true,
+        windowsRuntimeAccessRequired: false
       })
       expect(backend.setWindowsRuntimeAccess).not.toHaveBeenCalled()
     } finally {

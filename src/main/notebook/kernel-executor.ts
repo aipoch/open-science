@@ -38,6 +38,7 @@ import {
 import {
   NotebookRuntimeAccessCancelledError,
   type NotebookProcessSandbox,
+  type NotebookRuntimeAccessAdmission,
   type NotebookSandboxCleanupReason,
   type NotebookSandboxCleanupResult,
   type NotebookSandboxProcessOutcome
@@ -980,7 +981,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
     }
     // Admission routes external R and the managed default through DEFAULT_R_ENV. Named,
     // agent-created environments have no per-runtime durable ACL removal workflow.
-    let admission: Readonly<{ windowsProtectionRequired: boolean }> | void = undefined
+    let admission: NotebookRuntimeAccessAdmission | void = undefined
     if (kind === 'r' && env === DEFAULT_R_ENV) {
       admission = await this.processSandbox?.ensureRuntimeAccess?.({
         executable: invocation.executable,

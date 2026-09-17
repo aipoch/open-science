@@ -205,6 +205,7 @@ class NotebookNetworkSandbox {
           : {}),
         ...(command.superviseProcessTree ? { superviseProcessTree: true } : {}),
         windowsProtectionRequired: command.windowsProtectionRequired,
+        windowsRuntimeAccessRequired: command.windowsRuntimeAccessRequired,
         signal: controller.signal,
         filesystem: command.filesystem ?? {
           readOnlyRoots: [command.cwd],

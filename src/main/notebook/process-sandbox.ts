@@ -43,6 +43,8 @@ export type NotebookSandboxInvocation = Readonly<{
   superviseProcessTree?: boolean
   /** Transient R admission decision; launch must retain this protection requirement. */
   windowsProtectionRequired?: boolean
+  /** A durable grant used for admission must still be authorized at launch. */
+  windowsRuntimeAccessRequired?: boolean
   filesystem: Readonly<{
     readOnlyRoots: readonly string[]
     optionalReadOnlyRoots?: readonly string[]
@@ -90,10 +92,15 @@ export class NotebookRuntimeAccessCancelledError extends Error {
   }
 }
 
+export type NotebookRuntimeAccessAdmission = Readonly<{
+  windowsProtectionRequired: boolean
+  windowsRuntimeAccessRequired: boolean
+}>
+
 export interface NotebookProcessSandbox {
   ensureRuntimeAccess?(
     request: Pick<NotebookSandboxInvocation, 'runtime' | 'executable' | 'sessionId' | 'signal'>
-  ): Promise<Readonly<{ windowsProtectionRequired: boolean }> | void>
+  ): Promise<NotebookRuntimeAccessAdmission | void>
   wrap(invocation: NotebookSandboxInvocation): Promise<NotebookSandboxedSpawn>
   requestNetworkAccess?(
     request: NotebookNetworkAccessDecisionRequest
