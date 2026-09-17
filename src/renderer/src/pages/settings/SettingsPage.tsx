@@ -5,7 +5,6 @@ import { ErrorNotice } from '@/components/error-notice'
 /* Hallmark · component: settings side rail · genre: modern-minimal · theme: existing Open Science tokens · slop: pass */
 import {
   AlertTriangle,
-  CheckCircle2,
   Loader2,
   Archive,
   ArrowLeft,
@@ -105,11 +104,8 @@ import {
   type ProviderFormValue
 } from './provider-form-value'
 import { SettingsPanelLoadingBoundary } from './SettingsPanelLoadingBoundary'
-import {
-  CATEGORY_KEYS,
-  describeValidation,
-  localizeProviderResourceMessage
-} from './validation-message'
+import { localizeProviderResourceMessage } from './validation-message'
+import { ProviderTestResultCard } from './ProviderTestResultCard'
 import { loadSettingsPanel } from './settings-panel-loader'
 import { SettingsGlobalSearch } from './SettingsGlobalSearch'
 import type { SettingsWriteErrorCode } from '../../../../shared/settings'
@@ -2111,42 +2107,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                 >
                   <div className="mx-auto max-w-[880px] space-y-3 px-5 py-4">
                     {connectionResult ? (
-                      <ErrorNotice
-                        inline
-                        role={connectionResult.ok ? 'status' : 'alert'}
-                        icon={connectionResult.ok ? CheckCircle2 : AlertTriangle}
-                        level={connectionResult.ok ? 'success' : 'warning'}
-                        description={t(CATEGORY_KEYS[connectionResult.category])}
-                      >
-                        <p>{t('Changes have not been saved.')}</p>
-                        {connectionResult.testedTarget ? (
-                          <div className="flex min-w-0 flex-wrap gap-x-4 text-xs text-muted-foreground">
-                            {connectionResult.testedTarget.model ? (
-                              <p
-                                className="min-w-0 truncate"
-                                title={connectionResult.testedTarget.model}
-                              >
-                                {t('Model')}: {connectionResult.testedTarget.model}
-                              </p>
-                            ) : null}
-                            {connectionResult.testedTarget.endpoint ? (
-                              <p>
-                                {t('API format')}: {connectionResult.testedTarget.endpoint}
-                              </p>
-                            ) : null}
-                          </div>
-                        ) : null}
-                        {connectionResult.message ||
-                        connectionResult.status ||
-                        connectionResult.frameworkIncompatible ? (
-                          <details className="max-h-32 overflow-y-auto break-words">
-                            <summary className="cursor-pointer">{t('View details')}</summary>
-                            <p className="mt-2 whitespace-pre-wrap">
-                              {describeValidation(connectionResult, t)}
-                            </p>
-                          </details>
-                        ) : null}
-                      </ErrorNotice>
+                      <ProviderTestResultCard result={connectionResult} />
                     ) : statusMessage ? (
                       <ErrorNotice
                         inline
