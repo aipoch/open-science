@@ -160,7 +160,7 @@ type SkillEditorProps = {
 }
 
 const SkillEditorAlert = ({ message }: { message: string }): React.JSX.Element => (
-  <ErrorNotice role="alert" tone="amber" className="mt-2" description={message} />
+  <ErrorNotice inline role="alert" tone="amber" className="mt-2" description={message} />
 )
 
 // Create/edit form for a personal skill: Identity (name/description) + Content (SKILL.md body).

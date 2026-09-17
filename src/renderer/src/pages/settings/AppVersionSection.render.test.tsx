@@ -165,6 +165,23 @@ describe('AppVersionSection', () => {
     expect(container.querySelector('img')?.getAttribute('src')).toBe('logo-dark.png')
   })
 
+  it('keeps the full update error available and routes retry to the existing owner', () => {
+    const check = vi.fn(async () => {})
+    useUpdateStore.setState({
+      status: { state: 'error', current: '0.2.0', error: 'net::ERR_NAME_NOT_RESOLVED' },
+      check
+    })
+    act(() => root.render(<AppVersionSection />))
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+      'net::ERR_NAME_NOT_RESOLVED'
+    )
+    const button = Array.from(container.querySelectorAll('button')).find((element) =>
+      /check now/i.test(element.textContent ?? '')
+    )!
+    act(() => button.click())
+    expect(check).toHaveBeenCalledOnce()
+  })
+
   it('shows an update action when a new version is available', () => {
     useUpdateStore.setState({
       status: { state: 'available', current: '0.2.0', latest: '0.3.0', notes: 'n' }

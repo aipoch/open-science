@@ -203,6 +203,7 @@ const runReviewWithSession = async (
         sessionId,
         originalTurnMessageId: turnMessageId,
         correctionScope: finalReview.scope,
+        reviewedSession: session,
         openChecks: finalReview.checks.filter((c) => c.status === 'warn' || c.status === 'fail'),
         projectId,
         mainSessionId,

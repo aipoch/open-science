@@ -14,6 +14,7 @@ vi.mock('electron', () => ({
 }))
 
 import { SkillRegistry } from '../skills/registry'
+import { AcpTurnSkillOwner } from '../acp/turn-skill-owner'
 import { loadSkillDocument } from '../skills/runtime-mcp-server'
 import type { FetchLike } from '../skills/github-import'
 import { UserSkillRepository } from '../skills/user-skill-repository'
@@ -90,6 +91,87 @@ const userSkillSourceDir = (catalog: SkillCatalogModule, source: 'personal' | 'i
   join(catalogStorageRoots.get(catalog)!, 'skills', source)
 
 describe('SkillCatalogModule', () => {
+  it.each(['fresh conversation', 'existing Main conversation', 'explicit chip control'])(
+    'loads a Main-disabled Specialist Skill in a %s',
+    async (scenario) => {
+      const catalog = await createCatalog()
+      await catalog.createSkill({
+        name: 'methods-section-writer',
+        description: 'Write methods.',
+        body: 'METHODS_DOCUMENT_SENTINEL'
+      })
+      const skillId = 'personal-methods-section-writer'
+      await catalog.setSkillEnabled({ id: skillId, enabled: false })
+      await catalog.setSkillEnabled({ id: 'demo', enabled: false })
+      const runtimeRoot = join(catalogStorageRoots.get(catalog)!, 'codex-subscription')
+      const owner = new AcpTurnSkillOwner({
+        resolveSpecialistSkills: async () => ({
+          kind: 'specialist',
+          skillIds: [skillId],
+          frameworkNames: ['methods-section-writer'],
+          missingSkillIds: []
+        }),
+        skills: {
+          needForceLoad: (ids) => catalog.skillsNeedingForceLoad(ids),
+          namesForIds: (ids) => catalog.skillNudgeNamesForIds(ids)
+        },
+        requestSkillsReload: () => {}
+      })
+      const prepare = (): Promise<void> =>
+        catalog.materializeSkills(
+          runtimeRoot,
+          ['demo', skillId],
+          new Set(owner.backendPreparation().forcedSkillIds)
+        )
+      if (scenario === 'existing Main conversation') {
+        const main = await owner.authorize({})
+        await prepare()
+        main.close('completed')
+      }
+      const specialist = await owner.authorize({
+        specialistId: 'auto-research-specialist',
+        ...(scenario === 'explicit chip control' ? { selectedSkillIds: [skillId] } : {})
+      })
+      try {
+        await prepare()
+        await expect(
+          loadSkillDocument(
+            {
+              root: runtimeRoot,
+              skillsDirectory: join(runtimeRoot, 'skills'),
+              allowedNames: new Set(['methods-section-writer'])
+            },
+            'methods-section-writer'
+          )
+        ).resolves.toContain('METHODS_DOCUMENT_SENTINEL')
+        await expect(
+          loadSkillDocument(
+            { root: runtimeRoot, skillsDirectory: join(runtimeRoot, 'skills') },
+            'demo'
+          )
+        ).rejects.toThrow('Unknown skill: demo')
+        expect((await catalog.listSkills()).find((skill) => skill.id === skillId)?.enabled).toBe(
+          false
+        )
+      } finally {
+        specialist.close('completed')
+        // Remove read-only generated packages through the existing materializer.
+        await catalog.materializeSkills(runtimeRoot, ['demo', skillId])
+      }
+      expect(owner.backendPreparation().forcedSkillIds).toEqual([])
+      await prepare()
+      await expect(
+        loadSkillDocument(
+          { root: runtimeRoot, skillsDirectory: join(runtimeRoot, 'skills') },
+          'methods-section-writer'
+        )
+      ).rejects.toThrow('Unknown skill: methods-section-writer')
+      await expect(owner.authorize({ selectedSkillIds: [skillId] })).rejects.toThrow(
+        `Skill "${skillId}" is not available to Main Agent.`
+      )
+    }
+  )
+
   it('holds Specialist relationships and Main Agent enablement stable through promotion', async () => {
     const root = await mkdtemp(join(tmpdir(), 'marketplace-impact-lock-'))
     roots.push(root)

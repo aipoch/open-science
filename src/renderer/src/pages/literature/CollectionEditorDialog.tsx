@@ -290,6 +290,7 @@ export const CollectionEditorDialog = forwardRef<
             {error ? (
               <div className="px-5 pb-4">
                 <ErrorNotice
+                  inline
                   role="alert"
                   tone="amber"
                   description={

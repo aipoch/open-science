@@ -73,7 +73,8 @@ describe('pull request change classification', () => {
         mode: 'selective',
         roots: expect.any(Array),
         lanes: expect.any(Array),
-        bundles: expect.arrayContaining(['policy', 'static', 'unit', 'macos_e2e'])
+        bundles: expect.arrayContaining(['policy', 'static', 'unit', 'macos_e2e']),
+        macosGroups: ['journeys', 'presentation', 'regressions', 'delegation']
       })
       expect(JSON.parse(outputs.plan)).not.toHaveProperty('reasonChains')
       expect(readFileSync(summary, 'utf8')).toContain(
@@ -255,7 +256,12 @@ describe('pull request change classification', () => {
     expect(plan.mode).toBe('selective')
     expect(plan.roots).toContain('notebook_runtime')
     expect(plan.roots).not.toContain('main_runtime')
-    expect(plan.lanes).toEqual(['policy', 'typecheck_node'])
+    expect(plan.lanes).toEqual([
+      'policy',
+      'typecheck_node',
+      'e2e_regressions_macos',
+      'e2e_delegation_macos'
+    ])
   })
 
   it('keeps risk overlays additive after a specific owner replaces a fallback', () => {
@@ -378,6 +384,9 @@ describe('pull request change classification', () => {
     ['PowerShell', 'src/main/notebook/micromamba-cache-powershell.test.ts'],
     ['path handling', 'src/main/acp/workspace-path.ts'],
     ['ACL behavior', 'src/main/notebook/micromamba-cache-acl.integration.test.ts'],
+    ['Windows wheel recovery', 'src/main/notebook/pip-wheel-evidence.ts'],
+    ['Windows wheel regression', 'src/main/notebook/pip-wheel-evidence.test.ts'],
+    ['Windows install evidence', 'src/main/notebook/pip-install-evidence.test.ts'],
     ['storage', 'src/main/storage/ipc.ts'],
     ['session persistence', 'src/main/session-persistence/ipc.ts'],
     ['notebook shell process', 'src/main/notebook/shell-process.ts'],
@@ -513,7 +522,9 @@ describe('pull request change classification', () => {
       'typecheck_web',
       'interface_contracts',
       'unit_macos',
-      'build'
+      'build',
+      'e2e_regressions_macos',
+      'e2e_delegation_macos'
     ])
     expect(plan.bundles).toEqual(['policy', 'static', 'unit', 'macos_e2e'])
   })

@@ -2844,6 +2844,71 @@ describe('workspace agent message sending', () => {
     })
   })
 
+  it.each(['existing', 'branched'])(
+    'provides history fallback for a %s bound Specialist without explicit Skill chips',
+    async (scenario) => {
+      useSessionStore.setState({
+        sessions: [
+          {
+            id: 'transport-session-1',
+            projectId: 'project-1',
+            cwd: '/workspace/project',
+            title: 'Research',
+            status: 'idle',
+            specialistId: 'research-specialist',
+            createdAt: 1,
+            updatedAt: 1,
+            messages: [
+              {
+                id: 'prior-user',
+                role: 'user',
+                content: 'Prior research question',
+                status: 'complete',
+                eventIds: [],
+                createdAt: 1,
+                updatedAt: 1
+              },
+              {
+                id: 'prior-agent',
+                role: 'agent',
+                content: 'Prior research answer',
+                status: 'complete',
+                eventIds: [],
+                createdAt: 2,
+                updatedAt: 2
+              }
+            ]
+          }
+        ]
+      })
+      const runtime = {
+        state: createSnapshot(['transport-session-1']),
+        createSession: vi
+          .fn()
+          .mockResolvedValue({ sessionId: 'branched-session', cwd: '/workspace/project' }),
+        resumeSession: vi.fn(),
+        resetSessionContext: vi.fn(),
+        sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+      }
+      await sendWorkspaceMessage(runtime, {
+        ...(scenario === 'branched'
+          ? { branchSourceSessionId: 'transport-session-1', specialistId: 'research-specialist' }
+          : { sessionId: 'transport-session-1' }),
+        text: 'Continue the research',
+        cwd: '/workspace/project',
+        projectId: 'project-1'
+      })
+      await flushRuntimeTasks()
+      await vi.waitFor(() => expect(runtime.sendPrompt).toHaveBeenCalledOnce())
+      expect(runtime.sendPrompt.mock.calls[0]?.[8]).toMatchObject({
+        historyPreamble: expect.stringContaining('Prior research question')
+      })
+      expect(runtime.sendPrompt.mock.calls[0]?.[8]?.historyPreamble).not.toContain(
+        'Continue the research'
+      )
+    }
+  )
+
   it('sends annotation-only context while preserving structured Message data', async () => {
     const sendPrompt = vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
     const runtime = {

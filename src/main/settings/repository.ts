@@ -218,6 +218,11 @@ class SettingsRepository {
       return {
         ...settings,
         providers,
+        // A custom provider has one model. Keep its active selection in the same save so
+        // validation and runtime resolution cannot keep using the model from before the edit.
+        ...(configEdit && provider.type === 'custom' && settings.activeProviderId === provider.id
+          ? { activeModel: provider.model }
+          : {}),
         ...(isClaudeSubscriptionProvider(provider.type) &&
         isClaudeSubscriptionProviderId(provider.id)
           ? { claudeSubscriptionProviderId: provider.id }

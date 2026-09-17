@@ -535,6 +535,25 @@ describe('ProviderForm field switching', () => {
     expect(trigger?.textContent).toContain('DeepSeek')
   })
 
+  it('explains DeepSeek routing and retains legacy tags after refresh', () => {
+    render(createEmptyProviderFormValue({ type: 'official', vendorId: 'deepseek' }), {
+      supportedModels: ['deepseek-flash', 'deepseek-v4-pro']
+    })
+    const link = container.querySelector(
+      'a[href="https://api-docs.deepseek.com/quick_start/pricing/"]'
+    )
+    expect(link?.textContent).toBe('DeepSeek API model and routing details')
+    expect(container.textContent).toContain('with Flash pricing')
+    expect(container.textContent).toContain('original model IDs')
+    const tags = Array.from(container.querySelectorAll('span')).map((span) => span.textContent)
+    expect(tags).toContain('deepseek-v4-flash')
+    expect(tags).toContain('deepseek-v4-flash-vision-exp')
+    render(createEmptyProviderFormValue({ type: 'official', vendorId: 'anthropic' }))
+    expect(
+      container.querySelector('a[href="https://api-docs.deepseek.com/quick_start/pricing/"]')
+    ).toBeNull()
+  })
+
   it('shows a key field but no base URL or model control for an official vendor', () => {
     render(createEmptyProviderFormValue({ type: 'official', vendorId: 'deepseek' }))
 

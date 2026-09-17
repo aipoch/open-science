@@ -46,7 +46,7 @@ const step = (job: Job, name: string): Step => {
 }
 
 describe('release and scheduled workflow topology', () => {
-  it('batches latest-main Windows coverage hourly across five serial shards', () => {
+  it('batches latest-main Windows coverage daily across five serial shards', () => {
     const windows = workflow('windows-full-test.yml')
     const schedule = windows.on?.schedule as Array<{ cron: string }>
     const dispatch = windows.on?.workflow_dispatch as {
@@ -81,7 +81,7 @@ describe('release and scheduled workflow topology', () => {
     expect(test.run).toContain('--maxWorkers=1')
     expect(test.run).toContain('--reporter=github-actions')
     expect(windows.on).not.toHaveProperty('push')
-    expect(schedule).toEqual([{ cron: '47 * * * *' }])
+    expect(schedule).toEqual([{ cron: '47 18 * * *' }])
     expect(dispatch.inputs?.mode).toMatchObject({
       default: 'full',
       options: ['full', 'notebook-sandbox', 'notebook-mutation', 'regressions']
@@ -114,6 +114,10 @@ describe('release and scheduled workflow topology', () => {
       "${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'regressions' }}"
     )
     expect(regressions.run).not.toContain('--shard')
+    expect(regressions.run).toContain('src/main/delegation/opencode-runtime-preparation.test.ts')
+    expect(regressions.shell).toBe('bash')
+    expect(regressions.env?.TEST_NAME_PATTERN).toBe("${{ inputs.test_name_pattern || '.*' }}")
+    expect(regressions.run).toContain('--testNamePattern="$TEST_NAME_PATTERN"')
     expect(regressions.run).toContain('--maxWorkers=1 --testTimeout=60000 --hookTimeout=60000')
     for (const file of [
       'vitest.config.test.ts',
@@ -166,14 +170,14 @@ describe('release and scheduled workflow topology', () => {
     const profile = step(soak, 'Record runtime resource profile')
     const upload = step(soak, 'Upload runtime resource evidence')
 
-    expect(schedule).toEqual([{ cron: '23 3 * * *' }])
+    expect(schedule).toEqual([{ cron: '23 21 * * *' }])
     expect(dispatch.inputs?.mode).toMatchObject({
       default: 'smoke',
       options: ['smoke', 'soak', 'package-macos-arm64']
     })
     expect(resource.permissions).toEqual({ actions: 'read', contents: 'read' })
     expect(resource.concurrency).toEqual({
-      group: 'runtime-resource-soak-${{ github.ref }}',
+      group: 'runtime-resource-soak-${{ github.event_name }}-${{ github.ref }}',
       'cancel-in-progress': true
     })
     expect(step(plan, 'Check for unprofiled main changes').run).toContain(
@@ -208,17 +212,18 @@ describe('release and scheduled workflow topology', () => {
     expect(release.jobs['notarize-mac'].needs).toEqual(['build', 'package-smoke'])
   })
 
-  it('batches Nightly hourly and prepares publication without write access', () => {
+  it('batches Nightly daily and prepares publication without write access', () => {
     const nightly = workflow('nightly.yml')
     const schedule = nightly.on?.schedule as Array<{ cron: string }>
     const prepare = nightly.jobs.prepare
 
     expect(nightly.on).not.toHaveProperty('push')
-    expect(schedule).toEqual([{ cron: '17 * * * *' }])
+    expect(schedule).toEqual([{ cron: '17 17 * * *' }])
     expect(nightly.on).toHaveProperty('workflow_dispatch')
     expect(nightly.permissions).toEqual({ actions: 'read', contents: 'read' })
     expect(nightly.concurrency).toEqual({
-      group: "nightly-build${{ inputs.dry_run == 'linux-cli' && '-linux-cli' || '' }}",
+      group:
+        "nightly-build-${{ github.event_name }}${{ inputs.dry_run == 'linux-cli' && '-linux-cli' || '' }}",
       'cancel-in-progress': true
     })
     expect(nightly.jobs.build).toMatchObject({

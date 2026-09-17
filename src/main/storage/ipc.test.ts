@@ -2071,7 +2071,7 @@ describe('storage IPC handlers', () => {
     registerStorageIpcHandlers(deps)
 
     const first = invoke('storage:migrate', { parent: targetParent })
-    await tick()
+    await expect.poll(() => releaseDisconnect, { timeout: 10_000 }).toBeTypeOf('function')
 
     await expect(invoke('storage:migrate', { parent: targetParent })).resolves.toEqual({
       ok: false,
@@ -2102,7 +2102,7 @@ describe('storage IPC handlers', () => {
 
     try {
       const migratePromise = invoke('storage:migrate', { parent: targetParent })
-      await tick()
+      await expect.poll(() => releaseDisconnect, { timeout: 10_000 }).toBeTypeOf('function')
 
       await expect(
         invoke('storage:set-data-root-and-relaunch', { parent: alternateParent })
@@ -2267,7 +2267,7 @@ describe('storage IPC handlers', () => {
     registerStorageIpcHandlers(deps)
 
     const migratePromise = invoke('storage:migrate', { parent: targetParent })
-    await tick()
+    await expect.poll(() => releaseDisconnect, { timeout: 10_000 }).toBeTypeOf('function')
     await invoke('storage:cancel-migrate')
     releaseDisconnect?.()
 

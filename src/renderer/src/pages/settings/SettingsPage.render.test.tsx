@@ -1639,6 +1639,22 @@ describe('SettingsPage layout', () => {
     expect(content?.getAttribute('aria-hidden')).toBe('true')
     expect(nav?.contains(document.activeElement)).toBe(true)
 
+    await act(async () => {
+      document.activeElement?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      )
+    })
+    expect(onClose).not.toHaveBeenCalled()
+    expect(nav?.getAttribute('aria-hidden')).toBe('true')
+    expect(drawer?.getAttribute('role')).toBeNull()
+    expect(content?.hasAttribute('inert')).toBe(false)
+    expect(document.activeElement?.getAttribute('aria-label')).toBe('Open settings navigation')
+    await act(async () => {
+      document.body
+        .querySelector<HTMLButtonElement>('[aria-label="Open settings navigation"]')
+        ?.click()
+    })
+
     const generalTab = Array.from(nav?.querySelectorAll('button') ?? []).find((button) =>
       /general/i.test(button.textContent ?? '')
     )

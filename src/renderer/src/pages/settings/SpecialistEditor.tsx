@@ -254,7 +254,7 @@ const SpecialistEditor = ({
       <div className="max-w-2xl">
         {/* Save error — shown at the top so it is immediately visible */}
         {saveError ? (
-          <ErrorNotice role="alert" tone="amber" className="mb-4" description={saveError} />
+          <ErrorNotice inline role="alert" tone="amber" className="mb-4" description={saveError} />
         ) : null}
 
         {/* Saved identity bar — stable reference of what's currently persisted (edit only).

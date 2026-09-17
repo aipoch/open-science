@@ -92,6 +92,7 @@ type NativeFollowUpWorkflowOptions = Readonly<{
   activeProviderSessionId: (appSessionId: string) => string | undefined
   hasLivePrompt: (appSessionId: string) => boolean
   hasPendingPermission: (appSessionId: string) => boolean
+  hasPendingSideChatInteraction?: (appSessionId: string) => boolean
   livePrompt?: (appSessionId: string) => NativeFollowUpLivePrompt | undefined
   sessionCwd: (appSessionId: string) => string | undefined
   publishUserMessage: (input: NativeFollowUpUserMessage) => void
@@ -398,6 +399,14 @@ class AcpNativeFollowUpWorkflow {
 
     if (!isCurrent() || !this.sameLivePrompt(request.sessionId, live))
       return refusePrepared('no-live-turn')
+    // Preparation can await notebook input materialization. Recheck at the last synchronous
+    // dispatch point: an advisory must never enter a turn that now awaits a user decision.
+    if (
+      !publishUserMessage &&
+      (this.options.hasPendingPermission(request.sessionId) ||
+        this.options.hasPendingSideChatInteraction?.(request.sessionId))
+    )
+      return refusePrepared('prompt-required')
     const transportSignal = this.transportTimeout(route.transport)
     if (route.transport === 'acp-steering') {
       let result: unknown

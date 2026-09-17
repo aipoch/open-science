@@ -21,11 +21,22 @@ function declaredTests(module) {
   return testKinds.flatMap((kind) => module.testFiles[kind])
 }
 
-function modulesForPath(manifest, path) {
-  return Object.entries(manifest.modules)
+export function modulesForPath(manifest, path) {
+  const owners = Object.entries(manifest.modules)
+    .filter(([, module]) => module.ownerPaths.includes(path))
+    .map(([moduleId]) => moduleId)
+  if (owners.length > 0) return owners
+  const explicit = Object.entries(manifest.modules)
     .filter(([, module]) =>
       [...module.ownerPaths, ...module.interfacePaths, ...declaredTests(module)].includes(path)
     )
+    .map(([moduleId]) => moduleId)
+  if (explicit.length > 0 || /\.(test|spec)\.[cm]?[jt]sx?$/.test(path)) return explicit
+  // A declared owner test also identifies its colocated implementation. Consumer tests
+  // cannot establish ownership; unmatched implementations still fall back to full.
+  const ownerTest = path.replace(/(\.[cm]?[jt]sx?)$/, '.test$1')
+  return Object.entries(manifest.modules)
+    .filter(([, module]) => module.testFiles.owner.includes(ownerTest))
     .map(([moduleId]) => moduleId)
 }
 
@@ -77,6 +88,9 @@ function fullPlan(reason) {
 export function createModuleTestPlan(moduleId, manifest = defaultManifest) {
   validateModuleImpactManifest(manifest)
   if (!manifest.modules[moduleId]) throw new Error(`Unknown module: ${moduleId}`)
+  if (manifest.modules[moduleId].fullTestReason) {
+    return fullPlan(`${moduleId} -> ${manifest.modules[moduleId].fullTestReason} -> full`)
+  }
   return selectivePlan(manifest, [moduleId], [`module ${moduleId} -> declared tests`], {
     status: 'not-requested',
     testFiles: []
@@ -94,6 +108,8 @@ export function createAffectedTestPlan(changes, graph, manifest = defaultManifes
   }
 
   const seeds = new Set()
+  const directTests = new Set()
+  const testModules = new Set()
   const reasons = []
   for (const change of changes) {
     const pathPlan = classifyChanges([change])
@@ -101,9 +117,26 @@ export function createAffectedTestPlan(changes, graph, manifest = defaultManifes
       reasons.push(`${change.path} -> documentation lane -> no module tests`)
       continue
     }
+    // Browser fixtures/specs execute in the complete browser lane, not Vitest. This explicit
+    // owner must remain selected in mixed diffs; unknown E2E helpers still fall back to full.
+    if (pathPlan.roots.includes('renderer_browser_e2e') && !pathPlan.bundles.includes('unit')) {
+      reasons.push(`${change.path} -> renderer browser E2E lane -> no module tests`)
+      continue
+    }
     for (const path of [change.path, change.previousPath].filter(Boolean)) {
       const matchedModules = modulesForPath(manifest, path)
       if (matchedModules.length === 0) return fullPlan(`${path} -> unknown module owner -> full`)
+      // Some test files also export shared certification helpers. Their explicit interface
+      // registration keeps downstream test consumers in the plan.
+      const sharedTest = matchedModules.some((moduleId) =>
+        manifest.modules[moduleId].interfacePaths.includes(path)
+      )
+      if (/\.(test|spec)\.[cm]?[jt]sx?$/.test(path) && !sharedTest) {
+        directTests.add(path)
+        for (const moduleId of matchedModules) testModules.add(moduleId)
+        reasons.push(`${path} -> registered test -> direct execution`)
+        continue
+      }
       for (const moduleId of matchedModules) {
         seeds.add(moduleId)
         reasons.push(`${path} -> ${moduleId}`)
@@ -112,6 +145,12 @@ export function createAffectedTestPlan(changes, graph, manifest = defaultManifes
   }
 
   const modules = expandConsumers(manifest, [...seeds])
+  const fullModule = [...modules, ...testModules].find(
+    (moduleId) => manifest.modules[moduleId].fullTestReason
+  )
+  if (fullModule) {
+    return fullPlan(`${fullModule} -> ${manifest.modules[fullModule].fullTestReason} -> full`)
+  }
   for (const moduleId of seeds) {
     const visit = (consumer, chain) => {
       reasons.push([...chain, consumer].join(' -> '))
@@ -123,7 +162,15 @@ export function createAffectedTestPlan(changes, graph, manifest = defaultManifes
       visit(consumer, [moduleId])
     }
   }
-  return selectivePlan(manifest, modules, reasons, graph)
+  const plan = selectivePlan(manifest, [...modules, ...testModules], reasons, graph)
+  // Editing a registered test runs that test; changing implementations or shared fixtures
+  // still runs every declared owner, contract and transitive consumer test.
+  plan.testFiles = sorted([
+    ...modules.flatMap((moduleId) => declaredTests(manifest.modules[moduleId])),
+    ...directTests,
+    ...graph.testFiles
+  ])
+  return plan
 }
 
 function isCurrentGraph(status) {

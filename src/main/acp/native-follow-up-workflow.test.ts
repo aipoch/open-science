@@ -17,6 +17,7 @@ const createWorkflow = (
   overrides: {
     advertised?: boolean
     livePrompt?: boolean | (() => boolean)
+    sideChatInteraction?: () => boolean
     pendingPermission?: boolean | (() => boolean)
     livePromptTurn?: () =>
       { turnToken: string; signal: AbortSignal; promptMessageId?: string } | undefined
@@ -71,6 +72,7 @@ const createWorkflow = (
         typeof overrides.livePrompt === 'function'
           ? overrides.livePrompt()
           : (overrides.livePrompt ?? true),
+      hasPendingSideChatInteraction: overrides.sideChatInteraction,
       hasPendingPermission: () =>
         typeof overrides.pendingPermission === 'function'
           ? overrides.pendingPermission()
@@ -928,5 +930,45 @@ describe('finalizeNativeFollowUpPreparedContent', () => {
       prompt: [{ type: 'text', text: 'see file' }],
       uploads: []
     })
+  })
+})
+
+describe('Side chat advisory decision barrier', () => {
+  it('does not inject while a user decision is pending', async () => {
+    const { workflow, request } = createWorkflow({ sideChatInteraction: () => true })
+    expect(await workflow.steerSideChatAdvisory({ sessionId: 'app-1', text: 'advisory' })).toEqual({
+      injected: false
+    })
+    expect(request).not.toHaveBeenCalled()
+    expect(published).toEqual([])
+  })
+  it('rechecks after asynchronous preparation and permits delivery after the decision settles', async () => {
+    let waiting = false
+    const { workflow, request } = createWorkflow({
+      sideChatInteraction: () => waiting,
+      prepareFollowUp: async () => ({
+        prompt: [{ type: 'text', text: 'context' }],
+        notebookTurnInputs: {
+          projectId: 'project-1',
+          sessionId: 'app-1',
+          livePromptMessageId: 'prompt-live',
+          uploads: [],
+          references: []
+        }
+      }),
+      registerTurnInputs: async () => {
+        waiting = true
+      }
+    })
+    expect(await workflow.steerSideChatAdvisory({ sessionId: 'app-1', text: 'advisory' })).toEqual({
+      injected: false
+    })
+    expect(request).not.toHaveBeenCalled()
+    const resumed = createWorkflow({ sideChatInteraction: () => waiting })
+    waiting = false
+    expect(
+      await resumed.workflow.steerSideChatAdvisory({ sessionId: 'app-1', text: 'advisory' })
+    ).toMatchObject({ injected: true })
+    expect(resumed.request).toHaveBeenCalledOnce()
   })
 })

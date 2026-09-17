@@ -77,6 +77,8 @@ type Harness = {
   pushUserMessage: Mock<AcpPromptTurnWorkflowOptions['environment']['pushUserMessage']>
   routeNotification: Mock<AcpPromptTurnWorkflowOptions['environment']['routeNotification']>
   resumeAfterReload: Mock<AcpPromptTurnWorkflowOptions['resumeAfterReload']>
+  prepareContinuationReplay: Mock<AcpPromptTurnWorkflowOptions['prepareContinuationReplay']>
+  disconnectForReload: Mock<AcpPromptTurnWorkflowOptions['disconnectForReload']>
   setSession: (replacement: ActiveSession) => void
   skill: TurnSkillHandle
   workflow: AcpPromptTurnWorkflow
@@ -354,6 +356,9 @@ const createHarness = (
     finalization,
     currentCwd: () => '/default',
     resolveProjectId: () => 'project-1',
+    prepareContinuationReplay: vi.fn<AcpPromptTurnWorkflowOptions['prepareContinuationReplay']>(
+      async () => ({ historyPreamble: 'durable history' })
+    ),
     disconnectForReload: vi.fn(async () => journal.push('disconnect')),
     resumeAfterReload,
     recordAdmittedPrompt: vi.fn(() => journal.push('handoff')),
@@ -386,6 +391,8 @@ const createHarness = (
     pushUserMessage,
     routeNotification,
     resumeAfterReload,
+    prepareContinuationReplay: workflowOptions.prepareContinuationReplay,
+    disconnectForReload: workflowOptions.disconnectForReload,
     setSession: (replacement: ActiveSession) => (session = replacement),
     skill,
     workflow
@@ -965,6 +972,65 @@ describe('AcpPromptTurnWorkflow', () => {
     })
     expect(turn).toMatchObject({ contextReset: true, historyPreamble: 'restored transcript' })
     expect(harness.executor.mock.calls[0][0].session).toBe(reloaded)
+  })
+
+  it.each(['cancelled', 'superseded'] as const)(
+    'does not reconnect a continuation %s during history preparation',
+    async (action) => {
+      const replay = deferred<{ historyPreamble: string }>()
+      const skill = skillHandle('reload')
+      const harness = createHarness({ authorize: () => skill })
+      harness.prepareContinuationReplay.mockImplementation(() => replay.promise)
+      const pending = harness.workflow.run(request(), { kind: 'app-continuation' })
+      await vi.waitFor(() => expect(harness.prepareContinuationReplay).toHaveBeenCalledOnce())
+      let replacement: ReturnType<typeof harness.owner.reservePrompt> | undefined
+      if (action === 'cancelled') {
+        await harness.owner.cancelPrompt({
+          sessionId: 's1',
+          notify: async () => {},
+          onAccepted: () => {},
+          onTimeout: () => {}
+        })
+      } else {
+        replacement = harness.owner.reservePrompt({ sessionId: 's1', kind: 'prompt' })
+      }
+      const rejected = expect(pending).rejects.toThrow()
+      replay.resolve({ historyPreamble: 'late history' })
+      await rejected
+      expect(harness.disconnectForReload).not.toHaveBeenCalled()
+      expect(harness.executor).not.toHaveBeenCalled()
+      expect(skill.close).toHaveBeenCalledWith('failed', { reload: false })
+      if (replacement) {
+        expect(harness.owner.activatePrompt(replacement)).toBe(replacement)
+      }
+    }
+  )
+
+  it('leaves the provider connected and releases Skill ownership when continuation history cannot be restored', async () => {
+    const skill = skillHandle('reload')
+    const harness = createHarness({ authorize: () => skill })
+    harness.prepareContinuationReplay.mockRejectedValue(new Error('History unavailable'))
+
+    await expect(harness.workflow.run(request(), { kind: 'app-continuation' })).rejects.toThrow(
+      'History unavailable'
+    )
+
+    expect(harness.disconnectForReload).not.toHaveBeenCalled()
+    expect(harness.executor).not.toHaveBeenCalled()
+    expect(skill.close).toHaveBeenCalledWith('failed', { reload: false })
+    expect(harness.interactions.release).toHaveBeenCalledOnce()
+  })
+
+  it("retains an app continuation caller's explicit history fallback", async () => {
+    const harness = createHarness({ authorize: () => skillHandle('reload') })
+    harness.resumeAfterReload.mockResolvedValue({ contextReset: true })
+    const turn = request()
+    turn.resumeFallback = { historyPreamble: 'caller reconstructed history' }
+
+    await harness.workflow.run(turn, { kind: 'app-continuation' })
+
+    expect(harness.prepareContinuationReplay).not.toHaveBeenCalled()
+    expect(turn.historyPreamble).toBe('caller reconstructed history')
   })
 
   it('reserves before Plan preflight and admits only an activated interaction', async () => {

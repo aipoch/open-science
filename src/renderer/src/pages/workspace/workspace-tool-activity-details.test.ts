@@ -1759,3 +1759,24 @@ describe('workspace tool activity details', () => {
     expect(section?.kind === 'code' && section.text.length).toBeLessThan(25000)
   })
 })
+
+it.each([
+  { status: 'not-found', notices: ['No public PDF is available.'] },
+  { status: 'already-reviewed', candidateId: 'reviewed-1', notices: ['Already processed.'] },
+  { status: 'pending-review' },
+  { isError: true, message: 'Download failed: upstream unavailable' }
+])('preserves acquisition output without a usable pending receipt: %j', (result) => {
+  const text = JSON.stringify(result)
+  const details = buildToolActivityDetails(
+    createActivity({
+      providerToolName: 'mcp__open-science-library__acquire_pdf',
+      status: 'isError' in result ? 'failed' : 'completed',
+      rawOutput: { content: [{ type: 'text', text }] },
+      toolContent: [{ type: 'content', content: { type: 'text', text } }]
+    })
+  )
+  expect(details?.sections.some((section) => section.kind === 'literature')).toBe(false)
+  const serialized = JSON.stringify(details)
+  expect(serialized).toContain(result.status ?? result.message)
+  if (result.notices?.length) expect(serialized).toContain(result.notices[0])
+})

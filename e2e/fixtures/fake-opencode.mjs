@@ -1033,7 +1033,9 @@ if (process.argv.includes('--version')) {
 
       let reply = 'Deterministic reply: Summarize the deterministic fixture.'
       try {
-        if (prompt.includes(MERMAID_BLOCK_PROMPT)) {
+        if (prompt.includes('Discuss alternatives without approving main.')) {
+          reply = 'Deterministic reply: Discuss alternatives without approving main.'
+        } else if (prompt.includes(MERMAID_BLOCK_PROMPT)) {
           // A wide left-to-right flowchart: intrinsic width exceeds the conversation column, so
           // zooming must stay clipped by the block, and the source view must keep its frame.
           reply = [

@@ -998,6 +998,24 @@ const ProviderForm = ({
 
           {keyField}
 
+          {value.vendorId === 'deepseek' ? (
+            <div className="space-y-1.5 rounded-lg border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
+              <p>
+                {t(
+                  'DeepSeek routes deepseek-v4-flash and deepseek-v4-flash-vision-exp to DeepSeek V4.1 Flash (deepseek-flash), with Flash pricing.'
+                )}
+              </p>
+              <p>
+                {t(
+                  'Open Science keeps legacy model names after refresh so existing sessions can continue using their original model IDs.'
+                )}
+              </p>
+              <ExternalTextLink href="https://api-docs.deepseek.com/quick_start/pricing/">
+                {t('DeepSeek API model and routing details')}
+              </ExternalTextLink>
+            </div>
+          ) : null}
+
           {(() => {
             const models = value.vendorId
               ? getOfficialVendorModelIds(value.vendorId, value.region, supportedModels)

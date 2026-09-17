@@ -1,7 +1,15 @@
+import { SettingsService } from '../settings/service'
+import { SettingsRepository } from '../settings/repository'
+import { SkillRegistry } from '../skills/registry'
+import { ClaudeCodeSkillMaterializer } from '../skills/materializer'
+import {
+  loadSkillDocument,
+  OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION
+} from '../skills/runtime-mcp-server'
 import { describe, expect, it, vi } from 'vitest'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { readFileSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 
@@ -162,6 +170,336 @@ const delegatedSession = (frameworkId: AgentFrameworkId): PersistedChatSession =
 })
 
 describe('production delegated framework runtime bridge', () => {
+  it.each([
+    ['claude-code', false],
+    ['opencode', false],
+    ['codex', false],
+    ['codebuddy', false],
+    ['opencode', true]
+  ] as const)(
+    'prepares disabled bound Skill packages before %s starts and removes them with the Attempt (cleanup failure: %s)',
+    async (frameworkId, cleanupFailure) => {
+      const dataRoot = await mkdtemp(join(tmpdir(), 'delegated-bound-skills-'))
+      const bundle = join(dataRoot, 'bundle')
+      await mkdir(join(bundle, 'research', 'references'), { recursive: true })
+      await writeFile(
+        join(bundle, 'research', 'SKILL.md'),
+        '---\nname: research\ndescription: Research experiments.\n---\nDELEGATED_RESEARCH_DOCUMENT'
+      )
+      await writeFile(
+        join(bundle, 'research', 'references', 'method.md'),
+        'complete research resource'
+      )
+      await writeFile(
+        join(bundle, 'manifest.json'),
+        JSON.stringify({
+          version: 1,
+          skills: [
+            {
+              id: 'research',
+              name: 'Research',
+              source: 'featured',
+              updatedAt: '2026-01-01T00:00:00.000Z'
+            }
+          ]
+        })
+      )
+      const settings = new SettingsService({
+        repository: new SettingsRepository(dataRoot),
+        configRoot: dataRoot,
+        skillRegistry: new SkillRegistry(bundle)
+      })
+      await settings.setSkillEnabled({ id: 'research', enabled: false })
+      if (cleanupFailure) {
+        const prepare = settings.prepareDelegatedSkills.bind(settings)
+        vi.spyOn(settings, 'prepareDelegatedSkills').mockImplementation(async (...args) => {
+          const prepared = await prepare(...args)
+          return {
+            ...prepared,
+            dispose: async () => {
+              await prepared.dispose()
+              throw new Error('Skill cleanup failed')
+            }
+          }
+        })
+      }
+      const admitted = backend(frameworkId)
+      admitted.sessionOptions = {
+        [OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION]: {
+          root: join(dataRoot, 'main-projection'),
+          command: process.execPath,
+          entryPath: '/skill-runtime.js'
+        }
+      }
+      const original = JSON.stringify(admitted)
+      let child: ChildProcessWithoutNullStreams | undefined
+      let spawnInput: AgentSpawnInput | undefined
+      const spawnSpy =
+        frameworkId === 'codex' || frameworkId === 'codebuddy'
+          ? vi.spyOn(admitted.framework, 'spawn').mockImplementation((input) => {
+              spawnInput = input
+              // Native delegates spawn before createRuntime: the complete file must already exist.
+              const skillFile =
+                frameworkId === 'codex'
+                  ? join(input.env.CODEX_HOME, 'skills', 'research', 'references', 'method.md')
+                  : join(
+                      input.env.CODEBUDDY_CONFIG_DIR,
+                      'skill-runtime',
+                      '.claude',
+                      'skills',
+                      'research',
+                      'references',
+                      'method.md'
+                    )
+              expect(readFileSync(skillFile, 'utf8')).toBe('complete research resource')
+              child = spawn(process.execPath, ['-e', 'process.stdin.resume()'], { stdio: 'pipe' })
+              return child
+            })
+          : undefined
+      let observed: runtimeComposition.AcpRuntimeCompositionOptions | undefined
+      let finish!: () => void
+      const pending = new Promise<{ stopReason: 'end_turn' }>((resolve) => {
+        finish = () => resolve({ stopReason: 'end_turn' })
+      })
+      const runtimeSpy = vi
+        .spyOn(runtimeComposition, 'createAcpRuntime')
+        .mockImplementation((options) => {
+          observed = options
+          return {
+            createSession: async () => ({ sessionId: 'ephemeral-child' }),
+            sendAppContinuation: () => {
+              options.runtimeCallbacks!.onProviderPromptAccepted?.('ephemeral-child')
+              return pending
+            },
+            deleteSession: async () => undefined,
+            shutdownForQuit: async () => {
+              child?.kill()
+              return { reaped: true }
+            }
+          } as never
+        })
+      let completion: Promise<unknown> | undefined
+      try {
+        const frameworks = createProductionDelegatedFrameworkRuntime({
+          capacity: 1,
+          dataRoot,
+          runtime: {
+            settingsService: settings,
+            specialistService: {
+              resolveRunnableById: async () => ({
+                enabled: true,
+                capabilityMode: 'selected',
+                selectedCapabilities: { skillIds: ['research'], connectorIds: [] },
+                fullAccess: { excludedSkillIds: [], excludedConnectorIds: [] }
+              })
+            }
+          } as never,
+          notebookRpcServer: () =>
+            ({
+              issueDelegatedNotebookConnection: async () => ({
+                endpoint: 'http://127.0.0.1:1',
+                token: 'test',
+                release: () => undefined,
+                revoke: async () => undefined
+              })
+            }) as never,
+          readSession: async () => delegatedSession(frameworkId)
+        })
+        const selected = await frameworks.forSession(session(frameworkId))
+        const reservation = await selected.execution.reserve(1)
+        const running = selected.execution.run(
+          {
+            session: { projectId: 'project-1', sessionId: `session-${frameworkId}` },
+            frameId: 'child-frame',
+            attemptId: 'bound-attempt',
+            runtimeSegmentId: 'child-segment',
+            executionModel: {
+              frameworkId,
+              providerId: 'provider',
+              backendId: `${frameworkId}:provider`,
+              modelRoute:
+                frameworkId === 'claude-code'
+                  ? 'claude-anthropic'
+                  : frameworkId === 'opencode'
+                    ? 'opencode-openai'
+                    : frameworkId === 'codebuddy'
+                      ? 'codebuddy-openai'
+                      : 'codex-responses',
+              model: 'admitted-model',
+              reasoningEffort: 'default'
+            },
+            executionBackend: admitted,
+            task: 'Research experiments.',
+            inputs: [],
+            workspaceCwd: join(dataRoot, 'workspace'),
+            profile: 'researcher',
+            continuation: false
+          },
+          reservation.slotIds[0]
+        )
+        completion = running.completion
+        await running.accepted
+        const runtimeHome = join(
+          dataRoot,
+          'delegation',
+          'project-1',
+          `session-${frameworkId}`,
+          'runtime',
+          'bound-attempt'
+        )
+        const projection = observed!.fixedBackend!.sessionOptions![
+          OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION
+        ] as { root: string; skillsDirectory: string }
+        expect(observed!.preparedSkills?.skillIds).toEqual(['research'])
+        expect(observed!.preparedSkills?.catalog).toContainEqual(
+          expect.objectContaining({
+            name: 'research',
+            path: join(projection.skillsDirectory, 'research', 'SKILL.md')
+          })
+        )
+        await expect(
+          loadSkillDocument({ ...projection, allowedNames: new Set(['research']) }, 'research')
+        ).resolves.toContain('DELEGATED_RESEARCH_DOCUMENT')
+        await expect(
+          readFile(join(projection.skillsDirectory, 'research', 'references', 'method.md'), 'utf8')
+        ).resolves.toBe('complete research resource')
+        expect(await settings.skillsNeedingForceLoad(['research'])).toEqual(['research'])
+        if (frameworkId === 'opencode')
+          expect(projection.skillsDirectory).toBe(
+            join(observed!.fixedBackend!.env.XDG_CONFIG_HOME, 'opencode', 'skills')
+          )
+        if (frameworkId === 'claude-code')
+          expect(observed!.fixedBackend!.sessionOptions).toMatchObject({
+            additionalDirectories: [projection.root],
+            sandbox: { filesystem: { allowRead: [projection.root], denyWrite: [projection.root] } }
+          })
+        if (spawnInput) expect(observed!.fixedBackend!.env).toEqual(spawnInput.env)
+        finish()
+        if (cleanupFailure) await expect(completion).rejects.toThrow('Skill cleanup failed')
+        else await expect(completion).resolves.toMatchObject({ status: 'completed' })
+        await expect(stat(runtimeHome)).rejects.toMatchObject({ code: 'ENOENT' })
+        expect(JSON.stringify(admitted)).toBe(original)
+      } finally {
+        finish()
+        await completion?.catch(() => undefined)
+        child?.kill()
+        spawnSpy?.mockRestore()
+        runtimeSpy.mockRestore()
+        await settings.dispose()
+        await rm(dataRoot, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it.each([false, true])(
+    'cleans copied read-only OpenCode Skills without a Specialist (prepare failure: %s)',
+    async (prepareFailure) => {
+      const dataRoot = await mkdtemp(join(tmpdir(), 'delegated-readonly-copy-'))
+      const sourceRoot = join(dataRoot, 'main-config', 'opencode')
+      const sourceSkill = join(sourceRoot, 'skills', 'os-example')
+      const sourceFile = join(sourceSkill, '.catalog_stamp')
+      await mkdir(sourceSkill, { recursive: true })
+      await writeFile(sourceFile, 'main-owned snapshot')
+      await chmod(sourceFile, 0o444)
+      await chmod(sourceSkill, 0o555)
+      const admitted = backend('opencode')
+      admitted.env.XDG_CONFIG_HOME = dirname(sourceRoot)
+      const runtimeHome = join(
+        dataRoot,
+        'delegation',
+        'project-1',
+        'session-opencode',
+        'runtime',
+        'copied-attempt'
+      )
+      const revoke = vi.fn(async () => undefined)
+      const runtimeSpy = vi.spyOn(runtimeComposition, 'createAcpRuntime').mockImplementation(
+        (options) =>
+          ({
+            createSession: async () => ({ sessionId: 'ephemeral-child' }),
+            sendAppContinuation: async () => {
+              options.runtimeCallbacks!.onProviderPromptAccepted?.('ephemeral-child')
+              const copy = join(runtimeHome, 'config', 'opencode', 'skills', 'os-example')
+              expect(await readFile(join(copy, '.catalog_stamp'), 'utf8')).toBe(
+                'main-owned snapshot'
+              )
+              if (process.platform !== 'win32') expect((await stat(copy)).mode & 0o222).toBe(0)
+              await symlink(
+                sourceSkill,
+                join(dirname(copy), 'external-skill'),
+                process.platform === 'win32' ? 'junction' : 'dir'
+              )
+
+              return { stopReason: 'end_turn' }
+            },
+            deleteSession: async () => undefined,
+            shutdownForQuit: async () => ({ reaped: true })
+          }) as never
+      )
+      try {
+        const frameworks = createProductionDelegatedFrameworkRuntime({
+          capacity: 1,
+          dataRoot,
+          runtime: { settingsService: {} } as never,
+          notebookRpcServer: () =>
+            ({
+              issueDelegatedNotebookConnection: async () => {
+                if (prepareFailure) throw new Error('Notebook preparation failed')
+                return {
+                  endpoint: 'http://127.0.0.1:1',
+                  token: 'test',
+                  release: () => undefined,
+                  revoke
+                }
+              }
+            }) as never,
+          readSession: async () => delegatedSession('opencode')
+        })
+        const selected = await frameworks.forSession(session('opencode'))
+        const reservation = await selected.execution.reserve(1)
+        const running = selected.execution.run(
+          {
+            session: { projectId: 'project-1', sessionId: 'session-opencode' },
+            frameId: 'child-frame',
+            attemptId: 'copied-attempt',
+            runtimeSegmentId: 'child-segment',
+            executionModel: {
+              frameworkId: 'opencode',
+              providerId: 'provider',
+              backendId: 'opencode:provider',
+              modelRoute: 'opencode-openai',
+              model: 'admitted-model',
+              reasoningEffort: 'default'
+            },
+            executionBackend: admitted,
+            task: 'Investigate',
+            inputs: [],
+            workspaceCwd: dataRoot,
+            continuation: false
+          },
+          reservation.slotIds[0]
+        )
+        if (prepareFailure) {
+          await expect(running.completion).rejects.toThrow('Notebook preparation failed')
+        } else {
+          await expect(running.completion).resolves.toMatchObject({ status: 'completed' })
+          expect(revoke).toHaveBeenCalledOnce()
+        }
+        await expect(stat(runtimeHome)).rejects.toMatchObject({ code: 'ENOENT' })
+        expect(await readFile(sourceFile, 'utf8')).toBe('main-owned snapshot')
+        if (process.platform !== 'win32') expect((await stat(sourceSkill)).mode & 0o222).toBe(0)
+      } finally {
+        runtimeSpy.mockRestore()
+        await new ClaudeCodeSkillMaterializer().sync(join(runtimeHome, 'config', 'opencode'), [], {
+          directoryLayout: 'agent-facing'
+        })
+        await chmod(sourceSkill, 0o755)
+        await chmod(sourceFile, 0o644)
+        await rm(dataRoot, { recursive: true, force: true })
+      }
+    }
+  )
+
   it('copies CodeBuddy configuration into each delegated Attempt runtime', async () => {
     const root = await mkdtemp(join(tmpdir(), 'delegated-codebuddy-config-'))
     const sourceConfigDir = join(root, 'shared-codebuddy')

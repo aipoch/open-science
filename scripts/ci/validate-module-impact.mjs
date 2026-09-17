@@ -56,6 +56,12 @@ export function validateModuleImpactManifest(
   const ownedPaths = new Map()
 
   for (const [moduleId, module] of Object.entries(modules)) {
+    if (
+      module.fullTestReason !== undefined &&
+      (typeof module.fullTestReason !== 'string' || !module.fullTestReason.trim())
+    ) {
+      throw new Error(`${moduleId}.fullTestReason must explain intentional full validation`)
+    }
     if (!/^[a-z][a-z0-9_]*$/.test(moduleId)) {
       throw new Error(`Invalid module-impact module id: ${moduleId}`)
     }

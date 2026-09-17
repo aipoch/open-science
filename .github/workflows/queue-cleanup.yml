@@ -1,0 +1,37 @@
+name: Clean up obsolete queue runs
+
+on:
+  workflow_run:
+    workflows: [PR Gate]
+    types: [requested, completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: queue-cleanup
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.event == 'merge_group' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Checkout trusted cleanup code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: refs/heads/main
+          persist-credentials: false
+          sparse-checkout: scripts/ci/cancel-stale-queue-runs.mjs
+          sparse-checkout-cone-mode: false
+      - name: Cancel obsolete merge-group runs
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          script: |
+            const { cancelStaleQueueRuns } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/ci/cancel-stale-queue-runs.mjs`)
+            await cancelStaleQueueRuns({ github, repo: context.repo, log: core.info })

@@ -21,7 +21,8 @@ const launcher = resolve('scripts/windows-reset/reset-open-science.cmd')
 const quote = (value: string): string => `'${value.replaceAll("'", "''")}'`
 const roots: string[] = []
 const fixture = (): { root: string; profile: string; appData: string; data: string } => {
-  const root = mkdtempSync(join(tmpdir(), 'open-science-reset-'))
+  // Windows TEMP can contain an 8.3 alias; the reset owner compares canonical paths.
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'open-science-reset-')))
   roots.push(root)
   const profile = join(root, 'user space')
   const appData = join(profile, 'AppData', 'Roaming')

@@ -1733,7 +1733,7 @@ const WorkspaceMessageItemImpl = ({
                   />
                   {editError ? (
                     <div role="alert">
-                      <ErrorNotice tone="red" title={editError} />
+                      <ErrorNotice inline tone="red" title={editError} />
                     </div>
                   ) : null}
                   <div className="flex items-center justify-end gap-1">

@@ -142,7 +142,8 @@ const categoryFromTrustedToolName = (value: string | undefined): string | undefi
   value ? TRUSTED_TOOL_CATEGORIES[normalizeTrustedToolName(value)] : undefined
 
 const capabilityFromLegacyCategory = (categoryKey: string): PermissionCapability | undefined => {
-  if (categoryKey === 'builtin:web_fetch') return { kind: 'builtin_tool', key: categoryKey }
+  if (categoryKey === 'builtin:web_fetch' || categoryKey === 'builtin:web_search')
+    return { kind: 'builtin_tool', key: categoryKey }
   if (categoryKey.startsWith('customize:')) {
     const key = categoryKey
     return isPreRegisteredPermissionIdentity('customize_mutation', key)

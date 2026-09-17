@@ -37,6 +37,6 @@ const noticeToneClassNames: Record<NoticeLevel, string> = {
   error:
     'bg-status-failure-surface text-status-failure-foreground dark:bg-status-failure-dark-surface dark:text-status-failure-dark-foreground'
 }
-const inlineNoticeClassName = `${noticeSurfaceClassName} flex min-w-0 items-start gap-3 leading-6 [overflow-wrap:anywhere]`
+const inlineNoticeClassName = 'min-w-0 text-sm leading-5 text-foreground [overflow-wrap:anywhere]'
 export { inlineNoticeClassName, noticeIconClassNames, noticeToneClassNames }
 export type { ErrorNoticeTone, NoticeLevel }

@@ -17,12 +17,16 @@
     "windows_runtime",
     "windows_path",
     "build",
+    "e2e_smoke_macos",
     "e2e_functional_macos",
     "e2e_functional_windows",
     "e2e_workspace_macos",
     "e2e_workspace_windows",
     "e2e_accessibility_macos",
-    "e2e_visual_macos"
+    "e2e_visual_macos",
+    "e2e_regressions_macos",
+    "e2e_delegation_macos",
+    "e2e_browser_windows"
   ],
   "bundleOrder": [
     "policy",
@@ -49,12 +53,16 @@
     "windows_runtime": "windows_core",
     "windows_path": "windows_core",
     "build": "macos_e2e",
+    "e2e_smoke_macos": "macos_e2e",
     "e2e_functional_macos": "macos_e2e",
     "e2e_functional_windows": "windows_e2e",
     "e2e_workspace_macos": "macos_e2e",
     "e2e_workspace_windows": "windows_e2e",
     "e2e_accessibility_macos": "macos_e2e",
-    "e2e_visual_macos": "macos_e2e"
+    "e2e_visual_macos": "macos_e2e",
+    "e2e_regressions_macos": "macos_e2e",
+    "e2e_delegation_macos": "macos_e2e",
+    "e2e_browser_windows": "windows_e2e"
   },
   "rules": [
     {
@@ -70,7 +78,10 @@
         "playwright.config.*",
         "electron-builder.yml",
         "scripts/ci/**",
-        ".github/workflows/pr-gate.yml"
+        ".github/workflows/pr-gate.yml",
+        "playwright.browser.config.*",
+        ".github/actions/source-regression/**",
+        ".github/workflows/source-regression.yml"
       ],
       "mode": "full",
       "capabilities": []
@@ -92,6 +103,12 @@
       "role": "owner",
       "paths": ["**/*.md", "docs/**", "LICENSE", ".gitignore"],
       "capabilities": ["documentation"]
+    },
+    {
+      "id": "native_runtime_packages",
+      "role": "owner",
+      "paths": ["packages/process-tree-native/**", "packages/safe-file-publisher-native/**"],
+      "capabilities": ["notebook_network_sandbox", "windows_sensitive"]
     },
     {
       "id": "notebook_network_sandbox",
@@ -176,6 +193,10 @@
         "src/main/notebook/package-listing.ts",
         "src/main/notebook/package-manager.ts",
         "src/main/notebook/package-process-sandbox.ts",
+        "src/main/notebook/pip-install-evidence.ts",
+        "src/main/notebook/pip-install-evidence.test.ts",
+        "src/main/notebook/pip-wheel-evidence.ts",
+        "src/main/notebook/pip-wheel-evidence.test.ts",
         "src/main/notebook/process-environment.ts",
         "src/main/notebook/provisioner-runtime.ts",
         "src/main/notebook/provisioner.ts",
@@ -236,7 +257,8 @@
         "src/shared/settings.ts",
         "src/shared/update.ts",
         "src/shared/web-api-map.generated.ts",
-        "src/shared/wsl-setup.ts"
+        "src/shared/wsl-setup.ts",
+        "src/main/delegation/production-framework-runtime.ts"
       ],
       "capabilities": ["windows_sensitive"]
     },
@@ -291,6 +313,66 @@
         ".github/workflows/stage-runtime-bundle.yml"
       ],
       "capabilities": ["runtime_bundle"]
+    },
+    {
+      "id": "renderer_browser_e2e",
+      "role": "owner",
+      "paths": ["e2e/browser/**"],
+      "capabilities": ["renderer_browser_e2e"]
+    },
+    {
+      "id": "critical_desktop_runtime",
+      "role": "overlay",
+      "paths": [
+        "src/main/acp/**",
+        "src/main/agent-framework/**",
+        "src/main/delegation/**",
+        "src/main/session*/**",
+        "src/main/permission*/**",
+        "src/main/artifacts/**",
+        "src/main/uploads/**",
+        "src/main/project*/**",
+        "src/main/compute/**",
+        "src/main/notebook/**",
+        "src/main/settings/**",
+        "src/main/skills/**",
+        "src/main/specialist/**",
+        "src/main/reviewer/**",
+        "src/main/side-chat/**",
+        "src/main/storage/**",
+        "src/main/database/**",
+        "src/main/local-fs/**",
+        "src/main/ipc-surfaces/**",
+        "src/main/connectors/*.ts",
+        "src/main/*runtime*.ts",
+        "src/main/*lifecycle*.ts",
+        "src/main/*window*.ts",
+        "src/main/second-instance-router.ts",
+        "src/main/ipc.ts",
+        "src/main/index.ts",
+        "src/main/*.ts",
+        "src/main/agents/**",
+        "src/main/archive/**",
+        "src/main/background-result-delivery/**",
+        "src/main/cli-install/**",
+        "src/main/diagnostics/**",
+        "src/main/host-sdk/**",
+        "src/main/literature/**",
+        "src/main/local-models/**",
+        "src/main/managed-file-versions/**",
+        "src/main/memory/**",
+        "src/main/net/**",
+        "src/main/notifications/**",
+        "src/main/office-preview/**",
+        "src/main/remote-access/**",
+        "src/main/session-package/**",
+        "src/main/session-plan/**",
+        "src/main/tasks/**",
+        "src/main/update/**",
+        "src/main/web-service/**",
+        "src/main/wsl/**"
+      ],
+      "capabilities": ["e2e_regressions", "e2e_delegation"]
     }
   ],
   "capabilities": {
@@ -303,7 +385,7 @@
       "lanes": ["docs"]
     },
     "shared_contract": {
-      "consumers": ["preload_adapter", "i18n_catalog"],
+      "consumers": ["preload_adapter", "i18n_catalog", "e2e_regressions", "e2e_delegation"],
       "lanes": [
         "format",
         "lint",
@@ -314,7 +396,7 @@
       ]
     },
     "preload_contract": {
-      "consumers": [],
+      "consumers": ["e2e_regressions", "e2e_delegation"],
       "lanes": [
         "format",
         "lint",
@@ -330,7 +412,7 @@
       "lanes": ["format", "lint", "typecheck_node", "interface_contracts", "unit_macos"]
     },
     "notebook_network_sandbox": {
-      "consumers": [],
+      "consumers": ["e2e_regressions", "e2e_delegation"],
       "lanes": [
         "format",
         "lint",
@@ -357,7 +439,13 @@
       ]
     },
     "renderer_view": {
-      "consumers": ["e2e_functional", "e2e_accessibility", "e2e_visual", "i18n_catalog"],
+      "consumers": [
+        "e2e_functional",
+        "e2e_accessibility",
+        "e2e_visual",
+        "i18n_catalog",
+        "e2e_regressions"
+      ],
       "lanes": ["format", "lint", "typecheck_web", "unit_macos", "build"]
     },
     "i18n_catalog": {
@@ -369,7 +457,7 @@
       "lanes": ["runtime_bundle"]
     },
     "renderer_state": {
-      "consumers": ["e2e_workspace"],
+      "consumers": ["e2e_workspace", "e2e_regressions", "e2e_delegation"],
       "lanes": []
     },
     "cli_sdk": {
@@ -385,7 +473,14 @@
       "lanes": ["typecheck_web", "build"]
     },
     "renderer_settings": {
-      "consumers": ["e2e_functional", "e2e_workspace", "e2e_accessibility", "e2e_visual"],
+      "consumers": [
+        "e2e_functional",
+        "e2e_workspace",
+        "e2e_accessibility",
+        "e2e_visual",
+        "e2e_regressions",
+        "e2e_delegation"
+      ],
       "lanes": ["unit_macos"]
     },
     "e2e_functional": {
@@ -403,6 +498,25 @@
     "e2e_visual": {
       "consumers": [],
       "lanes": ["e2e_visual_macos"]
+    },
+    "e2e_regressions": {
+      "consumers": [],
+      "lanes": ["e2e_regressions_macos"]
+    },
+    "e2e_delegation": {
+      "consumers": [],
+      "lanes": ["e2e_delegation_macos"]
+    },
+    "renderer_browser_e2e": {
+      "consumers": [],
+      "lanes": [
+        "format",
+        "lint",
+        "typecheck_node",
+        "typecheck_web",
+        "e2e_visual_macos",
+        "e2e_browser_windows"
+      ]
     }
   }
 }

@@ -125,13 +125,13 @@ for (const width of [320, 1000]) {
 }
 
 for (const dark of [false, true]) {
-  test(`embedded and floating messages share one surface in ${dark ? 'dark' : 'light'} theme`, async ({
+  test(`inline guidance stays unboxed while recovery messages retain cards in ${dark ? 'dark' : 'light'} theme`, async ({
     page
   }) => {
     await page.setViewportSize({ width: 1000, height: 1100 })
     await page.goto(`/notice-styles.html?locale=zh-Hans${dark ? '&dark' : ''}`)
     await page.getByRole('button', { name: 'Notebook environment error', exact: true }).click()
-    const surfaces = page.locator('[data-notice-level]')
+    const surfaces = page.locator('[data-notice-level]:not([data-notice-inline])')
     const styles = await surfaces.evaluateAll((nodes) =>
       nodes.map((node) => {
         const style = getComputedStyle(node)
@@ -149,6 +149,14 @@ for (const dark of [false, true]) {
       })
     )
     expect(new Set(styles.map((style) => style.surface)).size).toBe(1)
+    for (const inline of await page.locator('[data-notice-inline]').all()) {
+      expect(
+        await inline.evaluate((node) => {
+          const style = getComputedStyle(node)
+          return [style.borderTopWidth, style.padding, style.backgroundColor]
+        })
+      ).toEqual(['0px', '0px', 'rgba(0, 0, 0, 0)'])
+    }
     expect(
       new Set(
         ['info', 'warning', 'error'].map(
@@ -300,4 +308,75 @@ for (const width of [320, 1000]) {
       await expect(archive).toHaveCount(0)
     })
   }
+}
+
+for (const width of [320, 375, 768, 1280]) {
+  for (const dark of [false, true]) {
+    test(`About errors use the available row width at ${width}px, dark=${dark}`, async ({
+      page
+    }) => {
+      await page.setViewportSize({ width, height: 850 })
+      await page.goto(`/notice-styles.html?about&locale=zh-Hans${dark ? '&dark' : ''}`)
+      const error = page.getByRole('alert')
+      await expect(error).toHaveText('net::ERR_NAME_NOT_RESOLVED')
+      const layout = await error.evaluate((node) => {
+        const notice = node.closest('section')!
+        const column = notice.parentElement!
+        const label = column.parentElement!
+        const icon = notice.querySelector('svg')!.getBoundingClientRect()
+        const text = node.getBoundingClientRect()
+        const style = getComputedStyle(notice)
+        return {
+          columnWidth: column.clientWidth,
+          availableWidth: label.clientWidth - 48 - 12,
+          border: style.borderTopWidth,
+          padding: style.padding,
+          iconOffset: icon.y - text.y,
+          textBesideIcon: text.x > icon.right
+        }
+      })
+      expect(layout.columnWidth).toBeCloseTo(layout.availableWidth, 0)
+      expect(layout.border).toBe('0px')
+      expect(layout.padding).toBe('0px')
+      expect(Math.abs(layout.iconOffset)).toBeLessThanOrEqual(4)
+      expect(layout.textBesideIcon).toBe(true)
+      await page.getByRole('button', { name: '立即检查' }).click()
+      await expect(error).toHaveCount(0)
+      await expect(page.getByRole('status')).toBeVisible()
+      await page.goto(`/notice-styles.html?about&long&locale=zh-Hans${dark ? '&dark' : ''}`)
+      await expect(page.getByRole('alert')).toContainText('net::ERR_NAME_NOT_RESOLVED_'.repeat(20))
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+        true
+      )
+    })
+  }
+}
+
+for (const width of [320, 768]) {
+  test(`inset notices and narrow cards keep icons beside text at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 1000 })
+    await page.goto('/notice-styles.html?layout')
+    const inline = page.getByTestId('margin-inline')
+    const host = (await page.getByTestId('margin-host').boundingBox())!
+    const bounds = (await inline.boundingBox())!
+    expect(bounds.x).toBeGreaterThan(host.x)
+    expect(bounds.x + bounds.width).toBeLessThan(host.x + host.width)
+    for (const id of ['margin-inline', 'narrow-card', 'inline-dismiss', 'inline-retry']) {
+      const surface = page.getByTestId(id)
+      expect(
+        await surface.evaluate((node) => {
+          const icon = node.querySelector('svg')!.getBoundingClientRect()
+          const text = node.querySelector('p, [role="alert"]')!.getBoundingClientRect()
+          return Math.abs(icon.y - text.y) <= 5 && icon.right < text.x
+        })
+      ).toBe(true)
+      expect(await surface.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true)
+    }
+    await page.getByTestId('inline-dismiss').getByRole('button').click()
+    await page.getByTestId('inline-retry').getByRole('button').click()
+    await expect(page.getByTestId('actions')).toHaveText('2')
+    await page.getByText('Details', { exact: true }).click()
+    await expect(page.locator('pre')).toHaveText('diagnostic/'.repeat(40))
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  })
 }

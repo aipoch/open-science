@@ -1584,14 +1584,42 @@ describe('PreviewPanel', () => {
   })
 
   it('renders a live Side chat and its independent composer inside the right panel', async () => {
+    useProjectStore.setState({
+      projects: [
+        {
+          id: 'default',
+          name: 'Default',
+          description: '',
+          isExample: false,
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      isLoaded: true
+    })
     useSessionStore.setState({
       sessions: [
         {
           id: 'right-parent',
           projectId: 'default',
           title: 'Main analysis',
-          description: 'Compare the two cohorts'
-        } as ChatSession
+          description: 'Compare the two cohorts',
+          cwd: '/workspace',
+          status: 'idle',
+          createdAt: 1,
+          updatedAt: 1,
+          messages: [
+            {
+              id: 'right-user',
+              eventIds: [],
+              role: 'user',
+              content: 'Compare the two cohorts',
+              status: 'complete',
+              createdAt: 1,
+              updatedAt: 1
+            }
+          ]
+        } satisfies ChatSession
       ]
     })
     const openSession = vi.spyOn(useNavigationStore.getState(), 'openSession').mockReturnValue(true)

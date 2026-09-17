@@ -48,12 +48,7 @@ export const SessionPackageImportError = (): React.JSX.Element => {
             <Dialog.Description className="text-sm leading-relaxed text-muted-foreground">
               {t('Your existing research is unchanged.')}
             </Dialog.Description>
-            <ErrorNotice
-              role="alert"
-              tone="amber"
-              description={error}
-              className="border-0 bg-transparent p-0 [&_[role=alert]]:basis-0"
-            />
+            <ErrorNotice inline role="alert" tone="amber" description={error} />
           </div>
           <div className={dialogFooterClassName}>
             <Button onClick={() => setError(undefined)}>{t('Close')}</Button>

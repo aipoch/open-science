@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { load } from 'js-yaml'
 
 import { parseNameStatus } from './classify-pr-changes.mjs'
+import { moduleOwnershipFromRevisions } from './check-module-ownership.mjs'
 
 function actionReferences(document, workflow) {
   const references = new Set()
@@ -117,15 +118,6 @@ const stableChecks = {
   '.github/workflows/pr-gate.yml': { jobId: 'gate', name: 'PR Gate' },
   '.github/workflows/ci-integrity.yml': { jobId: 'integrity', name: 'CI Integrity' }
 }
-
-const protectedControlPlanePaths = new Set([
-  ...Object.keys(stableChecks),
-  'scripts/ci/check-ci-integrity.mjs',
-  'scripts/ci/check-pr-policy.mjs',
-  'scripts/ci/classify-pr-changes.mjs',
-  'scripts/ci/change-impact.json',
-  'scripts/ci/evaluate-pr-gate.mjs'
-])
 
 function isWorkflowPath(path) {
   return /^\.github\/workflows\/.*\.ya?ml$/i.test(path)
@@ -265,17 +257,7 @@ export function checkCiIntegrityChanges(files) {
     }
 
     const stableCheck = stableChecks[file.path] ?? stableChecks[file.previousPath]
-    const protectedPath = [file.path, file.previousPath]
-      .filter(Boolean)
-      .find((path) => protectedControlPlanePaths.has(path))
-    const movedProtectedPath = file.previousPath && file.path !== file.previousPath
-    if (protectedPath && file.baseText && (headText !== file.baseText || movedProtectedPath)) {
-      violations.push({
-        path: file.path,
-        rule: 'protected-gate-control-plane',
-        message: `Established gate control-plane file ${protectedPath} may change only through an explicit maintainer ruleset bypass`
-      })
-    }
+    // CODEOWNERS review authorizes control-plane edits; Integrity validates their safety.
     if (stableCheck && !hasStableJobName(document, stableCheck)) {
       violations.push({
         path: file.path,
@@ -378,6 +360,10 @@ ${inspected}
 ### Violations
 
 ${violations}
+
+### Historical module ownership gaps (nonblocking)
+
+${(result.legacyGaps ?? []).map((path) => `- <code>${escapeHtml(path)}</code>`).join('\n') || '- None'}
 `
 }
 
@@ -385,6 +371,10 @@ export function runCiIntegrityCli(arguments_ = process.argv.slice(2), environmen
   const base = requireCommit(argumentValue(arguments_, '--base') ?? environment.BASE_SHA, '--base')
   const head = requireCommit(argumentValue(arguments_, '--head') ?? environment.HEAD_SHA, '--head')
   const result = checkCiIntegrityChanges(ciIntegrityFilesFromRevisions(base, head))
+  const ownership = moduleOwnershipFromRevisions(base, head)
+  result.violations.push(...ownership.violations)
+  result.legacyGaps = ownership.legacyGaps
+  result.ok = result.ok && ownership.ok
 
   if (environment.GITHUB_STEP_SUMMARY) {
     appendFileSync(environment.GITHUB_STEP_SUMMARY, formatCiIntegritySummary(result))

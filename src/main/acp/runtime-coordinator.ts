@@ -860,7 +860,7 @@ class AcpRuntimeCoordinator {
   sendApplicationPrompt(
     request: AcpPromptRequest,
     attribution: MessageAttribution,
-    _promptAttemptId?: string,
+    options?: Parameters<AcpRuntime['sendApplicationPrompt']>[2],
     onApplicationPromptAdmitted?: (prompt: ReturnType<AcpRuntime['sendPrompt']>) => void
   ): ReturnType<AcpRuntime['sendApplicationPrompt']> {
     return this.linearizeRootAdmission(request.sessionId, () =>
@@ -871,7 +871,8 @@ class AcpRuntimeCoordinator {
         undefined,
         false,
         attribution,
-        onApplicationPromptAdmitted
+        onApplicationPromptAdmitted,
+        options?.onPromptAdmitted
       )
     )
   }
@@ -1170,7 +1171,10 @@ class AcpRuntimeCoordinator {
         )
       }
       if (operation === 'sendApplicationPrompt') {
-        return runtime.sendApplicationPrompt(taskRequest, attribution!, attempt.id)
+        return runtime.sendApplicationPrompt(taskRequest, attribution!, {
+          promptAttemptId: attempt.id,
+          onPromptAdmitted: admitPrompt
+        })
       }
       if (operation === 'sendPrompt') {
         return admitPrompt
@@ -1233,6 +1237,10 @@ class AcpRuntimeCoordinator {
     return this.promptDispatchAdmissionGuard
       ? this.promptDispatchAdmissionGuard(request.sessionId, dispatch, true)
       : dispatch()
+  }
+
+  hasPendingSideChatInteraction(sessionId: string): boolean {
+    return this.runtimeForSession(sessionId).hasPendingSideChatInteraction(sessionId)
   }
 
   async steerSideChatAdvisory(
@@ -1588,7 +1596,7 @@ class AcpRuntimeCoordinator {
           false
         )
       },
-      sendApplicationPrompt: (request, attribution) =>
+      sendApplicationPrompt: (request, attribution, admission) =>
         this.linearizeRootAdmission(request.sessionId, async () => {
           this.assertPromptAdmissionOpen()
           const contextReset = await ensureActivitySession(request.sessionId)
@@ -1606,7 +1614,9 @@ class AcpRuntimeCoordinator {
             'sendApplicationPrompt',
             runtime,
             false,
-            attribution
+            attribution,
+            undefined,
+            admission?.onPromptAdmitted
           )
         })
     }

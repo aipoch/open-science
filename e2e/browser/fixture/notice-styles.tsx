@@ -1,3 +1,6 @@
+import { AppVersionSection } from '@/pages/settings/AppVersionSection'
+import { useUpdateStore } from '@/stores/update-store'
+import { useThemeStore } from '@/stores/theme-store'
 import { NetworkProxyForm } from '@/pages/settings/NetworkProxyForm'
 import { useSettingsStore } from '@/stores/settings-store'
 import { EnvStatusBanner } from '@/pages/workspace/EnvStatusBanner'
@@ -22,7 +25,7 @@ import { useArchiveUndoStore } from '@/stores/archive-undo-store'
 
 const query = new URLSearchParams(location.search)
 const locale = query.get('locale') === 'zh-Hans' ? 'zh-Hans' : 'en'
-document.documentElement.classList.toggle('dark', query.has('dark'))
+useThemeStore.getState().setPreference(query.has('dark') ? 'dark' : 'light')
 window.api = {
   platform: 'darwin',
   storage: {
@@ -55,6 +58,45 @@ export function Fixture(): React.JSX.Element {
   const [modal, setModal] = useState('')
   const [actions, setActions] = useState(0)
   const [notice, setNotice] = useState(true)
+  if (query.has('about')) {
+    return (
+      <main className="mx-auto max-w-5xl space-y-6 p-6 text-foreground" data-testid="about-preview">
+        <h1 className="text-xl font-semibold">{t('General')}</h1>
+        <AppVersionSection />
+      </main>
+    )
+  }
+  if (query.has('layout')) {
+    return (
+      <main className="mx-auto max-w-3xl space-y-6 p-6 text-foreground">
+        <div className="flex flex-col border" data-testid="margin-host">
+          <InlineNotice className="m-2" role="alert" level="error" data-testid="margin-inline">
+            {'net::ERR_NAME_NOT_RESOLVED_'.repeat(8)}
+          </InlineNotice>
+        </div>
+        <div className="w-40" data-testid="narrow-host">
+          <ErrorNotice description="net::ERR_NAME_NOT_RESOLVED" data-testid="narrow-card" />
+        </div>
+        <Notice
+          inline
+          role="alert"
+          description="Could not save the language."
+          data-testid="inline-dismiss"
+          dismissButton={{ label: 'Dismiss', onClick: () => setActions(actions + 1) }}
+        />
+        <Notice
+          inline
+          role="alert"
+          description="Could not check the log file."
+          errorCode={'diagnostic/'.repeat(40)}
+          diagnosticsLabel="Details"
+          data-testid="inline-retry"
+          primaryButton={{ label: 'Retry', onClick: () => setActions(actions + 1) }}
+        />
+        <output data-testid="actions">{actions}</output>
+      </main>
+    )
+  }
   if (query.has('floatingArchive')) {
     return (
       <main className="min-h-svh bg-background">
@@ -260,6 +302,20 @@ export function Fixture(): React.JSX.Element {
 }
 void Promise.resolve(prepareI18nLocale(locale)).then(() => {
   initI18n(locale)
+  if (query.has('about')) {
+    useUpdateStore.setState({
+      status: {
+        state: 'error',
+        current: '0.30.1',
+        error: query.has('long')
+          ? 'net::ERR_NAME_NOT_RESOLVED_'.repeat(20)
+          : 'net::ERR_NAME_NOT_RESOLVED'
+      },
+      check: async () => {
+        useUpdateStore.setState({ status: { state: 'up-to-date', current: '0.30.1' } })
+      }
+    })
+  }
   if (query.has('settingsInline')) {
     useSettingsStore.setState({
       networkProxy: { mode: 'manual', server: 'http://127.0.0.1:1086' },

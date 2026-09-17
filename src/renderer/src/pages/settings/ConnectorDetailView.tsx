@@ -201,7 +201,13 @@ const ConnectorDetailView = ({
       ) : null}
 
       {operationError ? (
-        <ErrorNotice role="alert" tone="amber" className="mt-4" description={operationError} />
+        <ErrorNotice
+          inline
+          role="alert"
+          tone="amber"
+          className="mt-4"
+          description={operationError}
+        />
       ) : null}
 
       <ResourceAvailability

@@ -1043,6 +1043,27 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
       let projected: ChatSession
       if (current === source && mode === 'replace-persisted-if-current') {
         projected = withTransientSessionState(session, current)
+      } else if (
+        current !== source &&
+        externallyHydratedSessionAuthorities.has(current) &&
+        sessionRevision(session) >= sessionRevision(current)
+      ) {
+        // A Task snapshot can arrive while a renderer save is queued. Its newer
+        // receipt must reconcile the conversation too, not just its revision.
+        const merged = withTransientSessionState(
+          mergeNewerPersistedSessionByIdentity(current, session),
+          current
+        )
+        projected = projectDurablePlanAuthority(
+          {
+            ...current,
+            messages: merged.messages,
+            activities: merged.activities,
+            activityGroups: merged.activityGroups,
+            conversationGraph: merged.conversationGraph
+          },
+          session
+        )
       } else if (current === source && !preserveLocalBranch) {
         const flat = mergeDurableUploadProjection(
           source.messages,

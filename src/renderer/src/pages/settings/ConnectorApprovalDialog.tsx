@@ -199,6 +199,7 @@ export function ConnectorApprovalDialog({
             </div>
             {responseErrorRequestId === request.id ? (
               <ErrorNotice
+                inline
                 role="alert"
                 tone="amber"
                 className="mt-3"

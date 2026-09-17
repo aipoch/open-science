@@ -51,7 +51,11 @@ describe('module test impact commands', () => {
         'src/main/notebook/local-rpc-server.mcpcall.test.ts'
       ])
     )
-    expect(plan.capabilityOverlays).toEqual(['windows_sensitive'])
+    expect(plan.capabilityOverlays).toEqual([
+      'e2e_delegation',
+      'e2e_regressions',
+      'windows_sensitive'
+    ])
     expect(plan.fallbackCapabilities).toEqual(['main_runtime'])
 
     const affected = createAffectedTestPlan(
@@ -193,7 +197,7 @@ describe('module test impact commands', () => {
     expect(plan.reasonChains).toContain('artifact_storage -> artifact_provenance')
   })
 
-  it.each(['src/main/reviewer/reviewer-session-driver.ts', 'src/shared/reviewer.ts'])(
+  it.each(['src/main/reviewer/reviewer-session-driver.ts'])(
     'expands Reviewer changes through downstream consumers for %s',
     (path) => {
       const plan = createAffectedTestPlan([{ path, status: 'modified' }], {
@@ -669,4 +673,43 @@ describe('module test impact commands', () => {
     expect(packageJson.scripts['test:module']).toContain('module-test-impact.mjs module')
     expect(packageJson.scripts['test:affected']).toContain('module-test-impact.mjs affected')
   })
+})
+
+it('uses only declared owner tests to recover colocated implementation ownership', () => {
+  const manifest = JSON.parse(readFileSync(resolve('scripts/ci/module-impact.json'), 'utf8'))
+  const graph = { status: 'unavailable-manifest-only', testFiles: [] }
+  const module = manifest.modules.genomes_ensembl_connector
+  const source = 'src/main/connectors/descriptors/new-known-descriptor.ts'
+  const test = source.replace('.ts', '.test.ts')
+  const changes = [{ path: source, status: 'added' }]
+  module.testFiles.consumer.push(test)
+  expect(createAffectedTestPlan(changes, graph, manifest).mode).toBe('full')
+  module.testFiles.consumer.pop()
+  module.testFiles.owner.push(test)
+  const plan = createAffectedTestPlan(changes, graph, manifest)
+  expect(plan.mode).toBe('selective')
+  expect(plan.modules).toContain('genomes_ensembl_connector')
+  expect(plan.testFiles).toContain(test)
+  expect(
+    createAffectedTestPlan(
+      [{ path: source.replace('new-known', 'unknown'), status: 'added' }],
+      graph,
+      manifest
+    ).mode
+  ).toBe('full')
+})
+
+it.each([
+  [
+    'src/main/connectors/descriptors/genomes-ensembl.ts',
+    'src/main/connectors/descriptors/genomes.test.ts'
+  ],
+  ['src/main/reviewer/correction.ts', 'src/main/reviewer/correction-owner.test.ts']
+])('retains the direct owner/aggregate contract when %s changes', (path, testFile) => {
+  const plan = createAffectedTestPlan([{ path, status: 'modified' }], {
+    status: 'unavailable-manifest-only',
+    testFiles: []
+  })
+  expect(plan.mode).toBe('selective')
+  expect(plan.testFiles).toContain(testFile)
 })

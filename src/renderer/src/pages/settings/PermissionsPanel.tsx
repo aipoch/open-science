@@ -1,3 +1,4 @@
+import { InlineNotice } from '@/components/ui/inline-notice'
 import { inlineNoticeClassName } from '@/components/ui/notice-chrome'
 import { ErrorNotice } from '@/components/error-notice'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -378,7 +379,7 @@ const PermissionsPanel = ({
           </SettingsRow>
 
           {defaultPermissionProfile === 'full' ? (
-            <div role="status" className={`${inlineNoticeClassName} mt-1`}>
+            <div role="status" className={`${inlineNoticeClassName} mt-1 flex items-start gap-2`}>
               <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
               {t(
                 'New conversations can run commands, change files, and access the network without asking first. Existing conversations keep their current permission mode.'
@@ -432,7 +433,7 @@ const PermissionsPanel = ({
         </div>
 
         {incompleteStores.length > 0 ? (
-          <div role="status" className="mb-4 rounded-lg border border-border bg-muted/35 px-3 py-2">
+          <InlineNotice role="status" className="mb-4">
             <p className="text-sm text-foreground">
               {t('Some permission details are unavailable')}
             </p>
@@ -446,7 +447,7 @@ const PermissionsPanel = ({
                 'Individual grants remain revocable; Revoke all is disabled until the complete set is known.'
               )}
             </p>
-          </div>
+          </InlineNotice>
         ) : null}
 
         {error ? (

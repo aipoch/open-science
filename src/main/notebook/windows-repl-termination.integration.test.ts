@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { beforeEach, expect, it, vi } from 'vitest'
@@ -32,6 +32,7 @@ import { NotebookNetworkSandbox } from '../../../packages/notebook-network-sandb
 import { NotebookKernelExecutor } from './kernel-executor'
 import { KernelProcessLifecycleOwner } from './kernel-process-lifecycle.windows-posix'
 import type { NotebookProcessSandbox } from './process-sandbox'
+import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
 
 beforeEach(() => {
   backend.cleanupAfterCommand.mockReset().mockImplementation(async (...[, , outcome]) => ({
@@ -43,9 +44,13 @@ beforeEach(() => {
 
 it
   .skipIf(process.platform !== 'win32')
-  .each(['valid', 'missing', 'error', 'late', 'receipt-retry'] as const)(
-  'reconciles a failed REPL only with a valid native termination proof (%s)',
-  async (proof) => {
+  .each(
+    (['valid', 'missing', 'error', 'late', 'receipt-retry'] as const).flatMap((proof) =>
+      (['shutdown', 'restart', 'execute'] as const).map((recovery) => ({ proof, recovery }))
+    )
+  )(
+  'reconciles a failed REPL only with a valid native termination proof ($proof/$recovery)',
+  async ({ proof, recovery }) => {
     const root = await mkdtemp(join(tmpdir(), 'os-repl-termination-'))
     const sandbox = new NotebookNetworkSandbox({
       resources: { root: resolve('packages/notebook-network-sandbox/vendor') },
@@ -134,35 +139,34 @@ it
       timeoutMs: 10_000
     }
     try {
-      const failed = await executor.execute(request)
-      expect(failed.stderr).toContain('Notebook kernel process exited with exit code 1.')
-      const spec = JSON.parse(Buffer.from(nativeLaunches[0].argv[2], 'base64url').toString('utf8'))
-      // The native Job Object proof exists even though the already-exited leader cannot be
-      // rediscovered by taskkill. Do not consume it before the production owner can use it.
-      await expect(readFile(spec.terminationProofPath, 'utf8')).resolves.toBe(
-        spec.terminationProofToken
-      )
+      const failed = executor.execute(request)
+      if (proof === 'valid') {
+        await expect(failed).resolves.toMatchObject({
+          status: 'failed',
+          stderr: expect.stringContaining('Notebook kernel process exited with exit code 1.')
+        })
+      } else {
+        await expect(failed).rejects.toBeInstanceOf(NotebookExecutionStopError)
+      }
       const oldReceipts = lifecycle ? await readdir(join(root, 'runtime', 'kernel-processes')) : []
       if (lifecycle) expect(oldReceipts).toHaveLength(1)
-      await executor.shutdown()
-      const results = []
-      for (let attempt = 0; attempt < 3; attempt++) results.push(await executor.execute(request))
-      expect(results, JSON.stringify(results)).toEqual(
-        Array.from({ length: 3 }, (_, attempt) =>
-          proof === 'missing' ||
-          proof === 'error' ||
-          ((proof === 'late' || proof === 'receipt-retry') && attempt === 0)
-            ? expect.objectContaining({
-                status: 'failed',
-                kernelDispatched: false,
-                stderr: 'SHELL_CLEANUP_INCOMPLETE: Previous shell cleanup could not be reconciled.'
-              })
-            : expect.objectContaining({
-                status: 'completed',
-                stdout: expect.stringContaining('REPL_RECOVERED')
-              })
-        )
-      )
+      const recoverable = proof !== 'missing' && proof !== 'error'
+      if (recovery === 'shutdown') {
+        await expect(executor.shutdown()).resolves.toEqual({ reaped: recoverable })
+      } else if (recovery === 'restart') {
+        if (recoverable) await expect(executor.restart()).resolves.toBeUndefined()
+        else await expect(executor.restart()).rejects.toThrow('restart refused')
+      }
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (recoverable) {
+          await expect(executor.execute(request)).resolves.toMatchObject({
+            status: 'completed',
+            stdout: expect.stringContaining('REPL_RECOVERED')
+          })
+        } else {
+          await expect(executor.execute(request)).rejects.toBeInstanceOf(NotebookExecutionStopError)
+        }
+      }
       if (lifecycle) {
         const receipts = await readdir(join(root, 'runtime', 'kernel-processes'))
         expect(receipts).toHaveLength(1)

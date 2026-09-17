@@ -1,10 +1,12 @@
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
+import { findExecutable } from '../runtime/src/platform/executable.js'
 import { NotebookNetworkSandbox } from './index.js'
 import type { NotebookFilesystemPolicy, NotebookSandboxedProcess } from './types.js'
 
@@ -24,9 +26,78 @@ const run = (
     child.on('close', (code) => resolveRun({ code, stderr }))
   })
 
+const python3 =
+  process.platform === 'linux'
+    ? findExecutable('python3', '/usr/local/bin:/usr/bin:/bin')
+    : undefined
+
 const platformSupported = process.platform === 'darwin' || process.platform === 'linux'
 
 describe.runIf(platformSupported)('Notebook filesystem enforcement', () => {
+  it
+    .runIf(process.platform === 'linux' && Boolean(python3))
+    .each(['/tmp', '/var/tmp'].filter(existsSync))(
+    'starts a Python script explicitly granted under masked %s',
+    async (temporaryRoot) => {
+      const appRoot = await mkdtemp(join(temporaryRoot, '.mount_open-science-'))
+      const workspace = await mkdtemp(join(tmpdir(), 'open-science-appimage-workspace-'))
+      const script = join(
+        appRoot,
+        'resources',
+        'app.asar.unpacked',
+        'resources',
+        'notebook',
+        'python_loop.py'
+      )
+      const secret = join(appRoot, 'ungranted-secret.txt')
+      await mkdir(resolve(script, '..'), { recursive: true })
+      await writeFile(secret, 'private temporary data')
+      await writeFile(script, 'print("hello")\n')
+      // The host can open the exact script that the sandboxed interpreter must execute.
+      const direct = spawnSync(python3!, [script], { encoding: 'utf8' })
+      expect(direct.status, direct.stderr).toBe(0)
+      expect(direct.stdout).toBe('hello\n')
+      const sandbox = new NotebookNetworkSandbox({
+        policy: { allowedDomains: [], deniedDomains: [] },
+        resources: { root: resolve(import.meta.dirname, '../vendor') }
+      })
+
+      try {
+        await sandbox.initialize()
+        const wrapped = await sandbox.wrap({
+          command:
+            '"$PYTHON_PATH" "$SCRIPT_PATH" > result.txt && ' +
+            'test ! -e "$SECRET_PATH" && ' +
+            'if printf changed > "$SCRIPT_PATH"; then exit 1; else exit 0; fi',
+          cwd: workspace,
+          env: {
+            PATH: '/usr/bin:/bin',
+            PYTHON_PATH: python3,
+            SCRIPT_PATH: script,
+            SECRET_PATH: secret
+          },
+          filesystem: {
+            readOnlyRoots: ['/bin', '/usr/bin', script],
+            readWriteRoots: [workspace],
+            deniedReadRoots: [],
+            deniedWriteRoots: []
+          },
+          onNetworkAccessRequest: async () => false
+        })
+        const result = await run(wrapped, workspace)
+        await wrapped.cleanup('exit', { processesTerminated: true })
+
+        expect(result.code, result.stderr).toBe(0)
+        await expect(readFile(join(workspace, 'result.txt'), 'utf8')).resolves.toBe('hello\n')
+        await expect(readFile(script, 'utf8')).resolves.toBe('print("hello")\n')
+      } finally {
+        await sandbox.dispose()
+        await rm(appRoot, { recursive: true, force: true })
+        await rm(workspace, { recursive: true, force: true })
+      }
+    }
+  )
+
   it.runIf(process.platform === 'linux')(
     'starts with an existing protected .bashrc in a hidden private root',
     async () => {

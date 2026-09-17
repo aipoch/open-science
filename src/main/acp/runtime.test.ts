@@ -25,6 +25,7 @@ vi.mock('electron', () => ({ app: { getPath: () => tmpdir(), isPackaged: true } 
 import { AcpRuntime } from './runtime.test-utils'
 import type { AcpPromptContentOwner } from './prompt-content-owner'
 import { createAcpTaskAgentPort } from './task-agent-port'
+import { createAcpDelegateExecution } from '../delegation/acp-execution'
 import { loadManagedCodexErrorHandler } from '../settings/codex-error.test-utils'
 import type { AcpAgentConnectionAdapter } from './agent-connection-adapter'
 import type { AcpConnectionCloseWorkflow } from './connection-close-workflow'
@@ -1193,6 +1194,42 @@ afterEach(async () => {
 })
 
 describe('ACP runtime migration write-gate', () => {
+  it('checks application context after admission and before the provider sees the correction', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['s1'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    try {
+      await runtime.createSession({ cwd: '/workspace' })
+      const failure = new Error('Synthetic reviewed context changed')
+      const onPromptAdmitted = vi.fn(async () => {
+        throw failure
+      })
+      await expect(
+        runtime.sendApplicationPrompt(
+          { sessionId: 's1', text: '[Auditor] stale correction' },
+          {
+            kind: 'application',
+            feature: 'reviewer',
+            purpose: 'correction',
+            causeReviewId: 'review'
+          },
+          { onPromptAdmitted }
+        )
+      ).rejects.toBe(failure)
+      expect(onPromptAdmitted).toHaveBeenCalledOnce()
+      expect(fakeAgent.prompts).toHaveLength(0)
+      // Rejection must release execution ownership so a legitimate user can continue.
+      await runtime.sendPrompt({ sessionId: 's1', text: 'New user task' })
+      expect(fakeAgent.prompts).toHaveLength(1)
+    } finally {
+      runtime.shutdown()
+    }
+  })
+
   it('propagates a normalized Codex capacity error through the ACP wire', async () => {
     const root = await mkdtemp(join(tmpdir(), 'acp-codex-capacity-'))
     const capacityError = 'Selected model is at capacity. Please try a different model.'
@@ -23449,7 +23486,10 @@ describe('ACP runtime skill force-load + nudge', () => {
 
   // Builds a spawner that returns a fresh fake agent per connect, so a force-load reconnect can spawn a
   // second working agent. All agent handles are collected so tests can assert prompts across reconnects.
-  const createFreshAgentSpawner = (): {
+  const createFreshAgentSpawner = (
+    modes?: SessionModeState,
+    sessionId = 'remote-session-1'
+  ): {
     spawn: () => ChildProcessWithoutNullStreams
     agents: Array<ReturnType<typeof startFakeAgent>>
     spawnCount: () => number
@@ -23461,7 +23501,7 @@ describe('ACP runtime skill force-load + nudge', () => {
       spawn: () => {
         count += 1
         const process = new FakeAgentProcess()
-        agents.push(startFakeAgent(process, ['remote-session-1']))
+        agents.push(startFakeAgent(process, [sessionId], { modes }))
         return asAgentProcess(process)
       },
       agents,
@@ -23512,6 +23552,7 @@ describe('ACP runtime skill force-load + nudge', () => {
     const releaseNewerPrompt = createDeferred()
     const onPromptStarted = vi.fn()
     const onPromptEnded = vi.fn()
+    let skillChecks = 0
     startFakeAgent(process, ['remote-session-1'], {
       onPrompt: async ({ text }) => {
         if (text === 'newer prompt') {
@@ -23529,6 +23570,8 @@ describe('ACP runtime skill force-load + nudge', () => {
       resolveSpecialistSkills: resolveForceLoadSpecialistSkills,
       skills: {
         needForceLoad: async () => {
+          // The newer preflight sees the refreshed, enabled catalog and may proceed.
+          if (++skillChecks > 1) return []
           skillCheckEntered.resolve()
           await releaseSkillCheck.promise
           return ['research']
@@ -23577,7 +23620,8 @@ describe('ACP runtime skill force-load + nudge', () => {
     > = []
     const createRuntime = (
       spawner: ReturnType<typeof createFreshAgentSpawner>,
-      contexts: Array<{ forcedSkillIds: string[]; systemPromptAppends?: string[] } | undefined>
+      contexts: Array<{ forcedSkillIds: string[]; systemPromptAppends?: string[] } | undefined>,
+      skillId: string
     ): AcpRuntime =>
       new AcpRuntime({
         appVersion: '0.1.0',
@@ -23594,15 +23638,20 @@ describe('ACP runtime skill force-load + nudge', () => {
           }
         },
         resolveSpecialistIdentity: resolveForceLoadSpecialistIdentity,
-        resolveSpecialistSkills: resolveForceLoadSpecialistSkills,
+        resolveSpecialistSkills: async () => ({
+          kind: 'specialist',
+          skillIds: [skillId],
+          frameworkNames: [skillId],
+          missingSkillIds: []
+        }),
         skills: {
           needForceLoad: async (ids) => ids,
           namesForIds: async (ids) => ids
         }
       })
 
-    const first = createRuntime(firstSpawner, firstContexts)
-    const second = createRuntime(secondSpawner, secondContexts)
+    const first = createRuntime(firstSpawner, firstContexts, 'skill-a')
+    const second = createRuntime(secondSpawner, secondContexts, 'skill-b')
     await Promise.all([
       first.createSession({ cwd: '/workspace', specialistId: 'force-load-specialist' }),
       second.createSession({ cwd: '/workspace', specialistId: 'force-load-specialist' })
@@ -23633,6 +23682,356 @@ describe('ACP runtime skill force-load + nudge', () => {
       expect.arrayContaining([expect.objectContaining({ forcedSkillIds: ['skill-a'] })])
     )
   })
+
+  it.each([
+    { framework: claudeCodeFramework, modelRoute: undefined },
+    { framework: opencodeFramework, modelRoute: undefined },
+    { framework: codexFramework, modelRoute: 'codex-responses' as const },
+    { framework: codexFramework, modelRoute: 'codex-bridge' as const },
+    { framework: codeBuddyFramework, modelRoute: undefined }
+  ])(
+    'prepares bound disabled Skills without chips before $framework.id/$modelRoute dispatch and restores afterward',
+    async ({ framework, modelRoute }) => {
+      const spawner = createFreshAgentSpawner(
+        framework.id === 'codex'
+          ? createModes(['read-only', 'agent', 'agent-full-access'], 'read-only')
+          : undefined,
+        framework.id === 'codex' ? '11111111-1111-4111-8111-111111111111' : undefined
+      )
+      const contexts: string[][] = []
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        resolveBackend: (context) => {
+          contexts.push([...context.forcedSkillIds])
+          return {
+            framework: { ...framework, spawn: spawner.spawn },
+            modelRoute,
+            executablePath: '/bin/agent',
+            env: {}
+          }
+        },
+        resolveSpecialistIdentity: resolveForceLoadSpecialistIdentity,
+        resolveSpecialistSkills: resolveForceLoadSpecialistSkills,
+        skills: {
+          needForceLoad: async (ids) => ids.filter((id) => id === 'research'),
+          namesForIds: async (ids) => ids
+        }
+      })
+      try {
+        const session = await runtime.createSession({
+          cwd: '/workspace',
+          specialistId: 'force-load-specialist'
+        })
+        await runtime.sendPrompt({
+          sessionId: session.sessionId,
+          text: 'summarize the paper',
+          resumeFallback: { historyPreamble: 'EXISTING_CONVERSATION_HISTORY' }
+        })
+        expect(contexts.slice(0, 2)).toEqual([[], ['research']])
+        if (modelRoute === 'codex-bridge') {
+          // Existing force-load reconnects do not retain bridge continuity: replay app history.
+          expect(spawner.agents[1].newSessions).toHaveLength(1)
+          expect(spawner.agents[1].prompts[0].text).toContain('EXISTING_CONVERSATION_HISTORY')
+        } else {
+          // CodeBuddy resumes once more to apply its per-turn Skill route before dispatch.
+          expect(spawner.agents[1].resumedSessions).toHaveLength(
+            framework.id === 'codebuddy' ? 2 : 1
+          )
+        }
+        expect(spawner.agents[1].prompts[0].text).not.toContain(
+          'Use the following skill(s) for this task:'
+        )
+        await vi.waitFor(() => expect(runtime.getSnapshot().status).toBe('idle'))
+        await runtime.resumeSession({
+          sessionId: session.sessionId,
+          cwd: '/workspace',
+          specialistId: 'force-load-specialist'
+        })
+        expect(contexts.at(-1)).toEqual([])
+      } finally {
+        await runtime.disconnect()
+      }
+    }
+  )
+
+  it.each([
+    ...RESTORED_CONTINUATION_FRAMEWORKS,
+    ['CodeBuddy', codeBuddyFramework, undefined, undefined] as const
+  ])(
+    'preserves app continuation context when bound Skills reload %s',
+    async (_name, framework, modelRoute) => {
+      const sessionId = '11111111-1111-4111-8111-111111111111'
+      const receivedPrompts: ContentBlock[][] = []
+      const agents: Array<ReturnType<typeof startFakeAgent>> = []
+      const root = await createTemporaryRoot()
+      const uploadRepository = new UploadRepository(root)
+      const staged = await stageUploadFixtures(uploadRepository, {
+        files: [
+          {
+            name: 'experiment.txt',
+            mimeType: 'text/plain',
+            content: Buffer.from('experiment data').toString('base64')
+          }
+        ]
+      })
+      const uploads = await uploadRepository.finalizePendingSessionUploads(sessionId, staged)
+      const saved = createRestoredContinuationSession(
+        'handoff-origin',
+        sessionId,
+        'default-project'
+      )
+      saved.messages[0].uploads = uploads
+      saved.messages[0].content = 'Analyze the original experiment before the handoff.'
+      saved.messages[0].images = [
+        {
+          id: 'experiment-image',
+          mimeType: 'image/png',
+          data: imageBytes.toString('base64'),
+          byteLength: imageBytes.length
+        }
+      ]
+      saved.conversationGraph = createLinearConversationGraph({
+        sessionId,
+        messages: saved.messages,
+        frameworkId: framework.id,
+        createdAt: 1,
+        updatedAt: 1
+      })
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        uploads: { repository: uploadRepository },
+        permissionWait: {
+          sessions: {
+            readSessionRuntimeContext: vi.fn(),
+            patchSessionRuntimeContext: vi.fn(),
+            containsMessageOnActiveBranch: vi.fn(),
+            loadSessionForContinuation: async () => structuredClone(saved)
+          }
+        },
+        resolveBackend: () => ({
+          framework: {
+            ...framework,
+            spawn: () => {
+              const process = new FakeAgentProcess()
+              agents.push(
+                startFakeAgent(process, [sessionId], {
+                  modes: createModes(['read-only', 'agent', 'agent-full-access'], 'read-only'),
+                  onPrompt: ({ prompt }) => {
+                    receivedPrompts.push(prompt)
+                  }
+                })
+              )
+              return asAgentProcess(process)
+            }
+          },
+          modelRoute,
+          supportsImageInput: true,
+          executablePath: '/bin/agent',
+          env: {}
+        }),
+        resolveSpecialistIdentity: resolveForceLoadSpecialistIdentity,
+        resolveSpecialistSkills: resolveForceLoadSpecialistSkills,
+        skills: {
+          needForceLoad: async (ids) => ids.filter((id) => id === 'research'),
+          namesForIds: async (ids) => ids
+        }
+      })
+      try {
+        await runtime.createSession({ cwd: '/workspace', projectId: 'default-project' })
+        await runtime.switchSpecialist(sessionId, 'force-load-specialist')
+        await runtime.sendAppContinuation({
+          sessionId,
+          text: 'Continue the original user task after the approved Specialist handoff.',
+          provenanceContext: { promptMessageId: 'handoff-origin' }
+        })
+        const prompt = agents.at(-1)?.prompts[0].text
+        if (modelRoute === 'codex-bridge') {
+          expect(agents.at(-1)?.newSessions).toHaveLength(1)
+          expect(prompt).toContain('Analyze the original experiment before the handoff.')
+          expect(receivedPrompts[0]).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({ type: 'image', data: imageBytes.toString('base64') }),
+              expect.objectContaining({ type: 'resource_link', name: 'experiment.txt' })
+            ])
+          )
+        } else {
+          expect(agents.at(-1)?.resumedSessions.length).toBeGreaterThan(0)
+          expect(prompt).not.toContain('Analyze the original experiment before the handoff.')
+        }
+        expect(prompt).toContain('Continue the original user task')
+      } finally {
+        await runtime.disconnect()
+      }
+    }
+  )
+
+  it.each([
+    ...RESTORED_CONTINUATION_FRAMEWORKS,
+    ['CodeBuddy', codeBuddyFramework, undefined, undefined] as const
+  ])(
+    'dispatches a delegated Specialist with a Main-disabled bound Skill without durable child Session storage on %s',
+    async (_name, framework, modelRoute) => {
+      const firstPrompt = createDeferred<void>()
+      const finishFirstPrompt = createDeferred<void>()
+      const agents: Array<ReturnType<typeof startFakeAgent>> = []
+      const spawn = (): ChildProcessWithoutNullStreams => {
+        const process = new FakeAgentProcess()
+        let prompts = 0
+        agents.push(
+          startFakeAgent(process, ['11111111-1111-4111-8111-111111111111'], {
+            modes: createModes(['read-only', 'agent', 'agent-full-access'], 'read-only'),
+            onPrompt: async () => {
+              if (++prompts === 1) {
+                firstPrompt.resolve()
+                await finishFirstPrompt.promise
+              }
+              return { stopReason: 'end_turn' }
+            }
+          })
+        )
+        return asAgentProcess(process)
+      }
+      const execution = createAcpDelegateExecution({
+        capacity: 1,
+        prepare: (input) => ({
+          executionId: input.attemptId,
+          provenance: {
+            projectId: input.session.projectId,
+            sessionId: input.session.sessionId,
+            agentFrameId: input.frameId,
+            runtimeSegmentId: input.runtimeSegmentId,
+            promptMessageId: 'child-prompt',
+            messageBranchId: 'child-branch'
+          },
+          workspace: { cwd: '/workspace' },
+          runtimeHome: '/runtime/delegated-specialist',
+          frameworkId: framework.id,
+          capability: { revoke: async () => {} }
+        }),
+        assertFrameworkNativeDelegationDisabled: () => {},
+        createRuntime: (_scope, callbacks) =>
+          new AcpRuntime({
+            appVersion: '0.1.0',
+            defaultCwd: '/workspace',
+            resolveBackend: () => ({
+              framework: { ...framework, spawn },
+              ...(modelRoute ? { modelRoute } : {}),
+              executablePath: '/bin/agent',
+              env: {}
+            }),
+            callbacks,
+            resolveSpecialistIdentity: resolveForceLoadSpecialistIdentity,
+            resolveSpecialistSkills: resolveForceLoadSpecialistSkills,
+            skills: {
+              preparedSkillIds: ['research'],
+              needForceLoad: async (ids) => ids.filter((id) => id === 'research'),
+              namesForIds: async (ids) => ids
+            }
+          })
+      })
+      const reservation = await execution.reserve(1)
+      const running = execution.run(
+        {
+          session: { projectId: 'project-1', sessionId: 'parent-session' },
+          frameId: 'child-frame',
+          attemptId: 'delegated-attempt',
+          runtimeSegmentId: 'child-segment',
+          task: 'Analyze the delegated experiment.',
+          inputs: [],
+          profile: 'force-load-specialist',
+          continuation: false
+        },
+        reservation.slotIds[0]
+      )
+      try {
+        await Promise.race([firstPrompt.promise, running.completion])
+        const followup = running.sendMessage('Check the experiment controls too.')
+        finishFirstPrompt.resolve()
+        await followup
+      } finally {
+        finishFirstPrompt.resolve()
+      }
+      await expect(running.completion).resolves.toMatchObject({ status: 'completed' })
+      expect(
+        agents
+          .flatMap((agent) => agent.prompts)
+          .some((prompt) => prompt.text.includes('Analyze the delegated experiment.'))
+      ).toBe(true)
+      expect(agents).toHaveLength(1)
+      expect(agents[0].prompts).toHaveLength(2)
+      expect(agents[0].prompts[1].text).toContain('Check the experiment controls too.')
+    }
+  )
+
+  it.each(['failed', 'cancelled'] as const)(
+    'keeps the shared provider connected when continuation replay is %s before reload',
+    async (outcome) => {
+      const process = new FakeAgentProcess()
+      const agent = startFakeAgent(process, ['bound-session', 'other-session'])
+      let resolveHistory!: (session: PersistedChatSession) => void
+      const history = new Promise<PersistedChatSession>((resolve) => {
+        resolveHistory = resolve
+      })
+      const loadHistory = vi.fn(() => history)
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        resolveBackend: () => ({
+          framework: { ...opencodeFramework, spawn: () => asAgentProcess(process) },
+          executablePath: '/bin/agent',
+          env: {}
+        }),
+        permissionWait: {
+          sessions: {
+            readSessionRuntimeContext: vi.fn(),
+            patchSessionRuntimeContext: vi.fn(),
+            containsMessageOnActiveBranch: vi.fn(),
+            loadSessionForContinuation: loadHistory
+          }
+        },
+        resolveSpecialistIdentity: resolveForceLoadSpecialistIdentity,
+        resolveSpecialistSkills: resolveForceLoadSpecialistSkills,
+        skills: {
+          needForceLoad: async (ids) => ids.filter((id) => id === 'research'),
+          namesForIds: async (ids) => ids
+        }
+      })
+      try {
+        await runtime.createSession({
+          cwd: '/workspace',
+          projectId: 'project-1',
+          specialistId: 'force-load-specialist'
+        })
+        await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
+        const pending = runtime.sendAppContinuation({
+          sessionId: 'bound-session',
+          text: 'Continue the handoff',
+          provenanceContext: { promptMessageId: 'origin' }
+        })
+        const rejected = expect(pending).rejects.toThrow()
+        await vi.waitFor(() => expect(loadHistory).toHaveBeenCalledOnce())
+        if (outcome === 'cancelled') await runtime.cancelPrompt({ sessionId: 'bound-session' })
+        resolveHistory(
+          outcome === 'failed'
+            ? createRestoredContinuationSession('wrong-origin', 'bound-session')
+            : createRestoredContinuationSession('origin', 'bound-session')
+        )
+        await rejected
+        await new Promise<void>((resolve) => setImmediate(resolve))
+        expect(process.killed).toBe(false)
+        await runtime.sendPrompt({
+          sessionId: 'other-session',
+          text: 'Continue the unrelated conversation'
+        })
+        expect(agent.prompts).toHaveLength(1)
+        expect(agent.prompts[0].text).toContain('Continue the unrelated conversation')
+      } finally {
+        await runtime.disconnect()
+      }
+    }
+  )
 
   it('respawns and nudges when a picked skill is disabled, then restores after the turn', async () => {
     const spawner = createFreshAgentSpawner()
@@ -23707,7 +24106,7 @@ describe('ACP runtime skill force-load + nudge', () => {
       resolveSpecialistIdentity: resolveForceLoadSpecialistIdentity,
       resolveSpecialistSkills: resolveForceLoadSpecialistSkills,
       skills: {
-        needForceLoad: async (ids) => ids,
+        needForceLoad: async (ids) => ids.filter((id) => id === 'research'),
         namesForIds: async (ids) => ids
       }
     })

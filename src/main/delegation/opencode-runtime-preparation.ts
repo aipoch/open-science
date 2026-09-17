@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { cp, lstat, mkdir, writeFile } from 'node:fs/promises'
+import { cp, lstat, mkdir, stat, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { dirname, isAbsolute, join, relative, sep } from 'node:path'
 
@@ -143,6 +143,17 @@ const prepareOpenCodeRuntime = async (
   // OpenCode waits for a fresh dependency install before every child can initialize. Generated
   // config/plugin/instructions still come from admission; never copy a database or auth store.
   if (admitted.env.XDG_CONFIG_HOME) {
+    // Windows reports ENOENT for children of a regular file, unlike POSIX's ENOTDIR.
+    // Validate the parent before treating missing optional projections as absent.
+    const sourceDirectory = await stat(sourceRoot).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== 'ENOENT') throw error
+      return undefined
+    })
+    if (sourceDirectory && !sourceDirectory.isDirectory()) {
+      throw Object.assign(new Error('OpenCode delegated config source is not a directory.'), {
+        code: 'ENOTDIR'
+      })
+    }
     for (const entry of [
       'skills',
       'package.json',

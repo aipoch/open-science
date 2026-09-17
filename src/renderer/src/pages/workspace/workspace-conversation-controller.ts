@@ -40,7 +40,7 @@ import {
 } from './workspace-message-queue-controller'
 import { isWorkspacePresentationRevealing } from './workspace-presentation-revealing'
 import type { WorkspaceSessionController } from './workspace-session-controller'
-import { hasMainConversation } from './use-side-chat-controller'
+import { sideChatBlock } from './side-chat-availability'
 
 type WorkspaceConversationRuntime = Pick<
   WorkspaceAgentRuntime,
@@ -350,17 +350,17 @@ const canBranch = (options: WorkspaceConversationControllerOptions): boolean =>
   )
 
 const canStartSideChat = (options: WorkspaceConversationControllerOptions): boolean =>
-  Boolean(
-    options.sideChat &&
-    options.activeSession &&
-    hasMainConversation(options.activeSession) &&
-    options.isPersistenceReady &&
-    options.agentConfigurationReady &&
-    options.actionability?.actions.startSideChat.allowed !== false &&
-    options.composer.view.transfers.length === 0 &&
-    options.composer.view.attachments.length === 0 &&
-    (docToText(options.composer.view.doc).trim() || options.composer.view.annotations.length > 0)
-  )
+  Boolean(options.sideChat) &&
+  !sideChatBlock({
+    action: 'send',
+    parent: options.activeSession,
+    persistenceReady: options.isPersistenceReady,
+    hasAttachments:
+      options.composer.view.transfers.length > 0 || options.composer.view.attachments.length > 0,
+    hasContent: Boolean(
+      docToText(options.composer.view.doc).trim() || options.composer.view.annotations.length > 0
+    )
+  })
 
 const useWorkspaceConversationController = (
   options: WorkspaceConversationControllerOptions

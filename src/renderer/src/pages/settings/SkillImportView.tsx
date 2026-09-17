@@ -247,7 +247,13 @@ const SkillImportView = ({
       </div>
       <div aria-busy={busy}>
         {message?.kind === 'error' ? (
-          <ErrorNotice role="alert" tone="amber" className="mt-2" description={message.text} />
+          <ErrorNotice
+            inline
+            role="alert"
+            tone="amber"
+            className="mt-2"
+            description={message.text}
+          />
         ) : null}
 
         {repositories ? (

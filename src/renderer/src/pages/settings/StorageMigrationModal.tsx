@@ -403,6 +403,7 @@ const StorageMigrationModal = ({
                 {t('Elapsed {{time}}', { time: formatElapsed(elapsedMs) })}
               </p>
               <ErrorNotice
+                inline
                 role="alert"
                 tone="amber"
                 className="mt-3"
@@ -473,6 +474,7 @@ const StorageMigrationModal = ({
               </div>
               {discardError ? (
                 <ErrorNotice
+                  inline
                   role="alert"
                   tone="amber"
                   className="mt-3"
@@ -520,6 +522,7 @@ const StorageMigrationModal = ({
               </div>
               {discardError ? (
                 <ErrorNotice
+                  inline
                   role="alert"
                   tone="amber"
                   className="mt-3"

@@ -104,7 +104,7 @@ describe('Windows AppContainer elevation', () => {
 
 describe('Windows AppContainer launch', () => {
   it('keeps nested optional PATH candidates until their individual permissions are checked', () => {
-    const root = realpathSync(mkdtempSync(join(tmpdir(), 'optional-path-')))
+    const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'optional-path-')))
     const parent = join(root, 'tools')
     const child = join(parent, 'bin')
     try {

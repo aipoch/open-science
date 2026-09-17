@@ -218,7 +218,7 @@ describe('Side chat OpenCode instruction isolation', () => {
         expect(setup.promptPrefix).toContain('open_science_host_message_send_message')
         expect(setup.promptPrefix).not.toContain(mainPrompt)
         expect(resolved.persistentSystemPrompt).toBeUndefined()
-        expect(resolved.env.XDG_CONFIG_HOME).toContain('side-chat-test/profile')
+        expect(resolved.env.XDG_CONFIG_HOME).toContain(join('side-chat-test', 'profile'))
         const diskConfig = JSON.parse(
           await readFile(join(resolved.env.XDG_CONFIG_HOME!, 'opencode/opencode.json'), 'utf8')
         )

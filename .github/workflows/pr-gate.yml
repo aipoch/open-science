@@ -20,6 +20,8 @@ on:
           - runtime-bundle
           - windows-e2e
           - e2e
+          - source-regressions
+          - macos-smoke
 
 permissions:
   contents: read
@@ -122,12 +124,19 @@ jobs:
         env:
           BASE_SHA: ${{ steps.revisions.outputs.base }}
           DRY_RUN_MODE: ${{ inputs.dry_run || 'classified' }}
+          PR_GATE_PLATFORM_POLICY: risk-v1
           EVENT_NAME: ${{ github.event_name }}
           HEAD_SHA: ${{ steps.revisions.outputs.head }}
           TRUSTED_CLASSIFIER_DIR: ${{ steps.trusted_classifier.outputs.dir }}
           TRUSTED_CLASSIFIER_SOURCE: ${{ steps.trusted_classifier.outputs.source }}
         run: |
           set -euo pipefail
+          if [[ "$EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN_MODE" == "macos-smoke" ]]; then
+            plan='{"schemaVersion":1,"mode":"selective","roots":["manual:macos-smoke"],"lanes":["policy","build","e2e_smoke_macos"],"bundles":["policy","macos_e2e"],"macosProfile":"smoke","macosGroups":["journeys"],"reasonChains":["focused single-runner macOS smoke"]}'
+            echo "plan=$plan" >> "$GITHUB_OUTPUT"
+            echo 'lanes=["policy","build","e2e_smoke_macos"]' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [[ "$EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN_MODE" == "unit-coverage" ]]; then
             plan='{"schemaVersion":1,"mode":"full","roots":["manual:unit-coverage"],"lanes":["policy","unit_macos"],"bundles":["policy","unit"],"reasonChains":["workflow_dispatch unit-coverage -> focused dry-run"]}'
             echo "plan=$plan" >> "$GITHUB_OUTPUT"
@@ -177,6 +186,12 @@ jobs:
               '' \
               '- `workflow_dispatch runtime-bundle -> focused dry-run`' \
               >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [[ "$EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN_MODE" == "source-regressions" ]]; then
+            plan='{"schemaVersion":1,"mode":"selective","roots":["manual:source-regressions"],"lanes":["policy","e2e_regressions_macos","e2e_delegation_macos"],"bundles":["policy","macos_e2e"],"macosGroups":["regressions","delegation"]}'
+            echo "plan=$plan" >> "$GITHUB_OUTPUT"
+            echo 'lanes=["policy","e2e_regressions_macos","e2e_delegation_macos"]' >> "$GITHUB_OUTPUT"
             exit 0
           fi
           if [[ "$EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN_MODE" == "e2e" ]]; then
@@ -373,6 +388,11 @@ jobs:
           echo "node=$node_outcome" >> "$GITHUB_OUTPUT"
           echo "web=$web_outcome" >> "$GITHUB_OUTPUT"
           exit "$failed"
+      - name: Check complete module ownership and consumer evidence
+        # Full portable shards already run these guards. Selective source plans must also
+        # detect newly introduced imports that make their checked-in consumer evidence stale.
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') && fromJSON(needs.preflight.outputs.plan).mode != 'full' }}
+        run: npx vitest run scripts/ci/audit-module-ownership.test.ts scripts/ci/module-consumer-coverage.test.ts
       - name: Check interface contract baseline (shadow)
         id: interface_contracts
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'interface_contracts') }}
@@ -516,9 +536,9 @@ jobs:
     name: Module tests and coverage
     needs: [preflight, unit_shard]
     if: ${{ always() && needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}
-    # Full plans merge Ubuntu shard reports on Ubuntu. Selective plans still execute affected
-    # Modules on real macOS so native platform behavior remains covered for focused changes.
-    runs-on: ${{ needs.unit_shard.result != 'skipped' && 'ubuntu-latest' || 'macos-14' }}
+    # Ordinary changes use portable coverage; expanded native plans keep the Mac module run.
+    # Full portable shards always merge coverage on Ubuntu.
+    runs-on: ${{ (needs.unit_shard.result != 'skipped' || fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke') && 'ubuntu-latest' || 'macos-14' }}
     timeout-minutes: 15
     steps:
       - name: Checkout
@@ -542,6 +562,7 @@ jobs:
         if: ${{ fromJSON(needs.preflight.outputs.plan).mode == 'selective' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos') }}
         continue-on-error: true
         env:
+          VITEST_PORTABLE_CI: ${{ fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke' && '1' || '0' }}
           BASE_SHA: ${{ needs.preflight.outputs.base }}
           HEAD_SHA: ${{ needs.preflight.outputs.head }}
         # The module graph selects owner, contract, and consumer tests. Coverage remains scoped to
@@ -639,44 +660,6 @@ jobs:
           packages/notebook-network-sandbox/src/filesystem-enforcement.integration.test.ts
           packages/notebook-network-sandbox/src/network-enforcement.integration.test.ts
 
-  # The trusted base classifier for the introducing PR still selects this legacy bundle.
-  # It performs no tests and can be deleted after this workflow lands on main.
-  coverage_macos:
-    name: Legacy coverage plan compatibility
-    needs: preflight
-    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'coverage_macos') }}
-    runs-on: macos-14
-    timeout-minutes: 15
-    steps:
-      - name: Checkout coverage-only legacy plan
-        if: ${{ !contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - name: Setup Node for coverage-only legacy plan
-        if: ${{ !contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-        with:
-          node-version: 22
-          cache: npm
-      - name: Install dependencies for coverage-only legacy plan
-        if: ${{ !contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}
-        run: node scripts/ci/npm-ci.mjs
-      - name: Test coverage-only legacy plan
-        if: ${{ !contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}
-        run: npm run test:coverage
-      - name: Upload legacy coverage report
-        if: ${{ always() && !contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: coverage-report
-          path: coverage/
-          retention-days: 5
-          if-no-files-found: warn
-      - name: Confirm coverage consolidated into Module tests
-        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}
-        run: echo "Coverage thresholds are enforced by the macOS Module-test job."
-
   windows_core:
     name: Windows core
     needs: preflight
@@ -728,6 +711,16 @@ jobs:
           src/main/specialist/repository.test.ts
           src/main/notebook/micromamba-cache-powershell.test.ts
           src/main/notebook/micromamba-cache-acl.integration.test.ts
+      - name: Test Windows wheel evidence recovery
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') }}
+        shell: pwsh
+        env:
+          RUN_KERNEL: '1'
+        run: |
+          $env:OPEN_SCIENCE_TEST_PYTHON = python -c "import sys, pip, ensurepip; print(sys.executable)"
+          if ($LASTEXITCODE -ne 0 -or -not $env:OPEN_SCIENCE_TEST_PYTHON) { throw 'Python with pip and ensurepip is required for wheel evidence tests.' }
+          npm test -- src/main/notebook/pip-wheel-evidence.test.ts src/main/notebook/pip-install-evidence.test.ts
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Test Windows notebook shell behavior
         id: windows_shell
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') }}
@@ -808,7 +801,7 @@ jobs:
   macos_e2e_setup:
     name: Prepare macOS E2E
     needs: preflight
-    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'macos_e2e') }}
+    if: ${{ fromJSON(needs.preflight.outputs.plan).macosProfile != 'smoke' && needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'macos_e2e') }}
     runs-on: macos-14
     timeout-minutes: 15
     outputs:
@@ -887,13 +880,14 @@ jobs:
   macos_e2e:
     name: macOS build and E2E (${{ matrix.group }})
     needs: [preflight, macos_e2e_setup]
-    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'macos_e2e') }}
+    if: ${{ !cancelled() && needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'macos_e2e') && (fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke' || needs.macos_e2e_setup.result == 'success') }}
     runs-on: macos-14
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        group: [journeys, presentation, regressions, delegation]
+        # Trusted pre-migration plans have no group selection: retain their full legacy matrix.
+        group: ${{ fromJSON(needs.preflight.outputs.plan).macosGroups || fromJSON('["journeys","presentation","regressions","delegation"]') }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -902,21 +896,31 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: ${{ needs.macos_e2e_setup.outputs.node_version }}
+          node-version: ${{ needs.macos_e2e_setup.outputs.node_version || '22' }}
+          cache: ${{ fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke' && 'npm' || '' }}
           package-manager-cache: false
+      - name: Install short Mac dependencies
+        if: ${{ fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke' }}
+        run: node scripts/ci/npm-ci.mjs
+      - name: Build short Mac application
+        id: smoke_build
+        if: ${{ fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke' }}
+        run: npm run build:e2e
       # Artifact IDs survive failed-job reruns without selecting another producer attempt.
       - name: Download E2E setup
+        if: ${{ fromJSON(needs.preflight.outputs.plan).macosProfile != 'smoke' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           artifact-ids: ${{ needs.macos_e2e_setup.outputs.artifact_id }}
           path: ${{ runner.temp }}/e2e-setup/
           merge-multiple: true
       - name: Restore E2E setup
+        if: ${{ fromJSON(needs.preflight.outputs.plan).macosProfile != 'smoke' }}
         id: setup
         run: node scripts/ci/e2e-setup-snapshot.mjs restore "$RUNNER_TEMP/e2e-setup"
       - name: Test macOS-native behavior
         id: unit_macos_native
-        if: ${{ matrix.group == 'journeys' && fromJSON(needs.preflight.outputs.plan).mode == 'full' }}
+        if: ${{ matrix.group == 'journeys' && fromJSON(needs.preflight.outputs.plan).macosProfile != 'smoke' && fromJSON(needs.preflight.outputs.plan).mode == 'full' }}
         continue-on-error: true
         run: |
           npx vitest run \
@@ -926,6 +930,19 @@ jobs:
             src/main/notebook/managed-runtime-guard.test.ts
           npx vitest run src/main/notebook/kernel-executor.test.ts \
             -t 'executes the repl loop through the production network sandbox'
+      - name: Test short macOS platform checks
+        id: unit_macos_smoke
+        if: ${{ matrix.group == 'journeys' && fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke' }}
+        continue-on-error: true
+        run: npx vitest run src/main/net/network-info.test.ts src/main/notebook/managed-runtime-guard.test.ts
+      - name: Run short macOS core
+        id: e2e_smoke_macos
+        if: ${{ matrix.group == 'journeys' && (steps.smoke_build.outcome == 'success' || steps.setup.outcome == 'success') && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_smoke_macos') }}
+        continue-on-error: true
+        run: >-
+          npx playwright test e2e/electron-foundation.spec.ts e2e/settings-persistence.spec.ts e2e/window-presentation.spec.ts
+          --grep 'creates a project through the desktop stack and reloads it after relaunch|persists the selected theme after closing settings and relaunching|keeps the E2E window hidden across relaunch'
+          --fail-on-flaky-tests --global-timeout=180000
       - name: Run functional journeys
         id: e2e_functional_macos
         if: ${{ matrix.group == 'journeys' && steps.setup.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_functional_macos') }}
@@ -965,24 +982,23 @@ jobs:
           retention-days: 5
           if-no-files-found: warn
       - name: Install headless Chromium
-        if: ${{ matrix.group == 'presentation' || matrix.group == 'regressions' }}
+        if: ${{ matrix.group == 'presentation' }}
         run: npx playwright install chromium --only-shell
       - name: Run supplemental regressions
         id: e2e_regressions_macos
         if: ${{ matrix.group == 'regressions' && steps.setup.outcome == 'success' }}
         continue-on-error: true
-        env:
-          PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/regressions_macos
-          PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/regressions_macos.json
-        run: npm run test:e2e:regressions -- --fail-on-flaky-tests --global-timeout=1200000
+        uses: ./.github/actions/source-regression
+        with:
+          group: regressions
+          include-capacity: 'false'
       - name: Run supplemental delegation
         id: e2e_delegation_macos
         if: ${{ matrix.group == 'delegation' && steps.setup.outcome == 'success' }}
         continue-on-error: true
-        env:
-          PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/delegation_macos
-          PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/delegation_macos.json
-        run: npm run test:e2e:delegation -- --fail-on-flaky-tests --global-timeout=1200000
+        uses: ./.github/actions/source-regression
+        with:
+          group: delegation
       - name: Run renderer layout pilot
         id: renderer_layout
         if: ${{ matrix.group == 'presentation' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_visual_macos') }}
@@ -1054,6 +1070,9 @@ jobs:
           E2E_REGRESSIONS_OUTCOME: ${{ steps.e2e_regressions_macos.outcome }}
           E2E_DELEGATION_OUTCOME: ${{ steps.e2e_delegation_macos.outcome }}
           E2E_GROUP: ${{ matrix.group }}
+          UNIT_MACOS_SMOKE_OUTCOME: ${{ steps.unit_macos_smoke.outcome }}
+          E2E_SMOKE_SELECTED: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_smoke_macos') }}
+          E2E_SMOKE_OUTCOME: ${{ steps.e2e_smoke_macos.outcome }}
           UNIT_MACOS_NATIVE_OUTCOME: ${{ steps.unit_macos_native.outcome }}
         run: |
           set -euo pipefail
@@ -1071,6 +1090,9 @@ jobs:
           check e2e_accessibility_macos "$E2E_ACCESSIBILITY_OUTCOME"
           check e2e_visual_macos "$E2E_VISUAL_OUTCOME"
           check unit_macos_native "$UNIT_MACOS_NATIVE_OUTCOME"
+          check unit_macos_smoke "$UNIT_MACOS_SMOKE_OUTCOME"
+          check e2e_smoke_macos "$E2E_SMOKE_OUTCOME"
+          if [[ "${E2E_GROUP:-}" == "journeys" && "${E2E_SMOKE_SELECTED:-}" == "true" && ( "${E2E_SMOKE_OUTCOME:-}" != "success" || "${UNIT_MACOS_SMOKE_OUTCOME:-}" != "success" ) ]]; then failed=1; fi
           # These groups are selected whenever this bundle runs; skipped is not success.
           if [[ "${E2E_GROUP:-}" == "regressions" && "${E2E_REGRESSIONS_OUTCOME:-}" != "success" ]]; then failed=1; fi
           if [[ "${E2E_GROUP:-}" == "delegation" && "${E2E_DELEGATION_OUTCOME:-}" != "success" ]]; then failed=1; fi
@@ -1085,7 +1107,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        # Browser-only plans need the complete browser suite on shard 1, not idle native shards.
+        shard: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_browser_windows') && !contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_functional_windows') && !contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_workspace_windows') && fromJSON('[1]') || fromJSON('[1,2,3]') }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1191,6 +1214,7 @@ jobs:
         if: ${{ always() }}
         shell: bash
         env:
+          E2E_SHARD: ${{ matrix.shard }}
           RENDERER_LAYOUT_OUTCOME: ${{ steps.renderer_layout.outcome }}
           SETUP_OUTCOME: ${{ steps.setup.outcome }}
           E2E_ACCESSIBILITY_OUTCOME: ${{ steps.e2e_accessibility_windows.outcome }}
@@ -1206,6 +1230,10 @@ jobs:
             fi
           }
           check renderer_layout "$RENDERER_LAYOUT_OUTCOME"
+          if [[ "$E2E_SHARD" == "1" && "$RENDERER_LAYOUT_OUTCOME" != "success" ]]; then
+            echo "Required Windows browser suite did not succeed" >&2
+            failed=1
+          fi
           check setup "$SETUP_OUTCOME"
           check e2e_functional_windows "$E2E_FUNCTIONAL_OUTCOME"
           check e2e_workspace_windows "$E2E_WORKSPACE_OUTCOME"
@@ -1253,7 +1281,6 @@ jobs:
       - static
       - unit
       - linux_runtime
-      - coverage_macos
       - windows_core
       - macos_e2e
       - windows_e2e
@@ -1279,10 +1306,12 @@ jobs:
         # Keep process environment bounded. Embedding the complete needs payload in job env includes
         # the preflight plan and exceeds Linux ARG_MAX on large diffs before checkout can start.
         env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_GATE_PLATFORM_POLICY: risk-v1
           PR_GATE_EXECUTION_MODE: bundles
           PR_GATE_PLAN: ${{ needs.preflight.outputs.plan }}
           PREFLIGHT_RESULT: ${{ needs.preflight.result }}
-          PR_GATE_NEEDS: '{"preflight":{"result":"${{ needs.preflight.result }}"},"policy":{"result":"${{ needs.policy.result }}"},"static":{"result":"${{ needs.static.result }}"},"unit":{"result":"${{ needs.unit.result }}"},"linux_runtime":{"result":"${{ needs.linux_runtime.result }}"},"coverage_macos":{"result":"${{ needs.coverage_macos.result }}"},"windows_core":{"result":"${{ needs.windows_core.result }}"},"macos_e2e":{"result":"${{ needs.macos_e2e.result }}"},"windows_e2e":{"result":"${{ needs.windows_e2e.result }}"}}'
+          PR_GATE_NEEDS: '{"preflight":{"result":"${{ needs.preflight.result }}"},"policy":{"result":"${{ needs.policy.result }}"},"static":{"result":"${{ needs.static.result }}"},"unit":{"result":"${{ needs.unit.result }}"},"linux_runtime":{"result":"${{ needs.linux_runtime.result }}"},"windows_core":{"result":"${{ needs.windows_core.result }}"},"macos_e2e":{"result":"${{ needs.macos_e2e.result }}"},"windows_e2e":{"result":"${{ needs.windows_e2e.result }}"}}'
         run: |
           set -euo pipefail
           if [[ "$PREFLIGHT_RESULT" != "success" ]]; then

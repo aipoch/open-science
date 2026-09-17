@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { execFile, spawnSync } from 'node:child_process'
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, relative, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { zipSync } from 'fflate'
 import { describe, expect, it, vi } from 'vitest'
@@ -25,11 +25,14 @@ urllib.request.build_opener = lambda *args: Opener()
 `
 
 describe('legacy pip wheel evidence', () => {
-  it
-    .skipIf(!process.env.RUN_KERNEL || !python || process.platform === 'win32')
-    .each(['bundled', 'current'])(
-    'recovers a real %s pip installation with generated entry points only when their bytes match',
-    async (installer) => {
+  it.skipIf(!process.env.RUN_KERNEL || !python).each([
+    ['bundled', 'normal'],
+    ['bundled', 'deterministic'],
+    ['current', 'normal'],
+    ['current', 'deterministic']
+  ])(
+    'recovers a real %s pip installation with %s generated entry points only when their bytes match',
+    async (installer, metadata) => {
       const root = await mkdtemp(join(tmpdir(), 'wheel-entry-points-'))
       const prefix = join(root, 'env')
       const execute = promisify(execFile)
@@ -81,6 +84,7 @@ describe('legacy pip wheel evidence', () => {
             timeout: 30_000,
             env: {
               ...process.env,
+              SOURCE_DATE_EPOCH: metadata === 'deterministic' ? '946684800' : undefined,
               PIP_CONFIG_FILE: process.platform === 'win32' ? 'nul' : '/dev/null'
             }
           }
@@ -112,27 +116,99 @@ describe('legacy pip wheel evidence', () => {
           ).toString('base64'),
           [url]: wheel.toString('base64')
         }
+        const probePath = join(root, 'probe.py')
+        const responsesPath = join(root, 'responses.json')
+        await writeFile(
+          probePath,
+          mockNetwork.replace('json.loads(sys.argv[3])', 'json.load(open(sys.argv[3]))') +
+            '\n' +
+            PIP_WHEEL_EVIDENCE_SCRIPT
+        )
+        await writeFile(responsesPath, JSON.stringify(responses))
         const probe = async (): Promise<unknown[]> => {
           const result = await execute(
             interpreter,
-            [
-              '-I',
-              '-c',
-              mockNetwork + '\n' + PIP_WHEEL_EVIDENCE_SCRIPT,
-              prefix,
-              JSON.stringify(['python:entry-probe']),
-              JSON.stringify(responses)
-            ],
+            ['-I', probePath, prefix, JSON.stringify(['python:entry-probe']), responsesPath],
             { timeout: 15_000 }
           )
           return JSON.parse(result.stdout).install
         }
-        expect(await probe()).toHaveLength(1)
+        const capture = await new EnvironmentLockCaptureOwner().capture(
+          {
+            language: 'python',
+            environmentName: 'default-python',
+            runtimeSource: 'managed',
+            condaPrefix: prefix
+          },
+          {
+            schemaVersion: 1,
+            captureKind: 'completed-run',
+            capturedAt: '2026-09-16T00:00:00Z',
+            installedInventory: {
+              capturedAt: '2026-09-16T00:00:00Z',
+              source: 'full-scan',
+              validation: 'full-scan'
+            },
+            kernelKind: 'python',
+            environmentName: 'default-python',
+            runtimeSource: 'managed',
+            inventorySources: ['kernel-native', 'interpreter-native'],
+            complete: true,
+            captureStatus: 'complete',
+            packages: [
+              {
+                name: 'entry-probe',
+                version: '1.0',
+                versionStatus: 'known',
+                ecosystem: 'python',
+                evidenceSources: ['python-kernel-modules', 'python-importlib-metadata'],
+                loadedState: 'loaded'
+              }
+            ]
+          },
+          {
+            micromamba: 'micromamba',
+            execute: async (argv) =>
+              argv.includes('-c')
+                ? JSON.stringify({ version: '1', install: await probe() })
+                : JSON.stringify([
+                    {
+                      name: 'python',
+                      version: '3.12',
+                      url: 'https://conda.example/python.conda',
+                      md5: 'a'.repeat(32)
+                    },
+                    {
+                      name: 'pip',
+                      version: '26.2.1',
+                      url: 'https://conda.example/pip.conda',
+                      md5: 'b'.repeat(32)
+                    },
+                    { name: 'entry-probe', version: '1.0', channel: 'pypi' }
+                  ])
+          }
+        )
+        const recovered = await probe()
+        expect(capture, JSON.stringify(capture)).toMatchObject({
+          state: 'captured',
+          captureStatus: 'complete'
+        })
+        expect(recovered).toHaveLength(1)
         const script = join(
           prefix,
           process.platform === 'win32' ? 'Scripts/entry-probe.exe' : 'bin/entry-probe'
         )
         const original = await readFile(script)
+        // A timestamp from a past install is valid, but neither launcher nor embedded code
+        // may change, including modifications that preserve the total byte count.
+        for (const offset of [0, original.indexOf(Buffer.from('sys.exit'))]) {
+          expect(offset).toBeGreaterThanOrEqual(0)
+          const modified = Buffer.from(original)
+          modified[offset] ^= 1
+          await writeFile(script, modified)
+          expect(await probe()).toHaveLength(0)
+        }
+        await writeFile(script, original)
         await writeFile(script, Buffer.concat([original, Buffer.from('\n# modified\n')]))
         expect(await probe()).toHaveLength(0)
         await writeFile(script, original)
@@ -140,7 +216,7 @@ describe('legacy pip wheel evidence', () => {
           recordPath,
           record
             .split('\n')
-            .filter((line) => !line.startsWith('../../../bin/entry-probe,'))
+            .filter((line) => !line.startsWith(relative(site, script).split(sep).join('/') + ','))
             .join('\n')
         )
         expect(await probe()).toHaveLength(0)
@@ -362,18 +438,21 @@ describe('legacy pip wheel evidence', () => {
         ).toString('base64'),
         [url]: wheel.toString('base64')
       }
+      const probePath = join(prefix, 'probe.py')
+      const responsesPath = join(prefix, 'responses.json')
+      await writeFile(
+        probePath,
+        mockNetwork.replace('json.loads(sys.argv[3])', 'json.load(open(sys.argv[3]))') +
+          '\n' +
+          PIP_WHEEL_EVIDENCE_SCRIPT
+      )
+      await writeFile(responsesPath, JSON.stringify(scenario === 'offline' ? {} : responses))
       const result = spawnSync(
         python!,
-        [
-          '-c',
-          mockNetwork + '\n' + PIP_WHEEL_EVIDENCE_SCRIPT,
-          prefix,
-          JSON.stringify(['python:example-lib']),
-          JSON.stringify(scenario === 'offline' ? {} : responses)
-        ],
+        [probePath, prefix, JSON.stringify(['python:example-lib']), responsesPath],
         { encoding: 'utf8', timeout: 10_000 }
       )
-      expect(result.status, result.stderr).toBe(0)
+      expect(result.status, result.error?.message ?? result.stderr).toBe(0)
       const report = JSON.parse(result.stdout)
       const matched = ['matched', 'purelib', 'platlib'].includes(scenario)
       expect(report.install).toHaveLength(matched ? 1 : 0)

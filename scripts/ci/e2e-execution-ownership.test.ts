@@ -7,10 +7,16 @@ import { load } from 'js-yaml'
 import { expect, it } from 'vitest'
 
 const require = createRequire(import.meta.url)
-const workflows = readdirSync('.github/workflows')
+const workflowSources = readdirSync('.github/workflows')
   .filter((file) => file.endsWith('.yml'))
   .map((file) => readFileSync(join('.github/workflows', file), 'utf8'))
   .join('\n')
+const supplementalAction = readFileSync('.github/actions/source-regression/action.yml', 'utf8')
+// The local action is included only with an actual workflow call site, so deleting every caller
+// cannot make orphaned tests look covered merely because a dormant action still exists.
+const workflows =
+  workflowSources +
+  (workflowSources.includes('uses: ./.github/actions/source-regression') ? supplementalAction : '')
 
 it('assigns every discovered Electron spec to a workflow-reachable command', () => {
   const scripts = JSON.parse(readFileSync('package.json', 'utf8')).scripts as Record<string, string>
@@ -78,7 +84,16 @@ it.each(['regressions', 'delegation'])(
     const workflow = load(readFileSync('.github/workflows/pr-gate.yml', 'utf8')) as {
       jobs: Record<
         string,
-        { steps: Array<{ name: string; id?: string; if?: string; run?: string }> }
+        {
+          steps: Array<{
+            name: string
+            id?: string
+            if?: string
+            run?: string
+            uses?: string
+            with?: { group: string }
+          }>
+        }
       >
     }
     const steps = workflow.jobs.macos_e2e.steps
@@ -86,7 +101,9 @@ it.each(['regressions', 'delegation'])(
     expect(execution.if).toBe(
       `\${{ matrix.group == '${group}' && steps.setup.outcome == 'success' }}`
     )
-    expect(execution.run).toContain(`npm run test:e2e:${group} -- --fail-on-flaky-tests`)
+    expect(execution.uses).toBe('./.github/actions/source-regression')
+    expect(execution.with?.group).toBe(group)
+    expect(supplementalAction).toContain(`npm run test:e2e:${group} -- --fail-on-flaky-tests`)
     const enforce = steps.find(({ name }) => name === 'Enforce selected macOS checks')!
     for (const outcome of ['failure', 'cancelled', 'skipped', '', 'success']) {
       const run = spawnSync('bash', ['-c', enforce.run!], {

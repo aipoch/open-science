@@ -3,6 +3,7 @@ import { join } from 'node:path'
 
 import { load } from 'js-yaml'
 import { describe, expect, it } from 'vitest'
+import { classifyChanges, platformExecutionPlan } from './classify-pr-changes.mjs'
 
 type Step = {
   env?: Record<string, string>
@@ -99,5 +100,33 @@ describe('CI Integrity workflow', () => {
       },
       run: 'node scripts/ci/check-pr-policy.mjs'
     })
+  })
+})
+
+describe('module registration approval boundary', () => {
+  it.each(['pull_request', 'merge_group'])(
+    'retains full portable fallback for %s registration',
+    (event) => {
+      const changes = [{ path: 'scripts/ci/module-impact.json', status: 'modified' }]
+      const plan = platformExecutionPlan(classifyChanges(changes), changes, event)
+      expect(plan.mode).toBe('full')
+      expect(plan.bundles).toContain('unit')
+    }
+  )
+
+  it('exempts only the exact registration data file after the CI script owner rule', () => {
+    const entries = readFileSync(join(process.cwd(), '.github/CODEOWNERS'), 'utf8')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith('#'))
+    expect(entries).toEqual([
+      '/.github/CODEOWNERS @aipoch/ci-maintainers',
+      '/CODEOWNERS @aipoch/ci-maintainers',
+      '/.github/workflows/ @aipoch/ci-maintainers',
+      '/.github/actions/ @aipoch/ci-maintainers',
+      '/.github/dependabot.yml @aipoch/ci-maintainers',
+      '/scripts/ci/ @aipoch/ci-maintainers',
+      '/scripts/ci/module-impact.json'
+    ])
   })
 })

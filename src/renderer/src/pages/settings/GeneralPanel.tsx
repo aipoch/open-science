@@ -462,6 +462,7 @@ const GeneralPanel = (): React.JSX.Element => {
 
         {logStatusError !== undefined ? (
           <Notice
+            inline
             level="error"
             role="alert"
             className="mt-2"
@@ -487,6 +488,7 @@ const GeneralPanel = (): React.JSX.Element => {
 
         {message ? (
           <Notice
+            inline
             level="error"
             role="alert"
             className="mt-2"
@@ -555,6 +557,7 @@ const GeneralPanel = (): React.JSX.Element => {
 
         {cliError ? (
           <Notice
+            inline
             level="error"
             role="alert"
             className="mt-2"

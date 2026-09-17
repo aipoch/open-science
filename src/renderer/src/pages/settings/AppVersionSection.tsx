@@ -88,9 +88,9 @@ const AppVersionSection = ({
       <SettingsRow
         label={
           <div className="flex min-w-0 items-center gap-3">
-            <AppLogo className="size-12 rounded-lg" />
-            <div className="min-w-0">
-              <p className="flex items-baseline gap-2">
+            <AppLogo className="size-12 shrink-0 rounded-lg" />
+            <div className="min-w-0 flex-1">
+              <p className="flex flex-wrap items-baseline gap-x-2">
                 <span className="text-sm font-semibold text-foreground">{APP.name}</span>
                 <span className="text-xs text-muted-foreground tabular-nums">v{version}</span>
               </p>

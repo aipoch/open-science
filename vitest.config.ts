@@ -1,6 +1,7 @@
 import { availableParallelism, cpus } from 'node:os'
 import { basename, dirname, resolve } from 'path'
 import { defineConfig, configDefaults } from 'vitest/config'
+import WindowsTestSequencer from './scripts/ci/windows-test-sequencer'
 
 const testRoot = resolve('.')
 const sharedInstallRoot = basename(dirname(testRoot)) === '.worktree' ? resolve('../..') : testRoot
@@ -12,7 +13,11 @@ export function resolveVitestMaxWorkers(
   return Math.max(available - 1, 1)
 }
 
-export const VITEST_ARCHITECTURE_TEST_GLOBS = ['**/*.architecture.test.ts'] as const
+export const VITEST_ARCHITECTURE_TEST_GLOBS = [
+  '**/*.architecture.test.ts',
+  // Whole-repository graph scanning belongs after the parallel pool, retaining its timeout.
+  'scripts/ci/module-consumer-coverage.test.ts'
+] as const
 
 export const VITEST_DATABASE_TEST_GLOBS = [
   'scripts/database-migration-ledger-smoke.test.ts',
@@ -146,6 +151,9 @@ export default defineConfig({
     }
   },
   test: {
+    // Only the advisory Windows full suite uses fixed module groups. Inherit Vitest's
+    // sorting/group ordering; override just assignment, never test discovery or worker limits.
+    ...(windowsFullTest ? { sequence: { sequencer: WindowsTestSequencer } } : {}),
     // Vitest shards each project independently. A valid full-suite shard can therefore contain no
     // files for one project even though its other projects execute tests.
     passWithNoTests: fullSuiteShardAllowsEmptyProjects(process.argv),

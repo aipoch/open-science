@@ -241,10 +241,11 @@ export const PackageOperationIndicator = (): React.JSX.Element | null => {
       </div>
       {active && cancelError?.id === operation.id ? (
         <ErrorNotice
+          inline
           role="alert"
           tone="amber"
           description={cancelError.message}
-          className="border-0 bg-transparent px-3 pb-2 pt-0 [&_[role=alert]]:basis-0"
+          className="px-3 pb-2 pt-0"
         />
       ) : null}
       {operation.state === 'running' && !waiting ? (
@@ -525,7 +526,8 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
             {operation.importQueueFull ? (
               <div className="mx-5 mt-4 flex shrink-0 items-start gap-3">
                 <ErrorNotice
-                  className="min-w-0 flex-1 border-0 bg-transparent p-0 [&_[role=alert]]:basis-0"
+                  inline
+                  className="min-w-0 flex-1"
                   role="alert"
                   tone="amber"
                   description={t('Waiting list is full. Open remaining packages later.')}
@@ -580,7 +582,8 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                 {error || operation.error ? (
                   <div className="flex flex-wrap items-start gap-x-3 gap-y-2">
                     <ErrorNotice
-                      className="min-w-0 flex-1 basis-64 border-0 bg-transparent p-0 [&_[role=alert]]:basis-0"
+                      inline
+                      className="min-w-0 flex-1 basis-64"
                       role="alert"
                       tone="amber"
                       description={error ?? operation.error}
@@ -613,7 +616,7 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                 ) : null}
                 {operation.cleanupPending && !active ? (
                   <ErrorNotice
-                    className="border-0 bg-transparent p-0 [&_[role=status]]:basis-0"
+                    inline
                     role="status"
                     tone="amber"
                     description={t(
@@ -643,7 +646,12 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                 summary={operation.summary}
                 notice={
                   error || operation.error ? (
-                    <ErrorNotice role="alert" tone="amber" description={error ?? operation.error} />
+                    <ErrorNotice
+                      inline
+                      role="alert"
+                      tone="amber"
+                      description={error ?? operation.error}
+                    />
                   ) : null
                 }
                 onCancel={() => void respond({ action: 'cancel', operationId: operation.id })}

@@ -490,7 +490,13 @@ const CitationStylesView = ({
         </div>
 
         {error ? (
-          <ErrorNotice role="alert" tone="amber" className="mt-5" description={errorMessage()} />
+          <ErrorNotice
+            inline
+            role="alert"
+            tone="amber"
+            className="mt-5"
+            description={errorMessage()}
+          />
         ) : null}
 
         {loading && styles === undefined ? (

@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+
 import type {
   ChatApiEndpoint,
   ValidateProviderResult,
@@ -785,7 +787,27 @@ const validateCustomProvider = async (
 const validateProvider = (
   provider: ResolvedProvider,
   deps: ValidateProviderDeps = {}
-): Promise<ValidateProviderResult> => validateCustomProvider(provider, deps)
+): Promise<ValidateProviderResult> => {
+  if (provider.vendorId !== 'opencode-go') return validateCustomProvider(provider, deps)
+
+  // Settings probes do not run through OpenCode's chat.headers plugin. Give each independent probe
+  // its own session, stable for every upstream request within that invocation. Decorate the upstream
+  // fetch (not the loopback request) so Messages, Chat Completions, Responses, and both Codex adapters
+  // all satisfy Go's routing contract without changing real conversation session identities.
+  const sessionId = `open-science-probe-${randomUUID()}`
+  const fetchImpl = deps.fetchImpl ?? fetch
+  return validateCustomProvider(provider, {
+    ...deps,
+    fetchImpl: (input, init) => {
+      const headers = new Headers(
+        init?.headers ?? (input instanceof Request ? input.headers : undefined)
+      )
+      headers.set('x-opencode-session', sessionId)
+      headers.set('user-agent', 'open-science/provider-validation')
+      return fetchImpl(input, { ...init, headers })
+    }
+  })
+}
 
 export {
   ANTHROPIC_VERSION,

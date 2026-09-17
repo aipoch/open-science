@@ -1,24 +1,4 @@
 import { expect, test } from '@playwright/test'
-import { mkdir } from 'node:fs/promises'
-import { join } from 'node:path'
-
-// Capture Windows startup failures; other platforms can opt in for diagnostic validation.
-if (process.platform === 'win32' || process.env.OPEN_SCIENCE_CSV_NETLOG === '1') {
-  test.use({
-    launchOptions: async ({ launchOptions }, provide, workerInfo): Promise<void> => {
-      const directory = join(
-        workerInfo.project.outputDir,
-        'csv-netlog',
-        `worker-${workerInfo.workerIndex}-pid-${process.pid}`
-      )
-      await mkdir(directory, { recursive: true })
-      await provide({
-        ...launchOptions,
-        args: [...(launchOptions.args ?? []), `--log-net-log=${join(directory, 'netlog.json')}`]
-      })
-    }
-  })
-}
 
 for (const theme of ['light', 'dark']) {
   test(`CSV row numbers cover scrolled data in ${theme} mode`, async ({ page }, testInfo) => {

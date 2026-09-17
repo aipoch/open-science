@@ -59,6 +59,11 @@ class SessionPlanInteractionOwner {
     return true
   }
 
+  hasPendingApproval(sessionId: string): boolean {
+    const row = this.rows.get(sessionId)
+    return Boolean(row?.approvalReservation || row?.approval || row?.providerPause)
+  }
+
   reserveApproval(sessionId: string, interactionId: string): void {
     const row = this.rows.get(sessionId) ?? {}
     if (row.approvalReservation || row.approval) {

@@ -306,6 +306,7 @@ const ResourceTagMenu = ({
             </div>
             {error ? (
               <Notice
+                inline
                 id={errorId}
                 level="error"
                 role="alert"
@@ -477,7 +478,7 @@ const ResourceTagBadges = ({
         ) : null}
       </div>
       {error ? (
-        <Notice level="error" role="alert" className="basis-full" description={error} />
+        <Notice inline level="error" role="alert" className="basis-full" description={error} />
       ) : null}
     </>
   )

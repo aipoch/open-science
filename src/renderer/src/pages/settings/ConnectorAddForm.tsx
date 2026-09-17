@@ -721,6 +721,7 @@ export function ConnectorAddForm({
         ) : null}
         {editTargetMissing ? (
           <ErrorNotice
+            inline
             role="alert"
             tone="amber"
             description={t('This Connector no longer exists. Your draft has not been saved.')}

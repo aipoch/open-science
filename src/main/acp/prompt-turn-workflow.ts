@@ -206,6 +206,9 @@ type AcpPromptTurnWorkflowOptions = Readonly<{
   finalization: AcpPromptTurnFinalization
   currentCwd: () => string
   resolveProjectId: (sessionId: string) => string
+  prepareContinuationReplay: (
+    request: AcpPromptRequest
+  ) => Promise<AcpPromptRequest['resumeFallback']>
   disconnectForReload: () => Promise<unknown>
   resumeAfterReload: (input: {
     sessionId: string
@@ -252,6 +255,24 @@ class AcpPromptTurnWorkflow {
     }
     const rejectedSkillOutcome =
       skill.reloadDecision.kind === 'reload' ? 'reload-restored' : 'failed'
+
+    if (
+      skill.reloadDecision.kind === 'reload' &&
+      mode.kind === 'app-continuation' &&
+      !request.resumeFallback
+    ) {
+      try {
+        this.assertSessionIdle(request.sessionId)
+        request.resumeFallback = await this.options.prepareContinuationReplay(request)
+        reservation.signal.throwIfAborted()
+        this.assertSessionIdle(request.sessionId)
+      } catch (error) {
+        // No provider reconnect has begun, so releasing authorization must not schedule one.
+        skill.close('failed', { reload: false })
+        this.options.interactions.release(reservation)
+        throw error
+      }
+    }
 
     try {
       if (skill.reloadDecision.kind === 'reload') {
