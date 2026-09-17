@@ -12,9 +12,9 @@ type SettingsSearchEntry = {
   labelKey: string
   // Extra English match terms that are never displayed.
   keywords?: string
-  // Value of the data-settings-anchor attribute marking this entry's exact jump target inside the
-  // panel. Entries without one fall back to the panel's first content block.
-  anchor?: string
+  // Entries jump to the data-settings-anchor element named by their id. skipAnchor opts out and
+  // falls back to the panel's first content block, for targets unmounted at jump time.
+  skipAnchor?: boolean
 }
 
 // Cross-panel search index: one to three representative entries per panel, each reusing existing
@@ -24,223 +24,141 @@ const SETTINGS_SEARCH_INDEX: ReadonlyArray<SettingsSearchEntry> = [
     id: 'model.add-provider',
     panel: 'model',
     labelKey: 'Add provider',
-    keywords: 'api key vendor',
-    anchor: 'model.add-provider'
+    keywords: 'api key vendor'
   },
-  {
-    id: 'model.main',
-    panel: 'model',
-    labelKey: 'Main model',
-    keywords: 'default thinking',
-    anchor: 'model.main'
-  },
+  { id: 'model.main', panel: 'model', labelKey: 'Main model', keywords: 'default thinking' },
   {
     id: 'model.scenarios',
     panel: 'model',
     labelKey: 'Scenario models',
-    keywords: 'subagent reviewer vision session details',
-    anchor: 'model.scenarios'
+    keywords: 'subagent reviewer vision session details'
   },
   {
     id: 'agent.framework',
     panel: 'agent',
     labelKey: 'Agent framework',
-    keywords: 'claude codex opencode backend',
-    anchor: 'agent.framework'
+    keywords: 'claude codex opencode backend'
   },
   {
     id: 'skills.manage',
     panel: 'skills',
     labelKey: 'Manage skills',
-    keywords: 'enable disable bulk',
-    anchor: 'skills.manage'
+    keywords: 'enable disable bulk'
   },
   {
     id: 'skills.add',
     panel: 'skills',
     labelKey: 'Add skill',
-    keywords: 'import upload zip github',
-    anchor: 'skills.add'
+    keywords: 'import upload zip github'
   },
-  {
-    id: 'skills.conversation-imports',
-    panel: 'skills',
-    labelKey: 'Conversation imports',
-    anchor: 'skills.conversation-imports'
-  },
+  { id: 'skills.conversation-imports', panel: 'skills', labelKey: 'Conversation imports' },
   {
     id: 'specialists.add',
     panel: 'specialists',
     labelKey: 'Add specialist',
-    keywords: 'create custom role',
-    anchor: 'specialists.add'
+    keywords: 'create custom role'
   },
   {
     id: 'specialists.marketplace',
     panel: 'specialists',
     labelKey: 'Marketplace',
-    keywords: 'browse install',
-    anchor: 'specialists.marketplace'
+    keywords: 'browse install'
   },
-  {
-    id: 'memory.new-category',
-    panel: 'memory',
-    labelKey: 'New category',
-    keywords: 'remember',
-    anchor: 'memory.new-category'
-  },
+  { id: 'memory.new-category', panel: 'memory', labelKey: 'New category', keywords: 'remember' },
   {
     id: 'connectors.add',
     panel: 'connectors',
     labelKey: 'Add connector',
-    keywords: 'mcp server',
-    anchor: 'connectors.add'
+    keywords: 'mcp server'
   },
   {
     id: 'connectors.import',
     panel: 'connectors',
     labelKey: 'Import Connector or MCP configuration',
-    keywords: 'json claude desktop'
-    // No anchor: the import action lives inside the Add connector dropdown, which is unmounted at
-    // jump time — fall back to the panel's first block immediately instead of waiting.
+    keywords: 'json claude desktop',
+    // The import action lives inside the Add connector dropdown, which is unmounted at jump
+    // time — fall back to the panel's first block immediately instead of waiting.
+    skipAnchor: true
   },
-  {
-    id: 'network.proxy',
-    panel: 'network',
-    labelKey: 'Proxy',
-    keywords: 'http https',
-    anchor: 'network.proxy'
-  },
+  { id: 'network.proxy', panel: 'network', labelKey: 'Proxy', keywords: 'http https' },
   {
     id: 'network.mirror',
     panel: 'network',
     labelKey: 'Package mirror',
-    keywords: 'npm pypi registry conda',
-    anchor: 'network.mirror'
+    keywords: 'npm pypi registry conda'
   },
   {
     id: 'network.domains',
     panel: 'network',
     labelKey: 'Notebook network access',
-    keywords: 'domains allowlist',
-    anchor: 'network.domains'
+    keywords: 'domains allowlist'
   },
   {
     id: 'remote-control.app-access',
     panel: 'remote-control',
     labelKey: 'App access',
-    keywords: 'remote browser link pair',
-    anchor: 'remote-control.app-access'
+    keywords: 'remote browser link pair'
   },
   {
     id: 'credentials.new',
     panel: 'credentials',
     labelKey: 'New credential',
-    keywords: 'token key',
-    anchor: 'credentials.new'
+    keywords: 'token key'
   },
   {
     id: 'credentials.literature',
     panel: 'credentials',
     labelKey: 'Literature access',
-    keywords: 'openalex unpaywall',
-    anchor: 'credentials.literature'
+    keywords: 'openalex unpaywall'
   },
-  {
-    id: 'credentials.github',
-    panel: 'credentials',
-    labelKey: 'GitHub',
-    anchor: 'credentials.github'
-  },
-  {
-    id: 'tags.new',
-    panel: 'tags',
-    labelKey: 'New Tag',
-    keywords: 'label organize color',
-    anchor: 'tags.new'
-  },
+  { id: 'credentials.github', panel: 'credentials', labelKey: 'GitHub' },
+  { id: 'tags.new', panel: 'tags', labelKey: 'New Tag', keywords: 'label organize color' },
   {
     id: 'permissions.default-mode',
     panel: 'permissions',
     labelKey: 'Default permission mode',
-    keywords: 'allow deny approve tools',
-    anchor: 'permissions.default-mode'
+    keywords: 'allow deny approve tools'
   },
   {
     id: 'runtimes.runtimes',
     panel: 'runtimes',
     labelKey: 'Notebook runtimes',
-    keywords: 'python r kernel jupyter environment',
-    anchor: 'runtimes.runtimes'
+    keywords: 'python r kernel jupyter environment'
   },
   {
     id: 'storage.application',
     panel: 'storage',
     labelKey: 'Application storage',
-    keywords: 'disk data size',
-    anchor: 'storage.application'
+    keywords: 'disk data size'
   },
   {
     id: 'storage.location',
     panel: 'storage',
     labelKey: 'Change location',
-    keywords: 'folder move directory',
-    anchor: 'storage.location'
+    keywords: 'folder move directory'
   },
   {
     id: 'compute.add-host',
     panel: 'compute',
     labelKey: 'Add SSH host',
-    keywords: 'ssh remote server gpu',
-    anchor: 'compute.add-host'
+    keywords: 'ssh remote server gpu'
   },
-  {
-    id: 'usage.list',
-    panel: 'usage',
-    labelKey: 'Usage',
-    keywords: 'tokens cost analytics',
-    anchor: 'usage.list'
-  },
-  {
-    id: 'archived.list',
-    panel: 'archived',
-    labelKey: 'Archived',
-    keywords: 'project restore',
-    anchor: 'archived.list'
-  },
+  { id: 'usage.list', panel: 'usage', labelKey: 'Usage', keywords: 'tokens cost analytics' },
+  { id: 'archived.list', panel: 'archived', labelKey: 'Archived', keywords: 'project restore' },
   {
     id: 'general.appearance',
     panel: 'general',
     labelKey: 'Appearance',
-    keywords: 'theme dark light',
-    anchor: 'general.appearance'
+    keywords: 'theme dark light'
   },
-  {
-    id: 'general.language',
-    panel: 'general',
-    labelKey: 'Language',
-    keywords: 'locale',
-    anchor: 'general.language'
-  },
-  {
-    id: 'general.notifications',
-    panel: 'general',
-    labelKey: 'Notifications',
-    anchor: 'general.notifications'
-  },
-  {
-    id: 'general.diagnostics',
-    panel: 'general',
-    labelKey: 'Diagnostics',
-    keywords: 'log file',
-    anchor: 'general.diagnostics'
-  },
+  { id: 'general.language', panel: 'general', labelKey: 'Language', keywords: 'locale' },
+  { id: 'general.notifications', panel: 'general', labelKey: 'Notifications' },
+  { id: 'general.diagnostics', panel: 'general', labelKey: 'Diagnostics', keywords: 'log file' },
   {
     id: 'general.cli',
     panel: 'general',
     labelKey: 'Command line tool',
-    keywords: 'cli install path shell',
-    anchor: 'general.cli'
+    keywords: 'cli install path shell'
   }
 ]
 
@@ -253,7 +171,6 @@ type SettingsGlobalSearchProps = {
 const FOCUSABLE_SELECTOR = 'a[href], button, input, select, textarea, [tabindex]'
 
 const HIGHLIGHT_CLASS = 'settings-search-highlight'
-const HIGHLIGHT_FADE_CLASS = 'settings-search-highlight-fading'
 
 // Rings and focuses the search jump target once the freshly navigated panel has rendered, so the
 // user sees exactly where they landed. Entries with an anchor jump to their own setting element;
@@ -271,7 +188,7 @@ const highlightNavigatedPanel = (panel: SettingsPanelId, anchor?: string): (() =
   const stripRing = (): void => {
     if (!highlighted) return
     if (highlighted.isConnected) {
-      highlighted.classList.remove(HIGHLIGHT_CLASS, HIGHLIGHT_FADE_CLASS)
+      highlighted.classList.remove(HIGHLIGHT_CLASS)
       if (addedTabIndex) highlighted.removeAttribute('tabindex')
     }
     highlighted = null
@@ -312,12 +229,8 @@ const highlightNavigatedPanel = (panel: SettingsPanelId, anchor?: string): (() =
       // without scrolling again.
       target.scrollIntoView({ block: 'nearest' })
       target.focus({ preventScroll: true })
-      timers.push(
-        window.setTimeout(() => {
-          if (highlighted?.isConnected) highlighted.classList.add(HIGHLIGHT_FADE_CLASS)
-        }, 1400),
-        window.setTimeout(stripRing, 1600)
-      )
+      // The class's own animation fades the ring out; this timer just removes it afterwards.
+      timers.push(window.setTimeout(stripRing, 1600))
       return
     }
     if (elapsed < 3000) timers.push(window.setTimeout(attempt, 150))
@@ -376,7 +289,10 @@ const SettingsGlobalSearch = ({
     setActiveIndex(0)
     onNavigate(entry.panel)
     cancelHighlightRef.current?.()
-    cancelHighlightRef.current = highlightNavigatedPanel(entry.panel, entry.anchor)
+    cancelHighlightRef.current = highlightNavigatedPanel(
+      entry.panel,
+      entry.skipAnchor ? undefined : entry.id
+    )
   }
 
   return (
@@ -474,4 +390,4 @@ const SettingsGlobalSearch = ({
 }
 
 export { SettingsGlobalSearch, SETTINGS_SEARCH_INDEX }
-export type { SettingsGlobalSearchProps, SettingsSearchEntry }
+export type { SettingsGlobalSearchProps }

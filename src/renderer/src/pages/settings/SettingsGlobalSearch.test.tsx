@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -234,39 +234,36 @@ describe('SettingsGlobalSearch', () => {
     act(() => {
       vi.advanceTimersByTime(1500)
     })
-    expect(target.classList.contains('settings-search-highlight-fading')).toBe(true)
+    // Mid-dwell the ring is still on; the class's own CSS animation handles the fade-out.
+    expect(target.classList.contains('settings-search-highlight')).toBe(true)
 
     act(() => {
       vi.advanceTimersByTime(200)
     })
     expect(target.classList.contains('settings-search-highlight')).toBe(false)
-    expect(target.classList.contains('settings-search-highlight-fading')).toBe(false)
     expect(target.hasAttribute('tabindex')).toBe(false)
     // Focus stays on the jump target after the visual ring is gone.
     expect(document.activeElement).toBe(target)
   })
 
-  it('places a unique data-settings-anchor in the panel sources for every anchored entry', () => {
-    const settingsDir = __dirname
-    const sources: string[] = []
-    const walk = (dir: string): void => {
-      for (const name of readdirSync(dir)) {
-        const path = join(dir, name)
-        if (statSync(path).isDirectory()) {
-          walk(path)
-        } else if (/\.(ts|tsx)$/.test(name) && !name.includes('.test.')) {
-          sources.push(readFileSync(path, 'utf8'))
-        }
-      }
-    }
-    walk(settingsDir)
+  it('marks a jump target in the panel sources for every anchored entry', () => {
+    const sources = readdirSync(__dirname, { recursive: true, withFileTypes: true })
+      .filter(
+        (entry) =>
+          entry.isFile() &&
+          /\.(ts|tsx)$/.test(entry.name) &&
+          !entry.name.includes('.test.') &&
+          entry.name !== 'SettingsGlobalSearch.tsx'
+      )
+      .map((entry) => readFileSync(join(entry.parentPath, entry.name), 'utf8'))
 
-    const anchored = SETTINGS_SEARCH_INDEX.filter((entry) => entry.anchor)
+    const anchored = SETTINGS_SEARCH_INDEX.filter((entry) => !entry.skipAnchor)
     expect(anchored.length).toBeGreaterThan(0)
     for (const entry of anchored) {
-      const needle = `data-settings-anchor="${entry.anchor}"`
-      const hits = sources.filter((source) => source.includes(needle))
-      expect(hits.length, `${entry.id} needs exactly one ${needle}`).toBe(1)
+      const hits = sources.filter(
+        (source) => source.includes(`"${entry.id}"`) || source.includes(`'${entry.id}'`)
+      )
+      expect(hits.length, `${entry.id} needs a data-settings-anchor in some panel`).toBe(1)
     }
   })
 
@@ -274,6 +271,7 @@ describe('SettingsGlobalSearch', () => {
     const css = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8')
     expect(css).toMatch(/\.settings-search-highlight\s*\{[^}]*outline-offset:\s*4px/)
     expect(css).toMatch(/\.settings-search-highlight\s*\{[^}]*scroll-margin/)
-    expect(css).toMatch(/\.settings-search-highlight-fading\s*\{[^}]*outline-color:\s*transparent/)
+    expect(css).toMatch(/\.settings-search-highlight\s*\{[^}]*animation:/)
+    expect(css).toMatch(/@keyframes settings-search-highlight-out/)
   })
 })
