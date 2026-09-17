@@ -247,22 +247,22 @@ export function platformExecutionPlan(plan, changes, event) {
     ) ||
     plan.roots.some((root) => /unknown|unowned|unmatched|bootstrap/.test(root))
   const lanes = new Set(plan.lanes)
-  lanes.delete('e2e_smoke_macos')
   const hasDesktop = plan.bundles.includes('macos_e2e')
   if (hasDesktop && event === 'pull_request') {
     lanes.add('e2e_functional_windows')
     lanes.add('e2e_workspace_windows')
   }
-  if (hasDesktop && !sensitive) {
-    for (const lane of lanes) {
-      if (defaultManifest.laneBundles[lane] === 'macos_e2e' && lane !== 'build') lanes.delete(lane)
+  for (const lane of lanes) {
+    if (
+      defaultManifest.laneBundles[lane] === 'macos_e2e' ||
+      (event === 'merge_group' && defaultManifest.laneBundles[lane] === 'windows_e2e')
+    ) {
+      lanes.delete(lane)
     }
-    lanes.add('e2e_smoke_macos')
   }
-  if (event === 'merge_group' && !sensitive) {
-    for (const lane of lanes) {
-      if (defaultManifest.laneBundles[lane] === 'windows_e2e') lanes.delete(lane)
-    }
+  if (event === 'merge_group' && hasDesktop) {
+    lanes.add('build')
+    lanes.add('e2e_smoke_macos')
   }
   const selectedLanes = defaultManifest.laneOrder.filter((lane) => lanes.has(lane))
   const bundles = new Set(selectedLanes.map((lane) => defaultManifest.laneBundles[lane]))
@@ -273,16 +273,27 @@ export function platformExecutionPlan(plan, changes, event) {
     macosProfile: sensitive ? 'expanded' : 'smoke',
     reasonChains: [
       ...plan.reasonChains,
-      `${event}: ${sensitive ? 'platform-sensitive -> expanded native checks' : 'ordinary change -> short macOS core; Windows business coverage on PR'}`
+      event === 'pull_request'
+        ? 'pull_request: portable tests and Windows business E2E; Mac validation deferred to merge queue'
+        : `merge_group: one Mac core job${sensitive ? ' with native checks' : ''}; complete Mac regression scheduled twice daily`
     ]
   }
 }
 
-// Derived after module/consumer overlays are resolved. Missing metadata in a trusted old plan
-// is handled conservatively by the workflow, which still runs all four groups.
+// Derive groups after module/consumer expansion and event-specific execution selection.
 export function macosGroupsForPlan(plan) {
   if (!plan.bundles?.includes('macos_e2e')) return []
-  if (plan.macosProfile === 'smoke') return ['journeys']
+  if (
+    plan.macosProfile === 'smoke' ||
+    (plan.lanes.includes('e2e_smoke_macos') &&
+      plan.lanes.every(
+        (lane) =>
+          defaultManifest.laneBundles[lane] !== 'macos_e2e' ||
+          ['build', 'e2e_smoke_macos'].includes(lane)
+      ))
+  ) {
+    return ['journeys']
+  }
   if (plan.mode === 'full') return ['journeys', 'presentation', 'regressions', 'delegation']
   const groups = {
     journeys: ['e2e_smoke_macos', 'build', 'e2e_functional_macos', 'e2e_workspace_macos'],

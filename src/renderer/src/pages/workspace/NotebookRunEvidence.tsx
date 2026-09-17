@@ -2,7 +2,13 @@ import { useTranslation } from 'react-i18next'
 import type { NotebookRunRecord } from '../../../../shared/notebook'
 
 // Show only evidence saved with this Run. Never substitute today's interpreter or package inventory.
-export const NotebookRunEvidence = ({ run }: { run: NotebookRunRecord }): React.JSX.Element => {
+export const NotebookRunEvidence = ({
+  run,
+  showEnvironmentCaptureWarning = true
+}: {
+  run: NotebookRunRecord
+  showEnvironmentCaptureWarning?: boolean
+}): React.JSX.Element => {
   const { t } = useTranslation()
   const target = run.frozenRuntimeTarget
   const capture = run.environmentCapture
@@ -24,7 +30,7 @@ export const NotebookRunEvidence = ({ run }: { run: NotebookRunRecord }): React.
       {run.environmentManifestChecksum ? (
         <code className="block break-all">{run.environmentManifestChecksum}</code>
       ) : null}
-      {!capture || capture.state !== 'available' ? (
+      {showEnvironmentCaptureWarning && (!capture || capture.state !== 'available') ? (
         <p>
           {t(
             'Environment evidence is incomplete or unavailable. Current packages cannot fill historical gaps.'

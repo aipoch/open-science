@@ -403,6 +403,229 @@ describe('protein-annotation / STRING', () => {
     expect(out.unmapped).toEqual([])
   })
 
+  describe('get_string_network node identity and expansion', () => {
+    const mapped = (
+      queryIndex: number,
+      stringId: string,
+      preferredName: string
+    ): { queryIndex: number; stringId: string; preferredName: string; ncbiTaxonId: number } => ({
+      queryIndex,
+      stringId,
+      preferredName,
+      ncbiTaxonId: 9606
+    })
+    const networkTsv = (rows: string[][]): string =>
+      [
+        'stringId_A\tstringId_B\tpreferredName_A\tpreferredName_B\tncbiTaxonId\tscore\tnscore\tfscore\tpscore\tascore\tescore\tdscore\ttscore',
+        ...rows.map((row) =>
+          [...row, '9606', '0.9', '0', '0', '0', '0', '0.9', '0', '0'].join('\t')
+        )
+      ].join('\n')
+    type NetworkResult = {
+      nodes: Array<{
+        query: string | null
+        queries: string[]
+        is_query: boolean
+        name: string
+        string_id: string
+        degree: number
+      }>
+      edges: Array<{ a: string; b: string; string_id_a: string; string_id_b: string }>
+      summary: {
+        n_nodes: number
+        n_connected_nodes: number
+        n_isolated_nodes: number
+        n_expanded_nodes: number
+      }
+      unmapped: string[]
+      provenance: { parameters: Record<string, unknown>; endpoints_used: string[] }
+    }
+    async function runNetwork(
+      symbols: string[],
+      mappings: ReturnType<typeof mapped>[],
+      rows: string[][]
+    ): Promise<{ result: NetworkResult; params: URLSearchParams | undefined }> {
+      const fetchImpl = mockFetch({
+        '/json/version': { json: [{ string_version: '12.0' }] },
+        '/json/get_string_ids': { json: mappings },
+        '/tsv/network': { text: networkTsv(rows) }
+      })
+      const result = (await engine(fetchImpl).call(
+        tool('get_string_network'),
+        { symbols },
+        {}
+      )) as NetworkResult
+      // The returned graph must be closed over its endpoints, including isolated inputs.
+      const ids = new Set(result.nodes.map((node) => node.string_id))
+      expect(ids.size).toBe(result.nodes.length)
+      for (const edge of result.edges) {
+        expect(ids.has(edge.string_id_a)).toBe(true)
+        expect(ids.has(edge.string_id_b)).toBe(true)
+      }
+      expect(result.summary.n_nodes).toBe(result.nodes.length)
+      expect(result.summary.n_connected_nodes + result.summary.n_isolated_nodes).toBe(ids.size)
+      expect(result.nodes.reduce((sum, node) => sum + node.degree, 0)).toBe(result.edges.length * 2)
+      const networkCall = calls(fetchImpl).find(([url]) => String(url).includes('/tsv/network'))
+      const params = networkCall ? new URL(String(networkCall[0])).searchParams : undefined
+      if (params) {
+        expect(Number(params.get('add_nodes'))).toBe(
+          result.provenance.parameters['network.add_nodes']
+        )
+      }
+      return { result, params }
+    }
+
+    it.each([['TP53'], ['TP53', 'NOTAGENE']])(
+      'includes expanded endpoints when the only mapped protein is %s',
+      async (...symbols) => {
+        const { result, params } = await runNetwork(
+          symbols,
+          [mapped(0, '9606.p53', 'TP53')],
+          [
+            ['9606.p53', '9606.mdm2', 'TP53', 'MDM2'],
+            ['9606.atm', '9606.p53', 'ATM', 'TP53'],
+            ['9606.mdm2', '9606.atm', 'MDM2', 'ATM'],
+            // Reversed duplicate must not inflate degrees or counts.
+            ['9606.mdm2', '9606.p53', 'MDM2', 'TP53']
+          ]
+        )
+        expect(params?.get('add_nodes')).toBe('10')
+        expect(result.summary).toMatchObject({
+          n_input_symbols: symbols.length,
+          n_mapped: 1,
+          n_nodes: 3,
+          n_edges: 3,
+          n_connected_nodes: 3,
+          n_isolated_nodes: 0,
+          n_expanded_nodes: 2
+        })
+        expect(result.unmapped).toEqual(symbols.slice(1))
+        expect(result.nodes).toEqual([
+          {
+            query: null,
+            queries: [],
+            is_query: false,
+            name: 'ATM',
+            string_id: '9606.atm',
+            degree: 2
+          },
+          {
+            query: null,
+            queries: [],
+            is_query: false,
+            name: 'MDM2',
+            string_id: '9606.mdm2',
+            degree: 2
+          },
+          {
+            query: 'TP53',
+            queries: ['TP53'],
+            is_query: true,
+            name: 'TP53',
+            string_id: '9606.p53',
+            degree: 2
+          }
+        ])
+        expect(result.edges[0]).toMatchObject({
+          a: 'ATM',
+          b: 'MDM2',
+          string_id_a: '9606.atm',
+          string_id_b: '9606.mdm2'
+        })
+      }
+    )
+
+    it('keeps isolated inputs and requests no expansion for multiple distinct mapped proteins', async () => {
+      const { result, params } = await runNetwork(
+        ['TP53', 'MDM2', 'ISOLATED'],
+        [
+          mapped(0, '9606.p53', 'TP53'),
+          mapped(1, '9606.mdm2', 'MDM2'),
+          mapped(2, '9606.iso', 'ISOLATED')
+        ],
+        [['9606.p53', '9606.mdm2', 'TP53', 'MDM2']]
+      )
+      expect(params?.get('add_nodes')).toBe('0')
+      expect(result.summary).toMatchObject({
+        n_nodes: 3,
+        n_connected_nodes: 2,
+        n_isolated_nodes: 1,
+        n_expanded_nodes: 0
+      })
+      expect(result.nodes.find((node) => node.string_id === '9606.iso')).toMatchObject({
+        query: 'ISOLATED',
+        is_query: true,
+        degree: 0
+      })
+    })
+
+    it('counts same-name proteins separately by STRING ID', async () => {
+      const { result } = await runNetwork(
+        ['GENE'],
+        [mapped(0, '9606.input', 'GENE')],
+        [['9606.input', '9606.neighbor', 'GENE', 'GENE']]
+      )
+      expect(result.nodes.map((node) => node.degree)).toEqual([1, 1])
+      expect(result.summary).toMatchObject({
+        n_nodes: 2,
+        n_connected_nodes: 2,
+        n_isolated_nodes: 0,
+        n_expanded_nodes: 1
+      })
+    })
+
+    it('preserves mapped request entries while deduplicating graph nodes and retaining aliases', async () => {
+      // This tests graph construction when mappings contain aliases, not upstream mapping recovery.
+      const { result, params } = await runNetwork(
+        ['TP53', 'P53'],
+        [mapped(0, '9606.p53', 'TP53'), mapped(1, '9606.p53', 'TP53')],
+        []
+      )
+      expect(params?.get('identifiers')).toBe('9606.p53\r9606.p53')
+      expect(params?.get('add_nodes')).toBe('0')
+      expect(result.summary).toMatchObject({
+        n_input_symbols: 2,
+        n_mapped: 2,
+        n_nodes: 1,
+        n_expanded_nodes: 0
+      })
+      expect(result.nodes.find((node) => node.is_query)).toMatchObject({
+        query: 'TP53',
+        queries: ['TP53', 'P53'],
+        degree: 0
+      })
+    })
+
+    it('retains a single isolated input when expansion returns no edges', async () => {
+      const { result, params } = await runNetwork(['TP53'], [mapped(0, '9606.p53', 'TP53')], [])
+      expect(params?.get('add_nodes')).toBe('10')
+      expect(result.nodes[0]).toMatchObject({ query: 'TP53', degree: 0 })
+      expect(result.summary).toMatchObject({
+        n_nodes: 1,
+        n_connected_nodes: 0,
+        n_isolated_nodes: 1,
+        n_expanded_nodes: 0,
+        n_edges: 0,
+        mean_score: null
+      })
+    })
+
+    it('returns an empty graph without claiming a network request when nothing maps', async () => {
+      const { result, params } = await runNetwork(['NOTAGENE'], [], [])
+      expect(params).toBeUndefined()
+      expect(result.nodes).toEqual([])
+      expect(result.edges).toEqual([])
+      expect(result.unmapped).toEqual(['NOTAGENE'])
+      expect(result.summary).toMatchObject({
+        n_nodes: 0,
+        n_connected_nodes: 0,
+        n_isolated_nodes: 0,
+        n_expanded_nodes: 0
+      })
+      expect(result.provenance.endpoints_used).toEqual(['json/version', 'json/get_string_ids'])
+    })
+  })
+
   it('get_string_similarity_scores canonicalizes homology pairs (id_a <= id_b, self flagged)', async () => {
     const fetchImpl = mockFetch({
       '/json/version': { json: [{ string_version: '12.0' }] },

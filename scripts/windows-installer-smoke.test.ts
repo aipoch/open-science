@@ -671,6 +671,22 @@ Open Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
     ).rejects.toThrow(/timed out after 25ms/)
   })
 
+  it('reports stdout while the observed process is still running', async () => {
+    const ready = Promise.withResolvers<string>()
+    let exited = false
+    const result = runProcess(
+      process.execPath,
+      ['-e', "process.stdout.write('ready\\n'); setTimeout(() => process.exit(7), 300)"],
+      { allowNonZero: true, onStdout: ready.resolve }
+    ).then((result) => {
+      exited = true
+      return result
+    })
+    expect(await ready.promise).toBe('ready\n')
+    expect(exited).toBe(false)
+    await expect(result).resolves.toMatchObject({ code: 7, stdout: 'ready\n' })
+  })
+
   it('terminates a lock holder when readiness fails', async () => {
     const installDirectory = await mkdtemp(join(tmpdir(), 'open-science-lock-holder-'))
     await writeFile(join(installDirectory, 'Uninstall open-science.exe'), '')

@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as netFetch from '../skills/net-fetch'
 import { ConnectorService } from '../connectors/service'
 import { ParserEngine } from '../connectors/engine'
+import { CLINICAL_TRIALS_TOOLS } from '../connectors/descriptors/clinical-trials'
+import { renderSkillDoc } from '../connectors/skill-doc'
 import { NotebookKernelExecutor } from './kernel-executor'
 import { NotebookLocalRpcServer } from './local-rpc-server'
 import type { NotebookExecutionResult } from './runtime-service'
@@ -112,6 +114,117 @@ async function executeGenomesCell(
     await rpcServer.close()
   }
 }
+
+// This bounded regression always runs: only the external HTTP response is mocked, while the
+// shipped REPL, RPC, authorization, input validation and connector parser stay real.
+describe('clinical trial host.mcp regression', () => {
+  it('preserves patient matching, pagination, details and unrestricted sex through the full chain', async () => {
+    const requests: URL[] = []
+    const record = {
+      protocolSection: {
+        identificationModule: { nctId: 'NCT07783087', briefTitle: 'Trial' },
+        eligibilityModule: {
+          minimumAge: '18 Years',
+          sex: 'ALL',
+          eligibilityCriteria: 'Review all inclusion and exclusion criteria.'
+        }
+      }
+    }
+    const connectorService = new ConnectorService({
+      getConnectors: () => ({
+        enabledIds: ['clinical-trials'],
+        autoAllowIds: ['clinical-trials']
+      }),
+      resolveApiKey: () => undefined,
+      engine: new ParserEngine({
+        retries: 0,
+        fetchImpl: async (input) => {
+          const url = new URL(String(input))
+          requests.push(url)
+          if (url.pathname.endsWith('/NCT07783087')) return Response.json(record)
+          return Response.json({
+            studies: [record],
+            ...(!url.searchParams.has('pageToken') ? { nextPageToken: 'next-page' } : {})
+          })
+        }
+      })
+    })
+    const rpcServer = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      connectorService
+    })
+    const connection = await rpcServer.issueControlConnection(
+      'session-42',
+      'project-1',
+      'root-frame-session-42'
+    )
+    const exec = makeExecutor()
+    try {
+      const descriptor = CLINICAL_TRIALS_TOOLS.find((tool) => tool.id === 'search_by_eligibility')!
+      const execution = await exec.execute(
+        baseRequest({
+          code: `${descriptor.example};
+            const next = await host.mcp('clinical-trials', 'search_by_eligibility', {
+              condition: 'diabetes', min_age: '65 Years', sex: 'FEMALE',
+              page_token: result.next_page_token
+            });
+            const detail = await host.mcp('clinical-trials', 'get_trial_details', {
+              nct_id: result.items[0].nct_id
+            });
+            const unrestricted = await host.mcp('clinical-trials', 'search_by_eligibility', {sex:'ALL'});
+            let invalidSex;
+            try { await host.mcp('clinical-trials', 'search_by_eligibility', {sex:'INVALID'}); }
+            catch (error) { invalidSex = String(error); }
+            console.log(JSON.stringify({result, next, detail, unrestricted, invalidSex}));`,
+          mcpRpcEndpoint: connection.endpoint,
+          mcpRpcSocketPath: connection.socketPath,
+          mcpRpcToken: connection.token,
+          sessionId: 'session-42',
+          projectId: 'project-1'
+        })
+      )
+      expect(execution.status).toBe('completed')
+      const output = JSON.parse(execution.stdout.trim())
+      expect(output.result).toMatchObject({
+        count: 1,
+        total: null,
+        next_page_token: 'next-page',
+        items: [{ nct_id: 'NCT07783087', minimum_age: '18 Years', maximum_age: null, sex: 'ALL' }]
+      })
+      expect(output.next.items).toEqual(output.result.items)
+      expect(output.next.next_page_token).toBeNull()
+      expect(output.detail).toMatchObject({
+        found: true,
+        trial: {
+          nct_id: 'NCT07783087',
+          minimum_age: '18 Years',
+          maximum_age: null,
+          sex: 'ALL',
+          eligibility_criteria: record.protocolSection.eligibilityModule.eligibilityCriteria
+        }
+      })
+      expect(output.unrestricted.items).toEqual(output.result.items)
+      expect(output.invalidSex).toContain('invalid_arguments')
+      expect(requests).toHaveLength(4)
+      const firstParams = requests[0].searchParams
+      expect(firstParams.get('filter.advanced')).toContain('AREA[MaximumAge]RANGE[65 Years, MAX]')
+      expect(firstParams.get('filter.advanced')).toContain('AREA[Sex]"ALL"')
+      expect(firstParams.get('fields')).toContain('MinimumAge|MaximumAge|Sex')
+      expect(requests[1].searchParams.get('pageToken')).toBe('next-page')
+      expect(requests[1].searchParams.get('filter.advanced')).toBe(
+        firstParams.get('filter.advanced')
+      )
+      expect(requests[3].searchParams.has('filter.advanced')).toBe(false)
+      const instructions = renderSkillDoc('clinical-trials')
+      expect(instructions).toContain('both trial age bounds are checked')
+      expect(instructions).toContain('ALL or omitted sex applies no sex filter')
+      expect(instructions).toContain('minimum_age, maximum_age and sex')
+    } finally {
+      await exec.shutdown()
+      connection.release()
+      await rpcServer.close()
+    }
+  })
+})
 
 gate('repl kernel host.mcp', () => {
   it.each([undefined, 'auto', 'id', 'symbol', 'guess', null, 42])(
