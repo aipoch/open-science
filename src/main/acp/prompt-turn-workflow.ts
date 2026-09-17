@@ -567,7 +567,6 @@ class AcpPromptTurnWorkflow {
                 ? { skillRuntimeAllowlist: readyPrepared.skillRuntimeAllowlist }
                 : {})
             })
-            if ((await this.checkpoint(interaction)) === 'cancelled') return 'cancelled'
             if (!accumulatedFacts && request.historyPreamble) {
               log.info('session transcript replay dispatched', {
                 sessionId,
