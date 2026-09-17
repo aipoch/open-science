@@ -85,6 +85,16 @@ jobs:
           fi
           git cat-file -e "${base_sha}^{commit}"
           git cat-file -e "${head_sha}^{commit}"
+          # Keep policy at the current trusted base, but classify only the PR contribution.
+          trusted_base_sha="$base_sha"
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            base_sha="$(git merge-base --all "$base_sha" "$head_sha")"
+            if [[ ! "$base_sha" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "PR must have exactly one merge base" >&2
+              exit 1
+            fi
+          fi
+          echo "trusted-base=$trusted_base_sha" >> "$GITHUB_OUTPUT"
           echo "base=$base_sha" >> "$GITHUB_OUTPUT"
           echo "head=$head_sha" >> "$GITHUB_OUTPUT"
 
@@ -92,7 +102,7 @@ jobs:
         id: trusted_classifier
         shell: bash
         env:
-          BASE_SHA: ${{ steps.revisions.outputs.base }}
+          BASE_SHA: ${{ steps.revisions.outputs.trusted-base }}
         run: |
           set -euo pipefail
           trusted_dir="$RUNNER_TEMP/pr-gate-trusted-classifier"
