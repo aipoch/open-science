@@ -49,7 +49,7 @@ AIPOCH Open-Science 是由 [AIPOCH](https://aipoch.com/open-science) 為科學�
 
 AIPOCH Open-Science 支援機器學習、統計學、生命科學、化學、材料科學、物理學及環境科學等領域的運算密集與資料密集研究。它涵蓋從文獻回顧、假設建立，到程式碼執行、資料分析、模擬、視覺化，以及產出可追溯研究成果的完整研究流程。
 
-> 💡 **[AIPOCH Open-Science v0.30.1 已發佈](https://github.com/aipoch/open-science/releases/latest)** _（最後更新於 2026 年 9 月）_。AIPOCH Open-Science v0.30.1 打磨變更的審閱與管理方式：技能更新預覽以帶語法高亮的原始碼差異檢視器呈現，側聊以繼承對話模型的草稿開啟，獨立的 Windows 重設工具可清除安裝之間殘留的受損資料，標籤選擇器支援鍵盤搜尋與建立，安裝時也會顯示專案授權條款。會話計畫核准在 MCP 逾時後仍然有效，已驗證的產物繫結獲得還原，gnomAD 連接器、技能市集與 PDF 擷取的修復也遍布各處。詳情請參閱[最新版本說明](https://github.com/aipoch/open-science/releases/latest)。
+> 💡 **[AIPOCH Open-Science v0.30.2 已發佈](https://github.com/aipoch/open-science/releases/latest)** _（最後更新於 2026 年 9 月）_。AIPOCH Open-Science v0.30.2 是一個穩定性版本：Windows 的 R 執行環境可靠復原（conda 啟動、可執行檔解析、核心恢復，以及已驗證的 pip 進入點），Notebook 同一輪次的輸入可正確重播，審閱者的修正也在關聯回饋之間保留上下文。文獻匯入會區分 PubMed 作者的姓氏與名字縮寫，並偵測撤稿關係；連接器收緊了 Ensembl、VEP、Reactome、UCSC 與 gnomAD 的行為；DeepSeek V4.1 Flash 也加入模型目錄。詳情請參閱[最新版本說明](https://github.com/aipoch/open-science/releases/latest)。
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 首屏橫幅：Science, Open to All——開源、模型無關、可自行託管的科學 AI 研究工作台" src="../images/readme/open-science-banner.png" />

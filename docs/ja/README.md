@@ -49,7 +49,7 @@ AIPOCH Open-Science は、[AIPOCH](https://aipoch.com/open-science) が科学者
 
 AIPOCH Open-Science は、機械学習、統計学、生命科学、化学、材料科学、物理学、環境科学など、幅広い分野の計算集約型・データ集約型研究を支援します。文献レビューと仮説構築から、コード実行、データ分析、シミュレーション、可視化、追跡可能な研究成果の作成まで、研究プロセス全体を支えます。
 
-> 💡 **[AIPOCH Open-Science v0.30.1 をリリースしました](https://github.com/aipoch/open-science/releases/latest)** _（最終更新：2026 年 9 月）_。AIPOCH Open-Science v0.30.1 は、変更のレビューと管理をさらに洗練させます。スキル更新のプレビューはハイライト付きのソース diff ビューアーとして表示され、サイド会話は会話のモデルを引き継ぐ下書きとして開き、スタンドアロンの Windows リセットユーティリティが再インストールをまたいで残る破損データを消去します。タグピッカーはキーボード検索と作成に対応し、プロジェクトライセンスがインストール中に表示されます。セッション計画の承認は MCP タイムアウトをまたいで維持され、検証済みのアーティファクトバインディングが復元され、gnomAD コネクタ、スキルマーケットプレイス、PDF 抽出の修正も随所に盛り込まれています。詳細は[最新リリースノート](https://github.com/aipoch/open-science/releases/latest)を参照してください。
+> 💡 **[AIPOCH Open-Science v0.30.2 をリリースしました](https://github.com/aipoch/open-science/releases/latest)** _（最終更新：2026 年 9 月）_。AIPOCH Open-Science v0.30.2 は安定性を重視したリリースです。Windows の R ランタイムが確実に復旧するようになり（conda の起動、実行ファイルの解決、カーネルの復旧、検証済みの pip エントリーポイント）、Notebook の同一ターン入力が正しくリプレイされ、レビュアーの修正がリンク済みフィードバックをまたいでコンテキストを保持します。文献の取り込みでは PubMed の著者の姓とイニシャルが区別され、撤回の関係性が検出されます。コネクタでは Ensembl、VEP、Reactome、UCSC、gnomAD の挙動が厳密化され、DeepSeek V4.1 Flash がモデルカタログに加わりました。詳細は[最新リリースノート](https://github.com/aipoch/open-science/releases/latest)を参照してください。
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science のヒーローバナー：Science, Open to All — オープンソース、モデル非依存、セルフホスト対応の科学 AI 研究ワークベンチ" src="../images/readme/open-science-banner.png" />

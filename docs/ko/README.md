@@ -49,7 +49,7 @@ AIPOCH Open-Science는 [AIPOCH](https://aipoch.com/open-science)가 과학자와
 
 AIPOCH Open-Science는 머신러닝, 통계학, 생명과학, 화학, 재료과학, 물리학, 환경과학을 비롯한 여러 분야의 계산 및 데이터 집약적 연구를 지원합니다. 문헌 검토와 가설 수립부터 코드 실행, 데이터 분석, 시뮬레이션, 시각화, 추적 가능한 연구 결과 생성까지 전체 연구 과정을 지원합니다.
 
-> 💡 **[AIPOCH Open-Science v0.30.1 출시](https://github.com/aipoch/open-science/releases/latest)** _(마지막 업데이트: 2026년 9월)_. AIPOCH Open-Science v0.30.1은 변경 사항을 검토하고 관리하는 방식을 다듬습니다. 하이라이트가 적용된 소스 diff 뷰어로 렌더링되는 스킬 업데이트 미리보기, 대화의 모델을 상속하는 초안으로 열리는 사이드 대화, 설치 사이에 남은 손상된 데이터를 정리하는 Windows용 독립 실행형 재설정 유틸리티, 키보드 검색과 생성이 추가된 태그 선택기, 설치 중에 표시되는 프로젝트 라이선스가 포함됩니다. 세션 계획 승인은 MCP 시간 초과가 일어나도 유지되고, 검증된 아티팩트 바인딩이 복원되며, gnomAD 커넥터·스킬 마켓플레이스·PDF 추출 전반의 수정이 적용됩니다. 자세한 내용은 [최신 릴리스 노트](https://github.com/aipoch/open-science/releases/latest)를 확인하세요.
+> 💡 **[AIPOCH Open-Science v0.30.2 출시](https://github.com/aipoch/open-science/releases/latest)** _(마지막 업데이트: 2026년 9월)_. AIPOCH Open-Science v0.30.2는 안정성 릴리스입니다. Windows R 런타임이 안정적으로 복구되고(conda 시작, 실행 파일 확인, 커널 복구, 검증된 pip 진입점), Notebook의 같은 턴 입력이 올바르게 재실행되며, 검토자 수정이 연결된 피드백 전반에서 컨텍스트를 유지합니다. 문헌 가져오기는 PubMed 저자의 성과 이니셜을 분리하고 철회 관계를 잡아내며, 커넥터는 Ensembl, VEP, Reactome, UCSC, gnomAD 동작을 다듬고, DeepSeek V4.1 Flash가 모델 카탈로그에 합류합니다. 자세한 내용은 [최신 릴리스 노트](https://github.com/aipoch/open-science/releases/latest)를 확인하세요.
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 히어로 배너: Science, Open to All — 오픈 소스, 모델 독립적, 자체 호스팅 가능한 과학 AI 연구 워크벤치" src="../images/readme/open-science-banner.png" />
