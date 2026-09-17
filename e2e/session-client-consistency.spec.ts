@@ -210,7 +210,9 @@ test('preserves a Web message edit while another client changes the selected Bra
       )
       .toEqual({ prompts: [original, revised, draft].sort() })
     await web.reload()
-    await expect(web.getByRole('heading', { name: title, exact: true })).toBeVisible()
+    await expect(
+      web.getByRole('heading', { name: `#${saved.number} ${title}`, exact: true })
+    ).toBeVisible()
     await expect(webConversation.getByText(draft, { exact: true })).toBeVisible()
     await expect(webConversation.getByLabel('Message revision', { exact: true })).toHaveText('3/3')
     await expect(web.getByRole('alertdialog')).toHaveCount(0)
