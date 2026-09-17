@@ -65,7 +65,9 @@
     "src/main/delegation/structured-output-owner.test.ts",
     "src/main/delegation/structured-output-submission.ts",
     "src/main/delegation/structured-output.test.ts",
-    "src/main/delegation/structured-output.ts"
+    "src/main/delegation/structured-output.ts",
+    "src/main/delegation/process-ownership.ts",
+    "src/main/delegation/process-ownership.test.ts"
   ],
   "interfacePaths": [
     "src/main/delegation/delegated-artifact-publication.ts",
@@ -83,7 +85,8 @@
     "src/main/delegation/settlement-continuation-dispatch.ts",
     "src/main/delegation/structured-output.ts",
     "src/main/delegation/certification-contract.test.ts",
-    "src/main/delegation/execution-contract.test.ts"
+    "src/main/delegation/execution-contract.test.ts",
+    "src/main/delegation/process-ownership.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -113,7 +116,8 @@
       "src/main/delegation/settlement-continuation-dispatch.test.ts",
       "src/main/delegation/specialist-runtime-consumption.test.ts",
       "src/main/delegation/structured-output-owner.test.ts",
-      "src/main/delegation/structured-output.test.ts"
+      "src/main/delegation/structured-output.test.ts",
+      "src/main/delegation/process-ownership.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -520,7 +524,9 @@
       "src/main/specialist/marketplace/service.test.ts",
       "src/main/specialist/package/release-certification.test.ts",
       "src/main/specialist/package/reported-regressions.test.ts",
-      "src/main/specialist/package/transaction.test.ts"
+      "src/main/specialist/package/transaction.test.ts",
+      "src/main/process-tree.windows.integration.test.ts",
+      "src/main/acp/agent-process.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

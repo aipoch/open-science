@@ -153,7 +153,9 @@
     "src/main/credential-identity/windows-profile-key.test.ts",
     "src/main/credential-identity/windows-profile-key.ts",
     "src/main/credential-identity/macos.test.ts",
-    "src/main/credential-identity/probe-logging.test.ts"
+    "src/main/credential-identity/probe-logging.test.ts",
+    "src/main/process-tree-windows.ts",
+    "src/main/process-tree.windows.integration.test.ts"
   ],
   "interfacePaths": [
     "src/main/app-lifecycle.ts",
@@ -204,7 +206,8 @@
     "src/main/windows-powershell.ts",
     "src/main/credential-identity/bootstrap.ts",
     "src/main/credential-identity/runtime.ts",
-    "src/main/credential-identity/selection.ts"
+    "src/main/credential-identity/selection.ts",
+    "src/main/process-tree-windows.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -287,7 +290,8 @@
       "src/main/credential-identity/sqlite-snapshot.test.ts",
       "src/main/credential-identity/windows-profile-key.test.ts",
       "src/main/credential-identity/macos.test.ts",
-      "src/main/credential-identity/probe-logging.test.ts"
+      "src/main/credential-identity/probe-logging.test.ts",
+      "src/main/process-tree.windows.integration.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -1065,7 +1069,9 @@
       "src/main/settings/responses-bridge.plan-tools.test.ts",
       "src/main/settings/provider-runtime-health-owner.test.ts",
       "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
-      "src/main/session-persistence/runtime-authority.test.ts"
+      "src/main/session-persistence/runtime-authority.test.ts",
+      "src/main/delegation/process-ownership.test.ts",
+      "src/main/delegation/frame-workspace.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
