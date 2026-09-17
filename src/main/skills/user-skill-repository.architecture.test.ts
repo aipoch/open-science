@@ -888,7 +888,11 @@ describe('User Skill repository architecture', () => {
           'src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts',
           'src/main/specialist/marketplace/official-source.test.ts',
           'src/main/specialist/marketplace/service.test.ts',
-          'src/main/specialist/package/transaction.test.ts'
+          'src/main/specialist/package/transaction.test.ts',
+          'src/main/delegation/process-ownership.test.ts',
+          'src/main/process-tree.windows.integration.test.ts',
+          'src/main/delegation/frame-workspace.test.ts',
+          'src/main/acp/agent-process.test.ts'
         ]
       },
       capabilityOverlays: ['windows_sensitive', 'e2e_regressions', 'e2e_delegation'],

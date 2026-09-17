@@ -1471,7 +1471,11 @@ describe('Settings backend ownership architecture', () => {
       'src/main/specialist/marketplace/service.test.ts',
       'src/main/specialist/package/release-certification.test.ts',
       'src/main/specialist/package/reported-regressions.test.ts',
-      'src/main/specialist/package/transaction.test.ts'
+      'src/main/specialist/package/transaction.test.ts',
+      'src/main/delegation/process-ownership.test.ts',
+      'src/main/process-tree.windows.integration.test.ts',
+      'src/main/delegation/frame-workspace.test.ts',
+      'src/main/acp/agent-process.test.ts'
     ])
     expect(
       [
