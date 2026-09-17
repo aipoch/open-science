@@ -1,11 +1,11 @@
 import { Notice } from '@/components/notice'
-import { InlineNotice } from '@/components/ui/inline-notice'
 import { ConnectorBulkManageView } from './ConnectorBulkManageView'
 import { ErrorNotice } from '@/components/error-notice'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 /* Hallmark · component: settings side rail · genre: modern-minimal · theme: existing Open Science tokens · slop: pass */
 import {
   AlertTriangle,
+  Loader2,
   Archive,
   ArrowLeft,
   ArrowRight,
@@ -47,6 +47,7 @@ import { useTranslation } from 'react-i18next'
 
 import {
   resolveCodexSubscriptionType,
+  type ValidateProviderResult,
   type ProviderView,
   type UpsertProviderRequest
 } from '../../../../shared/settings'
@@ -104,6 +105,7 @@ import {
 } from './provider-form-value'
 import { SettingsPanelLoadingBoundary } from './SettingsPanelLoadingBoundary'
 import { localizeProviderResourceMessage } from './validation-message'
+import { ProviderTestResultCard } from './ProviderTestResultCard'
 import { loadSettingsPanel } from './settings-panel-loader'
 import { SettingsGlobalSearch } from './SettingsGlobalSearch'
 import type { SettingsWriteErrorCode } from '../../../../shared/settings'
@@ -412,6 +414,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const detectCodeBuddy = useSettingsStore((state) => state.detectCodeBuddy)
   const encryptionAvailable = useSettingsStore((state) => state.encryptionAvailable)
   const load = useSettingsStore((state) => state.load)
+  const saveValidatedProvider = useSettingsStore((state) => state.saveValidatedProvider)
   const persistProvider = useSettingsStore((state) => state.persistProvider)
   const validateProvider = useSettingsStore((state) => state.validateProvider)
   const refreshProviderModels = useSettingsStore((state) => state.refreshProviderModels)
@@ -467,26 +470,30 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const [isRefreshingModels, setIsRefreshingModels] = useState(false)
   const [statusMessage, setStatusMessage] = useState<string | undefined>(undefined)
   const [statusOk, setStatusOk] = useState(false)
-  // Shared with ProvidersPanel: the post-save validation and the list's manual test both mark the
-  // provider busy so its card shows "Testing…".
   const [busyProviderId, setBusyProviderId] = useState<string | undefined>(undefined)
   const [postSaveValidationFailed, setPostSaveValidationFailed] = useState(false)
   const postSaveValidationGeneration = useRef(0)
   const postSaveValidationProviderId = useRef<string | undefined>(undefined)
-
   useEffect(() => {
     const providerId = postSaveValidationProviderId.current
     if (!providerId || providers.some((provider) => provider.id === providerId)) return
-
     postSaveValidationGeneration.current += 1
     postSaveValidationProviderId.current = undefined
     setBusyProviderId(undefined)
     setPostSaveValidationFailed(false)
   }, [providers])
+  const [isTestingConnection, setIsTestingConnection] = useState(false)
+  const [savedProviderWarning, setSavedProviderWarning] = useState<'reconnect' | 'refresh'>()
+  const [connectionResult, setConnectionResult] = useState<ValidateProviderResult>()
+  const formOperationGeneration = useRef(0)
+  const savingOperation = useRef(false)
 
   // Refresh settings whenever the dialog opens so external changes are reflected.
   useEffect(() => {
-    if (open) void load()
+    if (open) {
+      setSavedProviderWarning((current) => (current === 'refresh' ? undefined : current))
+      void load()
+    }
   }, [open, load])
 
   useEffect(() => {
@@ -1035,6 +1042,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     (editingProvider.configRevision ?? 0) !== (providerBase.configRevision ?? 0)
   const canSave =
     !isSaving &&
+    !isTestingConnection &&
     !providerEditTargetMissing &&
     !providerConflict &&
     !hasProviderFormErrors(formErrors)
@@ -1059,6 +1067,25 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     setStatusMessage(undefined)
   }
 
+  // Invalidate observations when the user leaves, edits inputs, or the saved target changes.
+  useEffect(() => {
+    formOperationGeneration.current += 1
+    setConnectionResult(undefined)
+    setStatusMessage(undefined)
+    setIsTestingConnection(false)
+    setIsSaving(false)
+    savingOperation.current = false
+  }, [open, historyIndex, formValue])
+
+  useEffect(() => {
+    // A save can publish its own committed revision before the command returns.
+    // Main checks concurrent writes; only invalidate read-only tests here.
+    if (savingOperation.current) return
+    formOperationGeneration.current += 1
+    setConnectionResult(undefined)
+    setIsTestingConnection(false)
+  }, [editingProvider?.id, editingProvider?.configRevision])
+
   const openCreate = (): void => {
     postSaveValidationGeneration.current += 1
     postSaveValidationProviderId.current = undefined
@@ -1072,60 +1099,92 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     postSaveValidationProviderId.current = undefined
     setBusyProviderId(undefined)
     setPostSaveValidationFailed(false)
-    navigate({
-      panel: 'model',
-      view: { kind: 'edit', providerId: provider.id }
-    })
+    navigate({ panel: 'model', view: { kind: 'edit', providerId: provider.id } })
   }
 
   const closeForm = (): void => navigate({ panel: 'model', view: { kind: 'list' } })
+  const canTestConnection = formValue.type === 'custom' || formValue.type === 'official'
+  const prospectiveRequest = (): UpsertProviderRequest => ({
+    ...toUpsertRequest(formValue, editingProvider?.id),
+    ...(modelView.kind === 'edit'
+      ? { requireExisting: true, expectedConfigRevision: providerBase?.configRevision ?? 0 }
+      : {})
+  })
+
+  const handleTestConnection = async (): Promise<void> => {
+    if (!canSave || !canTestConnection) return
+    const generation = ++formOperationGeneration.current
+    setIsTestingConnection(true)
+    setConnectionResult(undefined)
+    setStatusMessage(undefined)
+    try {
+      const result = await validateProvider({ edit: prospectiveRequest() })
+      if (generation === formOperationGeneration.current) {
+        if (result.applied === false) {
+          setStatusOk(false)
+          setStatusMessage(t('Provider configuration changed. Your draft has not been saved.'))
+          void load().catch(() => undefined)
+        } else {
+          setConnectionResult(result)
+        }
+      }
+    } catch {
+      if (generation === formOperationGeneration.current) {
+        setStatusOk(false)
+        setStatusMessage(t('Could not test the provider connection.'))
+      }
+    } finally {
+      if (generation === formOperationGeneration.current) setIsTestingConnection(false)
+    }
+  }
 
   const handleSave = async (): Promise<void> => {
     if (!canSave) return
-    postSaveValidationGeneration.current += 1
-    postSaveValidationProviderId.current = undefined
-    setBusyProviderId(undefined)
+    const generation = ++formOperationGeneration.current
+    savingOperation.current = true
     setIsSaving(true)
     setStatusMessage(undefined)
-    setPostSaveValidationFailed(false)
-
+    setConnectionResult(undefined)
     try {
-      // Persist first and return to the provider list immediately — don't hold the form open waiting
-      // for the connection test. The test then runs in the background and its result (green check or
-      // warning) lands on the provider's card.
-      const providerId = await persistProvider({
-        ...toUpsertRequest(formValue, editingProvider?.id),
-        ...(modelView.kind === 'edit'
-          ? { requireExisting: true, expectedConfigRevision: providerBase?.configRevision ?? 0 }
-          : {})
-      })
-
-      navigate({ panel: 'model', view: { kind: 'list' } })
-
-      if (providerId) {
-        const validationGeneration = ++postSaveValidationGeneration.current
-        postSaveValidationProviderId.current = providerId
-        setBusyProviderId(providerId)
-        void validateProvider({ providerId })
-          .then(() => {
-            if (postSaveValidationGeneration.current === validationGeneration) {
-              postSaveValidationProviderId.current = undefined
-              setPostSaveValidationFailed(false)
-            }
-          })
-          .catch(() => {
-            if (postSaveValidationGeneration.current === validationGeneration) {
-              setPostSaveValidationFailed(true)
-            }
-          })
-          .finally(() => {
-            if (postSaveValidationGeneration.current === validationGeneration) {
-              setBusyProviderId(undefined)
-            }
-          })
+      if (canTestConnection) {
+        const result = await saveValidatedProvider(prospectiveRequest())
+        if (generation !== formOperationGeneration.current) return
+        if (!result.providerId) {
+          setConnectionResult(result.validation)
+          return
+        }
+        setSavedProviderWarning(
+          result.runtimeReconnectFailed ? 'reconnect' : result.refreshFailed ? 'refresh' : undefined
+        )
+      } else {
+        // Subscription authentication continues through its existing flow.
+        const providerId = await persistProvider(prospectiveRequest())
+        if (generation !== formOperationGeneration.current) return
+        if (providerId) {
+          const validationGeneration = ++postSaveValidationGeneration.current
+          postSaveValidationProviderId.current = providerId
+          setBusyProviderId(providerId)
+          void validateProvider({ providerId })
+            .then(() => {
+              if (postSaveValidationGeneration.current === validationGeneration) {
+                postSaveValidationProviderId.current = undefined
+                setPostSaveValidationFailed(false)
+              }
+            })
+            .catch(() => {
+              if (postSaveValidationGeneration.current === validationGeneration) {
+                setPostSaveValidationFailed(true)
+              }
+            })
+            .finally(() => {
+              if (postSaveValidationGeneration.current === validationGeneration)
+                setBusyProviderId(undefined)
+            })
+        }
       }
+      closeForm()
     } catch (error) {
-      await load().catch(() => undefined)
+      if (generation !== formOperationGeneration.current) return
       setStatusOk(false)
       setStatusMessage(
         error instanceof Error
@@ -1133,7 +1192,10 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
           : t('Could not save provider.')
       )
     } finally {
-      setIsSaving(false)
+      if (generation === formOperationGeneration.current) {
+        savingOperation.current = false
+        setIsSaving(false)
+      }
     }
   }
 
@@ -1984,34 +2046,6 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                           defaultCustomApiEndpoint={customApiEndpoint}
                           framework={activeFramework}
                         />
-                        {statusMessage ? (
-                          statusOk ? (
-                            <InlineNotice level="success" role="status" className="mt-3">
-                              {statusMessage}
-                            </InlineNotice>
-                          ) : (
-                            <InlineNotice level="error" role="alert" className="mt-3">
-                              {statusMessage}
-                            </InlineNotice>
-                          )
-                        ) : null}
-                        <div className="mt-6 flex justify-end gap-2">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            onClick={closeForm}
-                            disabled={isSaving}
-                          >
-                            {t('Cancel')}
-                          </Button>
-                          <Button
-                            type="button"
-                            onClick={() => void handleSave()}
-                            disabled={!canSave}
-                          >
-                            {isSaving ? t('Saving…') : t('Save')}
-                          </Button>
-                        </div>
                       </div>
                     ) : (
                       <ModelPanel
@@ -2024,9 +2058,29 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                         }
                       >
                         {postSaveValidationFailed ? (
-                          <InlineNotice level="error" className="mx-5 mt-5" role="alert">
-                            {t('Could not test the provider connection.')}
-                          </InlineNotice>
+                          <ErrorNotice
+                            inline
+                            role="alert"
+                            className="mx-5 mt-5"
+                            description={t('Could not test the provider connection.')}
+                          />
+                        ) : null}
+                        {savedProviderWarning ? (
+                          <ErrorNotice
+                            inline
+                            role="alert"
+                            tone="amber"
+                            className="mx-5 mt-5"
+                            description={
+                              savedProviderWarning === 'reconnect'
+                                ? t(
+                                    'Provider saved, but the Agent could not reconnect. Your changes do not need to be saved again.'
+                                  )
+                                : t(
+                                    'Provider saved, but settings could not be refreshed. Reopen settings to refresh.'
+                                  )
+                            }
+                          />
                         ) : null}
                         <ProvidersPanel
                           onCreateProvider={openCreate}
@@ -2046,6 +2100,58 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                   </SettingsPanelLoadingBoundary>
                 </div>
               </motion.div>
+              {isProviderFormOpen ? (
+                <div
+                  className="shrink-0 border-t border-border bg-card"
+                  data-slot="provider-form-footer"
+                >
+                  <div className="mx-auto max-w-[880px] space-y-3 px-5 py-4">
+                    {connectionResult ? (
+                      <ProviderTestResultCard result={connectionResult} />
+                    ) : statusMessage ? (
+                      <ErrorNotice
+                        inline
+                        role={statusOk ? 'status' : 'alert'}
+                        level={statusOk ? 'success' : 'error'}
+                        description={statusMessage}
+                      />
+                    ) : null}
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        {canTestConnection ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            disabled={!canSave}
+                            onClick={() => void handleTestConnection()}
+                          >
+                            {isTestingConnection ? (
+                              <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                            ) : null}
+                            {isTestingConnection ? t('Testing…') : t('Test connection')}
+                          </Button>
+                        ) : null}
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          onClick={closeForm}
+                          disabled={isSaving}
+                        >
+                          {t('Cancel')}
+                        </Button>
+                        <Button type="button" onClick={() => void handleSave()} disabled={!canSave}>
+                          {isSaving ? (
+                            <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                          ) : null}
+                          {isSaving ? t('Saving…') : t('Save')}
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
             </div>
           </motion.div>
           <div

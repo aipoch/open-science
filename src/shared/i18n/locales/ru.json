@@ -122,6 +122,9 @@
     "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "Необходимо восстановить публикацию ответвления (операция {{operationId}}, сессия {{sessionId}}). Перезапустите приложение для восстановления этой попытки перед созданием нового ответвления."
   },
   "renderer": {
+    "Provider saved, but the Agent could not reconnect. Your changes do not need to be saved again.": "Поставщик сохранён, но Агенту не удалось подключиться повторно. Повторно сохранять изменения не нужно.",
+    "Provider saved, but settings could not be refreshed. Reopen settings to refresh.": "Поставщик сохранён, но обновить настройки не удалось. Откройте настройки заново, чтобы обновить их.",
+    "Changes have not been saved.": "Изменения не сохранены.",
     "Continued from chat #{{number}}": "Продолжение чата #{{number}}",
     "Continued from chat": "Продолжение чата",
     "Open-source license": "Лицензия открытого исходного кода",
@@ -5906,6 +5909,7 @@
     "Draft storage is unavailable. Copy your draft before leaving this page.": "Хранилище черновиков недоступно. Скопируйте черновик перед уходом с этой страницы.",
     "Sending failed. Your newer draft was kept. Copy the earlier draft from the details below.": "Отправка не удалась. Новый черновик сохранён. Скопируйте предыдущий черновик из сведений ниже.",
     "Uploaded files: names and indexed content. Generated files: names only. Unindexed content is not searched.": "Загруженные файлы: имена и индексированное содержимое. Созданные файлы: только имена. Неиндексированное содержимое не участвует в поиске.",
+    "Provider connection status changed. Your changes have not been saved. Test the connection again.": "Состояние подключения к поставщику изменилось. Ваши изменения не сохранены. Проверьте подключение ещё раз.",
     "Provider configuration changed. Your draft has not been saved.": "Конфигурация поставщика изменилась. Ваш черновик не сохранён.",
     "Latest saved configuration": "Последняя сохранённая конфигурация",
     "Reapply my changes to the latest configuration": "Применить мои изменения к последней конфигурации",

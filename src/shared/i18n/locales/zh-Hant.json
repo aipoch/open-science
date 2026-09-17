@@ -119,6 +119,9 @@
     "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "副本發布需要復原（操作 {{operationId}}，工作階段 {{sessionId}}）。請重新啟動應用程式以復原此次操作，然後再建立副本。"
   },
   "renderer": {
+    "Provider saved, but the Agent could not reconnect. Your changes do not need to be saved again.": "供應商已儲存，但智能體無法重新連線。無需再次儲存變更。",
+    "Provider saved, but settings could not be refreshed. Reopen settings to refresh.": "供應商已儲存，但無法重新整理設定。請重新開啟設定以重新整理。",
+    "Changes have not been saved.": "變更尚未儲存。",
     "Continued from chat #{{number}}": "接續自對話 #{{number}}",
     "Continued from chat": "接續自原對話",
     "Open-source license": "開源授權條款",
@@ -5448,6 +5451,7 @@
     "Draft storage is unavailable. Copy your draft before leaving this page.": "草稿儲存無法使用。離開此頁面前請複製草稿。",
     "Sending failed. Your newer draft was kept. Copy the earlier draft from the details below.": "傳送失敗。已保留您的新草稿。請從下方詳細資訊中複製先前的草稿。",
     "Uploaded files: names and indexed content. Generated files: names only. Unindexed content is not searched.": "上傳檔案：名稱和已索引內容。產生的檔案：僅名稱。未索引的內容不在搜尋範圍內。",
+    "Provider connection status changed. Your changes have not been saved. Test the connection again.": "供應商連線狀態已變更。您的修改尚未儲存。請重新測試連線。",
     "Provider configuration changed. Your draft has not been saved.": "供應商設定已變更。您的草稿尚未儲存。",
     "Latest saved configuration": "最新儲存的設定",
     "Reapply my changes to the latest configuration": "將我的變更重新套用至最新設定",

@@ -80,6 +80,11 @@ const fakeStore = () => {
     uninstallCodeBuddy: vi.fn(),
     uninstallCodex: vi.fn(),
     upsertProvider: vi.fn().mockResolvedValue(snapshot()),
+    saveValidatedProvider: vi.fn().mockResolvedValue({
+      validation: { ok: true, category: 'ok' },
+      providerId: 'active',
+      snapshot: snapshot()
+    }),
     deleteProvider: vi.fn().mockResolvedValue(snapshot()),
     setActiveProvider: vi.fn().mockResolvedValue(snapshot()),
     setAgentFramework: vi.fn().mockResolvedValue(snapshot()),
@@ -250,6 +255,27 @@ describe('SettingsWorkflows runtime effects', () => {
     await workflows.deleteProvider('active')
 
     expect(calls).toEqual(['read', 'upsert', 'reconnect', 'select', 'read', 'delete', 'reconnect'])
+  })
+
+  it('preserves the committed validated save when requesting runtime reconnect fails', async () => {
+    const { store, capability } = fakeStore()
+    const committed = {
+      validation: { ok: true, category: 'ok' as const },
+      providerId: 'active',
+      snapshot: snapshot()
+    }
+    store.saveValidatedProvider.mockResolvedValue(committed)
+    const workflows = createSettingsWorkflows(
+      capability,
+      testEffects({
+        requestProviderReconnect: () => {
+          throw new Error('Reconnect unavailable')
+        }
+      })
+    ).runtime
+    await expect(
+      workflows.saveValidatedProvider({ id: 'active', type: 'custom' })
+    ).resolves.toEqual({ ...committed, runtimeReconnectFailed: true })
   })
 
   it('persists the default model without mutating live Sessions', async () => {

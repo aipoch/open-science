@@ -17,6 +17,7 @@ const SKILL_PERMISSION_PROMPT = 'Request fixture skill permission.'
 const MEMORY_RECALL_PROMPT = 'Verify automatic memory recall.'
 const MEMORY_RECALL_ENTRY = 'Keep every response concise and welcoming.'
 const PROVIDER_BRIDGE_PROMPT = 'Verify the provider bridge.'
+const PROVIDER_RUNTIME_FAILURE_PROMPT = 'Verify runtime provider failure synchronization.'
 const NOTEBOOK_LIFECYCLE_PROMPT = 'Verify the notebook lifecycle.'
 const PERFORMANCE_NOTEBOOK_LIFECYCLE_PROMPT = 'Profile the notebook lifecycle.'
 const NOTEBOOK_MUTATION_CANCELLATION_PROMPT = 'Verify Notebook mutation cancellation.'
@@ -398,6 +399,40 @@ const verifyProviderBridge = () => {
         `(base URL: ${route.options.baseURL}, credential: present).`
     )
   return 'Provider bridge verified through the Agent process.'
+}
+
+// Opt-in integration probe: use the real app-provided loopback transport instead of manufacturing
+// an ACP error. This exercises the app bridge's original-status observation before terminalizing.
+const rejectThroughProviderBridge = async () => {
+  const config = JSON.parse(process.env.OPENCODE_CONFIG_CONTENT ?? '{}')
+  const route = Object.values(config.provider ?? {}).find(
+    (provider) => provider?.models?.['runtime-health-model']
+  )
+  const credentialName = route?.options?.apiKey?.match(/^\{env:([^}]+)\}$/)?.[1]
+  const credential = credentialName ? process.env[credentialName] : undefined
+  if (!route?.options?.baseURL || !credential)
+    throw new Error('Runtime health fixture route missing.')
+  const url = new URL(route.options.baseURL)
+  if (url.hostname !== '127.0.0.1') throw new Error('Runtime health fixture requires loopback.')
+  const response = await fetch(`${route.options.baseURL.replace(/\/$/, '')}/chat/completions`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${credential}`, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      model: 'runtime-health-model',
+      messages: [{ role: 'user', content: 'synthetic runtime health probe' }]
+    })
+  })
+  await response.text()
+  if (
+    response.status !== 400 ||
+    !['401', '403'].includes(response.headers.get('x-open-science-upstream-status') ?? '')
+  ) {
+    throw new Error('Runtime health fixture did not receive the bridged upstream 401/403.')
+  }
+  throw acp.RequestError.internalError(
+    { errorKind: 'provider-error' },
+    'Synthetic upstream authentication rejected.'
+  )
 }
 
 const assertValidModelLimits = () => {
@@ -981,6 +1016,7 @@ if (process.argv.includes('--version')) {
         .map((content) => (content.type === 'text' ? content.text : ''))
         .join('')
       await captureProviderPrompt(context.params.sessionId, prompt)
+      if (prompt.includes(PROVIDER_RUNTIME_FAILURE_PROMPT)) await rejectThroughProviderBridge()
 
       if (prompt.includes(DELEGATED_WAIT_MARKER)) {
         await captureDelegatedHandoff(

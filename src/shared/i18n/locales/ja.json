@@ -119,6 +119,9 @@
     "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "複製の公開処理を復旧する必要があります（操作 {{operationId}}、セッション {{sessionId}}）。再度複製する前にアプリを再起動してこの操作を復旧してください。"
   },
   "renderer": {
+    "Provider saved, but the Agent could not reconnect. Your changes do not need to be saved again.": "プロバイダーは保存されましたが、エージェントが再接続できませんでした。変更を再度保存する必要はありません。",
+    "Provider saved, but settings could not be refreshed. Reopen settings to refresh.": "プロバイダーは保存されましたが、設定を更新できませんでした。設定を開き直して更新してください。",
+    "Changes have not been saved.": "変更は保存されていません。",
     "Continued from chat #{{number}}": "会話 #{{number}} から継続",
     "Continued from chat": "元の会話から継続",
     "Open-source license": "オープンソースライセンス",
@@ -5448,6 +5451,7 @@
     "Draft storage is unavailable. Copy your draft before leaving this page.": "下書きの保存を利用できません。このページを離れる前に下書きをコピーしてください。",
     "Sending failed. Your newer draft was kept. Copy the earlier draft from the details below.": "送信に失敗しました。新しい下書きは保持されています。以下の詳細から以前の下書きをコピーしてください。",
     "Uploaded files: names and indexed content. Generated files: names only. Unindexed content is not searched.": "アップロードしたファイルは名前と索引済みの内容、生成されたファイルは名前のみを検索します。未索引の内容は検索されません。",
+    "Provider connection status changed. Your changes have not been saved. Test the connection again.": "プロバイダーの接続状態が変わりました。変更は保存されていません。接続をもう一度テストしてください。",
     "Provider configuration changed. Your draft has not been saved.": "プロバイダーの設定が変更されました。下書きは保存されていません。",
     "Latest saved configuration": "最新の保存済み設定",
     "Reapply my changes to the latest configuration": "自分の変更を最新の設定に再適用",

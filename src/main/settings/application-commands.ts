@@ -24,7 +24,9 @@ import type {
   SetSessionDetailsModelRequest,
   SetSubagentModelRequest,
   SetVisionModelRequest,
-  ValidateProviderRequest
+  ValidateProviderRequest,
+  UpsertProviderRequest,
+  SaveValidatedProviderResult
 } from '../../shared/settings'
 import type {
   InstallMissingWslDependenciesRequest,
@@ -449,6 +451,11 @@ const settingsCoreApplicationCommands = Object.freeze({
     readonly [request: SetVisionModelRequest],
     StoreResult<'setVisionModel'>
   >('settings:set-vision-model'),
+  saveValidatedProvider: defineApplicationCommand<
+    'settings:save-validated-provider',
+    readonly [request: UpsertProviderRequest],
+    SaveValidatedProviderResult
+  >('settings:save-validated-provider'),
   validateProvider: defineApplicationCommand<
     'settings:validate-provider',
     readonly [request: ValidateProviderRequest],
@@ -520,12 +527,13 @@ const settingsCoreApplicationCommandGroup = defineApplicationCommandGroup('setti
   settingsCoreApplicationCommands.setSessionDetailsModel,
   settingsCoreApplicationCommands.setSubagentModel,
   settingsCoreApplicationCommands.setVisionModel,
+  settingsCoreApplicationCommands.saveValidatedProvider,
   settingsCoreApplicationCommands.validateProvider
 ] as const)
 
 type CoreSettingsApplicationCommandDependencies = Readonly<{
   service: CoreSettingsCommandStore
-  runtime: Pick<RuntimeSettingsWorkflows, 'refreshProviderModels'>
+  runtime: Pick<RuntimeSettingsWorkflows, 'refreshProviderModels' | 'saveValidatedProvider'>
   appearance: Pick<AppearanceSettingsWorkflows, 'setAppIconVariant'>
   localShell: Pick<LocalShellSettingsWorkflows, 'switchToPowerShell' | 'useWsl2Bash'>
   snapshotCommits: SettingsSnapshotCommitOwner
@@ -763,6 +771,10 @@ const registerCoreSettingsApplicationCommands = (
       'settings:set-vision-model': ({ args }) =>
         dependencies.snapshotCommits.currentSnapshotAfter(
           dependencies.service.setVisionModel(readVisionModel(args[0]))
+        ),
+      'settings:save-validated-provider': ({ args }) =>
+        dependencies.snapshotCommits.projectAfter(
+          dependencies.runtime.saveValidatedProvider(args[0])
         ),
       'settings:validate-provider': ({ args }) =>
         dependencies.snapshotCommits.projectAfter(dependencies.service.validateProvider(args[0]))

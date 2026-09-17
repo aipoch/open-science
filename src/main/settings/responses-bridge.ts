@@ -1,3 +1,7 @@
+import {
+  observeProviderFailure,
+  type ProviderFailureObserver
+} from './provider-failure-observation'
 import { randomBytes } from 'node:crypto'
 import type { ServerResponse } from 'node:http'
 
@@ -53,6 +57,7 @@ type JsonObject = Record<string, any>
 const log = createLogger('acp-bridge')
 
 export type ResponsesBridgeTarget = {
+  onProviderFailure?: ProviderFailureObserver
   baseUrl: string
   key?: string
   vendorId?: OfficialVendorId
@@ -71,7 +76,7 @@ export type ResponsesBridgeTarget = {
 
 export type ResponsesBridgeModelTarget = Pick<
   ResponsesBridgeTarget,
-  'model' | 'vendorId' | 'reasoningEffortTransport' | 'reasoningEffort'
+  'model' | 'vendorId' | 'reasoningEffortTransport' | 'reasoningEffort' | 'onProviderFailure'
 >
 
 export type ResponsesBridgeConnection = {
@@ -408,6 +413,7 @@ export class ResponsesBridge {
       return
     }
 
+    const target = this.target
     const body = (await request.readJsonObject()) as JsonObject
     const promptCacheKey =
       typeof body.prompt_cache_key === 'string' ? body.prompt_cache_key : undefined
@@ -452,14 +458,14 @@ export class ResponsesBridge {
           .map((tool: JsonObject) => ({ ...tool, namespace: REQUEST_LOCAL_PLAN_NAMESPACE }))
       : []
     const namespacedTools = reviewerScoped
-      ? (this.target.reviewerScope?.namespacedTools ?? [])
+      ? (target.reviewerScope?.namespacedTools ?? [])
       : toolLessScoped
         ? []
         : hostMessageScoped
           ? hostMessageTools
           : hostMessageBoundaryActive
             ? []
-            : [...(this.target.namespacedTools ?? []), ...skillTools, ...planTools]
+            : [...(target.namespacedTools ?? []), ...skillTools, ...planTools]
     // codex-acp ignores disableBuiltInTools metadata and still advertises shell/filesystem tools.
     // For reviewer turns, replace the entire declaration set at the protocol boundary so the model
     // can call only the scope-bounded reviewer HTTP MCP functions.
@@ -470,17 +476,17 @@ export class ResponsesBridge {
     const reasoningByItemId = this.reasoningForRequest(promptCacheKey)
     const chatRequest = responsesToChatRequest(
       scopedBody,
-      this.target.model,
+      target.model,
       reasoningByItemId,
       namespacedTools,
       {
-        reasoningEffortOverride: this.target.reasoningEffort,
-        vendorId: this.target.vendorId,
-        reasoningEffortTransport: this.target.reasoningEffortTransport
+        reasoningEffortOverride: target.reasoningEffort,
+        vendorId: target.vendorId,
+        reasoningEffortTransport: target.reasoningEffortTransport
       }
     )
     const chatRequestBody = JSON.stringify(chatRequest)
-    const replayKey = providerRequestFingerprint(this.target.baseUrl, chatRequestBody)
+    const replayKey = providerRequestFingerprint(target.baseUrl, chatRequestBody)
     this.reconcileReasoningForRequest(promptCacheKey, body.input)
 
     // Reveals which real model actually serves the turn (Codex only ever sees the internal catalog
@@ -529,7 +535,7 @@ export class ResponsesBridge {
 
     const headers: Record<string, string> = {
       'content-type': 'application/json',
-      ...(this.target.key ? { authorization: `Bearer ${this.target.key}` } : {})
+      ...(target.key ? { authorization: `Bearer ${target.key}` } : {})
     }
     const replay = this.deterministicErrors.get(replayKey)
     if (replay) {
@@ -542,7 +548,8 @@ export class ResponsesBridge {
       })
       return
     }
-    const upstream = await fetchProviderRequest(this.fetchImpl, chatUrl(this.target.baseUrl), {
+    const startedAt = Date.now()
+    const upstream = await fetchProviderRequest(this.fetchImpl, chatUrl(target.baseUrl), {
       method: 'POST',
       headers,
       body: chatRequestBody,
@@ -550,6 +557,12 @@ export class ResponsesBridge {
     })
     if (!upstream.ok) {
       const errorBody = await readBoundedProviderErrorBody(upstream, { signal: request.signal })
+      await observeProviderFailure(
+        target.onProviderFailure,
+        { model: chatRequest.model, endpoint: 'openai', startedAt },
+        upstream.status,
+        errorBody.complete ? errorBody.body.toString('utf8') : undefined
+      )
       const message = errorBody.complete
         ? upstreamErrorMessage(errorBody.body.toString('utf8'), upstream.status)
         : `Provider request failed with status ${upstream.status}`

@@ -120,6 +120,9 @@
     "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "Die Veröffentlichung der Abzweigung muss wiederhergestellt werden (Vorgang {{operationId}}, Session {{sessionId}}). Starten Sie die App neu, um diesen Versuch wiederherzustellen, bevor Sie erneut abzweigen."
   },
   "renderer": {
+    "Provider saved, but the Agent could not reconnect. Your changes do not need to be saved again.": "Anbieter gespeichert, aber der Agent konnte keine neue Verbindung herstellen. Ihre Änderungen müssen nicht erneut gespeichert werden.",
+    "Provider saved, but settings could not be refreshed. Reopen settings to refresh.": "Anbieter gespeichert, aber die Einstellungen konnten nicht aktualisiert werden. Öffnen Sie die Einstellungen erneut, um sie zu aktualisieren.",
+    "Changes have not been saved.": "Änderungen wurden nicht gespeichert.",
     "Continued from chat #{{number}}": "Fortgesetzt aus Chat #{{number}}",
     "Continued from chat": "Fortgesetzt aus einem Chat",
     "Open-source license": "Open-Source-Lizenz",
@@ -5605,6 +5608,7 @@
     "Draft storage is unavailable. Copy your draft before leaving this page.": "Der Entwurfsspeicher ist nicht verfügbar. Kopieren Sie Ihren Entwurf, bevor Sie diese Seite verlassen.",
     "Sending failed. Your newer draft was kept. Copy the earlier draft from the details below.": "Senden fehlgeschlagen. Ihr neuerer Entwurf bleibt erhalten. Kopieren Sie den früheren Entwurf aus den Details unten.",
     "Uploaded files: names and indexed content. Generated files: names only. Unindexed content is not searched.": "Hochgeladene Dateien: Namen und indizierte Inhalte. Generierte Dateien: nur Namen. Nicht indizierte Inhalte werden nicht durchsucht.",
+    "Provider connection status changed. Your changes have not been saved. Test the connection again.": "Der Verbindungsstatus des Anbieters hat sich geändert. Ihre Änderungen wurden nicht gespeichert. Testen Sie die Verbindung erneut.",
     "Provider configuration changed. Your draft has not been saved.": "Die Anbieterkonfiguration wurde geändert. Ihr Entwurf wurde nicht gespeichert.",
     "Latest saved configuration": "Zuletzt gespeicherte Konfiguration",
     "Reapply my changes to the latest configuration": "Meine Änderungen auf die neueste Konfiguration anwenden",

@@ -121,6 +121,9 @@
     "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "La publication de la copie doit être rétablie (opération {{operationId}}, session {{sessionId}}). Redémarrez l’application pour récupérer cette opération avant de dupliquer à nouveau."
   },
   "renderer": {
+    "Provider saved, but the Agent could not reconnect. Your changes do not need to be saved again.": "Le fournisseur a été enregistré, mais l’Agent n’a pas pu se reconnecter. Vous n’avez pas besoin d’enregistrer à nouveau vos modifications.",
+    "Provider saved, but settings could not be refreshed. Reopen settings to refresh.": "Le fournisseur a été enregistré, mais les paramètres n’ont pas pu être actualisés. Rouvrez les paramètres pour les actualiser.",
+    "Changes have not been saved.": "Les modifications n’ont pas été enregistrées.",
     "Continued from chat #{{number}}": "Suite de la conversation #{{number}}",
     "Continued from chat": "Suite d’une conversation",
     "Open-source license": "Licence open source",
@@ -5770,6 +5773,7 @@
     "Draft storage is unavailable. Copy your draft before leaving this page.": "Le stockage des brouillons est indisponible. Copiez votre brouillon avant de quitter cette page.",
     "Sending failed. Your newer draft was kept. Copy the earlier draft from the details below.": "L’envoi a échoué. Votre nouveau brouillon est conservé. Copiez le brouillon précédent depuis les détails ci-dessous.",
     "Uploaded files: names and indexed content. Generated files: names only. Unindexed content is not searched.": "Fichiers téléversés : noms et contenu indexé. Fichiers générés : noms uniquement. Le contenu non indexé n’est pas recherché.",
+    "Provider connection status changed. Your changes have not been saved. Test the connection again.": "L’état de la connexion au fournisseur a changé. Vos modifications n’ont pas été enregistrées. Testez à nouveau la connexion.",
     "Provider configuration changed. Your draft has not been saved.": "La configuration du fournisseur a changé. Votre brouillon n’a pas été enregistré.",
     "Latest saved configuration": "Dernière configuration enregistrée",
     "Reapply my changes to the latest configuration": "Réappliquer mes modifications à la dernière configuration",

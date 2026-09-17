@@ -5086,6 +5086,8 @@ const NOT_TRANSLATABLE = new Set([
   'Authorization: X-Api-Key:',
   'openid profile',
   'Python',
+  // Protocol name; every locale keeps it verbatim (see the "(HTTP {{status}})" interpolation keys).
+  'HTTP',
   'Enter',
   'Esc',
   'Ctrl',

@@ -119,6 +119,9 @@
     "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "副本发布需要恢复（操作 {{operationId}}，会话 {{sessionId}}）。请重启应用恢复此次操作，然后再创建副本。"
   },
   "renderer": {
+    "Provider saved, but the Agent could not reconnect. Your changes do not need to be saved again.": "供应商已保存，但智能体无法重新连接。无需再次保存更改。",
+    "Provider saved, but settings could not be refreshed. Reopen settings to refresh.": "供应商已保存，但无法刷新设置。请重新打开设置以刷新。",
+    "Changes have not been saved.": "更改尚未保存。",
     "Continued from chat #{{number}}": "继续自会话 #{{number}}",
     "Continued from chat": "继续自原会话",
     "Open-source license": "开源许可证",
@@ -5448,6 +5451,7 @@
     "Draft storage is unavailable. Copy your draft before leaving this page.": "草稿存储不可用。离开此页面前请复制草稿。",
     "Sending failed. Your newer draft was kept. Copy the earlier draft from the details below.": "发送失败。已保留您的新草稿。请从下方详情中复制先前的草稿。",
     "Uploaded files: names and indexed content. Generated files: names only. Unindexed content is not searched.": "上传文件：名称和已索引内容。生成文件：仅名称。未索引的内容不在搜索范围内。",
+    "Provider connection status changed. Your changes have not been saved. Test the connection again.": "供应商连接状态已更改。您的修改尚未保存。请重新测试连接。",
     "Provider configuration changed. Your draft has not been saved.": "供应商配置已更改。您的草稿尚未保存。",
     "Latest saved configuration": "最新保存的配置",
     "Reapply my changes to the latest configuration": "将我的更改重新应用到最新配置",

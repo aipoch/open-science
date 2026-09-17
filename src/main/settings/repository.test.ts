@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { sanitizeSettings } from './document-codec'
+import { providerValidationFailed } from '../../shared/settings'
 import { CONNECTOR_RESOURCE_LIMITS } from './connector-resource-limits'
 import { SettingsDocumentStore } from './document-store'
 import { SettingsRepository } from './repository'
@@ -54,6 +55,44 @@ afterEach(async () => {
 })
 
 describe('settings repository', () => {
+  it('does not treat a failed validation write as recovery of an in-flight request', async () => {
+    const store = new SettingsDocumentStore(await createStorageRoot())
+    const repository = new SettingsRepository(store)
+    await repository.upsertProvider(
+      provider({
+        lastValidatedAt: 1,
+        lastValidatedTarget: { model: 'a', endpoint: 'openai' }
+      })
+    )
+    vi.spyOn(store, 'mutate').mockImplementationOnce(async (update) => {
+      update(await store.read())
+      throw new Error('Synthetic write failure')
+    })
+    await expect(
+      repository.updateProviderValidationIfTargetMatches(
+        'p1',
+        () => true,
+        { ok: true, category: 'ok' },
+        { model: 'b', endpoint: 'openai' }
+      )
+    ).rejects.toThrow('Synthetic write failure')
+    expect(
+      await repository.updateProviderValidationIfTargetMatches(
+        'p1',
+        () => true,
+        { ok: false, category: 'model-not-found', status: 404 },
+        { model: 'b', endpoint: 'openai' },
+        2
+      )
+    ).toBe(true)
+    expect(
+      providerValidationFailed((await repository.getSettings()).providers[0], {
+        model: 'b',
+        endpoint: 'openai'
+      })
+    ).toBe(true)
+  })
+
   it('publishes an active custom model edit and its selection in one mutation', async () => {
     const dir = await createStorageRoot()
     const store = new SettingsDocumentStore(dir)
@@ -1041,6 +1080,70 @@ describe('settings repository', () => {
       }).providers[0].reasoningEffortTransport
     ).toBeUndefined()
   })
+
+  it('retains independent missing-model failures across reloads', async () => {
+    const root = await createStorageRoot()
+    const repository = new SettingsRepository(root)
+    await repository.upsertProvider(provider())
+    const first = { model: 'model-a', endpoint: 'openai' as const }
+    const second = { model: 'model-b', endpoint: 'responses' as const }
+    const failure = { ok: false, category: 'model-not-found' as const, status: 404 }
+    await repository.updateProviderValidationIfTargetMatches('p1', () => true, failure, first)
+    await repository.updateProviderValidationIfTargetMatches('p1', () => true, failure, second)
+    await repository.updateProviderValidationIfTargetMatches('p1', () => true, failure, second)
+    const saved = (await new SettingsRepository(root).getSettings()).providers[0]
+    expect(providerValidationFailed(saved, first)).toBe(true)
+    expect(providerValidationFailed(saved, second)).toBe(true)
+    expect(providerValidationFailed(saved, { model: 'model-c', endpoint: 'openai' })).toBe(false)
+    expect(saved.lastValidationFailure?.targets).toHaveLength(2)
+  })
+
+  it.each(['model-a', 'model-b'])(
+    'a later success restores only %s and retains the other missing model',
+    async (successfulModel) => {
+      const root = await createStorageRoot()
+      const repository = new SettingsRepository(root)
+      await repository.upsertProvider(provider())
+      const first = { model: 'model-a', endpoint: 'openai' as const }
+      const second = { model: 'model-b', endpoint: 'openai' as const }
+      const now = vi.spyOn(Date, 'now').mockReturnValue(1000)
+      try {
+        const failure = { ok: false, category: 'model-not-found' as const, status: 404 }
+        await repository.updateProviderValidationIfTargetMatches('p1', () => true, failure, first)
+        await repository.updateProviderValidationIfTargetMatches('p1', () => true, failure, second)
+        now.mockReturnValue(2000)
+        const successful = successfulModel === first.model ? first : second
+        const remaining = successfulModel === first.model ? second : first
+        await repository.updateProviderValidationIfTargetMatches(
+          'p1',
+          () => true,
+          { ok: true, category: 'ok' },
+          successful
+        )
+        const saved = (await new SettingsRepository(root).getSettings()).providers[0]
+        expect(providerValidationFailed(saved, successful)).toBe(false)
+        expect(providerValidationFailed(saved, remaining)).toBe(true)
+        expect(saved.lastValidationFailure?.target).toEqual(remaining)
+        expect(saved.lastValidationFailure?.targets).toBeUndefined()
+        // The removed primary target's HTTP details must not be attributed to the retained model.
+        if (successfulModel === second.model) {
+          expect(saved.lastValidationFailure?.status).toBeUndefined()
+          expect(saved.lastValidationFailure?.message).toBeUndefined()
+        }
+        await repository.updateProviderValidationIfTargetMatches(
+          'p1',
+          () => true,
+          { ok: true, category: 'ok' },
+          remaining
+        )
+        expect(
+          (await new SettingsRepository(root).getSettings()).providers[0].lastValidationFailure
+        ).toBeUndefined()
+      } finally {
+        now.mockRestore()
+      }
+    }
+  )
 
   it('round-trips a recorded validation failure across a reload', async () => {
     const root = await createStorageRoot()

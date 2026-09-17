@@ -94,6 +94,7 @@ const expectedChannels = [
   'settings:set-session-details-model',
   'settings:set-subagent-model',
   'settings:set-vision-model',
+  'settings:save-validated-provider',
   'settings:validate-provider'
 ] as const
 
@@ -155,7 +156,10 @@ const createDependencies = (
     useWsl2Bash,
     dependencies: {
       service,
-      runtime: { refreshProviderModels: (request) => service.refreshProviderModels(request) },
+      runtime: {
+        refreshProviderModels: (request) => service.refreshProviderModels(request),
+        saveValidatedProvider: vi.fn()
+      },
       appearance: { setAppIconVariant: appearance },
       localShell: { switchToPowerShell, useWsl2Bash },
       snapshotCommits,
@@ -168,6 +172,25 @@ const createDependencies = (
 }
 
 describe('Settings core application commands', () => {
+  it('returns validated-save outcomes intact through local and remote command serialization', async () => {
+    const { dependencies } = createDependencies()
+    const result = {
+      validation: { ok: true, category: 'ok' as const },
+      providerId: 'committed',
+      runtimeReconnectFailed: true
+    }
+    vi.mocked(dependencies.runtime.saveValidatedProvider).mockResolvedValue(result)
+    const router = createApplicationCommandRouter()
+    registerCoreSettingsApplicationCommands(router.registrar, dependencies)
+    for (const location of ['local', 'remote'] as const) {
+      const returned = await router.dispatcher.invoke(
+        settingsCoreApplicationCommands.saveValidatedProvider,
+        invocation([{ id: 'committed', type: 'custom' }] as const, location)
+      )
+      expect(JSON.parse(JSON.stringify(returned))).toEqual(result)
+    }
+  })
+
   it('dispatches queue progress and identity-bound stop from local and remote callers', async () => {
     const { dependencies, serviceMethod } = createDependencies()
     const router = createApplicationCommandRouter()
@@ -224,7 +247,7 @@ describe('Settings core application commands', () => {
     const router = createApplicationCommandRouter()
     registerCoreSettingsApplicationCommands(router.registrar, {
       ...dependencies,
-      runtime: { refreshProviderModels }
+      runtime: { refreshProviderModels, saveValidatedProvider: vi.fn() }
     })
     await expect(
       router.dispatcher.invoke(

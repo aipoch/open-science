@@ -119,6 +119,9 @@
     "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "복제 게시를 복구해야 합니다(작업 {{operationId}}, 세션 {{sessionId}}). 다시 복제하기 전에 앱을 다시 시작하여 이 작업을 복구하세요."
   },
   "renderer": {
+    "Provider saved, but the Agent could not reconnect. Your changes do not need to be saved again.": "모델 제공업체가 저장되었지만 에이전트가 다시 연결하지 못했습니다. 변경 사항을 다시 저장할 필요는 없습니다.",
+    "Provider saved, but settings could not be refreshed. Reopen settings to refresh.": "모델 제공업체가 저장되었지만 설정을 새로 고치지 못했습니다. 설정을 다시 열어 새로 고치세요.",
+    "Changes have not been saved.": "변경 사항이 저장되지 않았습니다.",
     "Continued from chat #{{number}}": "대화 #{{number}}에서 계속",
     "Continued from chat": "이전 대화에서 계속",
     "Open-source license": "오픈 소스 라이선스",
@@ -5446,6 +5449,7 @@
     "Draft storage is unavailable. Copy your draft before leaving this page.": "초안을 저장할 수 없습니다. 이 페이지를 떠나기 전에 초안을 복사하세요.",
     "Sending failed. Your newer draft was kept. Copy the earlier draft from the details below.": "보내기에 실패했습니다. 새 초안은 유지됩니다. 아래 세부 정보에서 이전 초안을 복사하세요.",
     "Uploaded files: names and indexed content. Generated files: names only. Unindexed content is not searched.": "업로드한 파일: 이름 및 색인된 내용. 생성된 파일: 이름만. 색인되지 않은 내용은 검색하지 않습니다.",
+    "Provider connection status changed. Your changes have not been saved. Test the connection again.": "모델 제공업체의 연결 상태가 변경되었습니다. 변경 사항이 저장되지 않았습니다. 연결을 다시 테스트해 주세요.",
     "Provider configuration changed. Your draft has not been saved.": "모델 제공업체 설정이 변경되었습니다. 초안이 저장되지 않았습니다.",
     "Latest saved configuration": "최근 저장된 설정",
     "Reapply my changes to the latest configuration": "최신 설정에 내 변경 사항 다시 적용",

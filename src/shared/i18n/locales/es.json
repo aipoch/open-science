@@ -121,6 +121,9 @@
     "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "Es necesario recuperar la publicación de la bifurcación (operación {{operationId}}, sesión {{sessionId}}). Reinicie la aplicación para recuperar este intento antes de volver a bifurcar."
   },
   "renderer": {
+    "Provider saved, but the Agent could not reconnect. Your changes do not need to be saved again.": "Se ha guardado el proveedor, pero el Agente no ha podido volver a conectarse. No es necesario volver a guardar los cambios.",
+    "Provider saved, but settings could not be refreshed. Reopen settings to refresh.": "Se ha guardado el proveedor, pero no se ha podido actualizar la configuración. Vuelva a abrir la configuración para actualizarla.",
+    "Changes have not been saved.": "Los cambios no se han guardado.",
     "Continued from chat #{{number}}": "Continuación de la conversación #{{number}}",
     "Continued from chat": "Continuación de una conversación",
     "Open-source license": "Licencia de código abierto",
@@ -5770,6 +5773,7 @@
     "Draft storage is unavailable. Copy your draft before leaving this page.": "El almacenamiento de borradores no está disponible. Copie su borrador antes de salir de esta página.",
     "Sending failed. Your newer draft was kept. Copy the earlier draft from the details below.": "No se pudo enviar. Se conserva su borrador más reciente. Copie el borrador anterior de los detalles siguientes.",
     "Uploaded files: names and indexed content. Generated files: names only. Unindexed content is not searched.": "Archivos cargados: nombres y contenido indexado. Archivos generados: solo nombres. No se busca en contenido sin indexar.",
+    "Provider connection status changed. Your changes have not been saved. Test the connection again.": "El estado de conexión del proveedor ha cambiado. Sus cambios no se han guardado. Vuelva a probar la conexión.",
     "Provider configuration changed. Your draft has not been saved.": "La configuración del proveedor ha cambiado. Su borrador no se ha guardado.",
     "Latest saved configuration": "Última configuración guardada",
     "Reapply my changes to the latest configuration": "Volver a aplicar mis cambios a la última configuración",

@@ -1,3 +1,4 @@
+import { ProviderRuntimeHealthOwner } from './provider-runtime-health-owner'
 import { ClaudeCodeSkillMaterializer } from '../skills/materializer'
 import type { SpecialistListItem } from '../../shared/specialist'
 import { homedir } from 'node:os'
@@ -98,6 +99,7 @@ import type {
   UpdateSkillRequest,
   UpsertProviderRequest,
   ValidateProviderRequest,
+  SaveValidatedProviderResult,
   ValidateProviderResult
 } from '../../shared/settings'
 import { createLogger, type Logger } from '../logger'
@@ -224,6 +226,7 @@ export type SettingsServiceOptions = {
   readMarketplaceSpecialists?: () => Promise<SpecialistListItem[]>
   withMarketplaceImpactLock?: <T>(operation: () => Promise<T>) => Promise<T>
   // OpenAlex validation transport. Production injects Electron net.fetch so proxy settings apply.
+  onProviderHealthChanged?: () => Promise<void>
   openAlexFetch?: typeof fetch
   // One-shot Claude command runner, injectable so validation tests can inspect the exact auth env.
   executeClaudeProbe?: ExecuteClaudeProbe
@@ -573,7 +576,12 @@ class SettingsService {
       claudeIsolatedAuth: options.claudeIsolatedAuth,
       claudeSharedAuth: options.claudeSharedAuth
     })
+    const providerHealth = new ProviderRuntimeHealthOwner(
+      this.repository,
+      options.onProviderHealthChanged
+    )
     this.backendResolver = new AgentBackendResolver({
+      onProviderFailure: (target, failure) => providerHealth.observe(target, failure),
       readSettings: () => this.repository.getSettings(),
       providers: this.providers,
       runtime: this.runtimeManager,
@@ -1495,6 +1503,19 @@ class SettingsService {
   async upsertProvider(request: UpsertProviderRequest): Promise<SettingsSnapshot> {
     await this.providers.upsertProvider(request)
     return this.getSettingsView()
+  }
+
+  async saveValidatedProvider(
+    request: UpsertProviderRequest
+  ): Promise<SaveValidatedProviderResult> {
+    const result = await this.providers.saveValidatedProvider(request)
+    if (!result.providerId && result.validation.applied !== true) return result
+    try {
+      return { ...result, snapshot: await this.getSettingsView() }
+    } catch {
+      // The operation completed; preserve configuration/health outcomes if projection is unavailable.
+      return result
+    }
   }
 
   async rememberCodexAutoHttpsFallback(): Promise<boolean> {

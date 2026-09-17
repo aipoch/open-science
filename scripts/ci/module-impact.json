@@ -1748,6 +1748,7 @@
           "src/shared/renderer-surface-matrix.test.ts",
           "src/main/settings/skill-catalog.test.ts",
           "src/main/session-package/fork.test.ts",
+          "src/main/settings/provider-runtime-health-owner.test.ts",
           "src/renderer/src/lib/session-persistence/session-persistence.test.ts",
           "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts"
         ]
@@ -2923,6 +2924,7 @@
           "src/main/session-package/fork.test.ts",
           "src/main/settings/responses-bridge.plan-tools.test.ts",
           "src/main/session-plan/plan-context-file.shell.integration.test.ts",
+          "src/main/settings/provider-runtime-health-owner.test.ts",
           "src/renderer/src/lib/session-persistence/session-persistence.test.ts",
           "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts"
         ]
@@ -3158,6 +3160,7 @@
           "src/renderer/src/stores/runtime-settings-store.test.ts",
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
+          "src/main/settings/provider-runtime-health-owner.test.ts",
           "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts"
         ]
       },
@@ -3670,6 +3673,7 @@
           "src/main/session-package/fork.test.ts",
           "src/main/session-plan/plan-context-file.shell.integration.test.ts",
           "src/main/settings/responses-bridge.plan-tools.test.ts",
+          "src/main/settings/provider-runtime-health-owner.test.ts",
           "src/renderer/src/lib/session-persistence/session-persistence.test.ts",
           "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts"
         ]
@@ -3693,6 +3697,8 @@
         "src/main/settings/provider-error-replay.ts",
         "src/main/settings/provider-loopback-http-host.ts",
         "src/main/settings/provider-transport-owner.ts",
+        "src/main/settings/provider-failure-observation.ts",
+        "src/main/settings/provider-runtime-health-owner.ts",
         "src/main/settings/responses-bridge.ts",
         "src/main/settings/responses-bridge.plan-tools.test.ts",
         "src/main/settings/responses-protocol-types.ts",
@@ -3714,6 +3720,7 @@
         "src/main/settings/provider-loopback-http-host.test.ts",
         "src/main/settings/provider-transport-owner.architecture.test.ts",
         "src/main/settings/provider-transport-owner.test.ts",
+        "src/main/settings/provider-runtime-health-owner.test.ts",
         "src/main/settings/responses-bridge.integration.test.ts",
         "src/main/settings/responses-bridge.test.ts",
         "src/main/settings/responses-reasoning-replay.test.ts",
@@ -3736,6 +3743,8 @@
         "src/main/settings/openai-provider-bridge.ts",
         "src/main/settings/provider-loopback-http-host.ts",
         "src/main/settings/provider-transport-owner.ts",
+        "src/main/settings/provider-failure-observation.ts",
+        "src/main/settings/provider-runtime-health-owner.ts",
         "src/main/settings/responses-request-adapter.ts",
         "src/main/settings/responses-response-adapter.ts",
         "src/main/settings/system-proxy.ts",
@@ -3756,6 +3765,7 @@
           "src/main/settings/backend-route-planner.test.ts",
           "src/main/settings/backend-route-planner.architecture.test.ts",
           "src/main/settings/provider-transport-owner.test.ts",
+          "src/main/settings/provider-runtime-health-owner.test.ts",
           "src/main/settings/provider-transport-owner.architecture.test.ts",
           "src/main/settings/provider-loopback-http-host.test.ts",
           "src/main/settings/provider-loopback-http-host.architecture.test.ts",
@@ -4623,6 +4633,7 @@
           "src/shared/renderer-surface-matrix.test.ts",
           "src/main/settings/skill-catalog.test.ts",
           "src/main/session-package/fork.test.ts",
+          "src/main/settings/provider-runtime-health-owner.test.ts",
           "src/renderer/src/lib/session-persistence/session-persistence.test.ts",
           "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts"
         ]
@@ -5081,6 +5092,7 @@
           "src/shared/renderer-surface-matrix.test.ts",
           "src/main/session-package/fork.test.ts",
           "src/main/session-plan/plan-context-file.shell.integration.test.ts",
+          "src/main/settings/provider-runtime-health-owner.test.ts",
           "src/renderer/src/lib/session-persistence/session-persistence.test.ts",
           "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts"
         ]
@@ -5907,6 +5919,7 @@
           "src/renderer/web/renderer-argument-shape-characterization.test.ts",
           "src/main/settings/skill-catalog.test.ts",
           "src/main/session-package/fork.test.ts",
+          "src/main/settings/provider-runtime-health-owner.test.ts",
           "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts"
         ]
       },
@@ -8637,6 +8650,7 @@
           "src/shared/run-error-classification.test.ts",
           "src/main/session-package/fork.test.ts",
           "src/main/settings/responses-bridge.plan-tools.test.ts",
+          "src/main/settings/provider-runtime-health-owner.test.ts",
           "src/renderer/src/lib/session-persistence/session-persistence.test.ts",
           "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts"
         ]
@@ -9828,6 +9842,7 @@
           "src/main/session-package/fork.test.ts",
           "src/main/session-plan/plan-context-file.shell.integration.test.ts",
           "src/main/settings/responses-bridge.plan-tools.test.ts",
+          "src/main/settings/provider-runtime-health-owner.test.ts",
           "src/renderer/src/lib/session-persistence/session-persistence.test.ts",
           "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts"
         ]
@@ -10627,6 +10642,7 @@
           "src/shared/renderer-surface-matrix.test.ts",
           "src/main/session-package/fork.test.ts",
           "src/main/settings/responses-bridge.plan-tools.test.ts",
+          "src/main/settings/provider-runtime-health-owner.test.ts",
           "src/renderer/src/lib/session-persistence/session-persistence.test.ts",
           "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts"
         ]
@@ -11957,6 +11973,7 @@
           "src/main/session-plan/plan-context-file.shell.integration.test.ts",
           "src/main/session-plan/plan-legacy-compatibility.test.ts",
           "src/main/settings/responses-bridge.plan-tools.test.ts",
+          "src/main/settings/provider-runtime-health-owner.test.ts",
           "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts"
         ]
       },
@@ -18113,6 +18130,7 @@
           "src/shared/renderer-surface-matrix.test.ts",
           "src/main/session-package/fork.test.ts",
           "src/main/settings/responses-bridge.plan-tools.test.ts",
+          "src/main/settings/provider-runtime-health-owner.test.ts",
           "src/renderer/src/lib/session-persistence/session-persistence.test.ts",
           "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts"
         ]
@@ -21583,6 +21601,7 @@
           "src/main/session-plan/plan-context-file.shell.integration.test.ts",
           "src/main/session-plan/plan-context-file.test.ts",
           "src/main/session-plan/plan-legacy-compatibility.test.ts",
+          "src/main/settings/provider-runtime-health-owner.test.ts",
           "src/renderer/src/lib/session-persistence/session-persistence.test.ts",
           "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts"
         ]
@@ -22627,6 +22646,7 @@
           "src/main/notebook/dependency-analysis.stdlib-replay.test.ts",
           "src/main/session-package/fork.test.ts",
           "src/main/session-plan/plan-context-file.shell.integration.test.ts",
+          "src/main/settings/provider-runtime-health-owner.test.ts",
           "src/renderer/src/lib/session-persistence/session-persistence.test.ts",
           "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts"
         ]
@@ -22931,7 +22951,6 @@
           "src/main/compute/slurm.real-ssh.integration.test.ts",
           "src/main/compute/ssh-runner.test.ts",
           "src/main/connectors/application.test.ts",
-          "src/main/connectors/descriptors/variants-gnomad.test.ts",
           "src/main/connectors/mcp-payload-pagination.integration.test.ts",
           "src/main/connectors/service.test.ts",
           "src/main/database/permission-approval-summary.test.ts",
@@ -23020,6 +23039,7 @@
           "src/renderer/src/pages/settings/SpecialistEditor.persistence.render.test.tsx",
           "src/shared/renderer-surface-inventory.test.ts",
           "src/shared/renderer-surface-matrix.test.ts",
+          "src/main/connectors/descriptors/variants-gnomad.test.ts",
           "src/renderer/src/lib/session-persistence/session-persistence.test.ts",
           "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts"
         ]
@@ -24093,6 +24113,7 @@
           "src/main/session-package/fork.test.ts",
           "src/main/settings/responses-bridge.plan-tools.test.ts",
           "src/main/session-plan/plan-context-file.shell.integration.test.ts",
+          "src/main/settings/provider-runtime-health-owner.test.ts",
           "src/renderer/src/lib/session-persistence/session-persistence.test.ts",
           "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts"
         ]
@@ -25215,6 +25236,7 @@
           "src/main/session-plan/plan-context-file.shell.integration.test.ts",
           "src/main/session-plan/plan-legacy-compatibility.test.ts",
           "src/main/session-plan/plan-context-file.test.ts",
+          "src/main/settings/provider-runtime-health-owner.test.ts",
           "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts"
         ]
       },
@@ -27511,7 +27533,8 @@
           "src/renderer/src/stores/settings-store.test.ts",
           "src/renderer/web/bootstrap.test.ts",
           "src/renderer/web/renderer-argument-shape-characterization.test.ts",
-          "src/renderer/src/lib/session-fork.test.ts"
+          "src/renderer/src/lib/session-fork.test.ts",
+          "src/renderer/src/pages/settings/ProviderTestResultCard.test.tsx"
         ]
       },
       "capabilityOverlays": [],
@@ -28582,7 +28605,8 @@
           "src/renderer/src/stores/specialist-store.upload.test.ts",
           "src/renderer/src/stores/theme-store.test.ts",
           "src/renderer/web/bootstrap.test.ts",
-          "src/renderer/web/renderer-argument-shape-characterization.test.ts"
+          "src/renderer/web/renderer-argument-shape-characterization.test.ts",
+          "src/renderer/src/pages/settings/ProviderTestResultCard.test.tsx"
         ]
       },
       "capabilityOverlays": [],
@@ -29871,7 +29895,9 @@
         "src/renderer/src/pages/settings/useWslSetupStatus.test.ts",
         "src/renderer/src/pages/settings/useWslSetupStatus.ts",
         "src/renderer/src/pages/settings/validation-message.test.ts",
-        "src/renderer/src/pages/settings/validation-message.ts"
+        "src/renderer/src/pages/settings/validation-message.ts",
+        "src/renderer/src/pages/settings/ProviderTestResultCard.tsx",
+        "src/renderer/src/pages/settings/ProviderTestResultCard.test.tsx"
       ],
       "interfacePaths": [
         "src/renderer/src/pages/settings/AppVersionSection.tsx",
@@ -29970,7 +29996,8 @@
           "src/renderer/src/pages/settings/storage-i18n.render.test.tsx",
           "src/renderer/src/pages/settings/token-usage-analytics.test.ts",
           "src/renderer/src/pages/settings/useWslSetupStatus.test.ts",
-          "src/renderer/src/pages/settings/validation-message.test.ts"
+          "src/renderer/src/pages/settings/validation-message.test.ts",
+          "src/renderer/src/pages/settings/ProviderTestResultCard.test.tsx"
         ],
         "contract": [],
         "consumer": [

@@ -37,6 +37,7 @@ type RuntimeProviderModelSelection =
   | { kind: 'provider-default' }
 
 type ProviderRuntimeTarget = {
+  configRevision?: number
   providerId: string
   providerType: StoredProvider['type']
   disconnectedAt?: number
@@ -171,6 +172,7 @@ class ProviderRuntimeProjectionOwner {
 
     return {
       providerId: storedProvider.id,
+      configRevision: storedProvider.configRevision ?? 0,
       providerType: storedProvider.type,
       ...(storedProvider.disconnectedAt === undefined
         ? {}

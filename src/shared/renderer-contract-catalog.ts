@@ -492,6 +492,7 @@ import type {
   RespondApprovalRequest,
   RespondConnectorCredentialRequest,
   UpsertProviderRequest,
+  SaveValidatedProviderResult,
   ValidateProviderRequest,
   ValidateProviderResult
 } from './settings'
@@ -2408,6 +2409,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'settings.upsertProvider': callable<
     (request: UpsertProviderRequest) => Promise<SettingsSnapshot>
   >()('settings', ['settings:upsert-provider']),
+  'settings.saveValidatedProvider': callable<
+    (request: UpsertProviderRequest) => Promise<SaveValidatedProviderResult>
+  >()('settings', ['settings:save-validated-provider']),
   'settings.validateProvider': callable<
     (request: ValidateProviderRequest) => Promise<ValidateProviderResult>
   >()('settings', ['settings:validate-provider']),
