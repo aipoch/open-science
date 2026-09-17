@@ -1002,7 +1002,6 @@ describe('PR Gate workflow', () => {
       'src/main/windows.test.ts',
       'src/main/windows-icon-assets.test.ts',
       'src/main/windows-powershell.test.ts',
-      'src/main/uploads/atomic-no-replace-publisher.test.ts',
       'src/main/delegation/acp-execution.test.ts',
       'src/main/delegation/production-framework-runtime.test.ts',
       'src/main/file-save.test.ts',
@@ -1017,7 +1016,6 @@ describe('PR Gate workflow', () => {
       ({ name }) => name === 'Test macOS-native behavior'
     )
     for (const testFile of [
-      'src/main/uploads/atomic-no-replace-publisher.test.ts',
       'src/main/delegation/acp-execution.test.ts',
       'src/main/delegation/production-framework-runtime.test.ts'
     ])

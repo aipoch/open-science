@@ -1,10 +1,8 @@
 import { resolveEffectiveSpecialistSkills } from '../../shared/specialist'
 import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-server'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
-import { lstat, mkdir } from 'node:fs/promises'
-import type { BigIntStats } from 'node:fs'
-import { removeAnchoredTree } from '../uploads/atomic-no-replace-publisher'
-import { join, relative } from 'node:path'
+import { chmod, lstat, mkdir, readdir, rm } from 'node:fs/promises'
+import { join } from 'node:path'
 
 import {
   materializeSessionConversationGraph,
@@ -79,6 +77,27 @@ const sessionSetup = (backend: ResolvedAgentBackend): SessionSetup =>
     ...(backend.sessionOptions ? { sessionOptions: backend.sessionOptions } : {})
   })
 
+// Called before a child is spawned or after its process tree is confirmed reaped.
+// Skip remaining symlinks so cleanup does not chmod their external targets.
+const makeRuntimeCopyRemovable = async (path: string): Promise<void> => {
+  const entry = await lstat(path).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== 'ENOENT') throw error
+    return undefined
+  })
+  if (!entry || entry.isSymbolicLink()) return
+  if (entry.isDirectory()) {
+    await chmod(path, (entry.mode & 0o777) | 0o700)
+    for (const child of await readdir(path, { withFileTypes: true })) {
+      if (child.isDirectory() || (process.platform === 'win32' && child.isFile())) {
+        await makeRuntimeCopyRemovable(join(path, child.name))
+      }
+    }
+  } else if (process.platform === 'win32' && entry.isFile()) {
+    // Windows also checks the readonly file attribute when deleting a file.
+    await chmod(path, (entry.mode & 0o777) | 0o600)
+  }
+}
+
 const createProductionDelegatedFrameworkRuntime = (
   options: ProductionFrameworkRuntimeOptions
 ): ProductionDelegatedFrameworks =>
@@ -125,20 +144,18 @@ const createProductionDelegatedFrameworkRuntime = (
           'runtime',
           input.attemptId
         )
-        let runtimeIdentity: Pick<BigIntStats, 'dev' | 'ino'> | undefined
         const removeRuntimeHome = async (): Promise<void> => {
-          if (runtimeIdentity)
-            await removeAnchoredTree(
-              options.dataRoot,
-              relative(options.dataRoot, runtimeHome),
-              runtimeIdentity
-            )
+          // OpenCode copies Main's read-only Skills even without a Specialist. Clear only
+          // this Attempt's projection before removing its home, also after partial setup.
+          if (frameworkId === 'opencode') {
+            await makeRuntimeCopyRemovable(runtimeHome)
+          }
+          await rm(runtimeHome, { recursive: true, force: true })
         }
         let openCodeRuntime: PreparedOpenCodeRuntime | undefined
         let preparedSkills: AcpRuntimeCompositionOptions['preparedSkills']
         try {
           await mkdir(runtimeHome, { recursive: true, mode: 0o700 })
-          runtimeIdentity = await lstat(runtimeHome, { bigint: true })
           const durable = await options.readSession(input.session)
           const graph = durable && materializeSessionConversationGraph(durable).conversationGraph
           const frame = graph?.frames.find((candidate) => candidate.id === input.frameId)
@@ -289,9 +306,13 @@ const createProductionDelegatedFrameworkRuntime = (
             async disposeResources() {
               // Port ownership also outlives a possibly surviving or still-starting child.
               openCodeRuntime?.dispose()
-              // Skill projections are inside this owned tree. Do not run their path-based disposer
-              // against files the child could have replaced with links.
-              await removeRuntimeHome()
+              try {
+                // OpenCode copies read-only Skills into its config tree; the cleanup below
+                // restores directory permissions while skipping remaining symlinks.
+                if (frameworkId !== 'opencode') await preparedSkills?.dispose()
+              } finally {
+                await removeRuntimeHome()
+              }
             }
           }
           if (delegatedSpawn) return { ...base, spawn: delegatedSpawn }
@@ -305,6 +326,7 @@ const createProductionDelegatedFrameworkRuntime = (
             `Delegated-work framework ${frameworkId} does not prepare an execution scope.`
           )
         } catch (error) {
+          if (frameworkId !== 'opencode') await preparedSkills?.dispose().catch(() => undefined)
           openCodeRuntime?.dispose()
           preparedAttempts.delete(input.attemptId)
           if (releaseResolvedBackend) await releaseResolvedAgentBackendLeases(backend)

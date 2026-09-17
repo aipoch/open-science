@@ -2,7 +2,6 @@ import { SettingsService } from '../settings/service'
 import { SettingsRepository } from '../settings/repository'
 import { SkillRegistry } from '../skills/registry'
 import { ClaudeCodeSkillMaterializer } from '../skills/materializer'
-import { removeAnchoredTree } from '../uploads/atomic-no-replace-publisher'
 import {
   loadSkillDocument,
   OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION
@@ -407,11 +406,8 @@ describe('production delegated framework runtime bridge', () => {
         prepareSpy.mockRestore()
         releasePort?.()
         await settings.dispose()
-        await removeAnchoredTree(
-          dirname(dataRoot),
-          basename(dataRoot),
-          await lstat(dataRoot, { bigint: true })
-        )
+        await observed?.preparedSkills?.dispose()
+        await rm(dataRoot, { recursive: true, force: true })
       }
     }
   )
@@ -448,7 +444,11 @@ describe('production delegated framework runtime bridge', () => {
               expect(await readFile(join(copy, '.catalog_stamp'), 'utf8')).toBe(
                 'main-owned snapshot'
               )
-              if (process.platform !== 'win32') expect((await stat(copy)).mode & 0o222).toBe(0)
+              if (process.platform !== 'win32') {
+                expect((await stat(copy)).mode & 0o222).toBe(0)
+                // Reproduce a child removing every permission before it exits.
+                await chmod(copy, 0o000)
+              }
               await symlink(
                 sourceSkill,
                 join(dirname(copy), 'external-skill'),

@@ -9768,7 +9768,6 @@
         "packages/safe-file-publisher-native/index.cjs",
         "packages/safe-file-publisher-native/index.d.ts",
         "packages/safe-file-publisher-native/package.json",
-        "packages/safe-file-publisher-native/src/runtime_tree_removal.h",
         "packages/safe-file-publisher-native/src/safe_file_publisher_native.cc"
       ],
       "interfacePaths": ["packages/safe-file-publisher-native/index.cjs"],

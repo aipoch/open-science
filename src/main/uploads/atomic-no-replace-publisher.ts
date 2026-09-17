@@ -70,11 +70,3 @@ export const recoverAnchoredRemoval = (
     ...(contentFilename === undefined ? [] : [contentFilename])
   )
 }
-
-export const removeAnchoredTree = async (
-  rootPath: string,
-  relativePath: string,
-  identity: Pick<BigIntStats, 'dev' | 'ino'>
-): Promise<void> => {
-  await loadBinding().removeAnchoredTree(rootPath, relativePath, identity.dev, identity.ino)
-}

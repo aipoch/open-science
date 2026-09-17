@@ -33,15 +33,3 @@ export function recoverAnchoredRemoval(
   parentIno: bigint,
   contentFilename?: string
 ): void
-
-/**
- * Remove an owned tree after its writers exit, without following links.
- * The root is trusted; target identity is captured at creation and checked before traversal.
- * POSIX final unlink is name-based, not an atomic identity-conditioned deletion.
- */
-export function removeAnchoredTree(
-  rootPath: string,
-  relativePath: string,
-  dev: bigint,
-  ino: bigint
-): Promise<void>

@@ -7,9 +7,6 @@
     "src/main/process-tree.ts",
     "src/main/process-tree-native-loading.macos.integration.test.ts"
   ],
-  "packages/safe-file-publisher-native/src/runtime_tree_removal.h": [
-    "packages/safe-file-publisher-native/src/safe_file_publisher_native.cc"
-  ],
   "packages/safe-file-publisher-native/src/safe_file_publisher_native.cc": [
     "packages/safe-file-publisher-native/index.cjs"
   ],
