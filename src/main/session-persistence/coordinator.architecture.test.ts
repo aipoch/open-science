@@ -443,6 +443,7 @@ describe('Session persistence coordinator architecture', () => {
         'acknowledgeUncertainMessage',
         'admitMessageCommand',
         'admitQuestion',
+        'adoptPublishedSession',
         'appendSideChatRelay',
         'appendUserMessageToInteraction',
         'applyAgentEvent',
@@ -711,6 +712,7 @@ describe('Session persistence coordinator architecture', () => {
         'markCommittedProjectSessionsPrepared'
       ],
       runSession: [
+        'adoptPublishedSession',
         'appendSideChatRelay',
         'appendUserMessageToInteraction',
         'assertSessionAvailable',
@@ -807,7 +809,7 @@ describe('Session persistence coordinator architecture', () => {
       expect(methods(owner, 'private')).not.toContain('enqueue')
     }
 
-    expect(expectedSchedulerRoute.size).toBe(45)
+    expect(expectedSchedulerRoute.size).toBe(46)
     const constructorSource = facade.members.filter(isConstructorDeclaration)[0].getText(facadeFile)
     expect(constructorSource).toContain('this.operationScheduler.runSession(')
     expect(constructorSource).toContain('this.operationScheduler.runGlobal(work)')
@@ -1632,7 +1634,8 @@ describe('Session persistence coordinator architecture', () => {
       'src/renderer/src/pages/workspace/previews/preview-pagination-contract.test.tsx',
       'src/shared/renderer-surface-inventory.test.ts',
       'src/shared/renderer-surface-matrix.test.ts',
-      'src/main/settings/skill-catalog.test.ts'
+      'src/main/settings/skill-catalog.test.ts',
+      'src/main/session-package/fork.test.ts'
     ])
     expect(sessionPersistence.capabilityOverlays).toEqual([
       'windows_sensitive',

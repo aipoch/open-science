@@ -1355,7 +1355,8 @@ describe('Session Store architecture', () => {
           'src/renderer/src/stores/settings-navigation-slice.test.ts',
           'src/renderer/src/stores/settings-store.test.ts',
           'src/renderer/web/bootstrap.test.ts',
-          'src/renderer/web/renderer-argument-shape-characterization.test.ts'
+          'src/renderer/web/renderer-argument-shape-characterization.test.ts',
+          'src/renderer/src/lib/session-fork.test.ts'
         ]
       },
       capabilityOverlays: ['renderer_state'],
