@@ -136,6 +136,9 @@ type InvocationOwner<Owner> = Readonly<{
 // T2h0 injects this adapter; it resolves native window/progress targets without putting Electron
 // objects in transport-neutral application invocations.
 type ElectronDataContentApplicationCommandAdapter = InvocationOwner<{
+  forkSession: (
+    request: SessionPackage.SessionPackageRequest
+  ) => Promise<SessionPackage.SessionPackageRequest | null>
   exportSessionPackage: (
     request: SessionPackage.SessionPackageRequest
   ) => Promise<SessionPackage.SessionPackageExportResult>
@@ -343,6 +346,11 @@ const dataContentApplicationCommands = Object.freeze({
     'sessions:export-conversation',
     'exportConversationFromInvokingWindow'
   ),
+  sessionFork: electronCommand(
+    'sessions:fork',
+    'forkSession',
+    SessionPackage.sessionPackageCommandContracts.fork
+  ),
   sessionExportPackage: electronCommand(
     'sessions:export-package',
     'exportSessionPackage',
@@ -512,6 +520,7 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.sessionDelete,
     dataContentApplicationCommands.sessionEditDetails,
     dataContentApplicationCommands.sessionExportConversation,
+    dataContentApplicationCommands.sessionFork,
     dataContentApplicationCommands.sessionExportPackage,
     dataContentApplicationCommands.sessionImportPackage,
     dataContentApplicationCommands.sessionPackageOperation,
@@ -774,6 +783,10 @@ const registerDataContentApplicationCommands = (
           dataContentApplicationCommands.sessionExportConversation.name
         )
         return dependencies.electron.exportConversationFromInvokingWindow(invocation)
+      },
+      'sessions:fork': (invocation) => {
+        assertElectronCaller(invocation, dataContentApplicationCommands.sessionFork.name)
+        return dependencies.electron.forkSession(invocation)
       },
       'sessions:export-package': (invocation) => {
         assertElectronCaller(invocation, dataContentApplicationCommands.sessionExportPackage.name)

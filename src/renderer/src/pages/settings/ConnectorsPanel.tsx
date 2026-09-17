@@ -1,3 +1,4 @@
+import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { connectorDescription } from './connector-copy'
 import { ErrorNotice } from '@/components/error-notice'
@@ -145,12 +146,14 @@ export function ConnectorsPanel({
   const [retryingProjection, setRetryingProjection] = useState(false)
   const [oauthSignInServer, setOAuthSignInServer] = useState<CustomServerView>()
   const [oauthConnectionServer, setOAuthConnectionServer] = useState<CustomServerView>()
+  const dialogOAuthServer = useRetainedDialogValue(oauthConnectionServer)
   const [oauthConnectionBusy, setOAuthConnectionBusy] = useState(false)
   const [oauthConnectionError, setOAuthConnectionError] = useState<string | null>(null)
   const [removal, setRemoval] = useState<{
     server: CustomServerView
     specialistNames?: string[]
   } | null>(null)
+  const dialogRemoval = useRetainedDialogValue(removal)
   const [removing, setRemoving] = useState(false)
   const [checkingRemoval, setCheckingRemoval] = useState(false)
   const [removalError, setRemovalError] = useState<string | null>(null)
@@ -908,7 +911,7 @@ export function ConnectorsPanel({
             <div className={dialogHeaderClassName}>
               <div className="min-w-0">
                 <AlertDialog.Title className={dialogTitleClassName}>
-                  {t('Remove “{{name}}”?', { name: removal?.server.displayName ?? '' })}
+                  {t('Remove “{{name}}”?', { name: dialogRemoval?.server.displayName ?? '' })}
                 </AlertDialog.Title>
               </div>
               <AlertDialog.Cancel asChild>
@@ -931,24 +934,24 @@ export function ConnectorsPanel({
                   'This removes the Connector configuration and credentials from this app. Existing conversation history is kept.'
                 )}
               </AlertDialog.Description>
-              {removal?.specialistNames?.length ? (
+              {dialogRemoval?.specialistNames?.length ? (
                 <InlineNotice className="mt-4">
                   <p>
-                    {removal.specialistNames.length === 1
+                    {dialogRemoval.specialistNames.length === 1
                       ? t(
                           'This Connector is used by {{count}} Specialist. Its saved references will become unavailable.',
-                          { count: removal.specialistNames.length }
+                          { count: dialogRemoval.specialistNames.length }
                         )
                       : t(
                           'This Connector is used by {{count}} Specialists. Their saved references will become unavailable.',
-                          { count: removal.specialistNames.length }
+                          { count: dialogRemoval.specialistNames.length }
                         )}
                   </p>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    {removal.specialistNames.join(', ')}
+                    {dialogRemoval.specialistNames.join(', ')}
                   </p>
                 </InlineNotice>
-              ) : removal && removal.specialistNames === undefined ? (
+              ) : dialogRemoval && dialogRemoval.specialistNames === undefined ? (
                 <InlineNotice className="mt-4">
                   <p>
                     {tCommon(
@@ -961,7 +964,9 @@ export function ConnectorsPanel({
                     size="sm"
                     className="mt-2"
                     disabled={removing || checkingRemoval}
-                    onClick={() => void requestRemoval(removal.server)}
+                    onClick={() => {
+                      if (removal) void requestRemoval(removal.server)
+                    }}
                   >
                     {checkingRemoval ? tCommon('Checking…') : tCommon('Retry')}
                   </Button>
@@ -992,7 +997,9 @@ export function ConnectorsPanel({
               <Button
                 type="button"
                 variant="destructive"
-                disabled={removing || checkingRemoval || removal?.specialistNames === undefined}
+                disabled={
+                  removing || checkingRemoval || dialogRemoval?.specialistNames === undefined
+                }
                 onClick={() => void confirmRemoval()}
               >
                 {removing ? t('Removing…') : t('Remove Connector')}
@@ -1018,13 +1025,13 @@ export function ConnectorsPanel({
             <div className={dialogHeaderClassName}>
               <AlertDialog.Title className={dialogTitleClassName}>
                 {t('Manage “{{name}}” connection', {
-                  name: oauthConnectionServer?.displayName ?? ''
+                  name: dialogOAuthServer?.displayName ?? ''
                 })}
               </AlertDialog.Title>
             </div>
             <div className={dialogBodyClassName}>
               <AlertDialog.Description className={dialogDescriptionClassName}>
-                {oauthConnectionServer?.oauth?.sharedCredential
+                {dialogOAuthServer?.oauth?.sharedCredential
                   ? t(
                       'Disconnect removes the shared OAuth tokens from this app and disables every Connector using this credential. It does not revoke access on the service.'
                     )

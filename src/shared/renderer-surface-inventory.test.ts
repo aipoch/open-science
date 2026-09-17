@@ -176,6 +176,7 @@ const WEB_UNAVAILABLE_CHANNELS = [
   'file:save-session-artifacts',
   'sessions:export-conversation',
   'sessions:export-package',
+  'sessions:fork',
   'sessions:import-package',
   'sessions:open-recovery-folder',
   'sessions:package-operation',

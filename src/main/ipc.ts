@@ -1,3 +1,4 @@
+import { getDefaultPermissionProfile } from '../shared/permission-profiles'
 import { PackageLiteratureReader } from './session-package/literature-reader'
 import { PdfElementAgentReader } from './literature/pdf-structure/agent-reader'
 import { transactLiterature } from './literature/transact'
@@ -1136,8 +1137,18 @@ const createApplicationModules = async (
     isActive: () => false
   }
   let packageHandoffHeld = false
+  // Startup package recovery precedes catalog construction. After construction every live
+  // publication must update the same owner consulted by resume/save admission.
+  const packagePublicationOwner: {
+    current?: Pick<SessionPersistenceCoordinator, 'adoptPublishedSession'>
+  } = {}
   const sessionPackageService = await modules.add(undefined, () => {
     const service = new SessionPackageService({
+      getDefaultPermissionProfile: async () =>
+        getDefaultPermissionProfile(await settingsRepository.getSettings()),
+      onSessionPublished: async ({ projectId, sessionId }) => {
+        await packagePublicationOwner.current?.adoptPublishedSession(projectId, sessionId)
+      },
       inspectPackage: createPackageInspector(createInspectionWorker),
       configRoot: resolveConfigRoot(),
       storageRoot: resolveDataRoot(),
@@ -1483,6 +1494,7 @@ const createApplicationModules = async (
     },
     (session) => sessionPackageService.prepareSessionDeletion(session)
   )
+  packagePublicationOwner.current = sessionPersistenceCoordinator
   const bookmarkService = new BookmarkService({
     repository: bookmarkRepository,
     sessions: sessionRepository,
@@ -4843,6 +4855,11 @@ const createApplicationModules = async (
       electron: {
         sessionPackageOperation: async (invocation) =>
           sessionPackageDesktop.respond(invocation.args[0]),
+        forkSession: (invocation) =>
+          sessionPackageDesktop.fork(
+            invocation.args[0],
+            invocation.callerContext.lifecycleClientId
+          ),
         exportSessionPackage: (invocation) =>
           sessionPackageDesktop.export(
             invocation.args[0],

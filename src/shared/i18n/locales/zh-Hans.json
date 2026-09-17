@@ -42,7 +42,8 @@
     "Discard changes": "放弃更改",
     "Discard unsaved changes?": "要放弃未保存的更改吗？",
     "Export Session package": "导出会话包",
-    "Import Session package": "导入会话包"
+    "Import Session package": "导入会话包",
+    "Wait for all Session activity and pending approvals to finish before forking.": "请等待所有会话活动和待处理审批结束后再创建副本。"
   },
   "native": {
     "Linux OS credentials require an available Secret Service backend and /usr/bin/busctl. Unlock the original default keyring and restart. For an unsupported backend, use a compatible application version without changing the backend or profile.": "Linux 系统凭据需要可用的 Secret Service 后端和 /usr/bin/busctl。请解锁原有的默认密钥环并重新启动。如果后端不受支持，请使用兼容的应用版本，不要更改后端或 profile。",
@@ -117,10 +118,14 @@
     "Session package operation in progress": "会话包操作进行中",
     "Temporary files could not be removed. Try cleanup again.": "无法移除临时文件，请重试清理。",
     "Could not complete the Session package operation. Check the package and available disk space, then try again.": "无法完成会话包操作，请检查包文件和可用磁盘空间后重试。",
-    "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "原包文件不可用，可能已移动、删除或无法读取。请选择其他包文件。"
+    "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "原包文件不可用，可能已移动、删除或无法读取。请选择其他包文件。",
+    "Could not fork this Session: {{reason}}": "无法创建此会话的副本：{{reason}}",
+    "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "副本发布需要恢复（操作 {{operationId}}，会话 {{sessionId}}）。请重启应用恢复此次操作，然后再创建副本。"
   },
   "renderer": {
     "The selected data folder changed. Check the location and confirm it again.": "所选数据文件夹已发生变化。请检查位置并重新确认。",
+    "Continued from chat #{{number}}": "继续自会话 #{{number}}",
+    "Continued from chat": "继续自原会话",
     "Open-source license": "开源许可证",
     "Old Shell launch records are blocking this update.": "旧的命令行启动记录阻止了本次更新。",
     "Recovery will back up old Shell launch records and retry the update. Project data and settings are preserved.": "恢复操作将备份旧的命令行启动记录，然后重试更新。项目数据和设置将保留。",
@@ -5908,6 +5913,21 @@
     "A Side chat prompt is already running.": "侧边聊天正在回复。",
     "Enter a message to send.": "请输入要发送的消息。",
     "Send draft to Side chat": "将草稿发送到侧边聊天",
-    "Opens an empty Side chat; keeps your draft.": "打开空白侧聊，保留当前草稿。"
+    "Opens an empty Side chat; keeps your draft.": "打开空白侧聊，保留当前草稿。",
+    "Fork": "创建副本",
+    "Fork Session": "创建会话副本",
+    "Fork to continue": "创建副本以继续",
+    "Could not fork Session": "无法创建会话副本",
+    "Fork is available in the desktop app.": "创建副本功能可在桌面应用中使用。",
+    "Wait for the current transfer to finish before forking a Session.": "请等待当前传输完成后再创建会话副本。",
+    "Fork creates an independent Session with all branches and research data. No code runs automatically.": "创建包含所有分支和研究数据的独立会话副本。不会自动运行代码。",
+    "Preparing fork…": "正在准备副本…",
+    "Copying research…": "正在复制研究数据…",
+    "Fork completed": "副本已创建",
+    "Fork failed": "创建副本失败",
+    "Fork cancelled": "已取消创建副本",
+    "Open forked Session": "打开会话副本",
+    "Temporarily read-only during fork": "创建副本期间暂时为只读",
+    "Session storage is not ready.": "会话存储尚未就绪。"
   }
 }

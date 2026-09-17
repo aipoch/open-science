@@ -1711,41 +1711,35 @@ describe('mandatory product glossary', () => {
     expect(readme).not.toMatch(/\b(?:Skill|Connector|Subagent|Shell)\b|Active-Agent-Framework/u)
     expect(readme).not.toMatch(/\bAnrufe\b|Turnusbezogene/u)
     expect(readme).not.toMatch(/Ã|Â|â€|�/u)
-    expect(readme).toContain('MiniMax')
-    expect(readme).toContain('StepFun')
-    expect(readme).toContain('Xiaomi MIMO')
-    expect(readme).toContain('SenseNova')
-    expect(readme).toContain('Volcengine Ark')
-    expect(readme).toContain('Bailian (Alibaba Cloud)')
-    expect(readme).toContain(
-      'abgeschlossene Prompts als dauerhafte, auswählbare Nachrichten-Branches bearbeiten, ohne den ursprünglichen Verlauf zu löschen'
-    )
-    expect(readme).toContain(
-      'Wenn macOS oder Windows vor einem nicht identifizierten Entwickler oder einem unbekannten Herausgeber warnt'
-    )
-    expect(readme).toContain(
-      'Nach Abschluss eines Jobs startet die App automatisch eine Analyseinteraktion; eine eigene Polling-Schleife ist nicht erforderlich.'
-    )
+    // The README is an onboarding overview; detailed provider catalogs and old feature
+    // inventories were intentionally removed. Keep glossary/structure checks, not stale copy.
+    for (const heading of [
+      '🚀 Schnellstart',
+      'Produkttour',
+      'Benchmark-Ergebnisse',
+      'Kernkompetenzen',
+      'Modellanbieter',
+      'Daten, Berechtigungen und Vertrauen',
+      'Entwicklung & Verpackung',
+      'Häufig gestellte Fragen'
+    ]) {
+      expect(readme).toContain(`## ${heading}`)
+    }
+    for (const term of [
+      'Fähigkeiten',
+      'Konnektoren',
+      'Befehlszeile',
+      'CodeBuddy',
+      'SSH',
+      'Slurm'
+    ]) {
+      expect(readme).toContain(term)
+    }
     const rootPackage = JSON.parse(
       readFileSync(join(__dirname, '..', '..', '..', '..', 'package.json'), 'utf8')
     ) as { version: string }
     // The banner assertion tracks the repo version instead of a hardcoded bump target.
     expect(readme).toContain(`AIPOCH Open-Science v${rootPackage.version} veröffentlicht`)
-    expect(readme).toContain('30-Tage-Aktivitäts-Heatmap')
-    expect(readme).toContain('10 GB')
-    expect(readme).toContain('22 hervorgehobenen')
-    expect(readme).toContain('24 integrierten')
-    expect(readme).toContain('64 integrierte Fähigkeitssymbole')
-    expect(readme).toContain('GPT-6 Astra')
-    expect(readme).toContain('Claude Fable 5.1')
-    expect(readme).toContain('SSH')
-    expect(readme).toContain('Slurm')
-    expect(readme).toContain('Konfigurationsimport/-export')
-    expect(readme).toContain('bearbeitbaren Sitzungsdetails')
-    expect(readme).toContain('Quellenvorschau')
-    expect(readme).toContain('CodeBuddy')
-    expect(readme).toContain('Text-, Bild- und PDF-Anmerkungen')
-    expect(readme).toContain('OpenCode Go und OpenCode Zen')
   })
 
   const chosenGenericTerms = {

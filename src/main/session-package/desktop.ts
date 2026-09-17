@@ -1,3 +1,5 @@
+import { ForkRecoveryRequiredError } from './fork-session'
+import { redactSensitiveText } from '../../shared/diagnostic-redaction'
 import { formatPackageBytes } from '../../shared/session-package'
 import { randomUUID } from 'node:crypto'
 import { dialog, shell, type BrowserWindow } from 'electron'
@@ -375,6 +377,75 @@ export class SessionPackageDesktop {
     }
   }
 
+  fork(
+    request: SessionPackageRequest,
+    originClientId?: string
+  ): Promise<SessionPackageRequest | null> {
+    if (this.operations.snapshot?.result?.recovery)
+      return Promise.reject(new Error(this.operations.snapshot.error))
+    let operationSignal: AbortSignal | undefined
+    return this.operations
+      .run('fork', request, async (signal) => {
+        operationSignal = signal
+        let release: (() => void) | undefined
+        try {
+          this.options.assertCanStart?.()
+          this.operations.setCleanupPending(this.pendingCleanup.size > 0)
+          release = await this.options.reserveExport?.(request, signal)
+          const result = await this.options.withDataRootWrite(() =>
+            this.acceptCleanup(() =>
+              this.options.service.fork(request, signal, this.operations.report)
+            )
+          )
+          this.operations.completeResult({ imported: result })
+          try {
+            await this.options.afterImport(result, originClientId, false)
+          } catch (error) {
+            createLogger('session-package').warn(
+              'Fork published; notification failed',
+              diagnosticErrorFields(error)
+            )
+          }
+          return result
+        } catch (error) {
+          if (error instanceof ForkRecoveryRequiredError) {
+            this.operations.completeResult({ recovery: error.recovery })
+            throw new Error(
+              this.options.translate(
+                'Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.',
+                error.recovery
+              ),
+              { cause: error }
+            )
+          }
+          const detail = redactSensitiveText(error instanceof Error ? error.message : String(error))
+          const reason =
+            detail.startsWith('Wait for') || detail === 'The Session is still active.'
+              ? this.options.translate(
+                  'Wait for all Session activity and pending approvals to finish before forking.'
+                )
+              : detail.length > 1500
+                ? `${detail.slice(0, 1500)}…`
+                : detail
+          throw new Error(
+            this.options.translate('Could not fork this Session: {{reason}}', { reason }),
+            { cause: error }
+          )
+        } finally {
+          release?.()
+        }
+      })
+      .catch((error) => {
+        if (
+          operationSignal?.aborted &&
+          !this.shutdown.signal.aborted &&
+          !this.operations.snapshot?.result?.recovery
+        )
+          return null
+        throw error
+      })
+  }
+
   export(
     request: SessionPackageRequest,
     parent?: BrowserWindow
@@ -561,7 +632,12 @@ export class SessionPackageDesktop {
         target
       )
       .catch((error) => {
-        if (operationSignal?.aborted && !this.shutdown.signal.aborted) return null
+        if (
+          operationSignal?.aborted &&
+          !this.shutdown.signal.aborted &&
+          !this.operations.snapshot?.result?.recovery
+        )
+          return null
         throw error
       })
   }

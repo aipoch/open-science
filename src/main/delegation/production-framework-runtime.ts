@@ -111,7 +111,6 @@ const createProductionDelegatedFrameworkRuntime = (
         Readonly<{
           backend: ResolvedAgentBackend
           connection: NotebookRpcConnection
-          releaseBackend: boolean
           preparedSkills?: AcpRuntimeCompositionOptions['preparedSkills']
         }>
       >()
@@ -275,8 +274,7 @@ const createProductionDelegatedFrameworkRuntime = (
           preparedAttempts.set(input.attemptId, {
             backend: runtimeBackend,
             preparedSkills,
-            connection: capability,
-            releaseBackend: releaseResolvedBackend
+            connection: capability
           })
           const base: PreparedDelegateExecution = {
             executionId: input.attemptId,
@@ -291,6 +289,8 @@ const createProductionDelegatedFrameworkRuntime = (
             workspace: { cwd: input.workspaceCwd },
             runtimeHome,
             frameworkId,
+            runtimeConstructionIsProcessFree:
+              frameworkId === 'claude-code' || frameworkId === 'opencode',
             permissionProfile:
               options.resolvePermissionProfile?.(input.session.sessionId) ??
               durable.permissionProfile ??
@@ -299,18 +299,19 @@ const createProductionDelegatedFrameworkRuntime = (
             ...(input.artifactCurrentRunFile
               ? { artifactCurrentRunFile: input.artifactCurrentRunFile }
               : {}),
+            async releaseResources() {
+              preparedAttempts.delete(input.attemptId)
+              if (releaseResolvedBackend) await releaseResolvedAgentBackendLeases(backend)
+            },
             async disposeResources() {
+              // Port ownership also outlives a possibly surviving or still-starting child.
+              openCodeRuntime?.dispose()
               try {
-                await preparedSkills?.dispose()
+                // OpenCode copies read-only Skills into its config tree; the cleanup below
+                // restores directory permissions while skipping remaining symlinks.
+                if (frameworkId !== 'opencode') await preparedSkills?.dispose()
               } finally {
-                openCodeRuntime?.dispose()
-                const owned = preparedAttempts.get(input.attemptId)
-                preparedAttempts.delete(input.attemptId)
-                try {
-                  if (owned?.releaseBackend) await releaseResolvedAgentBackendLeases(owned.backend)
-                } finally {
-                  await removeRuntimeHome()
-                }
+                await removeRuntimeHome()
               }
             }
           }
@@ -325,11 +326,15 @@ const createProductionDelegatedFrameworkRuntime = (
             `Delegated-work framework ${frameworkId} does not prepare an execution scope.`
           )
         } catch (error) {
-          await preparedSkills?.dispose().catch(() => undefined)
+          if (frameworkId !== 'opencode') await preparedSkills?.dispose().catch(() => undefined)
           openCodeRuntime?.dispose()
           preparedAttempts.delete(input.attemptId)
           if (releaseResolvedBackend) await releaseResolvedAgentBackendLeases(backend)
-          await removeRuntimeHome().catch(() => undefined)
+          try {
+            await removeRuntimeHome()
+          } catch {
+            /* Preserve the preparation failure. */
+          }
           throw error
         }
       }
@@ -340,28 +345,22 @@ const createProductionDelegatedFrameworkRuntime = (
       ): ReturnType<typeof createAcpRuntime> => {
         const owned = preparedAttempts.get(scope.executionId)
         if (!owned) throw new Error('Delegated runtime scope is unavailable.')
-        preparedAttempts.delete(scope.executionId)
-        try {
-          return createAcpRuntime({
-            ...options.runtime,
-            notebookRpcServer: options.notebookRpcServer(),
-            fixedBackend: withDelegatedChildContext(owned.backend),
-            preparedSkills: owned.preparedSkills,
-            runtimeCallbacks: callbacks,
-            delegatedNotebookConnection: owned.connection,
-            permissionGrantContext: {
-              projectId: scope.provenance.projectId,
-              sessionId: scope.provenance.sessionId
-            },
-            ...(scope.artifactCurrentRunFile
-              ? { delegatedArtifactCurrentRunFile: scope.artifactCurrentRunFile }
-              : {}),
-            ...(agentProcess ? { spawnAgent: () => agentProcess } : {})
-          })
-        } catch (error) {
-          if (owned.releaseBackend) void releaseResolvedAgentBackendLeases(owned.backend)
-          throw error
-        }
+        return createAcpRuntime({
+          ...options.runtime,
+          notebookRpcServer: options.notebookRpcServer(),
+          fixedBackend: withDelegatedChildContext(owned.backend),
+          preparedSkills: owned.preparedSkills,
+          runtimeCallbacks: callbacks,
+          delegatedNotebookConnection: owned.connection,
+          permissionGrantContext: {
+            projectId: scope.provenance.projectId,
+            sessionId: scope.provenance.sessionId
+          },
+          ...(scope.artifactCurrentRunFile
+            ? { delegatedArtifactCurrentRunFile: scope.artifactCurrentRunFile }
+            : {}),
+          ...(agentProcess ? { spawnAgent: () => agentProcess } : {})
+        })
       }
 
       return {

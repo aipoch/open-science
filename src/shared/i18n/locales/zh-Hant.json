@@ -42,7 +42,8 @@
     "Discard changes": "捨棄變更",
     "Discard unsaved changes?": "要捨棄未儲存的變更嗎？",
     "Export Session package": "匯出工作階段套件",
-    "Import Session package": "匯入工作階段套件"
+    "Import Session package": "匯入工作階段套件",
+    "Wait for all Session activity and pending approvals to finish before forking.": "請等待所有工作階段活動和待處理核准結束後再建立副本。"
   },
   "native": {
     "Linux OS credentials require an available Secret Service backend and /usr/bin/busctl. Unlock the original default keyring and restart. For an unsupported backend, use a compatible application version without changing the backend or profile.": "Linux 系統憑證需要可用的 Secret Service 後端和 /usr/bin/busctl。請解鎖原有的預設金鑰環並重新啟動。如果後端不受支援，請使用相容的應用程式版本，不要變更後端或 profile。",
@@ -117,10 +118,14 @@
     "Session package operation in progress": "對話套件操作進行中",
     "Temporary files could not be removed. Try cleanup again.": "無法移除暫存檔案，請重試清理。",
     "Could not complete the Session package operation. Check the package and available disk space, then try again.": "無法完成工作階段套件操作，請檢查套件檔案和可用磁碟空間後重試。",
-    "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "原套件檔案無法使用，可能已移動、刪除或無法讀取。請選擇其他套件檔案。"
+    "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "原套件檔案無法使用，可能已移動、刪除或無法讀取。請選擇其他套件檔案。",
+    "Could not fork this Session: {{reason}}": "無法建立此工作階段的副本：{{reason}}",
+    "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "副本發布需要復原（操作 {{operationId}}，工作階段 {{sessionId}}）。請重新啟動應用程式以復原此次操作，然後再建立副本。"
   },
   "renderer": {
     "The selected data folder changed. Check the location and confirm it again.": "所選資料夾已發生變更。請檢查位置並重新確認。",
+    "Continued from chat #{{number}}": "接續自對話 #{{number}}",
+    "Continued from chat": "接續自原對話",
     "Open-source license": "開源授權條款",
     "Old Shell launch records are blocking this update.": "舊的命令列啟動記錄阻止了本次更新。",
     "Recovery will back up old Shell launch records and retry the update. Project data and settings are preserved.": "復原操作將備份舊的命令列啟動記錄，然後重試更新。專案資料和設定將保留。",
@@ -5908,6 +5913,21 @@
     "A Side chat prompt is already running.": "側邊聊天正在回覆。",
     "Enter a message to send.": "請輸入要傳送的訊息。",
     "Send draft to Side chat": "將草稿傳送至側邊聊天",
-    "Opens an empty Side chat; keeps your draft.": "開啟空白側聊，保留目前草稿。"
+    "Opens an empty Side chat; keeps your draft.": "開啟空白側聊，保留目前草稿。",
+    "Fork": "建立副本",
+    "Fork Session": "建立工作階段副本",
+    "Fork to continue": "建立副本以繼續",
+    "Could not fork Session": "無法建立工作階段副本",
+    "Fork is available in the desktop app.": "建立副本功能可在桌面應用程式中使用。",
+    "Wait for the current transfer to finish before forking a Session.": "請等待目前傳輸完成後再建立工作階段副本。",
+    "Fork creates an independent Session with all branches and research data. No code runs automatically.": "建立包含所有分支和研究資料的獨立工作階段副本。不會自動執行程式碼。",
+    "Preparing fork…": "正在準備副本…",
+    "Copying research…": "正在複製研究資料…",
+    "Fork completed": "副本已建立",
+    "Fork failed": "建立副本失敗",
+    "Fork cancelled": "已取消建立副本",
+    "Open forked Session": "開啟工作階段副本",
+    "Temporarily read-only during fork": "建立副本期間暫時為唯讀",
+    "Session storage is not ready.": "工作階段儲存尚未就緒。"
   }
 }

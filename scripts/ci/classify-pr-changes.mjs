@@ -5,6 +5,8 @@ import { appendFileSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+const workflowContractTest = 'scripts/ci/pr-gate-workflow.test.ts'
+
 const defaultManifest = JSON.parse(
   readFileSync(new URL('./change-impact.json', import.meta.url), 'utf8')
 )
@@ -107,6 +109,13 @@ export function classifyChanges(changes, manifest = defaultManifest) {
     }
 
     for (const path of paths) {
+      // This Vitest contract verifies the workflow; it is not an executable CI input.
+      if (path === workflowContractTest) {
+        roots.add('ci_workflow_contract_test')
+        reasonChains.add(`${path} -> workflow contract -> direct portable test`)
+        for (const lane of ['format', 'lint', 'typecheck_node', 'unit_macos']) lanes.add(lane)
+        continue
+      }
       const rules = manifest.rules.filter((rule) =>
         rule.paths.some((pattern) => matchesPath(path, pattern))
       )
@@ -204,7 +213,9 @@ function escapeHtml(value) {
 // Apply platform policy after dependency/consumer expansion, using trusted base code.
 export function platformExecutionPlan(plan, changes, event) {
   if (!['pull_request', 'merge_group'].includes(event)) return plan
-  const paths = changes.flatMap(({ path, previousPath }) => [path, previousPath].filter(Boolean))
+  const paths = changes.flatMap(({ path, previousPath }) =>
+    [path, previousPath].filter((value) => value && value !== workflowContractTest)
+  )
   const criticalDesktopPaths = defaultManifest.rules.find(
     ({ id }) => id === 'critical_desktop_runtime'
   ).paths

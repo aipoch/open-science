@@ -113,6 +113,11 @@ export function createAffectedTestPlan(changes, graph, manifest = defaultManifes
   const reasons = []
   for (const change of changes) {
     const pathPlan = classifyChanges([change])
+    if (pathPlan.roots.includes('ci_workflow_contract_test')) {
+      directTests.add(change.path)
+      reasons.push(`${change.path} -> workflow contract -> direct execution`)
+      continue
+    }
     if (pathPlan.lanes.includes('docs') && !pathPlan.bundles.includes('unit')) {
       reasons.push(`${change.path} -> documentation lane -> no module tests`)
       continue

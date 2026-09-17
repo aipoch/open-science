@@ -8,6 +8,7 @@ import {
   changeImpactManifestPath,
   parseNameStatus
 } from './classify-pr-changes.mjs'
+import { createAffectedTestPlan } from './module-test-impact.mjs'
 import { isModuleOwnershipPath } from './module-ownership-paths.mjs'
 import { validateModuleImpactManifest } from './validate-module-impact.mjs'
 
@@ -28,6 +29,8 @@ function covered(path, manifest) {
 // Registration is data, but it becomes trusted routing after merge. Retain existing
 // evidence so an additive registration cannot quietly weaken later selective runs.
 function registrationViolations(baseManifest, headManifest, headFiles) {
+  // Compare checked-in routing only; local graph evidence must not mask lost coverage.
+  const graph = { status: 'not-used', testFiles: [] }
   const violations = []
   const reject = (field) =>
     violations.push({

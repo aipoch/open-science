@@ -42,7 +42,8 @@
     "Discard changes": "Отбросить изменения",
     "Discard unsaved changes?": "Отменить несохранённые изменения?",
     "Export Session package": "Экспортировать пакет сеанса",
-    "Import Session package": "Импортировать пакет сеанса"
+    "Import Session package": "Импортировать пакет сеанса",
+    "Wait for all Session activity and pending approvals to finish before forking.": "Дождитесь завершения всех действий сессии и ожидающих подтверждений перед созданием ответвления."
   },
   "native": {
     "Linux OS credentials require an available Secret Service backend and /usr/bin/busctl. Unlock the original default keyring and restart. For an unsupported backend, use a compatible application version without changing the backend or profile.": "Для системных учётных данных Linux необходимы доступный бэкенд Secret Service и /usr/bin/busctl. Разблокируйте исходную связку ключей по умолчанию и перезапустите приложение. Если бэкенд не поддерживается, используйте совместимую версию приложения, не меняя бэкенд или профиль.",
@@ -120,10 +121,14 @@
     "Session package operation in progress": "Выполняется операция с пакетом сеанса",
     "Temporary files could not be removed. Try cleanup again.": "Не удалось удалить временные файлы. Повторите очистку.",
     "Could not complete the Session package operation. Check the package and available disk space, then try again.": "Не удалось завершить операцию с пакетом сеанса. Проверьте пакет и свободное место на диске, затем повторите попытку.",
-    "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "Исходный пакет недоступен. Возможно, он перемещён, удалён или больше не читается. Выберите другой пакет."
+    "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "Исходный пакет недоступен. Возможно, он перемещён, удалён или больше не читается. Выберите другой пакет.",
+    "Could not fork this Session: {{reason}}": "Не удалось создать ответвление этой сессии: {{reason}}",
+    "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "Необходимо восстановить публикацию ответвления (операция {{operationId}}, сессия {{sessionId}}). Перезапустите приложение для восстановления этой попытки перед созданием нового ответвления."
   },
   "renderer": {
     "The selected data folder changed. Check the location and confirm it again.": "Выбранная папка данных изменилась. Проверьте расположение и подтвердите его ещё раз.",
+    "Continued from chat #{{number}}": "Продолжение чата #{{number}}",
+    "Continued from chat": "Продолжение чата",
     "Open-source license": "Лицензия открытого исходного кода",
     "Old Shell launch records are blocking this update.": "Старые записи запуска командной строки блокируют обновление.",
     "Recovery will back up old Shell launch records and retry the update. Project data and settings are preserved.": "При восстановлении будет создана резервная копия старых записей запуска командной строки, после чего обновление повторится. Данные проекта и настройки сохранятся.",
@@ -6381,6 +6386,21 @@
     "A Side chat prompt is already running.": "Боковой чат уже обрабатывает запрос.",
     "Enter a message to send.": "Введите сообщение для отправки.",
     "Send draft to Side chat": "Отправить черновик в боковой чат",
-    "Opens an empty Side chat; keeps your draft.": "Открывает пустой боковой чат и сохраняет черновик."
+    "Opens an empty Side chat; keeps your draft.": "Открывает пустой боковой чат и сохраняет черновик.",
+    "Fork": "Создать ответвление",
+    "Fork Session": "Создать ответвление сессии",
+    "Fork to continue": "Создать ответвление и продолжить",
+    "Could not fork Session": "Не удалось создать ответвление сессии",
+    "Fork is available in the desktop app.": "Создание ответвлений доступно в настольном приложении.",
+    "Wait for the current transfer to finish before forking a Session.": "Дождитесь завершения текущей передачи, прежде чем создавать ответвление сессии.",
+    "Fork creates an independent Session with all branches and research data. No code runs automatically.": "Создаёт независимую сессию со всеми ветвями и данными исследования. Код не запускается автоматически.",
+    "Preparing fork…": "Подготовка ответвления…",
+    "Copying research…": "Копирование данных исследования…",
+    "Fork completed": "Ответвление создано",
+    "Fork failed": "Не удалось создать ответвление",
+    "Fork cancelled": "Создание ответвления отменено",
+    "Open forked Session": "Открыть ответвление сессии",
+    "Temporarily read-only during fork": "Временный режим чтения при создании ответвления",
+    "Session storage is not ready.": "Хранилище сеансов не готово."
   }
 }

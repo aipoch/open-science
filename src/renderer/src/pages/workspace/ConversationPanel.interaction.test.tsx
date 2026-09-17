@@ -7,6 +7,12 @@ import { createRoot, type Root } from 'react-dom/client'
 import type { PropsWithChildren } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+const { forkSessionMock } = vi.hoisted(() => ({ forkSessionMock: vi.fn(async () => undefined) }))
+vi.mock('@/lib/session-fork', () => ({
+  forkSession: forkSessionMock,
+  sessionForkAvailable: () => true
+}))
+
 import { ConversationPanel } from './ConversationPanel'
 import { FOCUS_COMPOSER_EVENT } from './composer-focus-events'
 import { subscribeAnnotationReveal } from './annotations/annotation-reveal'
@@ -6498,4 +6504,35 @@ describe('ConversationPanel error box + report affordance', () => {
     expect(errorBoxText()).toContain('Unable to connect to API (ConnectionRefused)')
     expect(reportButton()).toBeNull()
   })
+})
+
+it('offers Fork to continue while leaving the imported conversation read-only', async () => {
+  forkSessionMock.mockClear()
+  const activeSession: ChatSession = {
+    id: 'imported-session',
+    projectId: 'project-a',
+    title: 'Imported research',
+    cwd: '',
+    status: 'idle',
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1,
+    packageOrigin: {
+      importId: 'import-operation',
+      sourceProjectId: 'source-project',
+      sourceSessionId: 'source-session',
+      importedAt: 1,
+      manifestChecksum: 'a'.repeat(64)
+    }
+  }
+  renderPanel({ view: { activeSession } })
+  const button = [...container.querySelectorAll('button')].find((button) =>
+    button.textContent?.includes('Fork to continue')
+  )
+  expect(button).toBeDefined()
+  expect(container.querySelector('[data-testid="ordinary-composer-form"]')).toBeNull()
+  await act(async () => {
+    button!.click()
+  })
+  expect(forkSessionMock).toHaveBeenCalledWith(activeSession)
 })

@@ -1,5 +1,5 @@
-import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { execFileSync, spawnSync } from 'node:child_process'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -7,6 +7,7 @@ import { load } from 'js-yaml'
 import { describe, expect, it } from 'vitest'
 
 import { evaluatePrGate } from './evaluate-pr-gate.mjs'
+import { runModuleImpactAuthorityCli } from './module-impact-authority.mjs'
 
 type Step = {
   'continue-on-error'?: boolean
@@ -71,6 +72,141 @@ const manifest = JSON.parse(
 ) as { bundleOrder: string[]; laneBundles: Record<string, string>; laneOrder: string[] }
 
 describe('PR Gate workflow', () => {
+  it.each(['pull_request', 'merge_group', 'deleted', 'renamed', 'ci-edit', 'unrelated'])(
+    'resolves actual Git history without mixing trusted policy and PR differences: %s',
+    (scenario) => {
+      const root = mkdtempSync(join(tmpdir(), 'pr-gate-revisions-'))
+      const git = (...args: string[]): string =>
+        execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim()
+      const put = (path: string, contents: string): void => {
+        mkdirSync(join(root, path, '..'), { recursive: true })
+        writeFileSync(join(root, path), contents)
+      }
+      const source = 'src/main/connectors/descriptors/cancer-models.ts'
+      const test = 'src/main/connectors/descriptors/cancer-models.test.ts'
+      try {
+        git('init', '--quiet', '-b', 'main')
+        git('config', 'user.email', 'ci@example.com')
+        git('config', 'user.name', 'CI Test')
+        for (const name of [
+          'module-impact-authority.mjs',
+          'module-impact-shadow.mjs',
+          'module-test-impact.mjs',
+          'module-impact.json',
+          'validate-module-impact.mjs',
+          'classify-pr-changes.mjs',
+          'change-impact.json'
+        ]) {
+          put(`scripts/ci/${name}`, readFileSync(`scripts/ci/${name}`, 'utf8'))
+        }
+        put(source, 'export const value = 1\n')
+        put(test, '// initial contract\n')
+        git('add', '.')
+        git('commit', '--quiet', '-m', 'common ancestor')
+        const ancestor = git('rev-parse', 'HEAD')
+        put('.github/workflows/pr-gate.yml', '# base-only CI update\n')
+        put(
+          'scripts/ci/classify-pr-changes.mjs',
+          readFileSync('scripts/ci/classify-pr-changes.mjs', 'utf8') +
+            '\n// current trusted policy\n'
+        )
+        git('add', '.')
+        git('commit', '--quiet', '-m', 'advance main')
+        const base = git('rev-parse', 'HEAD')
+        if (scenario === 'unrelated') {
+          git('checkout', '--quiet', '--orphan', 'topic')
+          git('rm', '-rf', '.')
+        } else {
+          git('checkout', '--quiet', '-b', 'topic', ancestor)
+        }
+        if (scenario === 'deleted') git('rm', source)
+        else if (scenario === 'renamed')
+          git('mv', source, source.replace('cancer-models', 'renamed-cancer-models'))
+        else if (scenario === 'ci-edit') put('.github/workflows/pr-gate.yml', '# PR CI update\n')
+        else {
+          put(source, 'export const value = 2\n')
+          put(test, '// changed contract\n')
+        }
+        git('add', '.')
+        git('commit', '--quiet', '-m', 'PR contribution')
+        const head = git('rev-parse', 'HEAD')
+        const revisionStep = workflow.jobs.preflight.steps!.find(({ id }) => id === 'revisions')!
+        const output = join(root, 'outputs')
+        const result = spawnSync('bash', ['-c', revisionStep.run!], {
+          cwd: root,
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            EVENT_NAME: scenario === 'merge_group' ? 'merge_group' : 'pull_request',
+            PULL_BASE_SHA: base,
+            PULL_HEAD_SHA: head,
+            MERGE_BASE_SHA: base,
+            MERGE_HEAD_SHA: head,
+            GITHUB_OUTPUT: output
+          }
+        })
+        if (scenario === 'unrelated') {
+          expect(result.status).not.toBe(0)
+          expect(existsSync(output)).toBe(false)
+          return
+        }
+        expect(result.status, result.stderr).toBe(0)
+        const revisions = Object.fromEntries(
+          readFileSync(output, 'utf8')
+            .trim()
+            .split('\n')
+            .map((line) => line.split('='))
+        )
+        expect(revisions).toEqual({
+          base: scenario === 'merge_group' ? base : ancestor,
+          head,
+          'trusted-base': base
+        })
+        const prepare = workflow.jobs.preflight.steps!.find(
+          ({ id }) => id === 'trusted_classifier'
+        )!
+        expect(prepare.env!.BASE_SHA).toBe('${{ steps.revisions.outputs.trusted-base }}')
+        const prepared = spawnSync('bash', ['-c', prepare.run!], {
+          cwd: root,
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            BASE_SHA: revisions['trusted-base'],
+            RUNNER_TEMP: root,
+            GITHUB_OUTPUT: output
+          }
+        })
+        expect(prepared.status, prepared.stderr).toBe(0)
+        expect(
+          readFileSync(join(root, 'pr-gate-trusted-classifier/classify-pr-changes.mjs'), 'utf8')
+        ).toContain('// current trusted policy')
+        const { plan } = runModuleImpactAuthorityCli(
+          ['--base', revisions.base, '--head', revisions.head],
+          {
+            EVENT_NAME: scenario === 'merge_group' ? 'merge_group' : 'pull_request',
+            PR_GATE_PLATFORM_POLICY: 'risk-v1'
+          },
+          { cwd: root, write: () => undefined }
+        )
+        if (scenario === 'pull_request') {
+          expect(git('diff', '--name-only', revisions.base, head).split('\n')).toEqual([
+            test,
+            source
+          ])
+          expect(plan.mode).toBe('selective')
+          expect(plan.macosProfile).toBe('smoke')
+        } else {
+          expect(plan.mode).toBe('full')
+          expect(plan.roots).toContain(
+            scenario === 'ci-edit' ? 'global_gate_input' : 'destructive_change'
+          )
+        }
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    }
+  )
+
   it('includes portable Session journeys in both native functional lanes', () => {
     const { scripts } = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8')) as {
       scripts: Record<string, string>
@@ -81,7 +217,11 @@ describe('PR Gate workflow', () => {
       )?.run
       const script = command?.match(/^npm run (\S+)/)?.[1]
       expect(script, `${platform} functional lane must invoke a registered script`).toBeDefined()
-      for (const spec of ['e2e/session-package.spec.ts', 'e2e/session-package-drop.spec.ts'])
+      for (const spec of [
+        'e2e/session-package.spec.ts',
+        'e2e/session-package-drop.spec.ts',
+        'e2e/session-fork.spec.ts'
+      ])
         expect(
           scripts[script!]?.split(/\s+/),
           `${platform} must exercise Session packages`
@@ -1002,6 +1142,8 @@ describe('PR Gate workflow', () => {
       'src/main/windows.test.ts',
       'src/main/windows-icon-assets.test.ts',
       'src/main/windows-powershell.test.ts',
+      'src/main/delegation/acp-execution.test.ts',
+      'src/main/delegation/production-framework-runtime.test.ts',
       'src/main/file-save.test.ts',
       'src/main/specialist/repository.test.ts',
       'src/main/notebook/micromamba-cache-powershell.test.ts',
@@ -1009,6 +1151,15 @@ describe('PR Gate workflow', () => {
     ]) {
       expect(runtime?.run).toContain(testFile)
     }
+
+    const nativeMac = workflow.jobs.macos_e2e.steps?.find(
+      ({ name }) => name === 'Test macOS-native behavior'
+    )
+    for (const testFile of [
+      'src/main/delegation/acp-execution.test.ts',
+      'src/main/delegation/production-framework-runtime.test.ts'
+    ])
+      expect(nativeMac?.run).toContain(testFile)
 
     const wheelEvidence = workflow.jobs.windows_core.steps?.find(
       ({ name }) => name === 'Test Windows wheel evidence recovery'
@@ -1146,7 +1297,7 @@ describe('E2E throughput contracts', () => {
     const job = workflow.jobs.windows_e2e
     expect(job.steps?.find(({ id }) => id === 'renderer_layout')).toMatchObject({
       if: '${{ matrix.shard == 1 }}',
-      run: 'npm run test:e2e:browser -- --fail-on-flaky-tests --global-timeout=300000'
+      run: 'npm run test:e2e:browser -- --workers=1 --fail-on-flaky-tests --global-timeout=300000'
     })
     expect(
       job.steps?.find(({ name }) => name === 'Enforce selected Windows E2E checks')?.run

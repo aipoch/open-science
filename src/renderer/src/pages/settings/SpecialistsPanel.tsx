@@ -1,3 +1,4 @@
+import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { ErrorNotice } from '@/components/error-notice'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -221,6 +222,7 @@ const InstalledSpecialistsPanel = ({
     preview: SpecialistDeletePreview
     action: 'delete' | 'uninstall'
   } | null>(null)
+  const dialogDeletingItem = useRetainedDialogValue(deletingItem)
   const [deleteSkillIds, setDeleteSkillIds] = useState<Set<string>>(new Set())
   const [deleteSkillsExpanded, setDeleteSkillsExpanded] = useState(false)
   const [deleteBusy, setDeleteBusy] = useState(false)
@@ -490,7 +492,7 @@ const InstalledSpecialistsPanel = ({
 
   // Built-in Skills are app-managed and never participate in Specialist deletion. Keep this
   // renderer-side filter as a defensive boundary even though the main-side preview omits them.
-  const visibleDeleteSkills = deletingItem?.preview.skills.filter(
+  const visibleDeleteSkills = dialogDeletingItem?.preview.skills.filter(
     (skill) => skill.source !== 'featured'
   )
   const deletableDeleteSkills = visibleDeleteSkills?.filter((skill) => skill.deletable) ?? []
@@ -2258,9 +2260,6 @@ const InstalledSpecialistsPanel = ({
         onOpenChange={(open) => {
           if (!open && !deleteBusy) {
             setDeletingItem(null)
-            setDeleteSkillIds(new Set())
-            setDeleteSkillsExpanded(false)
-            setDeleteError(undefined)
           }
         }}
       >
@@ -2272,9 +2271,9 @@ const InstalledSpecialistsPanel = ({
             <div className={dialogHeaderClassName}>
               <div className="min-w-0">
                 <AlertDialog.Title className={dialogTitleClassName}>
-                  {deletingItem?.action === 'uninstall'
-                    ? t('Uninstall “{{name}}”?', { name: deletingItem.name })
-                    : t('Delete “{{name}}”?', { name: deletingItem?.name ?? '' })}
+                  {dialogDeletingItem?.action === 'uninstall'
+                    ? t('Uninstall “{{name}}”?', { name: dialogDeletingItem.name })
+                    : t('Delete “{{name}}”?', { name: dialogDeletingItem?.name ?? '' })}
                 </AlertDialog.Title>
               </div>
               <AlertDialog.Cancel asChild>
@@ -2293,7 +2292,7 @@ const InstalledSpecialistsPanel = ({
 
             <div className={`${dialogBodyClassName} overflow-y-auto`}>
               <AlertDialog.Description className={dialogDescriptionClassName}>
-                {deletingItem?.action === 'uninstall'
+                {dialogDeletingItem?.action === 'uninstall'
                   ? t(
                       'This removes the Marketplace Specialist from this device. Conversations using it will no longer be able to use it.'
                     )
@@ -2488,9 +2487,6 @@ const InstalledSpecialistsPanel = ({
                         await useSettingsStore.getState().loadSkills()
                         setDeleteBusy(false)
                         setDeletingItem(null)
-                        setDeleteSkillIds(new Set())
-                        setDeleteSkillsExpanded(false)
-                        setDeleteError(undefined)
                       } else {
                         const messages: Record<typeof result.code, string> = {
                           'stale-preview':
@@ -2526,7 +2522,7 @@ const InstalledSpecialistsPanel = ({
                   {deleteBusy ? (
                     <Loader2 data-icon="inline-start" className="animate-spin" aria-hidden="true" />
                   ) : null}
-                  {deletingItem?.action === 'uninstall'
+                  {dialogDeletingItem?.action === 'uninstall'
                     ? t(deleteBusy ? 'Uninstalling…' : 'Uninstall')
                     : t(deleteBusy ? 'Deleting…' : 'Delete Specialist')}
                 </span>

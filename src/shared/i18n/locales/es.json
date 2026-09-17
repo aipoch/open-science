@@ -42,7 +42,8 @@
     "Discard changes": "Descartar cambios",
     "Discard unsaved changes?": "¿Descartar los cambios no guardados?",
     "Export Session package": "Exportar paquete de sesión",
-    "Import Session package": "Importar paquete de sesión"
+    "Import Session package": "Importar paquete de sesión",
+    "Wait for all Session activity and pending approvals to finish before forking.": "Espere a que terminen todas las actividades de la sesión y las aprobaciones pendientes antes de bifurcar."
   },
   "native": {
     "Linux OS credentials require an available Secret Service backend and /usr/bin/busctl. Unlock the original default keyring and restart. For an unsupported backend, use a compatible application version without changing the backend or profile.": "Las credenciales del sistema Linux requieren un backend Secret Service disponible y /usr/bin/busctl. Desbloquee el llavero predeterminado original y reinicie. Si el backend no es compatible, utilice una versión compatible de la aplicación sin cambiar el backend ni el perfil.",
@@ -119,10 +120,14 @@
     "Session package operation in progress": "Operación de paquete de sesión en curso",
     "Temporary files could not be removed. Try cleanup again.": "No se pudieron eliminar los archivos temporales. Vuelva a intentar la limpieza.",
     "Could not complete the Session package operation. Check the package and available disk space, then try again.": "No se pudo completar la operación del paquete de sesión. Compruebe el paquete y el espacio disponible en disco, y vuelva a intentarlo.",
-    "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "El paquete original no está disponible. Puede que se haya movido, eliminado o que ya no se pueda leer. Seleccione otro paquete."
+    "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "El paquete original no está disponible. Puede que se haya movido, eliminado o que ya no se pueda leer. Seleccione otro paquete.",
+    "Could not fork this Session: {{reason}}": "No se pudo bifurcar esta sesión: {{reason}}",
+    "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "Es necesario recuperar la publicación de la bifurcación (operación {{operationId}}, sesión {{sessionId}}). Reinicie la aplicación para recuperar este intento antes de volver a bifurcar."
   },
   "renderer": {
     "The selected data folder changed. Check the location and confirm it again.": "La carpeta de datos seleccionada ha cambiado. Compruebe la ubicación y confírmela de nuevo.",
+    "Continued from chat #{{number}}": "Continuación de la conversación #{{number}}",
+    "Continued from chat": "Continuación de una conversación",
     "Open-source license": "Licencia de código abierto",
     "Old Shell launch records are blocking this update.": "Los registros antiguos de inicio de la línea de comandos bloquean esta actualización.",
     "Recovery will back up old Shell launch records and retry the update. Project data and settings are preserved.": "La recuperación guardará una copia de los registros antiguos de inicio de la línea de comandos y volverá a intentar la actualización. Se conservarán los datos del proyecto y la configuración.",
@@ -6240,6 +6245,21 @@
     "A Side chat prompt is already running.": "Ya hay una respuesta en curso en el chat lateral.",
     "Enter a message to send.": "Introduzca un mensaje para enviar.",
     "Send draft to Side chat": "Enviar borrador al chat lateral",
-    "Opens an empty Side chat; keeps your draft.": "Abre un Side chat vacío y conserva el borrador."
+    "Opens an empty Side chat; keeps your draft.": "Abre un Side chat vacío y conserva el borrador.",
+    "Fork": "Bifurcar",
+    "Fork Session": "Bifurcar sesión",
+    "Fork to continue": "Bifurcar para continuar",
+    "Could not fork Session": "No se pudo bifurcar la sesión",
+    "Fork is available in the desktop app.": "La bifurcación está disponible en la aplicación de escritorio.",
+    "Wait for the current transfer to finish before forking a Session.": "Espere a que termine la transferencia actual antes de bifurcar una sesión.",
+    "Fork creates an independent Session with all branches and research data. No code runs automatically.": "Crea una sesión independiente con todas las ramas y los datos de investigación. No se ejecuta código automáticamente.",
+    "Preparing fork…": "Preparando bifurcación…",
+    "Copying research…": "Copiando datos de investigación…",
+    "Fork completed": "Bifurcación completada",
+    "Fork failed": "Error al bifurcar",
+    "Fork cancelled": "Bifurcación cancelada",
+    "Open forked Session": "Abrir sesión bifurcada",
+    "Temporarily read-only during fork": "Solo lectura temporal durante la bifurcación",
+    "Session storage is not ready.": "El almacenamiento de sesiones no está listo."
   }
 }

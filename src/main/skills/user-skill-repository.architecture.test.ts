@@ -881,7 +881,8 @@ describe('User Skill repository architecture', () => {
           'src/renderer/src/stores/runtime-settings-store.test.ts',
           'src/renderer/src/stores/settings-connectors-slice.test.ts',
           'src/shared/renderer-surface-inventory.test.ts',
-          'src/shared/renderer-surface-matrix.test.ts'
+          'src/shared/renderer-surface-matrix.test.ts',
+          'src/main/session-package/fork.test.ts'
         ]
       },
       capabilityOverlays: ['windows_sensitive', 'e2e_regressions', 'e2e_delegation'],

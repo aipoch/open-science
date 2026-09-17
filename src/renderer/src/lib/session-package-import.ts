@@ -10,6 +10,7 @@ export const importSessionPackage = async (projectId: string, file?: File): Prom
     usePackageOperationStore.getState().setOpen(true)
     return
   }
+  usePackageOperationStore.setState({ errorKind: undefined })
   importing = true
   usePackageOperationStore.getState().setImportError(undefined)
   const previousId = usePackageOperationStore.getState().operation?.id

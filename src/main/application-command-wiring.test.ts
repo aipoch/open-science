@@ -44,6 +44,23 @@ const dependencyBlock = compact(
 )
 
 describe('production application command wiring', () => {
+  it('reads current global permissions when creating a fork', () => {
+    expect(compact(ipcSource)).toContain(
+      'getDefaultPermissionProfile: async () => getDefaultPermissionProfile(await settingsRepository.getSettings())'
+    )
+  })
+
+  it('adopts package publications into the live persistence owner before exposing desktop commands', () => {
+    expect(compact(ipcSource)).toContain(
+      'await packagePublicationOwner.current?.adoptPublishedSession(projectId, sessionId)'
+    )
+    const binding = ipcSource.indexOf(
+      'packagePublicationOwner.current = sessionPersistenceCoordinator'
+    )
+    expect(binding).toBeGreaterThan(ipcSource.indexOf('const sessionPersistenceCoordinator ='))
+    expect(binding).toBeLessThan(ipcSource.indexOf('const sessionPackageDesktop ='))
+  })
+
   it('constructs Session package desktop once with shared owners and retains lifecycle bindings', () => {
     const phase = compact(
       between(ipcSource, 'surfaceAdapters = afterAcpAdapters', 'const reviewerModelRuntime =')

@@ -306,6 +306,21 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     })
   }
 
+  // Package publication commits through its own recovery journal. Adopt only durable authority
+  // into this live catalog before the new Session is exposed to runtime admission or renderers.
+  adoptPublishedSession(projectId: string, sessionId: string): Promise<void> {
+    return this.operationScheduler.runSession(projectId, sessionId, async () => {
+      this.assertMutable(projectId, sessionId, 'mutate')
+      const loaded = await this.repository.loadSessionWithDiagnostics(projectId, sessionId)
+      if (loaded.status !== 'found') {
+        throw new Error(`Cannot adopt a published ${loaded.status} Session.`)
+      }
+      await assertSessionIdentityOwnership(this.repository, this.stateOwner, loaded.session)
+      this.stateOwner.invalidateBindingTopology(projectId, sessionId)
+      this.stateOwner.recordSession(loaded.session)
+    })
+  }
+
   setSessionDeletionHandlers(handlers: SessionDeletionHandlers): void {
     this.sessionDeletionHandlers = handlers
   }

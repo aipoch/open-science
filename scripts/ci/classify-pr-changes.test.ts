@@ -575,6 +575,36 @@ describe('pull request change classification', () => {
     expect(plan.bundles).toEqual(['policy', 'static'])
   })
 
+  it('runs the PR workflow contract without selecting desktop or full suites', () => {
+    const plan = classifyChanges([
+      { path: 'scripts/ci/pr-gate-workflow.test.ts', status: 'modified' }
+    ])
+    expect(plan.mode).toBe('selective')
+    expect(plan.bundles).toEqual(['policy', 'static', 'unit'])
+    expect(plan.roots).toEqual(['ci_workflow_contract_test'])
+  })
+
+  it.each(['deleted', 'renamed', 'type-changed'] as const)(
+    'retains the conservative fallback for a %s workflow contract',
+    (status) => {
+      const plan = classifyChanges([{ path: 'scripts/ci/pr-gate-workflow.test.ts', status }])
+      expect(plan.mode).toBe('full')
+    }
+  )
+
+  it.each([
+    '.github/workflows/pr-gate.yml',
+    'scripts/ci/classify-pr-changes.mjs',
+    'scripts/ci/module-impact.json'
+  ])('does not let a workflow test hide the changed CI input %s', (path) => {
+    const plan = classifyChanges([
+      { path: 'scripts/ci/pr-gate-workflow.test.ts', status: 'modified' },
+      { path, status: 'modified' }
+    ])
+    expect(plan.mode).toBe('full')
+    expect(plan.roots).toContain('global_gate_input')
+  })
+
   it.each([
     'package-lock.json',
     'vitest.config.ts',
