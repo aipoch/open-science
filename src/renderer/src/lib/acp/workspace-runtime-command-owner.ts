@@ -981,6 +981,21 @@ const sendWorkspaceMessage = async (
       return appended
     }
 
+    // An unresolved earlier save must not append another unsent user Message on every retry.
+    // Stable application-owned messages already have identity-based retry handling below.
+    if (!stableMessageId) {
+      try {
+        await (lifecycle.flushPersistence ?? flushSessionPersistence)()
+      } catch (error) {
+        if (lifecycle.isCurrent?.() === false) return undefined
+        if (isSessionSizeLimitError(error)) lifecycle.onSessionSizeLimit?.(sessionId)
+        useSessionStore.getState().failRun(sessionId, errorMessage(error))
+        return undefined
+      }
+      if (lifecycle.isCurrent?.() === false) return undefined
+      if (!canAdmitExistingWorkspacePrompt(runtime.state, input)) return undefined
+    }
+
     const prepared = await prepareExistingWorkspacePrompt(runtime, {
       sessionId,
       requireExistingSession: input.requireExistingSession,

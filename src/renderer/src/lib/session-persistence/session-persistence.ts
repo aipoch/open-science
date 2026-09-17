@@ -642,6 +642,29 @@ const rebaseSessionAfterRevisionConflict = (
           promptMessageId: submittedRun.promptMessageId,
           startedAt: Math.min(submittedRun.startedAt, latestRun.startedAt)
         }
+      } else if (
+        key === 'status' &&
+        base.status === 'waiting-permission' &&
+        latest.status === 'running' &&
+        submitted.status === 'idle' &&
+        !submitted.activeRun &&
+        !latest.runtimeContext?.permission &&
+        base.activeRun?.promptMessageId &&
+        jsonValuesEqual(latest.activeRun, base.activeRun) &&
+        selectedRootBranchId(base) === selectedRootBranchId(submitted) &&
+        selectedRootBranchId(base) === selectedRootBranchId(latest) &&
+        base.conversationGraph?.frames.every((frame) =>
+          [submitted, latest].every((session) =>
+            session.conversationGraph?.frames.some(
+              (candidate) =>
+                candidate.id === frame.id && candidate.activeBranchId === frame.activeBranchId
+            )
+          )
+        )
+      ) {
+        // Permission clearance and renderer completion can overtake one another for the same turn.
+        // Only the proven completed turn may supersede Main's intermediate running status.
+        rebased.status = submitted.status
       } else if (key === 'contextUsage') {
         // Main does not persist live context-window snapshots. Keep the renderer value, including
         // an explicit clear, instead of resurrecting a stale durable copy.
