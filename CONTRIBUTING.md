@@ -417,7 +417,8 @@ explicit native/worker loading edges in `scripts/ci/module-runtime-consumers.jso
 event, filesystem and other dynamic consumer contracts explicit in module test evidence; static
 analysis alone cannot prove those relationships.
 
-Editing a registered test runs that test directly. Editing implementations or shared test helpers
+Editing a registered test runs that test directly, except tests exporting shared helpers: register
+those files in `interfacePaths` so their consumers remain selected. Editing implementations or shared test helpers
 runs the module's owner, contract and consumer evidence. Locale JSON keeps its focused translation
 guards; the shared translation runtime has its own broader module. Modules whose dynamic consumers
 cannot be safely bounded declare a nonempty `fullTestReason` and retain full validation. This is

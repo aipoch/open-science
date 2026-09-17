@@ -81,15 +81,31 @@ it('retains every statically reachable consumer test and declared runtime-loadin
   ) as {
     modules: Record<
       string,
-      { ownerPaths: string[]; fullTestReason?: string; testFiles: Record<string, string[]> }
+      {
+        ownerPaths: string[]
+        interfacePaths: string[]
+        fullTestReason?: string
+        testFiles: Record<string, string[]>
+      }
     >
   }
   const isTest = (path: string): boolean =>
     /\.(test|spec)\.[cm]?[jt]sx?$/.test(path) && !path.startsWith('e2e/')
+  for (const [path, consumers] of reverse) {
+    if (!isTest(path) || consumers.size === 0 || !/^(src|packages)\//.test(path)) continue
+    expect(
+      Object.values(modules).some(
+        (module) => module.ownerPaths.includes(path) && module.interfacePaths.includes(path)
+      ),
+      `${path} exports shared test contracts; register it as an interface to retain consumers`
+    ).toBe(true)
+  }
   const missing: string[] = []
   for (const [id, module] of Object.entries(modules)) {
     if (module.fullTestReason || id === 'i18n_catalog') continue
-    const visited = new Set(module.ownerPaths.filter((path) => !isTest(path)))
+    const visited = new Set(
+      module.ownerPaths.filter((path) => !isTest(path) || module.interfacePaths.includes(path))
+    )
     const pending = [...visited]
     while (pending.length) {
       for (const consumer of reverse.get(pending.pop()!) ?? []) {

@@ -127,3 +127,14 @@ describe('complete module ownership', () => {
     )
   })
 })
+
+it.each(['certification-contract', 'execution-contract'])(
+  'expands consumers of the shared Delegation %s test contract',
+  (name) => {
+    const path = `src/main/delegation/${name}.test.ts`
+    const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph)
+    expect(plan.mode).toBe('selective')
+    expect(plan.testFiles).toContain(path)
+    expect(plan.testFiles).toContain('src/main/delegation/acp-execution.test.ts')
+  }
+)

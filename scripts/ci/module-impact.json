@@ -17545,7 +17545,9 @@
         "src/main/delegation/production-readiness.ts",
         "src/main/delegation/session-records.ts",
         "src/main/delegation/settlement-continuation-dispatch.ts",
-        "src/main/delegation/structured-output.ts"
+        "src/main/delegation/structured-output.ts",
+        "src/main/delegation/certification-contract.test.ts",
+        "src/main/delegation/execution-contract.test.ts"
       ],
       "consumerModules": [],
       "testFiles": {

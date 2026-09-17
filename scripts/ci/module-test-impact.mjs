@@ -126,7 +126,12 @@ export function createAffectedTestPlan(changes, graph, manifest = defaultManifes
     for (const path of [change.path, change.previousPath].filter(Boolean)) {
       const matchedModules = modulesForPath(manifest, path)
       if (matchedModules.length === 0) return fullPlan(`${path} -> unknown module owner -> full`)
-      if (/\.(test|spec)\.[cm]?[jt]sx?$/.test(path)) {
+      // Some test files also export shared certification helpers. Their explicit interface
+      // registration keeps downstream test consumers in the plan.
+      const sharedTest = matchedModules.some((moduleId) =>
+        manifest.modules[moduleId].interfacePaths.includes(path)
+      )
+      if (/\.(test|spec)\.[cm]?[jt]sx?$/.test(path) && !sharedTest) {
         directTests.add(path)
         for (const moduleId of matchedModules) testModules.add(moduleId)
         reasons.push(`${path} -> registered test -> direct execution`)

@@ -99,6 +99,17 @@ describe('module ownership admission', () => {
       })
     ).toMatchObject({ ok: true, legacyGaps: [fresh] })
   })
+  it('does not let interface or consumer membership hide a removed exact owner', () => {
+    const headManifest = manifest()
+    headManifest.modules.sample.ownerPaths = [test]
+    expect(
+      check({ headManifest, changes: [{ path: manifestPath, status: 'modified' }] })
+    ).toMatchObject({
+      ok: false,
+      violations: [expect.objectContaining({ path: source, rule: 'module-ownership-regression' })]
+    })
+  })
+
   it('catches a manifest-only removal even when source files are untouched', () => {
     const headManifest = manifest()
     headManifest.modules.sample.ownerPaths = [fresh]
