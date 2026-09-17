@@ -117,7 +117,7 @@
     "Temporary files could not be removed. Try cleanup again.": "Les fichiers temporaires n’ont pas pu être supprimés. Réessayez le nettoyage.",
     "Could not complete the Session package operation. Check the package and available disk space, then try again.": "L’opération sur le paquet de session n’a pas pu être terminée. Vérifiez le paquet et l’espace disque disponible, puis réessayez.",
     "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "Le paquet d’origine est indisponible. Il a peut-être été déplacé, supprimé ou est devenu illisible. Choisissez un autre paquet.",
-    "Could not fork this Session: {{reason}}": "Impossible de dupliquer cette session : {{reason}}",
+    "Could not fork this Session: {{reason}}": "Impossible de dupliquer cette session : {{reason}}",
     "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "La publication de la copie doit être rétablie (opération {{operationId}}, session {{sessionId}}). Redémarrez l’application pour récupérer cette opération avant de dupliquer à nouveau."
   },
   "renderer": {
