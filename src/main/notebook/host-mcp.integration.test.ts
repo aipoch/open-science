@@ -226,6 +226,78 @@ describe('clinical trial host.mcp regression', () => {
   })
 })
 
+// Exercise the shipped REPL and RPC path so callers cannot mistake request failures for absence.
+describe('Ensembl sequence host.mcp regression', () => {
+  it('keeps multiple-sequence and incompatible-type errors distinct from a missing ID', async () => {
+    const multipleError =
+      'Requesting a gene and type not equal to "genomic" can result in multiple sequences. 40 sequences detected. Please rerun your request and specify the multiple_sequences parameter'
+    const incompatibleError =
+      'No sequences returned, please check the type specified is compatible with the object requested'
+    const requests: string[] = []
+    const fetchImpl: typeof fetch = async (input) => {
+      const url = new URL(String(input))
+      requests.push(url.pathname)
+      if (url.pathname === '/sequence/id/ENSG00000141510') {
+        return Response.json({ error: multipleError }, { status: 400 })
+      }
+      if (url.pathname === '/sequence/id/ENST00000269305') {
+        return Response.json({ id: 'ENST00000269305', molecule: 'dna', seq: 'ACGT' })
+      }
+      if (url.pathname === '/sequence/id/ENSG00000000000') {
+        return Response.json({ error: "ID 'ENSG00000000000' not found" }, { status: 400 })
+      }
+      if (url.pathname === '/sequence/id/ENST00000673794') {
+        return Response.json({ error: incompatibleError }, { status: 400 })
+      }
+      throw new Error(`Unexpected request ${url}`)
+    }
+    const result = await executeGenomesCell(
+      `
+        const results = [];
+        for (const args of [
+          {stable_id:'ENSG00000141510',seq_type:'cdna'},
+          {stable_id:'ENST00000269305.9',seq_type:'cdna'},
+          {stable_id:'ENSG00000000000',seq_type:'cdna'},
+          {stable_id:'ENST00000673794',seq_type:'protein'}
+        ]) {
+          try {
+            results.push({result:await host.mcp('genomes','ensembl_sequence',args)});
+          } catch (error) {
+            results.push({error:String(error)});
+          }
+        }
+        console.log(JSON.stringify(results));
+      `,
+      fetchImpl
+    )
+    expect(result.status, result.traceback).toBe('completed')
+    const output = JSON.parse(result.stdout.trim())
+    expect(output[0].error).toContain(multipleError)
+    expect(output[0].result).toBeUndefined()
+    expect(output[1].result).toMatchObject({
+      found: true,
+      query: 'ENST00000269305.9',
+      id: 'ENST00000269305',
+      seq: 'ACGT',
+      length: 4
+    })
+    expect(output[2].result).toMatchObject({ found: false, id: null, sha256: null })
+    expect(output[3].error).toContain(incompatibleError)
+    expect(output[3].result).toBeUndefined()
+    expect(requests).toEqual([
+      '/sequence/id/ENSG00000141510',
+      '/sequence/id/ENST00000269305',
+      '/sequence/id/ENSG00000000000',
+      '/sequence/id/ENST00000673794'
+    ])
+    const instructions = renderSkillDoc('genomes')
+    expect(instructions).toContain('specify a transcript/protein stable ID instead')
+    expect(instructions).toContain(
+      'only when Ensembl explicitly reports the requested stable ID as not found'
+    )
+  })
+})
+
 gate('repl kernel host.mcp', () => {
   it.each([undefined, 'auto', 'id', 'symbol', 'guess', null, 42])(
     'preserves and validates lookup query_type through RPC: %s',
