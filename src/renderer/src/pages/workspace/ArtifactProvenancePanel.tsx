@@ -1986,7 +1986,9 @@ const ArtifactProvenancePanel = ({
                         </p>
                       ) : null
                     )}
-                    <NotebookDialogCell run={run} index={index} />
+                    {/* Provenance runs omit the full Notebook capture record. Environment
+                        evidence belongs to this version's Environment tab. */}
+                    <NotebookDialogCell run={run} index={index} showExecutionEvidence={false} />
                   </div>
                 ))}
               </div>

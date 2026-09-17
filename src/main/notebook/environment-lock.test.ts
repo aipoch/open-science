@@ -2365,3 +2365,68 @@ describe('decodeNotebookEnvironmentLock', () => {
     })
   })
 })
+
+describe('conflicting installed Conda package metadata', () => {
+  it('keeps the reported sine-plot environment partial when distribution metadata disagrees with Conda', async () => {
+    // Minimized from the saved run: importlib observes two distributions per name,
+    // while micromamba list exposes one Conda record per name.
+    const packages = [
+      ['fonttools', '4.63.0', '4.65.0', '4.63.0'],
+      ['kiwisolver', '1.5.1', '1.5.0', '1.5.0'],
+      ['numpy', '2.5.3', '2.5.1', '2.5.3'],
+      ['packaging', '26.3', '26.2', '26.3'],
+      ['pip', '26.2.1', '26.1.2', '26.1.2'],
+      ['setuptools', '83.0.0', '84.0.0', '83.0.0']
+    ] as const
+    const root = await mkdtemp(join(tmpdir(), 'conflicting-conda-metadata-'))
+    try {
+      const result = await captureNotebookEnvironmentLock(
+        {
+          language: 'python',
+          environmentName: 'default-python',
+          runtimeSource: 'managed',
+          condaPrefix: root
+        },
+        manifest({
+          packages: packages.flatMap(([name, first, second]) =>
+            [first, second].map((version) => ({
+              name,
+              version,
+              versionStatus: 'known' as const,
+              ecosystem: 'python' as const,
+              loadedState: 'loaded' as const,
+              evidenceSources: [
+                'python-importlib-metadata' as const,
+                'python-kernel-modules' as const
+              ]
+            }))
+          )
+        }),
+        {
+          micromamba: 'micromamba',
+          execute: async () =>
+            JSON.stringify(
+              packages.map(([name, , , version], index) => ({
+                name,
+                version,
+                url: `https://conda.example/${name}-${version}-0.conda`,
+                md5: String(index + 1).repeat(32)
+              }))
+            )
+        }
+      )
+      expect(result).toMatchObject({
+        state: 'captured',
+        captureStatus: 'partial',
+        partialReasons: ['non-conda-package-detected'],
+        diagnostics: packages.map(([packageName, observedVersion]) => ({
+          reason: 'package-lock-missing',
+          packageName,
+          observedVersion
+        }))
+      })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+})
