@@ -1811,6 +1811,23 @@ const createStoreSaver = (
             }
             persisted = rebased
           }
+          // Completion may overtake this queued snapshot on the same Branch. Adopt its
+          // lifecycle only if the local snapshot still represents the unchanged earlier run.
+          if (
+            sourceAuthority &&
+            submittedAuthority &&
+            sessionRevision(submittedAuthority) > sessionRevision(sourceAuthority) &&
+            sourceAuthority.status === 'running' &&
+            submittedAuthority.status === 'idle' &&
+            persisted.status === sourceAuthority.status &&
+            sessionFieldValuesEqual('activeRun', persisted.activeRun, sourceAuthority.activeRun)
+          ) {
+            persisted = {
+              ...persisted,
+              status: submittedAuthority.status,
+              activeRun: submittedAuthority.activeRun
+            }
+          }
           return persisted
         }
 

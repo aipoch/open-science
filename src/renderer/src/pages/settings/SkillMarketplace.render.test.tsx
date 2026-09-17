@@ -1417,6 +1417,69 @@ describe('Skill Marketplace', () => {
     expect(filterSkillMarketplace(entries, '', 'all', 'manifest', 'en')[0]).toBe(first)
   })
 
+  it.each(['NVIDIA-BioNeMo', 'google-deepmind', 'Yuan1z0825'])(
+    'shows the upstream owner %s on cards when authors are absent',
+    async (owner) => {
+      const entry = {
+        ...marketplaceEntry,
+        authors: undefined,
+        source: { ...marketplaceEntry.source, repository: `https://github.com/${owner}/skills` }
+      }
+      list.mockResolvedValue({ ok: true, value: { ...marketplaceCatalog, entries: [entry] } })
+      await act(async () =>
+        root.render(<SkillMarketplace view={{ kind: 'marketplace' }} onNavigate={vi.fn()} />)
+      )
+      const card = container.querySelector('[data-slot="skill-marketplace-card"]')!
+      expect(card.querySelector(`[title="${owner}"]`)?.textContent).toBe(owner)
+      expect(card.textContent).not.toContain('AIPOCH')
+      expect(entry.authors).toBeUndefined()
+    }
+  )
+
+  it('preserves declared authors while making their upstream organization searchable', async () => {
+    const entry = {
+      ...marketplaceEntry,
+      authors: [{ name: 'Ada' }, { name: 'Grace' }],
+      source: {
+        ...marketplaceEntry.source,
+        repository: 'https://github.com/NVIDIA-BioNeMo/skills'
+      }
+    }
+    list.mockResolvedValue({ ok: true, value: { ...marketplaceCatalog, entries: [entry] } })
+    await act(async () =>
+      root.render(<SkillMarketplace view={{ kind: 'marketplace' }} onNavigate={vi.fn()} />)
+    )
+    expect(container.querySelector('[title="Ada, Grace"]')?.textContent).toBe('Ada, Grace')
+    for (const authors of [entry.authors, undefined, []]) {
+      const candidate = { ...entry, authors }
+      expect(filterSkillMarketplace([candidate], ' NVIDIA ', 'all', 'name', 'en')).toEqual([
+        candidate
+      ])
+      expect(filterSkillMarketplace([candidate], 'AIPOCH', 'all', 'name', 'en')).toEqual([])
+    }
+    expect(filterSkillMarketplace([entry], 'Grace', 'all', 'name', 'en')).toEqual([entry])
+    expect(filterSkillMarketplace([entry], 'NVIDIA', 'Other', 'name', 'en')).toEqual([])
+  })
+
+  it('labels missing-author detail attribution as upstream source, retaining the package publisher', async () => {
+    const entry = {
+      ...marketplaceEntry,
+      authors: undefined,
+      source: {
+        ...marketplaceEntry.source,
+        repository: 'https://github.com/NVIDIA-BioNeMo/skills'
+      }
+    }
+    detail.mockResolvedValue({ ok: true, value: { ...marketplaceDetail, entry } })
+    await act(async () => root.render(<SkillMarketplace view={detailView} onNavigate={vi.fn()} />))
+    expect(container.textContent).toContain('Upstream source: NVIDIA-BioNeMo')
+    expect(container.textContent).not.toContain('Author:')
+    const publisher = [...container.querySelectorAll('dt')].find(
+      (node) => node.textContent === 'Package publisher'
+    )!
+    expect(publisher.nextElementSibling?.textContent).toBe('AIPOCH')
+  })
+
   it('appends cards and retains loaded results and scroll position across detail navigation', async () => {
     container.dataset.slot = 'settings-content-scroll'
     const onNavigate = vi.fn()

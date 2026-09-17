@@ -256,11 +256,12 @@ const createFakeRuntime = (options: {
     promptMessageId: 'prompt-live'
   }))
   const sendApplicationPrompt = vi.fn(
-    (
-      ...[request, _attribution, promptAttemptId]: Parameters<AcpRuntime['sendApplicationPrompt']>
+    async (
+      ...[request, _attribution, admission]: Parameters<AcpRuntime['sendApplicationPrompt']>
     ) => {
       void _attribution
-      return runPrompt(request, promptAttemptId)
+      await admission?.onPromptAdmitted?.()
+      return runPrompt(request, admission?.promptAttemptId)
     }
   )
   const sendAppContinuation = vi.fn(runPrompt)
@@ -5019,6 +5020,51 @@ describe('AcpRuntimeCoordinator', () => {
     expect(newBackendId).toBe('codex:owned')
   })
 
+  it.each(['direct', 'activity'] as const)(
+    'preserves application admission rejection through %s dispatch',
+    async (route) => {
+      let fake!: ReturnType<typeof createFakeRuntime>
+      const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+        fake = createFakeRuntime({ frameworkId: 'codex', sessionIds: ['session-1'], callbacks })
+        return fake.runtime
+      })
+      await coordinator.createSession({ cwd: '/workspace' })
+      const failure = new Error('Reviewed conversation changed before admission')
+      const onPromptAdmitted = vi.fn(async () => {
+        throw failure
+      })
+      const send = (
+        runtime: Pick<AcpRuntime, 'sendApplicationPrompt'>
+      ): ReturnType<AcpRuntime['sendApplicationPrompt']> =>
+        runtime.sendApplicationPrompt(
+          {
+            sessionId: 'session-1',
+            text: '[Auditor] fix',
+            provenanceContext: { promptMessageId: 'correction' }
+          },
+          {
+            kind: 'application',
+            feature: 'reviewer',
+            purpose: 'correction',
+            causeReviewId: 'review'
+          },
+          { onPromptAdmitted }
+        )
+      await expect(
+        route === 'direct' ? send(coordinator) : coordinator.withActivity({}, send)
+      ).rejects.toBe(failure)
+      expect(onPromptAdmitted).toHaveBeenCalledOnce()
+      expect(fake.runtime.sendApplicationPrompt).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.any(Object),
+        expect.objectContaining({
+          promptAttemptId: expect.any(String),
+          onPromptAdmitted: expect.any(Function)
+        })
+      )
+    }
+  )
+
   it('lazily adopts the main session on the pinned runtime only when an activity sends a prompt', async () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
     const coordinator = new AcpRuntimeCoordinator((callbacks) => {
@@ -5090,7 +5136,7 @@ describe('AcpRuntimeCoordinator', () => {
         purpose: 'correction',
         causeReviewId: 'review-1'
       },
-      'prompt-attempt-1'
+      { promptAttemptId: 'prompt-attempt-1', onPromptAdmitted: undefined }
     )
     expect(vi.mocked(created[0].runtime.sendPrompt)).not.toHaveBeenCalled()
   })
@@ -5203,4 +5249,34 @@ describe('AcpRuntimeCoordinator', () => {
       }
     })
   })
+})
+
+it('queries Side chat interaction authority on the session owner after framework retirement', async () => {
+  const oldPrompt = createDeferred<{ stopReason: string }>()
+  const created: ReturnType<typeof createFakeRuntime>[] = []
+  const checks: ReturnType<typeof vi.fn>[] = []
+  const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+    const index = created.length
+    const fake = createFakeRuntime({
+      frameworkId: index === 0 ? 'claude-code' : 'codex',
+      sessionIds: [`side-admission-${index}`],
+      callbacks,
+      ...(index === 0 ? { prompt: () => oldPrompt.promise } : {})
+    })
+    const check = vi.fn(() => index === 0)
+    Object.assign(fake.runtime, { hasPendingSideChatInteraction: check })
+    checks.push(check)
+    created.push(fake)
+    return fake.runtime
+  })
+  const old = await coordinator.createSession({ cwd: '/workspace' })
+  const turn = coordinator.sendPrompt({ sessionId: old.sessionId, text: 'keep old runtime alive' })
+  await coordinator.requestAgentFrameworkSwitch()
+  const current = await coordinator.createSession({ cwd: '/workspace' })
+  expect(coordinator.hasPendingSideChatInteraction(old.sessionId)).toBe(true)
+  expect(coordinator.hasPendingSideChatInteraction(current.sessionId)).toBe(false)
+  expect(checks[0]).toHaveBeenCalledWith(old.sessionId)
+  expect(checks[1]).toHaveBeenCalledWith(current.sessionId)
+  oldPrompt.resolve({ stopReason: 'end_turn' })
+  await turn
 })

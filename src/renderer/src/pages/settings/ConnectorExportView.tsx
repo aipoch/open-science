@@ -116,7 +116,7 @@ export function ConnectorExportView({ id, onDone }: ConnectorExportViewProps): R
           <p className="text-xs text-muted-foreground">{t('Preparing preview…')}</p>
         ) : null}
 
-        {error ? <ErrorNotice role="alert" tone="amber" description={t(error)} /> : null}
+        {error ? <ErrorNotice inline role="alert" tone="amber" description={t(error)} /> : null}
 
         {definition ? (
           <div>

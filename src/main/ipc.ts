@@ -1574,11 +1574,7 @@ const createApplicationModules = async (
       if (!runtime) return 'completed'
       const snapshot = runtime.getSnapshot()
       if (snapshot.promptInFlightSessionIds.includes(parentSessionId)) {
-        return snapshot.pendingPermissions.some(
-          (permission) => permission.sessionId === parentSessionId
-        )
-          ? 'waiting'
-          : 'running'
+        return runtime.hasPendingSideChatInteraction(parentSessionId) ? 'waiting' : 'running'
       }
       return runtime.liveSessionProjectId(parentSessionId) ? 'idle' : 'completed'
     },
@@ -3323,6 +3319,8 @@ const createApplicationModules = async (
       literaturePdfAcquisition,
       delegatedWork: delegatedWork.root,
       sideChatRelays: mainPromptSideChatRelay,
+      hasPendingCredentialRequest: (sessionId) =>
+        credentialRequestBroker.hasPendingForSession(sessionId),
       imageInputCompatibility,
       memory: memoryService,
       auxiliaryUsage: {

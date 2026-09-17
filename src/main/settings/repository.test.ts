@@ -932,6 +932,10 @@ describe('settings repository', () => {
         .providers[0].reasoningEffortPreset
     ).toBe('none-high')
     expect(
+      sanitizeSettings({ providers: [{ ...base, reasoningEffortPreset: 'none-low-high-max' }] })
+        .providers[0].reasoningEffortPreset
+    ).toBe('none-low-high-max')
+    expect(
       sanitizeSettings({ providers: [{ ...base, reasoningEffortPreset: 'unsupported' }] })
         .providers[0].reasoningEffortPreset
     ).toBe('unsupported')

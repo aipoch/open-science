@@ -217,6 +217,7 @@ export type AcpRuntimeCallbacks = {
 }
 
 type AcpRuntimeOptions = {
+  hasPendingCredentialRequest?: (sessionId: string) => boolean
   appVersion: string
   defaultCwd: string
   // Disposable framework homes must retain the same read protection as app-owned config roots.
@@ -646,6 +647,7 @@ class AcpRuntime {
   // App-owned MCP construction, routing aliases, and bearer lease ownership are kept behind one
   // explicit role policy. Connection/process lifetime remains with the connection resource owner.
   private readonly sessionInteractions: AcpSessionInteractionOwner
+  readonly hasPendingSideChatInteraction: (sessionId: string) => boolean
   private readonly elicitationOwner: AcpElicitationOwner
   private readonly appContinuations: AcpAppContinuationOwner
   private readonly userChoiceProvenanceContexts = new Map<
@@ -739,6 +741,14 @@ class AcpRuntime {
     this.permissionContext = session.permissionContext
     this.clientInteractions = session.clientInteractions
     this.elicitationOwner = session.elicitationOwner
+    this.hasPendingSideChatInteraction = (sessionId) =>
+      this.permissionContext.hasPendingForSession(sessionId) ||
+      this.elicitationOwner
+        .getPendingRequests()
+        .some((request) => request.sessionId === sessionId) ||
+      base.planInteractions.hasPendingApproval(sessionId) ||
+      options.hasPendingCredentialRequest?.(sessionId) === true
+
     this.durableContinuationContext = session.durableContinuationContext
     this.permissionWaitOwner = session.permissionWaitOwner
     this.planDeliveryOwner = options.plan
@@ -783,6 +793,22 @@ class AcpRuntime {
     const prompt = composeAcpRuntimePromptOwners(options, base, session, {
       plan: this.sessionPlanWorkflow.prompt,
       reload: {
+        prepareContinuationReplay: async (request) => {
+          const promptMessageId = request.provenanceContext?.promptMessageId
+          if (!promptMessageId) {
+            throw new Error('App continuation history requires its originating Message.')
+          }
+          const continuation = await this.durableContinuationContext.prepare({
+            projectId: this.resolveSessionProjectId(request.sessionId),
+            sessionId: request.sessionId,
+            promptMessageId,
+            replay: {
+              descriptor: this.durableContinuationHistoryReplayDescriptor(),
+              supportsImageInput: await this.supportsDurableContinuationImages()
+            }
+          })
+          return continuation.historyReplay
+        },
         disconnect: () => this.disconnect(false),
         resume: (request) => this.resumeSession(request)
       },
@@ -801,6 +827,7 @@ class AcpRuntime {
       activeProviderSessionId: (sessionId) => this.activeSessionFor(sessionId)?.sessionId,
       hasLivePrompt: (sessionId) => this.sessionInteractions.current(sessionId)?.kind === 'prompt',
       hasPendingPermission: (sessionId) => this.permissionContext.hasPendingForSession(sessionId),
+      hasPendingSideChatInteraction: this.hasPendingSideChatInteraction,
       livePrompt: (sessionId) => {
         const current = this.sessionInteractions.current(sessionId)
         return current?.kind === 'prompt'
@@ -1672,14 +1699,25 @@ class AcpRuntime {
   async sendApplicationPrompt(
     request: AcpPromptRequest,
     attribution: MessageAttribution,
-    promptAttemptId?: string
+    options?: {
+      promptAttemptId?: string
+      // Runs under prompt ownership, before prompt events, Artifact opening or provider dispatch.
+      // Throwing rejects this application turn without emitting a user-visible prompt.
+      onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>
+    }
   ): Promise<PromptResponse> {
     return this.withOperationLease(() =>
-      this.runPromptTurn(request, {
-        kind: 'application',
-        attribution,
-        ...(promptAttemptId === undefined ? {} : { promptAttemptId })
-      })
+      this.runPromptTurn(
+        request,
+        {
+          kind: 'application',
+          attribution,
+          ...(options?.promptAttemptId === undefined
+            ? {}
+            : { promptAttemptId: options.promptAttemptId })
+        },
+        options?.onPromptAdmitted
+      )
     )
   }
 

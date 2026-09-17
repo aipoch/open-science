@@ -3310,78 +3310,82 @@ describe('TaskRunner', () => {
     expect(saved.at(-1)?.pendingHistoryReplay).toEqual({ kind: 'all' })
   })
 
-  it('provides transcript fallback for skill-triggered reconnects', async () => {
-    const existing: PersistedChatSession = {
-      ...session,
-      messages: [
-        {
-          id: 'prior-user',
-          role: 'user',
-          content: 'Prior question',
-          status: 'complete',
-          eventIds: [],
-          createdAt: 1,
-          updatedAt: 1
-        },
-        {
-          id: 'prior-agent',
-          role: 'agent',
-          content: 'Prior answer',
-          status: 'complete',
-          eventIds: [],
-          createdAt: 2,
-          updatedAt: 2
-        }
-      ]
-    }
-    const prompts: Parameters<TaskRunnerDependencies['agent']['prompt']>[0][] = []
-    const ids = ['skill-user', 'skill-run', 'skill-agent']
-    const runner = createRunner({
-      sessions: { list: async () => [existing], save: async () => undefined },
-      agent: {
-        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
-        listAttachedSessionIds: async () => [existing.id],
-        createSession: async () => ({ sessionId: 'unused' }),
-        resumeSession: async (request) => ({ sessionId: request.sessionId }),
-        setPermissionProfile: async () => undefined,
-        cancelPrompt: async () => undefined,
-        prompt: async (request) => {
-          prompts.push(request)
-        }
-      },
-      createId: () => ids.shift() ?? 'generated-id'
-    })
-
-    const started = await runner.startRun({
-      project: project.id,
-      sessionId: existing.id,
-      prompt: 'Use the selected skill.',
-      skillIds: ['literature-review']
-    })
-    await runner.waitForRun(started.id)
-
-    expect(prompts).toEqual([
-      {
-        sessionId: existing.id,
-        promptMessageId: 'skill-user',
-        provenanceContext: {
-          rootFrameId: 'root-frame-session-1',
-          agentFrameId: 'root-frame-session-1',
-          messageBranchId: 'message-branch-session-1',
-          messageBranchAncestry: ['message-branch-session-1'],
-          messageAncestry: ['prior-user', 'prior-agent', 'skill-user'],
-          runtimeSegmentId: 'runtime-segment-session-1',
-          promptMessageId: 'skill-user'
-        },
-        text: 'Use the selected skill.',
-        skillIds: ['literature-review'],
-        resumeFallback: {
-          historyPreamble:
-            'Previous conversation:\n\nUser: Prior question\n\nAssistant: Prior answer'
-        }
+  it.each(['explicit Skill', 'bound Specialist'])(
+    'provides transcript fallback for %s reconnects',
+    async (selection) => {
+      const existing: PersistedChatSession = {
+        ...session,
+        ...(selection === 'bound Specialist' ? { specialistId: 'research-specialist' } : {}),
+        messages: [
+          {
+            id: 'prior-user',
+            role: 'user',
+            content: 'Prior question',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 1,
+            updatedAt: 1
+          },
+          {
+            id: 'prior-agent',
+            role: 'agent',
+            content: 'Prior answer',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 2,
+            updatedAt: 2
+          }
+        ]
       }
-    ])
-  })
+      const prompts: Parameters<TaskRunnerDependencies['agent']['prompt']>[0][] = []
+      const ids = ['skill-user', 'skill-run', 'skill-agent']
+      const runner = createRunner({
+        sessions: { list: async () => [existing], save: async () => undefined },
+        agent: {
+          withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+          listAttachedSessionIds: async () => [existing.id],
+          createSession: async () => ({ sessionId: 'unused' }),
+          resumeSession: async (request) => ({ sessionId: request.sessionId }),
+          setPermissionProfile: async () => undefined,
+          cancelPrompt: async () => undefined,
+          prompt: async (request) => {
+            prompts.push(request)
+          }
+        },
+        createId: () => ids.shift() ?? 'generated-id'
+      })
+
+      const started = await runner.startRun({
+        project: project.id,
+        sessionId: existing.id,
+        prompt: 'Use the selected skill.',
+        ...(selection === 'explicit Skill' ? { skillIds: ['literature-review'] } : {})
+      })
+      await runner.waitForRun(started.id)
+
+      expect(prompts).toEqual([
+        {
+          sessionId: existing.id,
+          promptMessageId: 'skill-user',
+          provenanceContext: {
+            rootFrameId: 'root-frame-session-1',
+            agentFrameId: 'root-frame-session-1',
+            messageBranchId: 'message-branch-session-1',
+            messageBranchAncestry: ['message-branch-session-1'],
+            messageAncestry: ['prior-user', 'prior-agent', 'skill-user'],
+            runtimeSegmentId: 'runtime-segment-session-1',
+            promptMessageId: 'skill-user'
+          },
+          text: 'Use the selected skill.',
+          ...(selection === 'explicit Skill' ? { skillIds: ['literature-review'] } : {}),
+          resumeFallback: {
+            historyPreamble:
+              'Previous conversation:\n\nUser: Prior question\n\nAssistant: Prior answer'
+          }
+        }
+      ])
+    }
+  )
 
   it('marks artifact-only completions when turn usage is unavailable', async () => {
     let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined

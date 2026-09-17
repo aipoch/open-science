@@ -1,3 +1,4 @@
+import { SideChatProvider } from './pages/workspace/use-side-chat-controller'
 import { WorkspaceComposerDraftsProvider } from './pages/workspace/workspace-composer-drafts'
 import { lazy, memo, Suspense, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -75,10 +76,27 @@ const SkillImportApprovalDialog = lazy(() =>
 )
 
 const ApplicationPresentationHost = (): React.JSX.Element => {
+  const startup = useApplicationStartup()
+  return (
+    <SideChatProvider
+      persistence={{
+        ready: startup.sessions.isReady,
+        blockedSessionIds: startup.sessions.persistenceBlockedSessionIds
+      }}
+    >
+      <ApplicationPresentationContent startup={startup} />
+    </SideChatProvider>
+  )
+}
+
+const ApplicationPresentationContent = ({
+  startup
+}: {
+  startup: ReturnType<typeof useApplicationStartup>
+}): React.JSX.Element => {
   const { t } = useTranslation()
   const settingsPageRef = useRef<SettingsPageHandle>(null)
   const closeActiveSettingsPane = useCallback(() => settingsPageRef.current?.closeActivePane(), [])
-  const startup = useApplicationStartup()
   const events = useApplicationEventBindings({
     startupView: startup.settings.startupView,
     sessionPersistence: startup.sessions,

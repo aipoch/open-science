@@ -151,7 +151,12 @@ describe('module impact shadow', () => {
       ]
     })
     expect(report.shadow.testFiles).toEqual([...report.shadow.testFiles].sort())
-    expect(report.shadow.capabilityOverlays).toEqual(['renderer_state', 'windows_sensitive'])
+    expect(report.shadow.capabilityOverlays).toEqual([
+      'e2e_delegation',
+      'e2e_regressions',
+      'renderer_state',
+      'windows_sensitive'
+    ])
     expect(report.shadow.fallbackCapabilities).toEqual(['main_runtime', 'renderer_view'])
     expect(report.comparison.requiredLanes).toContain('typecheck_web')
     expect(report.comparison.selectedLanes).toEqual(report.authoritative.lanes)
@@ -514,4 +519,17 @@ describe('module impact shadow', () => {
     expect(summary).toContain('&lt;unsafe&gt;')
     expect(summary).not.toContain('<unsafe>')
   })
+})
+
+it('ignores legacy blanket PR deferral when emitting a risk-based plan', () => {
+  const execute = vi.fn().mockReturnValue(Buffer.from('M\0package.json\0'))
+  const append = vi.fn()
+  const { plan } = runModuleImpactAuthorityCli(
+    ['--base', '1'.repeat(40), '--head', '2'.repeat(40)],
+    { EVENT_NAME: 'pull_request', PR_GATE_MERGE_QUEUE_ENABLED: 'true', GITHUB_OUTPUT: '/output' },
+    { cwd: '/repo', execute, append }
+  )
+  expect(plan.mode).toBe('full')
+  expect(plan.bundles).toContain('macos_e2e')
+  expect(append).toHaveBeenCalledWith('/output', expect.not.stringContaining('stage='))
 })

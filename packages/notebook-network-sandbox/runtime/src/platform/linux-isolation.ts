@@ -194,6 +194,14 @@ const linuxLaunch = async (request: LinuxLaunchRequest): Promise<LinuxLaunch> =>
     '/proc'
   ]
 
+  // Temporary mounts hide AppImage resources too. Restore only explicit read grants before
+  // applying private-root masks and deny overrides; unrelated host temporary files stay hidden.
+  for (const root of layout.readOnlyRoots) {
+    if (contains('/tmp', root) || contains('/var/tmp', root)) {
+      argumentsList.push('--ro-bind', root, root)
+    }
+  }
+
   const sensitiveReadRoots = [
     '/home',
     '/mnt',

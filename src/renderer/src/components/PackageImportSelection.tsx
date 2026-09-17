@@ -220,7 +220,7 @@ export const PackageImportSelection = ({
         )}
         {error || localError || loadError ? (
           <ErrorNotice
-            className="border-0 bg-transparent p-0 [&_[role=alert]]:basis-0"
+            inline
             role="alert"
             tone="amber"
             description={error ?? localError ?? loadError}

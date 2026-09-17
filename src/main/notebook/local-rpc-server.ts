@@ -413,6 +413,7 @@ type NotebookExecutionAuthorization = Readonly<{
 }>
 
 type ActiveArtifactTurnBinding = Readonly<{
+  artifactRunId?: string
   ownerExecutionId: string
   projectId: string
   provenanceContext: NotebookRunProvenanceContext
@@ -3306,9 +3307,35 @@ class NotebookLocalRpcServer {
       this.inputRegistry?.openRun
     ) {
       const sessionId = params.sessionId as string
+      const boundTurn = this.activeArtifactTurnBindings.get(sessionId)
+      const producerScope =
+        boundTurn?.artifactRunId &&
+        [
+          'rootFrameId',
+          'agentFrameId',
+          'messageBranchId',
+          'runtimeSegmentId',
+          'promptMessageId'
+        ].every(
+          (key) =>
+            provenanceContext[key] ===
+            boundTurn.provenanceContext[key as keyof NotebookRunProvenanceContext]
+        )
+          ? {
+              ...boundTurn.provenanceContext,
+              appSessionId: sessionId,
+              artifactRunId: boundTurn.artifactRunId,
+              assertActive: (): void => {
+                signal?.throwIfAborted()
+                if (this.activeArtifactTurnBindings.get(sessionId) !== boundTurn)
+                  throw new Error('Notebook producer input turn is no longer active.')
+              }
+            }
+          : undefined
       const lease = await this.inputRegistry.openRun({
         projectId,
         appSessionId: sessionId,
+        ...(producerScope ? { producerScope } : {}),
         promptMessageId: provenanceContext.promptMessageId,
         ...(method === 'execute' && Array.isArray(params.artifactVersionInputs)
           ? { artifactVersionInputs: params.artifactVersionInputs as string[] }

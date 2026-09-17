@@ -4848,9 +4848,19 @@ describe('notebook runtime service', () => {
 
     it('cancels and drains the running and queued Shell Runs before Session teardown', async () => {
       const root = await createStorageRoot()
+      const repository = new NotebookRunRepository(root)
+      const firstStarted = createDeferred<void>()
+      const secondAdmitted = createDeferred<void>()
+      const appendOrGetRun = repository.appendOrGetRun.bind(repository)
+      vi.spyOn(repository, 'appendOrGetRun').mockImplementation(async (input) => {
+        const result = await appendOrGetRun(input)
+        if (input.run.script === 'queued') secondAdmitted.resolve()
+        return result
+      })
       const execute = vi.fn<NotebookShellProcess['execute']>(
         (request) =>
           new Promise((resolve) => {
+            firstStarted.resolve()
             const cancel = (): void =>
               resolve({
                 stdout: '',
@@ -4866,7 +4876,7 @@ describe('notebook runtime service', () => {
         configRoot: root,
         dataRoot: root,
         projectId: 'default-project',
-        repository: new NotebookRunRepository(root),
+        repository,
         shellProcess: { execute },
         shellConcurrencyLimit: 1
       })
@@ -4874,10 +4884,14 @@ describe('notebook runtime service', () => {
       const running = service.executeShell({ ...scope, command: 'running' })
       const queued = service.executeShell({ ...scope, command: 'queued' })
 
-      await vi.waitFor(async () => {
-        const state = await service.state(scope)
-        expect(state.runs.map((run) => run.status).sort()).toEqual(['queued', 'running'])
-      })
+      // Real admission writes can exceed waitFor's one-second default on Windows CI.
+      // Await lifecycle boundaries while propagating early execution failures.
+      await Promise.race([firstStarted.promise, running])
+      await Promise.race([secondAdmitted.promise, queued])
+      expect((await service.state(scope)).runs.map((run) => run.status).sort()).toEqual([
+        'queued',
+        'running'
+      ])
       const shutdown = service.shutdown(scope)
 
       await expect(Promise.all([running, queued])).resolves.toEqual([

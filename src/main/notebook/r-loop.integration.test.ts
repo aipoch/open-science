@@ -169,6 +169,56 @@ const installBlankPngMaterializationTrace = (
   ].join('\n')
 
 gate('r_loop.R', () => {
+  it('keeps responding when a loaded package description becomes unavailable', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'r-missing-description-'))
+    const library = join(root, 'library')
+    const packagePath = execFileSync(
+      rscriptBin(),
+      ['--vanilla', '-e', 'cat(find.package("RColorBrewer"))'],
+      { encoding: 'utf8' }
+    ).trim()
+    cpSync(packagePath, join(library, 'RColorBrewer'), { recursive: true })
+    const { child, send } = startLoop(rscriptBin(), {}, root)
+    try {
+      const loaded = await send(
+        `.libPaths(c(${JSON.stringify(library.replaceAll('\\', '/'))}, .libPaths())); library(RColorBrewer); saved_result <- 42; cat(getNamespaceInfo("RColorBrewer", "path"))`
+      )
+      expect(loaded.error).toBeNull()
+      expect(loaded.stdout).toBe(join(library, 'RColorBrewer').replaceAll('\\', '/'))
+      // Change only the private fixture, never the installed package or R's functions.
+      rmSync(join(library, 'RColorBrewer', 'DESCRIPTION'))
+      rmSync(join(library, 'RColorBrewer', 'Meta', 'package.rds'))
+      const result = await send('cat("R kernel alive\\n"); list.files(".")')
+      expect(result.error).toBeNull()
+      expect(result.stdout).toContain('R kernel alive')
+      expect(result.environmentOverlay?.packages).toContainEqual(
+        expect.objectContaining({
+          name: 'RColorBrewer',
+          loadedState: 'attached',
+          versionStatus: 'unavailable'
+        })
+      )
+      const unavailable = result.environmentOverlay?.packages.find(
+        (pkg) => pkg.name === 'RColorBrewer'
+      )
+      expect(unavailable?.priority).toBeUndefined()
+      expect(unavailable?.builtForRuntime).toBeUndefined()
+      expect(result.environmentOverlay?.packages).toContainEqual(
+        expect.objectContaining({ name: 'base', priority: 'base' })
+      )
+      const next = await send('cat(saved_result)')
+      expect(next.error).toBeNull()
+      expect(next.stdout).toBe('42')
+    } finally {
+      if (child.exitCode === null) {
+        const exited = once(child, 'exit')
+        child.stdin.end()
+        await exited
+      }
+      rmSync(root, { recursive: true, force: true })
+    }
+  }, 30_000)
+
   it('replays selected cross-cell circlize configuration and reproduces the PNG', async () => {
     const root = mkdtempSync(join(tmpdir(), 'r-graphics-config-'))
     const originalDir = join(root, 'original')

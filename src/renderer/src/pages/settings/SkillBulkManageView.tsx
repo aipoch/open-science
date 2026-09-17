@@ -350,7 +350,9 @@ const SkillBulkManageView = (): React.JSX.Element => {
                 {bulkResult}
               </p>
             ) : null}
-            {bulkError ? <ErrorNotice role="alert" tone="amber" description={bulkError} /> : null}
+            {bulkError ? (
+              <ErrorNotice inline role="alert" tone="amber" description={bulkError} />
+            ) : null}
           </>
         ) : undefined
       }

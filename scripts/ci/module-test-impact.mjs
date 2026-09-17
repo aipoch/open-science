@@ -22,10 +22,17 @@ function declaredTests(module) {
 }
 
 function modulesForPath(manifest, path) {
-  return Object.entries(manifest.modules)
+  const explicit = Object.entries(manifest.modules)
     .filter(([, module]) =>
       [...module.ownerPaths, ...module.interfacePaths, ...declaredTests(module)].includes(path)
     )
+    .map(([moduleId]) => moduleId)
+  if (explicit.length > 0 || /\.(test|spec)\.[cm]?[jt]sx?$/.test(path)) return explicit
+  // A declared owner test also identifies its colocated implementation. Consumer tests
+  // cannot establish ownership; unmatched implementations still fall back to full.
+  const ownerTest = path.replace(/(\.[cm]?[jt]sx?)$/, '.test$1')
+  return Object.entries(manifest.modules)
+    .filter(([, module]) => module.testFiles.owner.includes(ownerTest))
     .map(([moduleId]) => moduleId)
 }
 
@@ -99,6 +106,12 @@ export function createAffectedTestPlan(changes, graph, manifest = defaultManifes
     const pathPlan = classifyChanges([change])
     if (pathPlan.lanes.includes('docs') && !pathPlan.bundles.includes('unit')) {
       reasons.push(`${change.path} -> documentation lane -> no module tests`)
+      continue
+    }
+    // Browser fixtures/specs execute in the complete browser lane, not Vitest. This explicit
+    // owner must remain selected in mixed diffs; unknown E2E helpers still fall back to full.
+    if (pathPlan.roots.includes('renderer_browser_e2e') && !pathPlan.bundles.includes('unit')) {
+      reasons.push(`${change.path} -> renderer browser E2E lane -> no module tests`)
       continue
     }
     for (const path of [change.path, change.previousPath].filter(Boolean)) {

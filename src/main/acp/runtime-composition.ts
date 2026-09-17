@@ -184,9 +184,13 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
   delegatedWork?: RootDelegatedWorkControl
   fixedBackend?: ResolvedAgentBackend
   runtimeCallbacks?: AcpRuntimeCallbacks
+  preparedSkills?: Awaited<
+    ReturnType<NonNullable<AcpSettingsCapabilities['prepareDelegatedSkills']>>
+  >
   delegatedNotebookConnection?: NotebookRpcConnection
   delegatedArtifactCurrentRunFile?: string
   spawnAgent?: () => ChildProcessWithoutNullStreams
+  hasPendingCredentialRequest?: AcpRuntimeOptions['hasPendingCredentialRequest']
   sideChatRelays?: AcpRuntimeOptions['sideChatRelays']
   imageInputCompatibility?: AcpRuntimeOptions['imageInputCompatibility']
   resolveComputeExecutionTargetIds?: AcpRuntimeOptions['resolveComputeExecutionTargetIds']
@@ -258,10 +262,12 @@ const createAcpRuntime = ({
   delegatedWork,
   fixedBackend,
   runtimeCallbacks,
+  preparedSkills,
   delegatedNotebookConnection,
   delegatedArtifactCurrentRunFile,
   spawnAgent,
   sideChatRelays,
+  hasPendingCredentialRequest,
   imageInputCompatibility,
   resolveComputeExecutionTargetIds,
   memory,
@@ -657,12 +663,18 @@ const createAcpRuntime = ({
             }
           : {}),
         skills: {
+          preparedSkillIds: preparedSkills?.skillIds,
           needForceLoad: (ids) => settingsService.skillsNeedingForceLoad(ids),
           namesForIds: (ids) => settingsService.skillNudgeNamesForIds(ids),
-          descriptorsForIds: (ids, codexHome) =>
-            settingsService.codexSkillDescriptorsForIds(ids, codexHome),
-          catalogForCodexHome: (codexHome) => settingsService.codexSkillCatalog(codexHome),
-          catalogForCodeBuddyRoot: (root) => settingsService.codeBuddySkillCatalog(root)
+          descriptorsForIds: async (ids, codexHome) => {
+            if (!preparedSkills) return settingsService.codexSkillDescriptorsForIds(ids, codexHome)
+            const names = new Set(await settingsService.skillNudgeNamesForIds(ids))
+            return preparedSkills.catalog.filter((entry) => names.has(entry.name))
+          },
+          catalogForCodexHome: async (codexHome) =>
+            preparedSkills?.catalog ?? settingsService.codexSkillCatalog(codexHome),
+          catalogForCodeBuddyRoot: async (root) =>
+            preparedSkills?.catalog ?? settingsService.codeBuddySkillCatalog(root)
         },
         ...(!delegatedNotebookConnection || delegatedArtifactCurrentRunFile
           ? {
@@ -833,6 +845,7 @@ const createAcpRuntime = ({
           : {}),
         callbacks: runtimeCallbacks,
         sideChatRelays,
+        hasPendingCredentialRequest,
         ...(!delegatedNotebookConnection && memory ? { memory } : {}),
         permissionGrantStore,
         permissionGrantRegistry,

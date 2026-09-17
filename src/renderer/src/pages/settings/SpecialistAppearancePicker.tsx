@@ -275,6 +275,7 @@ const SpecialistAppearancePicker = ({
               </>
             ) : saveState === 'error' ? (
               <Notice
+                inline
                 level="error"
                 className="w-full"
                 description={t('Appearance wasn’t saved. Try again.')}

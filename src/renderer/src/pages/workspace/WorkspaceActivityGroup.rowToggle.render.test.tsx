@@ -60,6 +60,78 @@ describe('WorkspaceActivityGroup row toggling', () => {
     vi.clearAllMocks()
   })
 
+  it.each([
+    ['save_to_inbox', { results: [{ kind: 'candidate', id: 'pending', state: 'pending' }] }, true],
+    [
+      'save_to_inbox',
+      {
+        results: [{ kind: 'candidate', id: 'pending', state: 'pending' }],
+        failure: { inputIndex: 1, code: 'FAILED', message: 'Failed' }
+      },
+      true
+    ],
+    ['acquire_pdf', { status: 'pending-review', candidateId: 'pdf-1' }, true],
+    ['acquire_pdf', { status: 'not-found' }, true],
+    ['save_to_inbox', { results: [{ kind: 'item', id: 'existing', state: 'present' }] }, true],
+    ['save_to_inbox', { openScienceLiteraturePresentation: { savedCount: 1 } }, true],
+    ['search_library', { items: [] }, true],
+    ['read_library_abstract', {}, true],
+    ['read_library_pdf', {}, true],
+    ['format_references', {}, true],
+    ['format_citation_document', {}, true],
+    ['prepare_latex_bundle', {}, true],
+    ['unrelated_tool', {}, false]
+  ])(
+    'expands literature tool %s and respects user collapse (%j)',
+    async (tool, result, expanded) => {
+      const activity: ToolActivity = {
+        ...SKILL_LOAD_ACTIVITY,
+        id: 'literature-1',
+        title: `mcp__open-science-library__${tool}`,
+        providerToolName: `mcp__open-science-library__${tool}`,
+        rawInput: {},
+        toolContent: [],
+        rawOutput: { content: [{ type: 'text', text: JSON.stringify(result) }] }
+      }
+      const onToggleRow = vi.fn()
+      const renderGroup = (overrides: Record<string, boolean>, groupExpanded = true): ReactNode => (
+        <WorkspaceActivityGroup
+          group={{
+            id: 'literature-group',
+            type: 'activity-group',
+            createdAt: 1,
+            sortIndex: 1,
+            title: '',
+            activities: [activity]
+          }}
+          isExpanded={groupExpanded}
+          onToggleGroup={vi.fn()}
+          expansionOverrides={overrides}
+          onToggleRow={onToggleRow}
+        />
+      )
+      await act(async () => {
+        root.render(renderGroup({}))
+      })
+      const chip = container.querySelector<HTMLButtonElement>('[data-testid="tool-chip"]')!
+      expect(chip.getAttribute('aria-expanded')).toBe(String(expanded))
+      if (expanded) {
+        await act(async () => {
+          chip.click()
+        })
+        expect(onToggleRow).toHaveBeenCalledWith('literature-1', false)
+        await act(async () => {
+          root.render(renderGroup({ 'literature-1': false }))
+        })
+        expect(chip.getAttribute('aria-expanded')).toBe('false')
+        await act(async () => {
+          root.render(renderGroup({}, false))
+        })
+        expect(container.querySelector('button')?.getAttribute('aria-expanded')).toBe('false')
+      }
+    }
+  )
+
   it('leaves bottom-follow mode before a row expansion changes the group height', async () => {
     const onToggleRow = vi.fn()
 

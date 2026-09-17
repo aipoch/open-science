@@ -251,6 +251,7 @@ export function ComputeApprovalDialog({
               </div>
               {dialogRequest.willPersistUnencrypted ? (
                 <ErrorNotice
+                  inline
                   role="alert"
                   tone="amber"
                   className="mt-3"
@@ -261,6 +262,7 @@ export function ComputeApprovalDialog({
               ) : null}
               {responseErrorRequestId === dialogRequest.id ? (
                 <ErrorNotice
+                  inline
                   role="alert"
                   tone="amber"
                   className="mt-3"

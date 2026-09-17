@@ -3640,13 +3640,28 @@ class Analyzer extends NodeVisitor {
   ): ReturnType<Analyzer['keywordArgumentRecord']>[] {
     const keywords = [...(node.keywords ?? [])]
     const args = Array.isArray(node.args) ? node.args : []
-    for (const [position, name] of Object.entries(
-      this.libraryCallEffect(node)?.callbackPositionalKeywords ?? {}
-    )) {
+    const effect = this.libraryCallEffect(node)
+    for (const [position, name] of Object.entries(effect?.callbackPositionalKeywords ?? {})) {
       const value = args[Number(position)]
       if (value) keywords.push({ type: 'keyword', arg: name, value, _fields: ['value'] })
     }
-    return keywords.map((keyword) => this.keywordArgumentRecord(keyword, trackLocal))
+    return keywords.map((keyword) => {
+      const record = this.keywordArgumentRecord(keyword, trackLocal)
+      // defaultdict calls its factory without arguments. Builtin scalar/container constructors
+      // cannot invoke user conversion methods in this position; shadowed names stay opaque.
+      if (
+        effect?.callbackPositionalKeywords?.[0] === 'default_factory' &&
+        keyword.arg === 'default_factory' &&
+        keyword.value.type === 'Name' &&
+        ['int', 'float', 'str', 'bool', 'list', 'dict', 'set', 'tuple'].includes(
+          keyword.value.id ?? ''
+        ) &&
+        !this.defined.has(keyword.value.id!) &&
+        !this.contextualKernelNames.has(keyword.value.id!)
+      )
+        return { ...record, callableReferences: [] }
+      return record
+    })
   }
 
   keywordArgumentRecord(
@@ -5022,6 +5037,8 @@ class Analyzer extends NodeVisitor {
 
   visit_Attribute(node: PyNode): void {
     if (node.ctx === 'Store' || node.ctx === 'Del') {
+      // Changing a defaultdict factory can make a later subscript invoke arbitrary code.
+      if (node.attr === 'default_factory') this.unknown.add('scoped-opaque-call')
       const name = this.visibleRootName(node)
       if (name) {
         const imported = this.importedCanonicalNames.get(name)
@@ -5635,6 +5652,7 @@ class Analyzer extends NodeVisitor {
       ) {
         this.unknown.add('external-state')
         if (
+          canonicalCallName === 'decimal.Decimal' ||
           ['random', 'numpy.random'].some((namespace) =>
             canonicalCallName.startsWith(`${namespace}.`)
           )
@@ -6308,6 +6326,25 @@ const analyzePythonTree = (
 }
 
 const pythonHasUnsupportedExternalState = (canonicalName: string, node?: PyNode): boolean => {
+  if (canonicalName === 'decimal.Decimal') {
+    const args = Array.isArray(node?.args) ? node.args : []
+    const value = args[0] ?? node?.keywords?.find((keyword) => keyword.arg === 'value')?.value
+    // Valid fixed-point string construction is exact and does not depend on precision,
+    // rounding, traps, or exponent-format settings. Other forms remain unmodeled.
+    return (
+      args.length > 1 ||
+      Boolean(node?.keywords?.some((keyword) => keyword.arg !== 'value')) ||
+      Boolean(
+        value &&
+        !(
+          value.type === 'Constant' &&
+          typeof value.value === 'string' &&
+          /^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)$/.test(value.value)
+        )
+      )
+    )
+  }
+
   const member = canonicalName.split('.').at(-1) ?? ''
   const effect = pythonLibraryMethodEffect(canonicalName.slice(0, -(member.length + 1)), member)
   // Entropy-seeding and independent Generator/Random instances remain external.
@@ -7084,6 +7121,8 @@ const analyzePythonFileAccessTree = (
         bindings
       )
     }
+    if (name === 'pathlib.PurePath.open' && node.func?.type === 'Attribute')
+      return resolveStaticString(node.func.value as PyNode, bindings)
     if (name === 'pandas.ExcelFile')
       return resolveStaticString(
         pythonFileCallArgument(node, { kind: 'read', position: 0, keywords: ['path_or_buffer'] }),
@@ -7598,6 +7637,16 @@ const analyzePythonFileAccessTree = (
             (Array.isArray(node.args) ? node.args[1] : undefined),
           'r'
         )
+      return
+    }
+
+    if (canonicalName === 'pathlib.PurePath.open' && node.func?.type === 'Attribute') {
+      recordModeFileAccess(
+        node.func.value as PyNode,
+        (node.keywords ?? []).find((keyword) => keyword.arg === 'mode')?.value ??
+          (Array.isArray(node.args) ? node.args[0] : undefined),
+        'r'
+      )
       return
     }
 

@@ -103,7 +103,7 @@ const translateMemoryError = (t: Translate, error: unknown): string => {
 }
 
 const MemoryErrorBanner = ({ message }: { message: string }): React.JSX.Element => (
-  <ErrorNotice role="alert" tone="amber" description={message} />
+  <ErrorNotice inline role="alert" tone="amber" description={message} />
 )
 
 const confirmButtonClassName =

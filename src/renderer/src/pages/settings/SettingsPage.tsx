@@ -437,7 +437,14 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   // Whether the dialog is enlarged to near-fullscreen via the maximize control.
   const [isExpanded, setIsExpanded] = useState(false)
   const isMobile = useMediaQuery('(max-width: 767px)')
-  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false)
+  const [isMobileNavOpen, setIsMobileNavOpenState] = useState(false)
+  const isMobileNavOpenRef = useRef(false)
+  const setIsMobileNavOpen = useCallback((next: boolean) => {
+    // The dialog's Escape listener can retain an earlier render's callback.
+    // Update its navigation authority before scheduling the visual state change.
+    isMobileNavOpenRef.current = next
+    setIsMobileNavOpenState(next)
+  }, [])
   // Visual preview (design-review scaffolding, off by default): the flag is evaluated each time
   // the dialog opens, so removing the flag and reopening Settings fully restores normal
   // operation. See visual-preview/preview-store.ts for enter/exit instructions.
@@ -1232,7 +1239,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
               event.preventDefault()
               return
             }
-            if (!isMobileNavOpen) return
+            if (!isMobileNavOpenRef.current) return
             event.preventDefault()
             setIsMobileNavOpen(false)
           }}
@@ -1505,6 +1512,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
 
                 {preflightFailed ? (
                   <Notice
+                    inline
                     level="error"
                     role="alert"
                     className="mx-3 mt-3"
@@ -1866,6 +1874,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                         {/* Secret writes fail closed when the OS keychain is unavailable. */}
                         {!encryptionAvailable ? (
                           <ErrorNotice
+                            inline
                             role="alert"
                             tone="amber"
                             className="mb-4"
@@ -1876,6 +1885,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                         ) : null}
                         {providerEditTargetMissing ? (
                           <ErrorNotice
+                            inline
                             role="alert"
                             tone="amber"
                             className="mb-4"

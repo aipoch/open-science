@@ -1,0 +1,10 @@
+# CI changes require one approval from an owner other than the PR author once
+# the main ruleset enables code-owner reviews. Keep this file self-owned.
+# New commits must dismiss stale approvals. Ordinary application files have no
+# ownership rule here; CI Integrity still validates the resulting configuration.
+/.github/CODEOWNERS @aipoch/ci-maintainers
+/CODEOWNERS @aipoch/ci-maintainers
+/.github/workflows/ @aipoch/ci-maintainers
+/.github/actions/ @aipoch/ci-maintainers
+/.github/dependabot.yml @aipoch/ci-maintainers
+/scripts/ci/ @aipoch/ci-maintainers

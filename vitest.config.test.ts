@@ -2,6 +2,7 @@ import { availableParallelism, cpus } from 'node:os'
 import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import WindowsTestSequencer from './scripts/ci/windows-test-sequencer'
 
 import vitestConfig, {
   CHANGED_SOURCE_COVERAGE_THRESHOLDS,
@@ -20,6 +21,11 @@ import vitestConfig, {
 } from './vitest.config'
 
 describe('Vitest discovery boundaries', () => {
+  it('enables module-based sharding only in the Windows full-test profile', () => {
+    expect(vitestConfig.test?.sequence?.sequencer).toBe(
+      process.env.VITEST_WINDOWS_FULL_TEST === '1' ? WindowsTestSequencer : undefined
+    )
+  })
   it.each([
     '**/.pnpm-store/**',
     '**/tmp/**',

@@ -32,36 +32,85 @@ const run = (
 
 describe('ensembl_lookup', () => {
   it('routes a true stable ID to /lookup/id (species ignored)', async () => {
-    const fetchImpl = vi.fn().mockResolvedValueOnce(jsonRes({ id: 'ENSG00000157764' }))
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(jsonRes({ id: 'ENSG00000157764', species: 'homo_sapiens' }))
     const out = (await run(
       'ensembl_lookup',
       { query: 'ENSG00000157764', species: 'mus_musculus', expand: true },
       fetchImpl
-    )) as { found: boolean; record: { id: string } }
+    )) as { found: boolean; species: string; record: { id: string } }
     const url = String(fetchImpl.mock.calls[0][0])
     expect(url).toContain('/lookup/id/ENSG00000157764?expand=1')
     expect(url).not.toContain('/lookup/symbol/')
     expect(out.found).toBe(true)
     expect(out.record.id).toBe('ENSG00000157764')
+    expect(out.species).toBe('homo_sapiens')
   })
+
+  it.each([undefined, 'homo_sapiens'])(
+    'returns the mouse record species when the requested species is %s',
+    async (species) => {
+      const record = {
+        id: 'ENSMUSG00000059552',
+        species: 'mus_musculus',
+        assembly_name: 'GRCm39',
+        seq_region_name: '11',
+        start: 69469669,
+        end: 69482701
+      }
+      const fetchImpl = vi.fn().mockResolvedValueOnce(jsonRes(record))
+      const out = await run(
+        'ensembl_lookup',
+        { query: record.id, ...(species ? { species } : {}) },
+        fetchImpl
+      )
+
+      expect(String(fetchImpl.mock.calls[0][0])).toContain(`/lookup/id/${record.id}?expand=0`)
+      expect(out).toEqual({ found: true, query: record.id, species: 'mus_musculus', record })
+    }
+  )
+
+  it.each([undefined, null, '', '   ', 9606])(
+    'rejects a successful lookup with invalid record species %s',
+    async (species) => {
+      const fetchImpl = vi
+        .fn()
+        .mockResolvedValueOnce(jsonRes({ id: 'ENSMUSG00000059552', species }))
+
+      await expect(
+        run('ensembl_lookup', { query: 'ENSMUSG00000059552' }, fetchImpl)
+      ).rejects.toThrow('Ensembl lookup returned a record without a valid species')
+    }
+  )
 
   it('routes an "ENS"-prefixed SYMBOL (ENSA / ENSAP1) to /lookup/symbol', async () => {
     for (const sym of ['ENSA', 'ENSAP1']) {
-      const fetchImpl = vi.fn().mockResolvedValueOnce(jsonRes({ id: 'ENSG00000143420' }))
+      const fetchImpl = vi
+        .fn()
+        .mockResolvedValueOnce(jsonRes({ id: 'ENSG00000143420', species: 'homo_sapiens' }))
       await run('ensembl_lookup', { query: sym }, fetchImpl)
       const url = String(fetchImpl.mock.calls[0][0])
       expect(url).toContain(`/lookup/symbol/homo_sapiens/${sym}?expand=0`)
     }
   })
 
-  it('routes a plain gene symbol to /lookup/symbol with the species', async () => {
-    const fetchImpl = vi.fn().mockResolvedValueOnce(jsonRes({ id: 'ENSG00000157764' }))
-    await run('ensembl_lookup', { query: 'BRAF' }, fetchImpl)
-    expect(String(fetchImpl.mock.calls[0][0])).toContain('/lookup/symbol/homo_sapiens/BRAF')
+  it.each([
+    { query: 'BRAF', species: 'homo_sapiens', id: 'ENSG00000157764' },
+    { query: 'Trp53', species: 'mus_musculus', id: 'ENSMUSG00000059552' }
+  ])('preserves the species for symbol lookup $query', async ({ query, species, id }) => {
+    const record = { id, species }
+    const fetchImpl = vi.fn().mockResolvedValueOnce(jsonRes(record))
+    const out = await run('ensembl_lookup', { query, species }, fetchImpl)
+
+    expect(String(fetchImpl.mock.calls[0][0])).toContain(`/lookup/symbol/${species}/${query}`)
+    expect(out).toEqual({ found: true, query, species, record })
   })
 
   it('removes an Ensembl version suffix before calling the stable-ID endpoint', async () => {
-    const fetchImpl = vi.fn().mockResolvedValueOnce(jsonRes({ id: 'ENST00000422447' }))
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(jsonRes({ id: 'ENST00000422447', species: 'homo_sapiens' }))
 
     await run('ensembl_lookup', { query: 'ENST00000422447.8' }, fetchImpl)
 
@@ -69,7 +118,9 @@ describe('ensembl_lookup', () => {
   })
 
   it('keeps an LRG id unchanged on the stable-ID route', async () => {
-    const fetchImpl = vi.fn().mockResolvedValueOnce(jsonRes({ id: 'LRG_299' }))
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(jsonRes({ id: 'LRG_299', species: 'homo_sapiens' }))
 
     await run('ensembl_lookup', { query: 'LRG_299' }, fetchImpl)
 
@@ -241,9 +292,129 @@ describe('ensembl_vep_variant', () => {
       fetchImpl
     )) as { query: string }
     expect(String(fetchImpl.mock.calls[0][0])).toContain(
-      '/vep/homo_sapiens/region/7:140753336-140753336/T'
+      '/vep/homo_sapiens/region/7:140753336-140753336:1/T'
     )
     expect(out.query).toBe('7:140753336-140753336 T')
+  })
+
+  it.each([
+    ['19:44908822-44908822:-1', 'A', '19:44908822-44908822:1', 'T'],
+    ['19:44908822-44908823:-1', 'gt', '19:44908822-44908823:1', 'AC'],
+    ['19:44908823-44908822:-1', 'GT', '19:44908823-44908822:1', 'AC'],
+    ['19:44908822-44908823:-1', '-', '19:44908822-44908823:1', '-']
+  ])(
+    'matches equivalent forward output for %s / %s',
+    async (region, allele, forwardRegion, forwardAllele) => {
+      const fetchImpl = vi.fn().mockImplementation(async (url: string) => {
+        expect(url).toContain(`/region/${forwardRegion}/${forwardAllele}`)
+        return jsonRes([{ ...vepResult, allele_string: `C/${forwardAllele}` }])
+      })
+      const args = { region, allele, allele_orientation: 'region', species: 'mus_musculus' }
+      const negative = (await run('ensembl_vep_variant', args, fetchImpl)) as Record<
+        string,
+        unknown
+      >
+      const positive = (await run(
+        'ensembl_vep_variant',
+        {
+          region: forwardRegion,
+          allele: forwardAllele,
+          species: 'mus_musculus'
+        },
+        fetchImpl
+      )) as Record<string, unknown>
+      expect(negative.results).toEqual(positive.results)
+      expect(negative.query).toBe(`${region} ${allele}`)
+      expect(negative.normalization).toEqual({
+        original: { region, allele, allele_orientation: 'region' },
+        forward: { region: forwardRegion, allele: forwardAllele },
+        reverse_complemented: allele !== '-'
+      })
+      expect(args).toEqual({
+        region,
+        allele,
+        allele_orientation: 'region',
+        species: 'mus_musculus'
+      })
+      expect(String(fetchImpl.mock.calls[0][0])).toContain('/vep/mus_musculus/')
+    }
+  )
+
+  it.each([undefined, 'forward'])(
+    'preserves the existing forward allele contract (%s)',
+    async (orientation) => {
+      const fetchImpl = vi.fn().mockResolvedValue(jsonRes([vepResult]))
+      const out = (await run(
+        'ensembl_vep_variant',
+        {
+          region: '19:44908822-44908822:-1',
+          allele: 'T',
+          allele_orientation: orientation
+        },
+        fetchImpl
+      )) as Record<string, unknown>
+      expect(String(fetchImpl.mock.calls[0][0])).toContain('/region/19:44908822-44908822:1/T')
+      expect(out.normalization).toMatchObject({
+        reverse_complemented: false,
+        original: { allele_orientation: 'forward' }
+      })
+    }
+  )
+
+  it.each(['19:44908822-44908822', '19:44908822-44908822:1', '19:44908822-44908822:+1'])(
+    'does not complement forward region %s in region orientation',
+    async (region) => {
+      const fetchImpl = vi.fn().mockResolvedValue(jsonRes([vepResult]))
+      await run(
+        'ensembl_vep_variant',
+        { region, allele: 't', allele_orientation: 'region' },
+        fetchImpl
+      )
+      expect(String(fetchImpl.mock.calls[0][0])).toContain('/region/19:44908822-44908822:1/T')
+    }
+  )
+
+  it.each(['INS', 'DUP', 'DEL', 'TDUP'])(
+    'preserves symbolic %s in forward orientation',
+    async (allele) => {
+      const fetchImpl = vi.fn().mockResolvedValue(jsonRes([vepResult]))
+      await run('ensembl_vep_variant', { region: '19:10-20:-1', allele }, fetchImpl)
+      expect(String(fetchImpl.mock.calls[0][0])).toContain(`/region/19:10-20:1/${allele}`)
+    }
+  )
+
+  it.each([
+    { region: '19:10-10:-1', allele: 'DUP', allele_orientation: 'region' },
+    { region: '19:10-10:-1', allele: 'N', allele_orientation: 'region' },
+    { region: '19:10-10:-1', allele: 'A/C', allele_orientation: 'region' },
+    { region: '19:10-10:-1', allele: 'A', allele_orientation: 'unknown' },
+    { region: '19:10-10:-2', allele: 'A' },
+    { region: '19:12-10:-1', allele: 'A' },
+    { region: '19:1-0:-1', allele: 'A' },
+    { region: '19:0-10', allele: '-' },
+    { region: '19:9007199254740992-9007199254740992', allele: 'A' },
+    { region: '19:10-10:-1?strand=1', allele: 'A' }
+  ])('rejects ambiguous or invalid region input before fetching: %j', async (args) => {
+    const fetchImpl = vi.fn()
+    await expect(run('ensembl_vep_variant', args, fetchImpl)).rejects.toThrow()
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('keeps ID precedence and the existing ID result shape', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonRes([vepResult]))
+    const out = (await run(
+      'ensembl_vep_variant',
+      {
+        variant_id: 'rs7412',
+        region: 'ignored:-1',
+        allele: 'not a sequence',
+        allele_orientation: 'region'
+      },
+      fetchImpl
+    )) as Record<string, unknown>
+    expect(String(fetchImpl.mock.calls[0][0])).toContain('/id/rs7412')
+    expect(out.query).toBe('rs7412')
+    expect(out).not.toHaveProperty('normalization')
   })
 
   it('throws when neither variant_id nor region+allele is supplied', async () => {

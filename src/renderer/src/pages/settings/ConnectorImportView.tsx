@@ -146,7 +146,7 @@ export function ConnectorImportView({
           </p>
         ) : null}
 
-        {error ? <ErrorNotice role="alert" tone="amber" description={error} /> : null}
+        {error ? <ErrorNotice inline role="alert" tone="amber" description={error} /> : null}
 
         {definition ? (
           <div>

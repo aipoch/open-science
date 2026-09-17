@@ -73,6 +73,8 @@ export function SideChatWorkbenchContent({
         />
       }
       onSend={chat.send}
+      sendDisabledReason={chat.unavailableReason}
+      onRetryRestore={chat.retryHydration}
       onDraftChange={chat.setDraft}
       onAnnotationsChange={chat.setAnnotations}
       onCancel={chat.cancel}

@@ -425,6 +425,7 @@ describe('Artifact Provenance repository architecture', () => {
       [
         ...productionFiles.map((file) => `src/main/artifacts/${file}`),
         'src/main/notebook/reproduction-runtime.ts',
+        'src/main/notebook/stdlib-replay.fixture.ts',
         'src/renderer/src/pages/workspace/ArtifactReproducibilityPanel.tsx',
         'src/shared/artifact-reproducibility.ts'
       ].sort()
@@ -457,6 +458,7 @@ describe('Artifact Provenance repository architecture', () => {
         'src/main/artifacts/reviewer-turn-file-evidence-reader.test.ts',
         'src/main/artifacts/provenance-write-contract.test.ts',
         'src/main/artifacts/write-budget-owner.test.ts',
+        'src/main/notebook/dependency-analysis.stdlib-replay.test.ts',
         'src/main/notebook/reproduction-runtime.test.ts',
         'src/renderer/src/pages/workspace/ArtifactReproducibilityPanel.test.tsx'
       ].sort()
@@ -493,7 +495,11 @@ describe('Artifact Provenance repository architecture', () => {
         'src/renderer/src/pages/workspace/artifact-publication-preview.integration.test.tsx'
       ].sort()
     )
-    expect(module.capabilityOverlays).toEqual(['windows_sensitive'])
+    expect(module.capabilityOverlays).toEqual([
+      'windows_sensitive',
+      'e2e_regressions',
+      'e2e_delegation'
+    ])
     expect(module.fallbackCapability).toBe('main_runtime')
   })
 })

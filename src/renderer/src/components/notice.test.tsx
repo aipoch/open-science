@@ -43,3 +43,22 @@ it('keeps existing error and contextual callers on the same semantic renderer', 
     [...container.querySelectorAll('section')].map((node) => node.dataset.noticeLevel)
   ).toEqual(['info', 'warning', 'error'])
 })
+
+it('selects unboxed presentation only for contextual notices', () => {
+  const { container } = render(
+    <>
+      <InlineNotice role="alert" level="error">
+        Local failure
+      </InlineNotice>
+      <ErrorNotice inline description="Local recovery" />
+      <ErrorNotice description="Regional recovery" />
+      <ErrorNotice fullPage inline title="Startup failure" />
+    </>
+  )
+  expect(
+    [...container.querySelectorAll('section')].map((node) => node.dataset.noticeInline)
+  ).toEqual(['true', 'true', undefined, undefined])
+  expect(screen.getByRole('alert').textContent).toBe('Local failure')
+  expect(screen.getByRole('alert').getAttribute('aria-atomic')).toBe('true')
+  expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Startup failure')
+})

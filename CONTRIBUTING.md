@@ -323,11 +323,35 @@ ci(review): unify automated AI reviews
   checks ran after the last material edit, and call out uncovered risks.
 - Keep PRs reasonably small and scoped so they are easy to review.
 - Ensure the final Test Impact Set, or the full fallback when required, passes.
-- After the pull request checks pass, merge it directly using **squash merge only**. Do not update the
-  branch only because `main` advanced; update it when it has merge conflicts or a maintainer requests
-  it. The squash commit subject must keep the pull request title's Conventional Commit format.
-- Non-documentation changes merged into `main` trigger the [Nightly workflow](.github/workflows/nightly.yml),
-  which runs post-merge verification and cross-platform package certification on the resulting commit.
+- After required PR checks and review pass, add the pull request to the native merge queue once
+  the queue rollout is enabled. The queue validates the combined revision before **squash merge**;
+  its squash subject must retain the PR title's Conventional Commit format. Do not update a branch
+  merely because `main` advanced; update it for conflicts or a maintainer request.
+- PR commits retain policy/CI Integrity, CodeQL, AI review, static checks and portable tests.
+  Desktop changes run the main Windows business journeys. Ordinary changes run one short macOS
+  core group (project creation/relaunch, persisted theme and window presentation), instead of the
+  four-group Mac matrix. The short job installs, builds and tests on one Mac runner without web
+  build or snapshot transfer. Known non-native main-process descriptors and locale changes use
+  this same short path. Critical desktop paths from the impact manifest, preload, windows,
+  shortcuts, processes, native dependencies, Notebook runtime, build/CI inputs and unknown main
+  ownership or destructive changes retain expanded affected Mac coverage.
+- Merge queue keeps concurrency two and validates the combined revision with Linux/portable
+  checks and the short Mac core. Ordinary changes do not repeat Windows business E2E in queue;
+  platform-sensitive changes retain their selected platform checks. Selected native module
+  coverage remains blocking. The obsolete blanket PR-deferral switch, stage output and separate
+  legacy coverage job have been removed; selected bundles must always pass.
+- New plans carry `macosProfile` (`smoke` or `expanded`). Trusted old plans without this field
+  retain their existing execution and complete fallback matrix. Workflows opt into the new plan
+  with `PR_GATE_PLATFORM_POLICY=risk-v1`; old workflow revisions receive the full legacy plan. Manual focused runs retain their
+  explicitly selected suites. The `macos-smoke` manual choice exercises the actual short Mac job
+  without unrelated platform suites. Plans requesting the retired `coverage_macos` bundle fail
+  validation; old completed runs need no migration. This compatibility concerns CI metadata only.
+- Nightly packaging, Windows Full Test, supplemental Source Regression, and Runtime Resource Soak
+  run daily on `main`, at 01:17, 02:47, 03:37, and 05:23 respectively in Singapore time
+  (Asia/Singapore, UTC+8). Unchanged successful revisions are skipped;
+  manual runs always execute. Formal release certification and post-release Windows Upgrade Smoke
+  retain their existing gates/triggers. Scheduled failures remain visible failures and cannot
+  retroactively block an already merged PR.
 
 ## Reporting Issues
 
@@ -347,3 +371,49 @@ use `npm-v*` tags and are published through the protected `Publish npm package` 
 
 By contributing, you agree that your contributions will be licensed under the
 [Apache License 2.0](./LICENSE), the same license that covers this project.
+
+### Supplemental desktop coverage
+
+The gate selects supplemental regressions and Delegation through critical desktop paths and
+module-consumer overlays. A known connector descriptor or main-process locale-only change keeps
+core journeys and affected portable tests without selecting unrelated supplemental groups. Unknown
+ownership, global inputs and destructive changes retain full fallback. Session, permission,
+Delegation, storage and native sandbox changes retain their relevant pre-merge checks.
+
+Source Regression runs complete Mac functional/workspace journeys, browser/visual/accessibility
+coverage and supplemental suites daily at 03:37 Asia/Singapore. The gate
+excludes only tests tagged `@capacity`; a three-session body-integrity check remains in the selected
+regression suite while forty-session resource profiling runs in Source Regression. Transcript
+scrolling/find correctness stays in the gate. Focused manual Source Regression runs include capacity
+profiling, and callers without an explicit capacity input retain complete coverage.
+
+### CI control-plane approval
+
+CI workflows, local actions, CI scripts, Dependabot configuration and CODEOWNERS itself have
+`@aipoch/ci-maintainers` as owner in `.github/CODEOWNERS`. Maintain membership in GitHub instead
+of editing individual usernames in the file. The team must be visible and have explicit repository
+write access. The main ruleset requires approval from one owner other than the PR author and
+dismisses stale approvals after new commits. Ordinary application files have no CODEOWNERS entry.
+
+Owner review authorizes control-plane changes; CI Integrity still validates unsafe workflow
+execution, mutable action references, expanded target-workflow permissions and spoofed or missing
+required checks. It runs for both PR admission and merge-group validation. Passing required checks
+and owner approval precede normal merge-queue admission. Never remove the Integrity `merge_group`
+trigger while its check is required.
+
+Keep required code-owner review and stale-approval dismissal enabled while relying on this policy.
+CI Integrity also checks module ownership for JavaScript/TypeScript files under `src/` and
+`packages/`. Register new source and test files in `scripts/ci/module-impact.json`, including their
+owner, contract and consumer test coverage. New unregistered files and regressions from existing
+coverage block admission; changes to historical unregistered files produce a nonblocking report
+and retain full test fallback. Renamed files must register their new paths. Manifest-only changes
+are checked against all surviving code files, so removing a mapping cannot silently reduce coverage.
+The checker reads candidate manifests as data using trusted base code and compares against the Git
+merge base; no separate historical allowlist is stored. Global CI inputs retain intentional full
+validation. E2E and CI scripts remain governed by their existing routing and integrity checks.
+Registration proves that a test plan exists, not that its dependency coverage is complete.
+
+The migration PR that removes the former unconditional protected-file rejection still encounters
+the old guard from its base revision. Any bootstrap ruleset bypass requires explicit maintainer
+authorization and directly merges the PR; it does not carry approval into a later queue run. Do not
+enqueue a PR with a known failing required check and expect the queue to waive it.

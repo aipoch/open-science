@@ -1385,44 +1385,52 @@ describe('ProviderAccountsModule', () => {
     })
   })
 
-  it('refuses to resolve a configured model removed by a catalog refresh', async () => {
-    await module.upsertProvider({
-      type: 'official',
-      name: 'DeepSeek',
-      vendorId: 'deepseek',
-      key: 'key'
-    })
-    const providerId = (await repository.getSettings()).providers[0].id
-    await module.setActiveProvider(providerId, 'deepseek-v4-pro')
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue(Response.json({ data: [{ id: 'replacement-model' }] }))
-    )
-
-    await expect(module.refreshProviderModels({ providerId })).resolves.toMatchObject({
-      ok: true,
-      models: ['replacement-model']
-    })
-    const settings = await repository.getSettings()
-    const provider = settings.providers[0]
-    expect(settings.activeModel).toBe('deepseek-v4-pro')
-
-    let outcome: string
-    try {
-      const target = module.resolveRuntimeTarget(
-        provider,
-        { kind: 'configured', requestedModel: settings.activeModel },
-        getAgentFramework('codex')
+  it.each([
+    { vendorId: 'deepseek', model: 'deepseek-v4-pro', preserved: true },
+    { vendorId: 'anthropic', model: 'claude-opus-5', preserved: false }
+  ] as const)(
+    'resolves configured models after catalog refresh for $vendorId',
+    async ({ vendorId, model, preserved }) => {
+      await module.upsertProvider({
+        type: 'official',
+        name: vendorId,
+        vendorId,
+        key: 'key'
+      })
+      const providerId = (await repository.getSettings()).providers[0].id
+      await module.setActiveProvider(providerId, model)
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue(Response.json({ data: [{ id: 'replacement-model' }] }))
       )
-      outcome = `resolved ${target.effectiveModel}`
-    } catch (error) {
-      outcome = error instanceof Error ? error.message : String(error)
-    }
 
-    expect(outcome).toBe(
-      'The configured model is no longer available from provider "DeepSeek": "deepseek-v4-pro". Pick another model in Settings → Model.'
-    )
-  })
+      await expect(module.refreshProviderModels({ providerId })).resolves.toMatchObject({
+        ok: true,
+        models: ['replacement-model']
+      })
+      const settings = await repository.getSettings()
+      const provider = settings.providers[0]
+      expect(settings.activeModel).toBe(model)
+
+      let outcome: string
+      try {
+        const target = module.resolveRuntimeTarget(
+          provider,
+          { kind: 'configured', requestedModel: settings.activeModel },
+          getAgentFramework('claude-code')
+        )
+        outcome = `resolved ${target.effectiveModel}`
+      } catch (error) {
+        outcome = error instanceof Error ? error.message : String(error)
+      }
+
+      expect(outcome).toBe(
+        preserved
+          ? `resolved ${model}`
+          : `The configured model is no longer available from provider "${vendorId}": "${model}". Pick another model in Settings → Model.`
+      )
+    }
+  )
 
   it('does not recreate a provider deleted while its model catalog refresh is pending', async () => {
     await module.upsertProvider({

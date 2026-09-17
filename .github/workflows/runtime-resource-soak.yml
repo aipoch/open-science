@@ -2,7 +2,7 @@ name: Runtime Resource Soak
 
 on:
   schedule:
-    - cron: '23 3 * * *'
+    - cron: '23 21 * * *' # UTC; overnight in Asia/Singapore
   workflow_dispatch:
     inputs:
       mode:
@@ -20,7 +20,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: runtime-resource-soak-${{ github.ref }}
+  group: runtime-resource-soak-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

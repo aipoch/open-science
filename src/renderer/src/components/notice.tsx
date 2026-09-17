@@ -25,8 +25,8 @@ import { FlaskLogo } from '@/components/flask-logo'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 
-// Inline notices share one compact presentation. Only startup-blocking surfaces opt into
-// the full-page branded layout. All copy arrives as final display strings — callers translate.
+// Contextual messages opt into an unboxed inline presentation; recovery cards keep their surface.
+// All copy arrives as final display strings — callers translate.
 
 type NoticeButtonProps = {
   label: string
@@ -42,6 +42,8 @@ type NoticeButtonProps = {
 type NoticeProps = Omit<HTMLAttributes<HTMLElement>, 'title' | 'role' | 'children' | 'content'> & {
   className?: string
   fullPage?: boolean
+  // Use inside an existing form, row or panel instead of nesting another card.
+  inline?: boolean
   // Announce the summary without reading technical diagnostics or recovery controls.
   role?: 'alert' | 'status' | 'note'
   children?: ReactNode
@@ -109,6 +111,7 @@ const NoticeButton = ({
 const Notice = ({
   className,
   fullPage = false,
+  inline = false,
   role,
   children,
   icon,
@@ -127,6 +130,10 @@ const Notice = ({
   ...props
 }: NoticeProps): React.JSX.Element => {
   const compact = !fullPage
+  const unboxed = compact && inline
+  const descriptionClassName = unboxed
+    ? 'font-normal text-muted-foreground [overflow-wrap:anywhere]'
+    : noticeDescriptionClassName
   const Icon =
     icon ??
     (fullPage ? undefined : { info: Info, warning: TriangleAlert, error: CircleAlert }[level])
@@ -150,22 +157,27 @@ const Notice = ({
     <section
       {...props}
       data-notice-level={level}
+      data-notice-inline={unboxed || undefined}
       className={cn(
-        '@container/notice flex w-full min-w-0 flex-col text-left',
-        compact ? cn('gap-3', noticeSurfaceClassName) : 'max-w-md gap-4',
+        '@container/notice flex min-w-0 flex-col text-left',
+        unboxed
+          ? 'self-stretch gap-2 text-sm leading-5'
+          : compact
+            ? cn('w-full gap-3', noticeSurfaceClassName)
+            : 'w-full max-w-md gap-4',
         className
       )}
     >
       {fullPage ? <FlaskLogo className="mb-4 size-18 self-center text-text-300" /> : null}
 
       {title !== undefined || description !== undefined || content !== undefined ? (
-        <div className="flex min-w-0 flex-wrap items-start gap-3">
+        <div className={cn('flex min-w-0 flex-wrap items-start', unboxed ? 'gap-2' : 'gap-3')}>
           {Icon ? (
             <div
               className={cn(
                 'flex shrink-0 items-center justify-center',
                 compact
-                  ? ['mt-0.5 h-5 w-4', noticeIconClassNames[level]]
+                  ? ['h-5 w-4', !unboxed && 'mt-0.5', noticeIconClassNames[level]]
                   : ['size-9 rounded-full', noticeToneClassNames[level]]
               )}
             >
@@ -175,7 +187,7 @@ const Notice = ({
           <div
             role={role}
             aria-atomic={role ? true : undefined}
-            className="flex min-w-0 flex-1 basis-40 flex-col gap-1"
+            className="flex min-w-0 flex-1 flex-col gap-1"
           >
             {title !== undefined ? (
               <Heading
@@ -188,10 +200,10 @@ const Notice = ({
               </Heading>
             ) : null}
             {description !== undefined ? (
-              <p className={cn('whitespace-pre-wrap', noticeDescriptionClassName)}>{description}</p>
+              <p className={cn('whitespace-pre-wrap', descriptionClassName)}>{description}</p>
             ) : null}
             {content !== undefined ? (
-              <div className={cn('space-y-1', noticeDescriptionClassName)}>{content}</div>
+              <div className={cn('space-y-1', descriptionClassName)}>{content}</div>
             ) : null}
           </div>
           {trailingAction ? (
@@ -216,7 +228,11 @@ const Notice = ({
         </div>
       ) : null}
 
-      {children ? <div className={cn('min-w-0', compact && Icon && 'pl-7')}>{children}</div> : null}
+      {children ? (
+        <div className={cn('min-w-0', compact && Icon && (unboxed ? 'pl-6' : 'pl-7'))}>
+          {children}
+        </div>
+      ) : null}
 
       {fullPage && errorCode !== undefined ? diagnosticContent : null}
 
@@ -239,7 +255,7 @@ const Notice = ({
             describedActions
               ? 'grid gap-3 border-t border-border pt-3 sm:grid-cols-2'
               : 'flex flex-wrap items-center justify-end gap-2',
-            compact && Icon && 'ml-7'
+            compact && Icon && (unboxed ? 'ml-6' : 'ml-7')
           )}
         >
           {describedActions && primaryButton ? (
@@ -256,7 +272,12 @@ const Notice = ({
 
       {compact && errorCode !== undefined ? (
         diagnosticsLabel ? (
-          <details className={cn('group border-t border-border pt-2.5', Icon && 'ml-7')}>
+          <details
+            className={cn(
+              'group border-t border-border pt-2.5',
+              Icon && (unboxed ? 'ml-6' : 'ml-7')
+            )}
+          >
             <summary className="flex w-fit cursor-pointer list-none items-center gap-1 rounded-sm text-xs leading-5 text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring [&::-webkit-details-marker]:hidden">
               <ChevronRight className="size-3 shrink-0 group-open:rotate-90" aria-hidden="true" />
               {diagnosticsLabel}

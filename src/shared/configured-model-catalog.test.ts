@@ -135,6 +135,29 @@ describe('configured model catalog', () => {
     ])
   })
 
+  it.each([
+    { frameworkId: 'claude-code', frameworkEndpoints: ['anthropic'] },
+    { frameworkId: 'opencode', frameworkEndpoints: ['anthropic', 'openai'] },
+    { frameworkId: 'codex', frameworkEndpoints: ['responses'] }
+  ] as const)('offers the new Ark vision models to $frameworkId', (framework) => {
+    const models = [
+      'doubao-seed-2-1-pro-260915',
+      'deepseek-v4-1-flash-260910',
+      'glm-5-3-flash-260828'
+    ]
+    const entries = buildConfiguredModelCatalog({
+      providers: [provider('ark', models, { type: 'official', vendorId: 'volcengine' })],
+      ...framework
+    })
+    expect(
+      entries.map(({ model, selectable, supportsImageInput }) => ({
+        model,
+        selectable,
+        supportsImageInput
+      }))
+    ).toEqual(models.map((model) => ({ model, selectable: true, supportsImageInput: true })))
+  })
+
   it('projects xAI subscription models as image-capable', () => {
     const [entry] = buildConfiguredModelCatalog({
       providers: [

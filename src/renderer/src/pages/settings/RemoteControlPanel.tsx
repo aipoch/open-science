@@ -712,7 +712,7 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
             })}
           </div>
 
-          {modeError ? <ErrorNotice role="alert" description={t(modeError)} /> : null}
+          {modeError ? <ErrorNotice inline role="alert" description={t(modeError)} /> : null}
 
           {incompleteShutdown ? (
             <ErrorNotice

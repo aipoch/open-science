@@ -5410,7 +5410,8 @@ describe('LiteratureLibraryPage', () => {
           target: { value: 'No identifier manual reference' }
         })
         fireEvent.click(screen.getByRole('button', { name: 'Save' }))
-        await within(screen.getByRole('dialog')).findByRole('alert')
+        // This integration fixture commits to real SQLite before the failed readback is rendered.
+        await within(screen.getByRole('dialog')).findByRole('alert', {}, { timeout: 10_000 })
         expect(await client.literatureItem.count()).toBe(1)
         expect((await catalog.get(committedId!))?.item.identifiers).toEqual([])
         const dialog = screen.getByRole('dialog')
@@ -5418,7 +5419,11 @@ describe('LiteratureLibraryPage', () => {
           within(dialog).queryByRole('button', { name: /retry/i }) ??
             within(dialog).getByRole('button', { name: 'Save' })
         )
-        await screen.findByRole('heading', { name: 'No identifier manual reference' })
+        await screen.findByRole(
+          'heading',
+          { name: 'No identifier manual reference' },
+          { timeout: 10_000 }
+        )
         expect
           .soft(await client.literatureItem.findMany({ select: { id: true, title: true } }))
           .toEqual([{ id: committedId, title: 'No identifier manual reference' }])

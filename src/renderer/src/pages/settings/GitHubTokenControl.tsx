@@ -184,6 +184,7 @@ const GitHubTokenControl = ({ onCancel }: { onCancel?(): void } = {}): React.JSX
         {feedback ? (
           feedback.kind === 'error' ? (
             <Notice
+              inline
               id="github-token-feedback"
               level="error"
               role="alert"

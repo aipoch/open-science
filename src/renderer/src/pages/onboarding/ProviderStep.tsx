@@ -432,6 +432,7 @@ const ProviderStep = ({
         <section aria-label={t('Configure model')}>
           {!encryptionAvailable ? (
             <ErrorNotice
+              inline
               className="mb-4"
               tone="amber"
               description={t(

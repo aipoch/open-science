@@ -248,20 +248,25 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     models: [
       { id: 'deepseek-v4-pro', contextWindow: 1_000_000 },
       { id: 'deepseek-v4-pro[1m]', contextWindow: 1_000_000 },
+      // DeepSeek V4.1 Flash uses the stable API id deepseek-flash.
+      { id: 'deepseek-flash', contextWindow: 1_000_000 },
       { id: 'deepseek-v4-flash', contextWindow: 1_000_000 },
       { id: 'deepseek-v4-flash-vision-exp', contextWindow: 1_000_000 }
     ],
     // Bundled DeepSeek V4 models serve the native Responses API. Keep the explicit list because the
     // vendor also exposes non-Responses models through its live model catalog.
     responsesModels: [
+      'deepseek-flash',
       'deepseek-v4-pro',
       'deepseek-v4-pro[1m]',
       'deepseek-v4-flash',
       'deepseek-v4-flash-vision-exp'
     ],
-    // Only the vision-exp id accepts image input. Pro and flash stay text-only; sending images to
-    // them returns 400. The explicit list also covers the same id when it arrives via live refresh.
-    multimodal: { multimodalModels: ['deepseek-v4-flash-vision-exp'] }
+    // V4.1 Flash accepts image input; the legacy Flash ids now route to the same model.
+    // Keep Pro text-only, and apply these capabilities to ids received through live refresh too.
+    multimodal: {
+      multimodalModels: ['deepseek-flash', 'deepseek-v4-flash', 'deepseek-v4-flash-vision-exp']
+    }
   },
   {
     id: 'bailian',
@@ -646,12 +651,27 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     // and OpenAI Responses at /api/v3/responses (the probe derives it from `openaiBaseUrl`). The same
     // model ids work on all three. No modelsListUrl: Ark's catalog also serves embedding, image
     // (Seedream), and video (Seedance) models alongside the chat ids, and the refresh has no
-    // modality filter — so the Doubao Seed chat catalog stays curated.
+    // modality filter — so the chat catalog stays curated.
     apiEndpoints: ['anthropic', 'openai', 'responses'],
     baseUrl: 'https://ark.cn-beijing.volces.com/api/compatible',
     openaiBaseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
     apiKeyUrl: 'https://console.volcengine.com/ark/region:ark+cn-beijing/apikey',
+    // Official model cards and effort mappings (verified 2026-09-16):
+    // https://console.volcengine.com/ark/region:cn-beijing/model
+    // https://www.volcengine.com/docs/82379/1449737
     models: [
+      { id: 'doubao-seed-2-1-pro-260915', contextWindow: 1_024_000 },
+      {
+        id: 'deepseek-v4-1-flash-260910',
+        contextWindow: 1_024_000,
+        reasoningEffort: 'none-low-high-max'
+      },
+      {
+        id: 'glm-5-3-flash-260828',
+        contextWindow: 1_024_000,
+        reasoningEffort: 'low-high-max'
+      },
+      // Keep dated selections pinned; a catalog update must not replace an existing model.
       { id: 'doubao-seed-2-1-pro-260628', contextWindow: 256_000 },
       { id: 'doubao-seed-2-1-turbo-260628', contextWindow: 256_000 },
       { id: 'doubao-seed-2-0-pro-260215', contextWindow: 256_000 },
@@ -659,9 +679,12 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
       { id: 'doubao-seed-2-0-mini-260215', contextWindow: 256_000 },
       { id: 'doubao-seed-2-0-code-preview-260215', contextWindow: 256_000 }
     ],
-    // The Seed 2.x general models accept image input; the code-preview coding model is text-only.
+    // Explicit image-input support; the older code-preview coding model remains text-only.
     multimodal: {
       multimodalModels: [
+        'doubao-seed-2-1-pro-260915',
+        'deepseek-v4-1-flash-260910',
+        'glm-5-3-flash-260828',
         'doubao-seed-2-1-pro-260628',
         'doubao-seed-2-1-turbo-260628',
         'doubao-seed-2-0-pro-260215',
@@ -1295,6 +1318,11 @@ export const getOfficialVendorModelIds = (
   if (!vendor) return []
   const region =
     vendor.regions?.find((candidate) => candidate.id === regionId) ?? vendor.regions?.[0]
+  // DeepSeek discovery omits still-routable legacy ids. Preserve the bundled names so
+  // pinned sessions remain usable, including settings cached before this compatibility rule.
+  if (id === 'deepseek' && fetchedModels?.length) {
+    return [...new Set([...fetchedModels, ...vendor.models.map((model) => model.id)])]
+  }
   return [
     ...(region?.modelIds ??
       (fetchedModels?.length ? fetchedModels : vendor.models.map((model) => model.id)))

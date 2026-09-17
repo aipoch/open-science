@@ -18,6 +18,7 @@ export type ReasoningEffortPresetId =
   | 'low-medium-high'
   | 'medium-high-xhigh'
   | 'minimal-low-medium-high'
+  | 'none-low-high-max'
   | 'none-high-max'
   | 'none-high-xhigh'
   | 'low-high-max'
@@ -72,6 +73,7 @@ export const CUSTOM_REASONING_EFFORT_PRESETS: ReadonlyArray<{
   { id: 'low-medium-high', label: 'Low / Medium / High' },
   { id: 'medium-high-xhigh', label: 'Medium / High / XHigh' },
   { id: 'none-high-xhigh', label: 'None / High / XHigh' },
+  { id: 'none-low-high-max', label: 'None / Low / High / Max' },
   { id: 'low-high', label: 'Low / High' }
 ]
 
@@ -147,6 +149,10 @@ const PROFILES: Record<ReasoningEffortPresetId, ReasoningEffortProfile> = {
   'minimal-low-medium-high': {
     supported: true,
     slots: ['minimal', 'low', 'medium', 'high', 'high']
+  },
+  'none-low-high-max': {
+    supported: true,
+    slots: ['none', 'low', 'high', 'max', 'max']
   },
   'none-high-max': {
     supported: true,

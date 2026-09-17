@@ -488,9 +488,18 @@ class SkillCatalogModule {
     return this.projectedSkillCatalog(join(runtimeRoot, '.claude', 'skills'), additionalEntries)
   }
 
+  async delegatedSkillCatalog(
+    skillsRoot: string,
+    forcedSkillIds: ReadonlySet<string>,
+    additionalEntries: AdditionalSkillCatalogEntries = []
+  ): Promise<SkillCatalogEntry[]> {
+    return this.projectedSkillCatalog(skillsRoot, additionalEntries, forcedSkillIds)
+  }
+
   private async projectedSkillCatalog(
     skillsRoot: string,
-    additionalEntries: AdditionalSkillCatalogEntries
+    additionalEntries: AdditionalSkillCatalogEntries,
+    delegatedSkillIds?: ReadonlySet<string>
   ): Promise<SkillCatalogEntry[]> {
     const realRoot = await realpath(skillsRoot).catch(() => undefined)
     if (!realRoot) return []
@@ -503,12 +512,14 @@ class SkillCatalogModule {
       typeof additionalEntries === 'function'
         ? await additionalEntries(settings)
         : additionalEntries
-    const disabled = new Set(settings.disabledSkillIds ?? [])
+    const disabled = new Set(
+      (settings.disabledSkillIds ?? []).filter((id) => !delegatedSkillIds?.has(id))
+    )
     const enabled: AdditionalSkillCatalogEntry[] = [
       ...skills
         .filter((skill) => isSkillEffectivelyEnabled(skill, disabled))
         .map((skill) => ({
-          directory: `${OS_SKILL_PREFIX}${skill.id}`,
+          directory: delegatedSkillIds ? skill.name : `${OS_SKILL_PREFIX}${skill.id}`,
           name: skill.name,
           description: skill.description
         })),

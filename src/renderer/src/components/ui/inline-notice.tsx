@@ -3,7 +3,7 @@ import type { LucideIcon } from 'lucide-react'
 import { ErrorNotice } from '../error-notice'
 import type { ErrorNoticeTone, NoticeLevel } from './notice-chrome'
 
-// Existing contextual callers share the Notice renderer; no separate inset layout or styling.
+// Contextual guidance shares Notice semantics without adding a nested card.
 const InlineNotice = ({
   children,
   role = 'note',
@@ -13,6 +13,6 @@ const InlineNotice = ({
   tone?: ErrorNoticeTone
   level?: NoticeLevel
   icon?: LucideIcon
-}): React.JSX.Element => <ErrorNotice {...props} role={role} content={children} />
+}): React.JSX.Element => <ErrorNotice {...props} inline role={role} content={children} />
 
 export { InlineNotice }

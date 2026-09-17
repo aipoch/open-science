@@ -33,6 +33,7 @@ describe('isReasoningEffortPresetSetting', () => {
     expect(isReasoningEffortPresetSetting('standard-5')).toBe(true)
     expect(isReasoningEffortPresetSetting('low-medium-xhigh')).toBe(true)
     expect(isReasoningEffortPresetSetting('none-high')).toBe(true)
+    expect(isReasoningEffortPresetSetting('none-low-high-max')).toBe(true)
     expect(isReasoningEffortPresetSetting('unsupported')).toBe(true)
   })
 
@@ -86,6 +87,17 @@ describe('resolveReasoningEffortControl', () => {
       'xhigh'
     ])
     expect(control.selectedValue).toBe('none')
+  })
+
+  it('offers the four Ark DeepSeek V4.1 levels and projects the off intent', () => {
+    const profile = reasoningEffortProfile('none-low-high-max')
+    const control = resolveReasoningEffortControl('max', profile)
+    expect(control.options.map(({ value }) => value)).toEqual(['none', 'low', 'high', 'max'])
+    expect(control.selectedValue).toBe('max')
+    expect(resolveReasoningEffortValue('low', profile)).toBe('none')
+    expect(resolveReasoningEffortValue('medium', profile)).toBe('low')
+    expect(resolveReasoningEffortValue('high', profile)).toBe('high')
+    expect(resolveReasoningEffortValue('xhigh', profile)).toBe('max')
   })
 
   it('shows two options when the model only distinguishes high and max', () => {

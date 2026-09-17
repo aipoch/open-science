@@ -1,3 +1,4 @@
+import { sideChatBlock, sideChatBlockMessage } from './side-chat-availability'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { useTranslation } from 'react-i18next'
@@ -530,9 +531,18 @@ const WorkspacePage = ({
     activeSession ? { sessionId: activeSession.id, projectId: activeSession.projectId } : undefined
   )
   const awaitsHistoryReplay = sessionAwaitsHistoryReplay(activeSession)
-  const sideChatDisabledReason = awaitsHistoryReplay
-    ? t('Resolve the current Session operation first.')
-    : sideChat.unavailableReason
+  const sideChatDisabledReason =
+    sideChatBlockMessage(
+      sideChatBlock({
+        action: 'send',
+        parent: activeSession,
+        persistenceReady:
+          isSessionPersistenceReady &&
+          !persistenceBlockedSessionIds.includes(activeSession?.id ?? '')
+      }),
+      t
+    ) ?? sideChat.unavailableReason
+
   const canArchiveSession = sessionController.lifecycle.canArchive
   const visiblePermissionRequests = useMemo(
     () =>
@@ -631,7 +641,7 @@ const WorkspacePage = ({
     composer,
     session: sessionController,
     runtime,
-    sideChat: canEditDraft && !sideChatDisabledReason ? { start: sideChat.start } : undefined,
+    sideChat: !sideChatDisabledReason ? { start: sideChat.start } : undefined,
     sideChatOpen: sideChat.view !== undefined,
     resetNewConversationSettings: () => {
       setNewConversationAutoReviewEnabled(false)
