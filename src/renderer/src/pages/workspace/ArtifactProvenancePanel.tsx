@@ -1986,7 +1986,13 @@ const ArtifactProvenancePanel = ({
                         </p>
                       ) : null
                     )}
-                    <NotebookDialogCell run={run} index={index} />
+                    {/* This projection omits capture status; keep saved run identity while
+                        leaving environment completeness to the Environment tab. */}
+                    <NotebookDialogCell
+                      run={run}
+                      index={index}
+                      showEnvironmentCaptureWarning={false}
+                    />
                   </div>
                 ))}
               </div>

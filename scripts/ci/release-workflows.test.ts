@@ -373,6 +373,14 @@ describe('release and scheduled workflow topology', () => {
   it('runs Windows upgrade smoke independently against published release assets', () => {
     const smokeWorkflow = workflow('windows-upgrade-smoke.yml')
     const smoke = smokeWorkflow.jobs['windows-upgrade-smoke']
+
+    const dryRun = smokeWorkflow.jobs['baseline-dry-run']
+    expect(dryRun.if).toBe('${{ inputs.dry_run }}')
+    expect(dryRun['runs-on']).toBe('windows-latest')
+    expect(step(dryRun, 'Generate test database client').run).toBe('npx prisma generate')
+    expect(
+      step(dryRun, 'Test actual Windows baseline selection and installer observation').run
+    ).toContain('scripts/windows-updater-certification.test.ts')
     const dispatch = smokeWorkflow.on?.repository_dispatch as { types: string[] }
 
     expect(dispatch.types).toEqual(['windows-upgrade-smoke'])

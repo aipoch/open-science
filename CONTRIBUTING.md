@@ -327,31 +327,28 @@ ci(review): unify automated AI reviews
   the queue rollout is enabled. The queue validates the combined revision before **squash merge**;
   its squash subject must retain the PR title's Conventional Commit format. Do not update a branch
   merely because `main` advanced; update it for conflicts or a maintainer request.
-- PR commits retain policy/CI Integrity, CodeQL, AI review, static checks and portable tests.
-  Desktop changes run the main Windows business journeys. Ordinary changes run one short macOS
-  core group (project creation/relaunch, persisted theme and window presentation), instead of the
-  four-group Mac matrix. The short job installs, builds and tests on one Mac runner without web
-  build or snapshot transfer. Known non-native main-process descriptors and locale changes use
-  this same short path. Critical desktop paths from the impact manifest, preload, windows,
-  shortcuts, processes, native dependencies, Notebook runtime, build/CI inputs and unknown main
-  ownership or destructive changes retain expanded affected Mac coverage.
+- PR commits retain policy/CI Integrity, CodeQL, AI review, static checks and portable tests on
+  Ubuntu. Desktop changes run Windows business E2E. Automatic PR checks do not allocate Mac
+  runners, including for platform-sensitive changes; Mac validation happens in merge queue.
 - Merge queue keeps concurrency two and validates the combined revision with Linux/portable
-  checks and the short Mac core. Ordinary changes do not repeat Windows business E2E in queue;
-  platform-sensitive changes retain their selected platform checks. Selected native module
-  coverage remains blocking. The obsolete blanket PR-deferral switch, stage output and separate
-  legacy coverage job have been removed; selected bundles must always pass.
-- New plans carry `macosProfile` (`smoke` or `expanded`). Trusted old plans without this field
-  retain their existing execution and complete fallback matrix. Workflows opt into the new plan
-  with `PR_GATE_PLATFORM_POLICY=risk-v1`; old workflow revisions receive the full legacy plan. Manual focused runs retain their
-  explicitly selected suites. The `macos-smoke` manual choice exercises the actual short Mac job
-  without unrelated platform suites. Plans requesting the retired `coverage_macos` bundle fail
-  validation; old completed runs need no migration. This compatibility concerns CI metadata only.
-- Nightly packaging, Windows Full Test, supplemental Source Regression, and Runtime Resource Soak
-  run daily on `main`, at 01:17, 02:47, 03:37, and 05:23 respectively in Singapore time
-  (Asia/Singapore, UTC+8). Unchanged successful revisions are skipped;
-  manual runs always execute. Formal release certification and post-release Windows Upgrade Smoke
-  retain their existing gates/triggers. Scheduled failures remain visible failures and cannot
-  retroactively block an already merged PR.
+  checks and one short Mac job (project creation/relaunch, persisted theme and window presentation).
+  Platform-sensitive changes add focused Darwin sandbox, process/delegation, window/second-launch
+  and Notebook checks in that same job. Selected native checks must succeed; skipped is not success.
+  Queue does not repeat Windows business E2E or complete Mac business/presentation suites. Existing
+  selected Windows core checks remain blocking. Full portable fallback still applies to unknown
+  owners, destructive changes and global CI inputs.
+- The platform policy uses the existing `macosProfile` values (`smoke` or `expanded`). An expanded
+  queue plan selects the short core lane plus native checks on one runner. Manual `macos-smoke`,
+  `source-regressions` and `e2e` runs retain their explicitly selected suites for early platform
+  diagnosis. Classification and gate validation continue to use trusted base code.
+- Complete Mac Source Regression runs twice daily on `main`, at **03:37 and 15:37 Singapore time**
+  (Asia/Singapore, UTC+8), including when main is unchanged. Each round uses one build and one Mac
+  runner for functional/workspace journeys, browser/visual/accessibility and supplemental suites.
+  Nightly packaging, Windows Full Test and Runtime Resource Soak retain their daily 01:17, 02:47
+  and 05:23 Singapore schedules and skip unchanged successful revisions. Manual runs always execute.
+  Formal release certification and post-release Windows Upgrade Smoke retain their existing gates.
+  Scheduled failures cannot retroactively block an already merged PR; Mac-only failures may first
+  be discovered in queue or scheduled validation.
 
 ## Reporting Issues
 
@@ -374,18 +371,11 @@ By contributing, you agree that your contributions will be licensed under the
 
 ### Supplemental desktop coverage
 
-The gate selects supplemental regressions and Delegation through critical desktop paths and
-module-consumer overlays. A known connector descriptor or main-process locale-only change keeps
-core journeys and affected portable tests without selecting unrelated supplemental groups. Unknown
-ownership, global inputs and destructive changes retain full fallback. Session, permission,
-Delegation, storage and native sandbox changes retain their relevant pre-merge checks.
-
-Source Regression runs complete Mac functional/workspace journeys, browser/visual/accessibility
-coverage and supplemental suites daily at 03:37 Asia/Singapore. The gate
-excludes only tests tagged `@capacity`; a three-session body-integrity check remains in the selected
-regression suite while forty-session resource profiling runs in Source Regression. Transcript
-scrolling/find correctness stays in the gate. Focused manual Source Regression runs include capacity
-profiling, and callers without an explicit capacity input retain complete coverage.
+Complete Mac regression and Delegation suites run in Source Regression at 03:37 and 15:37
+Asia/Singapore, as well as focused manual validation. Automatic PRs use Windows business coverage;
+queue uses short Mac core plus focused native checks for sensitive changes. Full Mac presentation,
+regression and Delegation matrices are not repeated in the queue. Capacity profiling remains in
+Source Regression; manual callers without an explicit capacity input retain complete coverage.
 
 ### CI control-plane approval
 

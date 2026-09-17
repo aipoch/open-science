@@ -106,7 +106,9 @@ describe('module ownership admission', () => {
       check({ headManifest, changes: [{ path: manifestPath, status: 'modified' }] })
     ).toMatchObject({
       ok: false,
-      violations: [expect.objectContaining({ path: source, rule: 'module-ownership-regression' })]
+      violations: expect.arrayContaining([
+        expect.objectContaining({ path: source, rule: 'module-ownership-regression' })
+      ])
     })
   })
 
@@ -171,7 +173,7 @@ describe('module ownership admission', () => {
     const headManifest = manifest()
     headManifest.modules.feature = {
       ...structuredClone(headManifest.modules.sample),
-      ownerPaths: [fresh],
+      ownerPaths: [fresh, 'src/main/new.test.ts'],
       interfacePaths: [fresh],
       testFiles: { owner: ['src/main/new.test.ts'], contract: [], consumer: [] },
       consumerModules: ['sample']

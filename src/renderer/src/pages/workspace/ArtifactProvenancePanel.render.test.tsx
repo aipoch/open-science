@@ -12,6 +12,7 @@ import {
 } from '@/stores/preview-workbench-store'
 import type { ArtifactVersionProvenance } from '../../../../shared/artifact-provenance'
 
+const notebookEvidenceProbe = vi.hoisted(() => ({ enabled: false }))
 const reviewerCardSpy = vi.hoisted(() => vi.fn())
 const workspaceMessageItemSpy = vi.hoisted(() => vi.fn())
 const workspaceActivityGroupSpy = vi.hoisted(() => vi.fn())
@@ -47,11 +48,17 @@ vi.mock('./previews/PreviewFileContent', () => ({
   )
 }))
 
-vi.mock('./SessionNotebookDialog', () => ({
-  NotebookDialogCell: ({ run }: { run: { runId: string } }) => (
-    <div data-testid="notebook-run">{run.runId}</div>
-  )
-}))
+vi.mock('./SessionNotebookDialog', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./SessionNotebookDialog')>()
+  return {
+    NotebookDialogCell: (props: React.ComponentProps<typeof actual.NotebookDialogCell>) =>
+      notebookEvidenceProbe.enabled ? (
+        <actual.NotebookDialogCell {...props} />
+      ) : (
+        <div data-testid="notebook-run">{props.run.runId}</div>
+      )
+  }
+})
 
 vi.mock('./WorkspaceMessageItem', () => ({
   WorkspaceMessageItem: (props: {
@@ -421,6 +428,7 @@ const clickTab = async (label: string): Promise<void> => {
 }
 
 beforeEach(async () => {
+  notebookEvidenceProbe.enabled = false
   Element.prototype.scrollIntoView = vi.fn()
   useArtifactEnvironmentLockStore.setState({ entries: new Map() })
   reviewerCardSpy.mockClear()
@@ -2805,4 +2813,16 @@ describe('Provenance selection and evidence completeness', () => {
     expect(container.querySelector('[data-testid="notebook-run"]')).not.toBeNull()
     expect(container.textContent).toMatch(/100[\s\S]*1[,]?000/)
   })
+})
+
+it('preserves saved run identity without describing provenance evidence as a historical gap', async () => {
+  notebookEvidenceProbe.enabled = true
+  await clickTab('Execution Log')
+  await flush()
+  expect(container.querySelector('[data-testid="session-notebook-cell"]')).not.toBeNull()
+  const evidence = container.querySelector('[data-testid="notebook-run-evidence"]')
+  expect(evidence?.textContent ?? '').toContain('notebook-run-2')
+  expect(container.textContent).not.toContain(
+    'Environment evidence is incomplete or unavailable. Current packages cannot fill historical gaps.'
+  )
 })
