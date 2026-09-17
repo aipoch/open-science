@@ -445,6 +445,7 @@ describe('Settings backend ownership architecture', () => {
       'resolveRuntimeModelCatalog',
       'resolveRuntimeReasoningEffortProfile',
       'resolveRuntimeTarget',
+      'saveValidatedProvider',
       'setActiveProvider',
       'toProviderView',
       'upsertProvider',
@@ -502,7 +503,7 @@ describe('Settings backend ownership architecture', () => {
         previewCustomServerTemplateImport previewGitHubSkill previewSkillArchive previewSkillZip
         createWslSupportHandoff probeWslSetup provisionedConnectorSkillNames publishHostSkill refreshProviderModels registeredHelperCatalog rememberCodexAutoHttpsFallback removeCustomServer removeDeviceCredential removeGitHubToken removeNotebookNetwork
         removeManualInterpreter resolveActiveModelChangeTarget resolveActiveReasoningEffort restoreLocalShellRuntimePreference
-        resolveAdmittedSubagentBackend resolveAgentBackend resolveDeviceOAuthCredential resolveExplicitAgentBackend resolveSkillDocument resolveSubagentExecutionModel saveCustomServerOAuthState saveGitHubToken
+        resolveAdmittedSubagentBackend resolveAgentBackend resolveDeviceOAuthCredential resolveExplicitAgentBackend resolveSkillDocument resolveSubagentExecutionModel saveCustomServerOAuthState saveGitHubToken saveValidatedProvider
         scanRepoSkills selectWslProfile setActiveProvider setAgentEnvironmentCreationEnabled setAgentFramework setAgentRouting setAppIconVariant setClosePreference switchLocalShellToPowerShell
         setComputeBookmarks setConnectorAutoAllow setConnectorEnabled
         setConversationSkillImportEnabled setCustomServerAuthenticator setCustomServerEnabled
@@ -533,6 +534,7 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/provider-accounts.ts',
       'src/main/settings/provider-auth-lifecycle.ts',
       'src/main/settings/provider-model-catalog-owner.ts',
+      'src/main/settings/provider-runtime-health-owner.ts',
       'src/main/settings/reviewer-model-owner.ts',
       'src/main/settings/service.ts',
       'src/main/settings/session-details-model-owner.ts',
@@ -561,6 +563,7 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/backend-route-planner.ts',
       'src/main/settings/backend-selection-owner.ts',
       'src/main/settings/codebuddy-skill-selector-transport.ts',
+      'src/main/settings/provider-runtime-health-owner.ts',
       'src/main/settings/provider-transport-owner.ts',
       'src/main/settings/reviewer-model-owner.ts',
       'src/main/settings/service.ts',
@@ -790,7 +793,7 @@ describe('Settings backend ownership architecture', () => {
       mainIpc.indexOf('settingsServiceRef.current = settingsService')
     )
     expect(settingsModule).toContain(
-      'const capability = new SettingsService({\n      repository: settingsRepository,\n      installCoordinator: settingsInstallCoordinator,\n      skillRuntimeMcpEntryPath: mainEntryPath,\n      openAlexFetch: netFetchStandard,\n      applyNetworkProxy:'
+      'const capability = new SettingsService({\n      repository: settingsRepository,\n      onProviderHealthChanged: async () => {\n        await settingsSnapshotCommits.projectAfter(Promise.resolve())\n      },\n      installCoordinator: settingsInstallCoordinator,\n      skillRuntimeMcpEntryPath: mainEntryPath,\n      openAlexFetch: netFetchStandard,\n      applyNetworkProxy:'
     )
     expect(settingsModule).toContain("name: 'settings-service'")
     expect(settingsModule).toContain('rollback: () => capability.dispose()')
@@ -910,6 +913,8 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/provider-error-replay.ts',
       'src/main/settings/provider-loopback-http-host.ts',
       'src/main/settings/provider-transport-owner.ts',
+      'src/main/settings/provider-failure-observation.ts',
+      'src/main/settings/provider-runtime-health-owner.ts',
       'src/main/settings/responses-bridge.ts',
       'src/main/settings/responses-bridge.plan-tools.test.ts',
       'src/main/settings/responses-protocol-types.ts',
@@ -931,6 +936,7 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/provider-loopback-http-host.test.ts',
       'src/main/settings/provider-transport-owner.architecture.test.ts',
       'src/main/settings/provider-transport-owner.test.ts',
+      'src/main/settings/provider-runtime-health-owner.test.ts',
       'src/main/settings/responses-bridge.integration.test.ts',
       'src/main/settings/responses-bridge.test.ts',
       'src/main/settings/responses-reasoning-replay.test.ts',
@@ -953,6 +959,8 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/openai-provider-bridge.ts',
       'src/main/settings/provider-loopback-http-host.ts',
       'src/main/settings/provider-transport-owner.ts',
+      'src/main/settings/provider-failure-observation.ts',
+      'src/main/settings/provider-runtime-health-owner.ts',
       'src/main/settings/responses-request-adapter.ts',
       'src/main/settings/responses-response-adapter.ts',
       'src/main/settings/system-proxy.ts',

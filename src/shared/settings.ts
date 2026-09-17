@@ -308,6 +308,9 @@ export type ProviderValidationFailure = {
   status?: number
   message?: string
   target?: ProviderValidationTarget
+  // Additional independently unavailable models/routes, only for model-not-found failures.
+  // Includes target; omitted for a single failure and for provider-wide failures.
+  targets?: ProviderValidationTarget[]
 }
 
 // Renderer-facing provider view: masked and stripped of every secret field.
@@ -391,7 +394,12 @@ export const providerValidationFailed = (
   provider.lastValidationFailure.category !== 'incompatible' &&
   (provider.lastValidationFailure.target === undefined ||
     (target !== undefined &&
-      providerValidationTargetMatches(provider.lastValidationFailure.target, target))) &&
+      [
+        provider.lastValidationFailure.target,
+        ...(provider.lastValidationFailure.category === 'model-not-found'
+          ? (provider.lastValidationFailure.targets ?? [])
+          : [])
+      ].some((failed) => providerValidationTargetMatches(failed, target)))) &&
   (provider.lastValidatedAt === undefined ||
     (target !== undefined &&
       provider.lastValidatedTarget !== undefined &&
@@ -774,6 +782,8 @@ export type SetActiveProviderRequest = {
 
 // Validation may target a saved provider (key resolved from storage) or an unsaved draft.
 export type ValidateProviderRequest = {
+  // Test prospective form values; existing credentials are merged only in main.
+  edit?: UpsertProviderRequest
   providerId?: string
   draft?: ProviderDraft
   // Optional model override for validating a saved provider before that model becomes active.
@@ -795,6 +805,8 @@ export type ValidationCategory =
   | 'unknown'
 
 export type ValidateProviderResult = {
+  // Exact prospective model and route tested by the edit/save operation.
+  testedTarget?: ProviderValidationTarget
   ok: boolean
   category: ValidationCategory
   status?: number
@@ -813,6 +825,15 @@ export type ValidateProviderResult = {
   // for immediate UI feedback — never persisted as a validation failure, because it goes stale the
   // moment the framework changes.
   frameworkIncompatible?: boolean
+}
+
+export type SaveValidatedProviderResult = {
+  runtimeReconnectFailed?: boolean
+  validation: ValidateProviderResult
+  // Present only after the atomic configuration and health write has completed.
+  providerId?: string
+  // Snapshot refresh can fail after a committed write; providerId still records that outcome.
+  snapshot?: SettingsSnapshot
 }
 
 // Request to refresh a saved provider's model list from the vendor's live API (fills the bundled

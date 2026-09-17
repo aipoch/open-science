@@ -305,6 +305,7 @@ export const WEB_INVOKE_CHANNELS = {
   'settings.retryConnectorProjection': 'settings:retry-connector-projection',
   'settings.retryCustomServer': 'settings:retry-custom-server',
   'settings.saveGitHubToken': 'settings:save-github-token',
+  'settings.saveValidatedProvider': 'settings:save-validated-provider',
   'settings.scanRepoSkills': 'settings:scan-repo-skills',
   'settings.selectWslProfile': 'settings:select-wsl-profile',
   'settings.setActiveProvider': 'settings:set-active-provider',

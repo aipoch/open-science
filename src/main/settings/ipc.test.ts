@@ -72,6 +72,7 @@ type FakeSettingsService = Record<
   | 'setDefaultPermissionProfile'
   | 'setAppIconVariant'
   | 'upsertProvider'
+  | 'saveValidatedProvider'
   | 'deleteProvider'
   | 'setActiveProvider'
   | 'validateProvider'
@@ -211,6 +212,9 @@ const createFakeService = (): FakeSettingsService => ({
     .fn()
     .mockResolvedValue({ claude: {}, providers: [], appIconVariant: 'dark' }),
   upsertProvider: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
+  saveValidatedProvider: vi
+    .fn()
+    .mockResolvedValue({ validation: { ok: true, category: 'ok' }, providerId: 'p1' }),
   deleteProvider: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
   setActiveProvider: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
   validateProvider: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
@@ -547,6 +551,15 @@ describe('settings IPC handlers', () => {
 
     await invoke('settings:upsert-provider', { type: 'custom', name: 'G' })
     expect(service.upsertProvider).toHaveBeenCalledWith({ type: 'custom', name: 'G' })
+
+    await expect(
+      invoke('settings:save-validated-provider', { id: 'p1', type: 'custom', name: 'G' })
+    ).resolves.toMatchObject({ providerId: 'p1' })
+    expect(service.saveValidatedProvider).toHaveBeenCalledWith({
+      id: 'p1',
+      type: 'custom',
+      name: 'G'
+    })
 
     await invoke('settings:delete-provider', { id: 'p1', scenarioModelHandling: 'inherit' })
     expect(service.deleteProvider).toHaveBeenCalledWith('p1', 'inherit')
