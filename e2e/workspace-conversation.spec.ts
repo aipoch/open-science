@@ -989,6 +989,9 @@ test('exports a CLI conversation first opened after completion', async ({ app },
     async () =>
       (await window.api.projects.list()).find((p) => p.name === 'Agent journey project')!.id
   )
+  // Slow projection delivery so the renderer's reply save overlaps Main's Task completion.
+  const runtimeProjection = await page.context().newCDPSession(page)
+  await runtimeProjection.send('Emulation.setCPUThrottlingRate', { rate: 4 })
   await app.authenticatedWebUrl()
   const directory = await app.createTestDirectory('cli-export')
   const output = await promisify(execFile)(
@@ -1018,6 +1021,9 @@ test('exports a CLI conversation first opened after completion', async ({ app },
     { projectId, sessionId: run.sessionId }
   )
   expect(saved).toBeTruthy()
+  expect(saved!.status).toBe('idle')
+  expect(saved!.activeRun).toBeUndefined()
+  expect(saved!.messages.filter((message) => message.role === 'agent')).toHaveLength(1)
   const destination = await app.configureSessionPackageDialogs()
   await page
     .getByRole('navigation', { name: 'Sessions' })

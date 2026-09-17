@@ -153,7 +153,9 @@ describe('ConversationExportDialog', () => {
           })
         }
         const queued = save(useSessionStore.getState())
-        durable = materializeSessionConversationGraph(createSession({ revision: 2, updatedAt: 5 }))
+        durable = materializeSessionConversationGraph(
+          createSession({ revision: 2, updatedAt: 5, taskRunCommitId: 'cli-run' })
+        )
         useSessionStore.getState().upsertPersistedSession(durable)
         const observed = save(useSessionStore.getState())
         release()
