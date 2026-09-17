@@ -22,6 +22,11 @@ import {
   type RuntimeResourceProfilerOptions
 } from '../../scripts/performance/runtime-resource-profiler'
 import { terminateProcessTree } from '../../src/main/process-tree'
+import {
+  readProcessTable,
+  readProcessTree,
+  selectProcessTree
+} from '../../scripts/performance/process-snapshot'
 import { createProjectDbClient } from '../../src/main/projects/prisma-client'
 import { RendererFailureGate } from './renderer-failure-gate'
 import { prepareBrandStorageFixture } from './brand-storage-data'
@@ -1167,8 +1172,22 @@ class ElectronAppHarness implements ElectronApp {
   async restartAfterCrash(): Promise<Page> {
     const application = this.application
     if (!application) throw new Error('No Electron process is available to terminate.')
-    const result = await terminateProcessTree(application.process())
-    if (!result.reaped) throw new Error('Electron crash simulation did not reap the process tree.')
+    const child = application.process()
+    const before =
+      process.platform === 'win32' && child.pid !== undefined
+        ? await readProcessTree(child.pid)
+        : undefined
+    const result = await terminateProcessTree(child)
+    let reaped = result.reaped
+    // taskkill can fail when a short-lived descendant exits during enumeration. Accept that
+    // race only after a complete query confirms the observed tree and its descendants are gone.
+    if (!reaped && before?.complete) {
+      const after = await readProcessTable()
+      reaped =
+        after.complete &&
+        before.processes.every(({ pid }) => selectProcessTree(after.processes, pid).length === 0)
+    }
+    if (!reaped) throw new Error('Electron crash simulation did not reap the process tree.')
     this.resourceProfiler?.detach(application)
     this.application = undefined
     this.currentPage = undefined
