@@ -538,6 +538,7 @@ describe('preload bridge — public surface inventory', () => {
       'sessions.exportConversation',
       'sessions.exportPackage',
       'sessions.filterPdfContextCandidates',
+      'sessions.fork',
       'sessions.importPackage',
       'sessions.linkPdfContext',
       'sessions.list',

@@ -622,3 +622,30 @@ it('recognizes the navigation manifest while retaining a live external reference
     await rm(root, { recursive: true, force: true })
   }
 })
+
+it('keeps a fork usable after source deletion and preserves evidence when cleanup cannot exclude external history', async () => {
+  const { service, identity, sessions, coordinator, target } = await importedFixture()
+  const child = await service.fork(identity)
+  const childContent = join(
+    target.storageRoot,
+    'notebooks',
+    child.projectId,
+    child.sessionId,
+    'data',
+    'result.txt'
+  )
+  expect(await readFile(childContent, 'utf8')).toBe('Research result')
+  await coordinator.deleteSession(identity.projectId, identity.sessionId)
+  await service.recover({ collectDeletedPackages: true })
+  expect(await readFile(childContent, 'utf8')).toBe('Research result')
+  expect(
+    (await sessions.loadSession(child.projectId, child.sessionId))?.packageOrigin
+  ).toBeUndefined()
+  await coordinator.deleteSession(child.projectId, child.sessionId)
+  await service.recover({ collectDeletedPackages: true })
+  expect(await sessions.loadSession(child.projectId, child.sessionId)).toBeUndefined()
+  // Each receipt has an external Notebook scope. Existing conservative cleanup retains bytes.
+  expect(await readFile(childContent, 'utf8')).toBe('Research result')
+  expect(await target.client.project.findUnique({ where: { id: child.projectId } })).not.toBeNull()
+  await service.close()
+})

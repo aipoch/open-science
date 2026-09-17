@@ -1,3 +1,4 @@
+import { createSessionBranchSource } from '../../../shared/session-branch-source'
 import type { StoreApi } from 'zustand'
 import { sessionExportLocked, usePackageOperationStore } from './package-operation-store'
 import {
@@ -46,23 +47,6 @@ export const createMessageId = (): string => {
 const createPendingSessionId = (): string => {
   pendingSessionSequence += 1
   return `pending-session-${Date.now()}-${pendingSessionSequence}`
-}
-const createSessionBranchSource = (
-  source: ChatSession,
-  headMessageId?: string
-): NonNullable<ChatSession['branchSource']> => {
-  const graph = source.conversationGraph
-  const frame = graph?.frames.find((candidate) => candidate.id === graph.activeFrameId)
-  const branch = graph?.branches.find((candidate) => candidate.id === frame?.activeBranchId)
-
-  return {
-    sessionId: source.id,
-    ...(frame ? { agentFrameId: frame.id } : {}),
-    ...(branch ? { messageBranchId: branch.id } : {}),
-    ...((headMessageId ?? branch?.headMessageId)
-      ? { headMessageId: headMessageId ?? branch?.headMessageId }
-      : {})
-  }
 }
 
 export const createSortIndex = (): number => {

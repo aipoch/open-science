@@ -80,7 +80,10 @@ export const ActionMenuItems = <ActionId extends string>({
             disabled={entry.disabled}
             className={cn(
               'gap-2',
-              compact && 'min-h-0 h-6 rounded-md px-2 py-0 text-[12px]',
+              compact &&
+                (entry.disabled && entry.disabledDescription
+                  ? 'rounded-md px-2 py-1 text-[12px]'
+                  : 'min-h-0 h-6 rounded-md px-2 py-0 text-[12px]'),
               entry.danger &&
                 (dangerClassName ??
                   'text-danger-000 data-[highlighted]:bg-danger-000/10 data-[highlighted]:text-danger-000')
@@ -88,7 +91,16 @@ export const ActionMenuItems = <ActionId extends string>({
             onSelect={() => onSelect(entry.action)}
           >
             <Icon className={cn(compact ? 'size-3.5' : 'size-4', 'shrink-0')} aria-hidden="true" />
-            {renderLabel?.(entry, t(entry.labelKey)) ?? t(entry.labelKey)}
+            {entry.disabled && entry.disabledDescription ? (
+              <span>
+                {renderLabel?.(entry, t(entry.labelKey)) ?? t(entry.labelKey)}
+                <span className="block max-w-64 whitespace-normal text-xs font-normal">
+                  {entry.disabledDescription}
+                </span>
+              </span>
+            ) : (
+              (renderLabel?.(entry, t(entry.labelKey)) ?? t(entry.labelKey))
+            )}
           </DropdownMenuItem>
         )
       })}

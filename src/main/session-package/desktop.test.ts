@@ -1411,3 +1411,78 @@ it('carries a new-project draft from OS file selection through confirmation with
     await service.close()
   }
 })
+
+it('keeps a committed Fork result when notifying the renderer fails', async () => {
+  const result = { projectId: 'project', sessionId: 'child' }
+  const service = { fork: vi.fn(async () => result) } as unknown as SessionPackageService
+  const release = vi.fn()
+  const desktop = createDesktop({
+    service,
+    translate: englishNativeTranslator,
+    withDataRootWrite: (work) => work(),
+    reserveExport: vi.fn(async () => release),
+    afterImport: vi.fn(async () => {
+      throw new Error('Renderer disconnected')
+    })
+  })
+  expect(await desktop.fork({ projectId: 'project', sessionId: 'source' })).toEqual(result)
+  expect(desktop.operations.snapshot).toMatchObject({
+    kind: 'fork',
+    state: 'succeeded',
+    result: { imported: result }
+  })
+  expect(release).toHaveBeenCalledOnce()
+  expect(dialog.showSaveDialog).not.toHaveBeenCalled()
+  await desktop.close()
+})
+
+it('returns a bounded, redacted reason at the public Fork failure boundary', async () => {
+  const secret = 'sk-proj-' + 'a'.repeat(80)
+  const service = {
+    fork: vi.fn(async () => {
+      throw new Error(`Missing evidence; token=${secret} ${'detail '.repeat(500)}`)
+    })
+  } as unknown as SessionPackageService
+  const desktop = createDesktop({
+    service,
+    translate: englishNativeTranslator,
+    withDataRootWrite: (work) => work(),
+    afterImport: vi.fn()
+  })
+  const error = await desktop
+    .fork({ projectId: 'project', sessionId: 'source' })
+    .catch((error) => error)
+  expect(error.message).toContain('Could not fork this Session')
+  expect(error.message).not.toContain(secret)
+  expect(error.message.length).toBeLessThan(1600)
+  const observable = sessionPackageCommandContracts.operation.result.parse(
+    desktop.operations.snapshot
+  )
+  expect(observable?.error).toBe(error.message)
+  await desktop.close()
+})
+
+it.each(['committed', 'unconfirmed'] as const)(
+  'preserves %s Fork recovery identity and prevents a duplicate submission',
+  async (outcome) => {
+    const { ForkRecoveryRequiredError } = await import('./fork-session')
+    const recovery = { projectId: 'project', sessionId: 'child', operationId: 'operation', outcome }
+    const fork = vi.fn(async () => {
+      throw new ForkRecoveryRequiredError(recovery, new Error('Lost acknowledgement'))
+    })
+    const desktop = createDesktop({
+      service: { fork } as unknown as SessionPackageService,
+      translate: englishNativeTranslator,
+      withDataRootWrite: (work) => work(),
+      afterImport: vi.fn()
+    })
+    const request = { projectId: 'project', sessionId: 'source' }
+    await expect(desktop.fork(request)).rejects.toThrow('Restart the app')
+    expect(
+      sessionPackageCommandContracts.operation.result.parse(desktop.operations.snapshot)
+    ).toMatchObject({ state: 'failed', result: { recovery } })
+    await expect(desktop.fork(request)).rejects.toThrow('Restart the app')
+    expect(fork).toHaveBeenCalledOnce()
+    await desktop.close()
+  }
+)

@@ -791,6 +791,8 @@ export type EditSessionDetailsRequest = EditSessionDetailsRequestBase &
 export type PersistedChatSession = {
   // Imported history has no execution authority. Absence preserves existing local Session behavior.
   packageOrigin?: import('./session-package').SessionPackageOrigin
+  // Copy receipt and recovery identity; unlike packageOrigin this grants no read-only status.
+  forkOrigin?: import('./session-package').SessionPackageOrigin
   id: string
   // App-wide, one-based sequence allocated by SQLite. Historical Session files omit it until the
   // one-time projection backfill assigns numbers in createdAt/id order and rewrites their JSON.
@@ -800,8 +802,8 @@ export type PersistedChatSession = {
   // Whole-Session durable revision used for optimistic concurrency. Historical files omit it and
   // restore as revision 0; Main stamps revision 1 on their next successful state transition.
   revision?: number
-  // Immutable snapshot of the direct Session and active conversation path copied by
-  // Branch in new session. Historical Sessions omit it and remain unrelated.
+  // Immutable source Session and selected conversation path at Branch or Fork creation.
+  // Historical Sessions omit it and remain unrelated.
   branchSource?: PersistedSessionBranchSource
   title: string
   description?: string
@@ -4478,6 +4480,11 @@ const sanitizeSession = (
     const origin = packageOriginSchema.safeParse(session.packageOrigin)
     if (!origin.success) return undefined
     sanitized.packageOrigin = origin.data
+  }
+  if (session.forkOrigin !== undefined) {
+    const origin = packageOriginSchema.safeParse(session.forkOrigin)
+    if (!origin.success) return undefined
+    sanitized.forkOrigin = origin.data
   }
   if (pendingHistoryReplay) sanitized.pendingHistoryReplay = pendingHistoryReplay
   if (session.branchContextResetRequired === true) sanitized.branchContextResetRequired = true

@@ -331,6 +331,7 @@ describe('WorkspaceSidebar accessible render', () => {
       const html = await renderSidebar([
         createSession({
           id: 'import-session',
+          contentLoaded: loaded ? undefined : false,
           title: 'Literature comparison',
           status: 'idle',
           packageOrigin: loaded
@@ -357,6 +358,30 @@ describe('WorkspaceSidebar accessible render', () => {
       expect(container.querySelector('[data-session-id="local"] [role="img"]')).toBeNull()
     }
   )
+
+  it.each([true, false])('leaves forked imports unlocked (details loaded: %s)', async (loaded) => {
+    const container = document.createElement('div')
+    container.innerHTML = await renderSidebar([
+      createSession({
+        id: '2a32189d-c609-4f99-aeb2-5a7cf7f65bb7',
+        contentLoaded: loaded ? undefined : false,
+        status: 'idle',
+        forkOrigin: loaded
+          ? {
+              importId: 'fork-receipt',
+              sourceProjectId: 'source-project',
+              sourceSessionId: 'source-session',
+              importedAt: 1,
+              manifestChecksum: 'a'.repeat(64)
+            }
+          : undefined
+      })
+    ])
+    expect(container.querySelector('[aria-label="Read-only"]')).toBeNull()
+    expect(
+      container.querySelector('[data-slot="session-open-button"]')?.getAttribute('title')
+    ).not.toBe('Read-only')
+  })
 
   it('keeps the sidebar card inset even on both sides', async () => {
     const html = await renderSidebar([createSession({ id: 'session-a' })])

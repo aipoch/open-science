@@ -96,6 +96,7 @@ type WorkspaceSidebarProps = {
   onCheckArtifacts?: (session: ChatSession) => void
   onViewNotebook: (session: ChatSession) => void
   onExportSession?: (session: ChatSession) => void
+  onForkSession?: (session: ChatSession) => Promise<void>
   onExportPackage?: (session: ChatSession) => Promise<void>
   onTogglePin: (session: ChatSession) => void
   canArchiveSession?: (session: ChatSession) => boolean
@@ -402,6 +403,7 @@ const WorkspaceSidebarView = ({
   onCheckArtifacts,
   onViewNotebook,
   onExportSession,
+  onForkSession,
   onExportPackage,
   packageBusy = false,
   onTogglePin,
@@ -906,9 +908,10 @@ const WorkspaceSidebarView = ({
                     </div>
                     {section.items.map((session) => {
                       const isActive = session.id === activeSessionId
-                      // Catalog-only Sessions do not load packageOrigin until opened.
                       const imported =
-                        Boolean(session.packageOrigin) || session.id.startsWith('import-')
+                        session.contentLoaded === false
+                          ? session.id.startsWith('import-')
+                          : Boolean(session.packageOrigin)
                       const shortcutNumber = shortcutNumberBySessionId.get(session.id)
                       const presentedStatus = getPresentedSessionStatus(
                         session,
@@ -930,6 +933,7 @@ const WorkspaceSidebarView = ({
                         onCheckArtifacts,
                         onViewNotebook,
                         onExportSession,
+                        onForkSession,
                         onExportPackage,
                         packageBusy,
                         onArchiveSession,
@@ -940,11 +944,15 @@ const WorkspaceSidebarView = ({
                         session.updatedAt,
                         session.pinned ?? false,
                         presentedStatus,
+                        session.status,
+                        session.runtimeContext?.permission?.state,
+                        session.runtimeContext?.plan?.approval,
                         session.activeMessageCount ?? session.messages.length,
                         canMutateConversations,
                         canDeleteConversations,
                         canDownloadArtifacts,
                         Boolean(onExportSession),
+                        Boolean(onForkSession),
                         Boolean(onExportPackage),
                         packageBusy,
                         archiveAvailable

@@ -42,7 +42,8 @@
     "Discard changes": "Änderungen verwerfen",
     "Discard unsaved changes?": "Nicht gespeicherte Änderungen verwerfen?",
     "Export Session package": "Sitzungspaket exportieren",
-    "Import Session package": "Sitzungspaket importieren"
+    "Import Session package": "Sitzungspaket importieren",
+    "Wait for all Session activity and pending approvals to finish before forking.": "Warten Sie, bis alle Sitzungsaktivitäten und ausstehenden Freigaben abgeschlossen sind, bevor Sie eine Kopie erstellen."
   },
   "native": {
     "Conversation export is too large. Select fewer conversation turns.": "Der Konversationsexport ist zu groß. Wählen Sie weniger Konversationsrunden aus.",
@@ -114,7 +115,9 @@
     "Session package operation in progress": "Sitzungspaketvorgang läuft",
     "Temporary files could not be removed. Try cleanup again.": "Temporäre Dateien konnten nicht entfernt werden. Wiederholen Sie die Bereinigung.",
     "Could not complete the Session package operation. Check the package and available disk space, then try again.": "Der Vorgang mit dem Sitzungspaket konnte nicht abgeschlossen werden. Prüfen Sie das Paket und den freien Speicherplatz und versuchen Sie es erneut.",
-    "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "Das ursprüngliche Paket ist nicht verfügbar. Es wurde möglicherweise verschoben, gelöscht oder ist nicht mehr lesbar. Wählen Sie ein anderes Paket."
+    "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "Das ursprüngliche Paket ist nicht verfügbar. Es wurde möglicherweise verschoben, gelöscht oder ist nicht mehr lesbar. Wählen Sie ein anderes Paket.",
+    "Could not fork this Session: {{reason}}": "Diese Session konnte nicht abgezweigt werden: {{reason}}",
+    "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "Die Veröffentlichung der Abzweigung muss wiederhergestellt werden (Vorgang {{operationId}}, Session {{sessionId}}). Starten Sie die App neu, um diesen Versuch wiederherzustellen, bevor Sie erneut abzweigen."
   },
   "renderer": {
     "Open-source license": "Open-Source-Lizenz",
@@ -6065,6 +6068,21 @@
     "A Side chat prompt is already running.": "Eine Side-Chat-Anfrage wird bereits bearbeitet.",
     "Enter a message to send.": "Geben Sie eine Nachricht zum Senden ein.",
     "Send draft to Side chat": "Entwurf an Side-Chat senden",
-    "Opens an empty Side chat; keeps your draft.": "Öffnet einen leeren Side chat; Ihr Entwurf bleibt erhalten."
+    "Opens an empty Side chat; keeps your draft.": "Öffnet einen leeren Side chat; Ihr Entwurf bleibt erhalten.",
+    "Fork": "Abzweigen",
+    "Fork Session": "Session abzweigen",
+    "Fork to continue": "Abzweigen und fortfahren",
+    "Could not fork Session": "Session konnte nicht abgezweigt werden",
+    "Fork is available in the desktop app.": "Das Abzweigen ist in der Desktop-App verfügbar.",
+    "Wait for the current transfer to finish before forking a Session.": "Warten Sie, bis die aktuelle Übertragung abgeschlossen ist, bevor Sie eine Session abzweigen.",
+    "Fork creates an independent Session with all branches and research data. No code runs automatically.": "Erstellt eine unabhängige Session mit allen Branches und Forschungsdaten. Es wird kein Code automatisch ausgeführt.",
+    "Preparing fork…": "Abzweigung wird vorbereitet…",
+    "Copying research…": "Forschungsdaten werden kopiert…",
+    "Fork completed": "Abzweigung abgeschlossen",
+    "Fork failed": "Abzweigung fehlgeschlagen",
+    "Fork cancelled": "Abzweigung abgebrochen",
+    "Open forked Session": "Abgezweigte Session öffnen",
+    "Temporarily read-only during fork": "Während der Abzweigung vorübergehend schreibgeschützt",
+    "Session storage is not ready.": "Der Sitzungsspeicher ist nicht bereit."
   }
 }

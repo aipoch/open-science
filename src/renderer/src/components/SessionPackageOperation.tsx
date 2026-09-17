@@ -41,6 +41,7 @@ import {
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
 import { drainWorkspaceRuntimeEventsForPersistence } from '@/lib/acp/useWorkspaceAgentRuntime'
+import { forkSession } from '@/lib/session-fork'
 import { flushSessionPersistence } from '@/lib/session-persistence/session-persistence'
 
 const operationStatus = (
@@ -48,7 +49,7 @@ const operationStatus = (
   t: TFunction
 ): { phase: string; status: string; waiting: boolean; busy: boolean; description?: string } => {
   const phase = {
-    preparing: t('Preparing package…'),
+    preparing: operation.kind === 'fork' ? t('Preparing fork…') : t('Preparing package…'),
     selecting:
       operation.kind === 'import'
         ? t('Choose a destination project')
@@ -57,7 +58,7 @@ const operationStatus = (
     validating: t('Validating package…'),
     compressing: t('Compressing package…'),
     saving: t('Saving package…'),
-    importing: t('Importing research…'),
+    importing: operation.kind === 'fork' ? t('Copying research…') : t('Importing research…'),
     'choosing-location': t('Waiting for a save location…'),
     confirming: t('Waiting for import confirmation…'),
     cleaning: t('Cleaning temporary files…')
@@ -66,11 +67,17 @@ const operationStatus = (
     operation.state === 'succeeded'
       ? operation.cleanupPending
         ? t('Completed, cleanup pending')
-        : t('Package operation completed')
+        : operation.kind === 'fork'
+          ? t('Fork completed')
+          : t('Package operation completed')
       : operation.state === 'failed'
-        ? t('Package operation failed')
+        ? operation.kind === 'fork'
+          ? t('Fork failed')
+          : t('Package operation failed')
         : operation.state === 'cancelled'
-          ? t('Package operation cancelled')
+          ? operation.kind === 'fork'
+            ? t('Fork cancelled')
+            : t('Package operation cancelled')
           : operation.state === 'cancelling'
             ? t('Cancelling and cleaning up…')
             : phase
@@ -309,7 +316,11 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
   const error = operationError?.id === operation.id ? operationError.message : undefined
   const active = packageOperationActive(operation)
   const title =
-    operation.kind === 'export' ? t('Export Session package') : t('Import Session package')
+    operation.kind === 'fork'
+      ? t('Fork Session')
+      : operation.kind === 'export'
+        ? t('Export Session package')
+        : t('Import Session package')
   const { phase, status, waiting, busy, description } = operationStatus(operation, t)
   const selecting = operation.state === 'awaiting-selection'
   const OperationIcon =
@@ -331,7 +342,12 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
     setRetrying(true)
     setError(undefined)
     try {
-      if (operation.kind === 'export' && operation.session) {
+      if (operation.kind === 'fork' && operation.session) {
+        await forkSession({
+          id: operation.session.sessionId,
+          projectId: operation.session.projectId
+        })
+      } else if (operation.kind === 'export' && operation.session) {
         await drainWorkspaceRuntimeEventsForPersistence(operation.session.sessionId)
         await flushSessionPersistence()
         await window.api.sessions.exportPackage(operation.session)
@@ -519,7 +535,11 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                     ? active && operation.progress.phase !== 'cleaning'
                       ? t('Research history is always included.')
                       : t('The Session is unlocked. You can continue your research.')
-                    : t('Import creates a new read-only Session. No code runs automatically.')}
+                    : operation.kind === 'fork'
+                      ? t(
+                          'Fork creates an independent Session with all branches and research data. No code runs automatically.'
+                        )
+                      : t('Import creates a new read-only Session. No code runs automatically.')}
                 </Dialog.Description>
               </div>
             </div>
@@ -702,9 +722,15 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                   </Button>
                 ) : null}
                 {operation.state === 'succeeded' && operation.result?.imported ? (
-                  <Button onClick={() => void openImported()}>{t('Open imported Session')}</Button>
+                  <Button onClick={() => void openImported()}>
+                    {operation.kind === 'fork'
+                      ? t('Open forked Session')
+                      : t('Open imported Session')}
+                  </Button>
                 ) : null}
-                {operation.state === 'failed' && !operation.cleanupPending ? (
+                {operation.state === 'failed' &&
+                !operation.cleanupPending &&
+                !operation.result?.recovery ? (
                   <Button disabled={retrying} onClick={() => void retry()}>
                     {t('Try again')}
                   </Button>

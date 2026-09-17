@@ -432,6 +432,7 @@ export const readPackageNotebooks = async (
 export const sessionFileVersionIds = (session: PersistedChatSession): string[] => {
   const ids = new Set<string>()
   if (session.runtimeContext?.plan) ids.add(session.runtimeContext.plan.artifactVersionId)
+  for (const plan of session.planHistoryProjections ?? []) ids.add(plan.artifactVersionId)
   for (const binding of session.runtimeContext?.pdfContext?.bindings ?? [])
     ids.add(binding.sourceVersionId)
   for (const message of session.conversationGraph?.messages ?? session.messages) {
@@ -612,6 +613,10 @@ export const prepareNativeImport = async (
     context?.sideChat?.id,
     ...(context?.sideChat?.entries.map((entry) => entry.id) ?? []),
     ...(context?.pdfContext?.bindings.map((binding) => binding.bindingId) ?? []),
+    ...(session?.conversationGraph?.messages ?? session?.messages ?? []).flatMap((message) => [
+      ...(message.pdfContext?.bindings.map((binding) => binding.bindingId) ?? []),
+      ...(message.annotations?.map((annotation) => annotation.id) ?? [])
+    ]),
     ...(context?.delegatedWork?.records.flatMap((record) =>
       record.attempts.map((attempt) => attempt.id)
     ) ?? [])

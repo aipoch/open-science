@@ -82,6 +82,33 @@ const clickAction = async (): Promise<void> => {
 }
 
 describe('ActionMenuProvider and ActionMenuTarget', () => {
+  it('shows why an action is disabled and prevents execution', async () => {
+    const execute = vi.fn()
+    await render(
+      <ActionMenuProvider>
+        <ActionMenuTarget
+          targetId="message-1"
+          identityKey="message-1:v1"
+          catalog={catalog}
+          recipe={recipe}
+          bindings={{
+            copy: { execute, disabled: true, disabledDescription: 'Wait for the active operation.' }
+          }}
+          invocation={{ kind: 'message', messageId: 'message-1', text: 'Message' }}
+          asChild
+        >
+          <button type="button">Message</button>
+        </ActionMenuTarget>
+      </ActionMenuProvider>
+    )
+    await openContextMenu(container.querySelector('button')!)
+    const item = document.body.querySelector('[data-action-id="copy"]')
+    expect(item?.hasAttribute('data-disabled')).toBe(true)
+    expect(item?.textContent).toContain('Wait for the active operation.')
+    await clickAction()
+    expect(execute).not.toHaveBeenCalled()
+  })
+
   it('uses asChild and opens one pointer menu at the event viewport coordinates', async () => {
     await render(
       <ActionMenuProvider testId="target-menu">

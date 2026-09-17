@@ -1,3 +1,4 @@
+import { forkSession, sessionForkAvailable } from '@/lib/session-fork'
 import { sideChatBlock, sideChatBlockMessage } from './side-chat-availability'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { PackageOperationIndicator } from '@/components/SessionPackageOperation'
@@ -1627,7 +1628,11 @@ const ConversationPanel = ({
                         aria-label={t('Session export in progress')}
                       >
                         <LockKeyhole className="size-4 shrink-0" aria-hidden="true" />
-                        <p className="text-sm">{t('Temporarily read-only during export')}</p>
+                        <p className="text-sm">
+                          {packageOperation?.kind === 'fork'
+                            ? t('Temporarily read-only during fork')
+                            : t('Temporarily read-only during export')}
+                        </p>
                       </section>
                     ) : activeSession?.packageOrigin ? (
                       <section
@@ -1647,6 +1652,19 @@ const ConversationPanel = ({
                             'Read-only. Browse the conversation, files and recorded results. Code execution and continuation are disabled.'
                           )}
                         </p>
+                        {sessionForkAvailable() ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="mt-2"
+                            onClick={() => {
+                              void forkSession(activeSession)
+                            }}
+                          >
+                            <GitBranch className="size-4" aria-hidden="true" />
+                            {t('Fork to continue')}
+                          </Button>
+                        ) : null}
                         <details className="mt-2 text-xs leading-5 text-muted-foreground">
                           <summary className="cursor-pointer">{t('Package source')}</summary>
                           <dl className="mt-1 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">

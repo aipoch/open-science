@@ -42,7 +42,8 @@
     "Discard changes": "변경 사항 버리기",
     "Discard unsaved changes?": "저장되지 않은 변경 사항을 버리시겠습니까?",
     "Export Session package": "세션 패키지 내보내기",
-    "Import Session package": "세션 패키지 가져오기"
+    "Import Session package": "세션 패키지 가져오기",
+    "Wait for all Session activity and pending approvals to finish before forking.": "모든 세션 활동과 대기 중인 승인이 완료된 후 복제하세요."
   },
   "native": {
     "Conversation export is too large. Select fewer conversation turns.": "대화 내보내기 용량이 너무 큽니다. 더 적은 대화 턴을 선택하세요.",
@@ -113,7 +114,9 @@
     "Session package operation in progress": "세션 패키지 작업 진행 중",
     "Temporary files could not be removed. Try cleanup again.": "임시 파일을 제거할 수 없습니다. 정리를 다시 시도하세요.",
     "Could not complete the Session package operation. Check the package and available disk space, then try again.": "세션 패키지 작업을 완료할 수 없습니다. 패키지와 사용 가능한 디스크 공간을 확인한 후 다시 시도하세요.",
-    "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "원본 패키지를 사용할 수 없습니다. 이동 또는 삭제되었거나 읽을 수 없는 상태일 수 있습니다. 다른 패키지를 선택하세요."
+    "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "원본 패키지를 사용할 수 없습니다. 이동 또는 삭제되었거나 읽을 수 없는 상태일 수 있습니다. 다른 패키지를 선택하세요.",
+    "Could not fork this Session: {{reason}}": "이 세션을 복제할 수 없습니다: {{reason}}",
+    "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "복제 게시를 복구해야 합니다(작업 {{operationId}}, 세션 {{sessionId}}). 다시 복제하기 전에 앱을 다시 시작하여 이 작업을 복구하세요."
   },
   "renderer": {
     "Open-source license": "오픈 소스 라이선스",
@@ -5901,6 +5904,21 @@
     "A Side chat prompt is already running.": "사이드 채팅 프롬프트가 이미 실행 중입니다.",
     "Enter a message to send.": "보낼 메시지를 입력하세요.",
     "Send draft to Side chat": "초안을 사이드 채팅으로 보내기",
-    "Opens an empty Side chat; keeps your draft.": "빈 사이드 채팅을 열고 초안을 유지합니다."
+    "Opens an empty Side chat; keeps your draft.": "빈 사이드 채팅을 열고 초안을 유지합니다.",
+    "Fork": "복제",
+    "Fork Session": "세션 복제",
+    "Fork to continue": "복제하여 계속",
+    "Could not fork Session": "세션을 복제할 수 없습니다",
+    "Fork is available in the desktop app.": "복제 기능은 데스크톱 앱에서 사용할 수 있습니다.",
+    "Wait for the current transfer to finish before forking a Session.": "현재 전송이 완료된 후 세션을 복제하세요.",
+    "Fork creates an independent Session with all branches and research data. No code runs automatically.": "모든 분기와 연구 데이터를 포함하는 독립적인 세션을 만듭니다. 코드는 자동으로 실행되지 않습니다.",
+    "Preparing fork…": "복제 준비 중…",
+    "Copying research…": "연구 데이터 복사 중…",
+    "Fork completed": "복제 완료",
+    "Fork failed": "복제 실패",
+    "Fork cancelled": "복제 취소됨",
+    "Open forked Session": "복제된 세션 열기",
+    "Temporarily read-only during fork": "복제 중에는 일시적으로 읽기 전용입니다",
+    "Session storage is not ready.": "세션 저장소가 준비되지 않았습니다."
   }
 }

@@ -15,6 +15,7 @@ import {
   retryPendingArtifactFinalization,
   saveSessionInOrder
 } from '@/lib/session-persistence/session-persistence'
+import { forkSession, sessionForkAvailable } from '@/lib/session-fork'
 import { exportSessionPackage, sessionPackageExportAvailable } from '@/lib/session-package-export'
 import { usePackageOperationStore } from '@/stores/package-operation-store'
 import { useMemoryStore } from '@/stores/memory-store'
@@ -1279,6 +1280,7 @@ const WorkspacePage = ({
                 window.api.artifacts?.sessionReproducibility ? setCheckSession : undefined
               }
               onViewNotebook={sessionController.actions.openNotebook}
+              onForkSession={sessionForkAvailable() ? forkSession : undefined}
               onExportPackage={sessionPackageExportAvailable() ? openPackageExport : undefined}
               onExportSession={
                 typeof window.api.sessions?.exportConversation === 'function'
@@ -1367,6 +1369,14 @@ const WorkspacePage = ({
                 close()
                 sessionController.actions.openNotebook(session)
               }}
+              onForkSession={
+                sessionForkAvailable()
+                  ? async (session) => {
+                      close()
+                      await forkSession(session)
+                    }
+                  : undefined
+              }
               onExportPackage={
                 sessionPackageExportAvailable()
                   ? async (session) => {

@@ -16,6 +16,7 @@ import {
 
 export const SessionPackageImportError = (): React.JSX.Element => {
   const { t } = useTranslation()
+  const errorKind = usePackageOperationStore((state) => state.errorKind)
   const error = usePackageOperationStore((state) => state.importError)
   const setError = usePackageOperationStore((state) => state.setImportError)
   return (
@@ -32,7 +33,9 @@ export const SessionPackageImportError = (): React.JSX.Element => {
         >
           <div className={dialogHeaderClassName}>
             <Dialog.Title className={dialogTitleClassName}>
-              {t('Could not import Session package')}
+              {errorKind === 'fork'
+                ? t('Could not fork Session')
+                : t('Could not import Session package')}
             </Dialog.Title>
             <Button
               variant="ghost"

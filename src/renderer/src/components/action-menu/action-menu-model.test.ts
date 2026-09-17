@@ -101,6 +101,7 @@ describe('resolveActionMenuEntries', () => {
         icon: () => Download,
         danger: ({ locked }) => locked,
         disabled: ({ locked }) => locked,
+        disabledDescription: ({ locked }) => (locked ? 'Locked by an active operation' : undefined),
         hidden: ({ text }) => text.length === 0
       }
     }
@@ -122,7 +123,8 @@ describe('resolveActionMenuEntries', () => {
         labelKey: 'Copy Selected text',
         icon: Download,
         danger: true,
-        disabled: true
+        disabled: true,
+        disabledDescription: 'Locked by an active operation'
       }
     ])
     expect(entries[0]).not.toHaveProperty('invocation')

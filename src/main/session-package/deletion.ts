@@ -57,9 +57,10 @@ export class SessionPackageDeletion {
     originSessionIds: string[]
   ): Promise<void> {
     if (
-      !session.packageOrigin ||
-      receipt.importId !== session.packageOrigin.importId ||
-      receipt.manifestChecksum !== session.packageOrigin.manifestChecksum ||
+      !(session.packageOrigin ?? session.forkOrigin) ||
+      receipt.importId !== (session.packageOrigin ?? session.forkOrigin)?.importId ||
+      receipt.manifestChecksum !==
+        (session.packageOrigin ?? session.forkOrigin)?.manifestChecksum ||
       receipt.projectId !== session.projectId ||
       receipt.sessionId !== session.id
     )
@@ -97,7 +98,7 @@ export class SessionPackageDeletion {
     await this.writeIntent(
       journalSchema.parse({
         schemaVersion: 1,
-        importId: session.packageOrigin?.importId,
+        importId: (session.packageOrigin ?? session.forkOrigin)?.importId,
         projectId: session.projectId,
         sessionId: session.id,
         identities: [],
