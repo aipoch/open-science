@@ -114,13 +114,6 @@ export const NetworkApproval = (): React.JSX.Element => {
           void runtime.respondToPermission(requestId, optionId)
         }}
       />
-      {runtime.state.pendingPermissions.length === 0 && (
-        <p data-testid="no-pending-approval" className="text-muted-foreground">
-          {language === 'zh-Hans'
-            ? '当前没有待处理的授权请求。'
-            : 'No pending permission requests.'}
-        </p>
-      )}
     </section>
   )
 }
