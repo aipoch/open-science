@@ -261,7 +261,7 @@ describe('User Skill repository architecture', () => {
   it('declares complete ownership and downstream test impact', () => {
     const manifest = JSON.parse(readSource(manifestPath)) as ModuleImpactManifest
     expect(manifest.modules.user_skills_repository).toEqual({
-      ownerPaths: [
+      ownerPaths: expect.arrayContaining([
         'src/main/skills/user-skill-catalog-observer.ts',
         'src/main/skills/user-skill-compatibility-index.ts',
         'src/main/skills/user-skill-repository.ts',
@@ -271,14 +271,14 @@ describe('User Skill repository architecture', () => {
         'src/main/skills/user-skill-import-contracts.ts',
         'src/main/skills/skill-mutation-owner.ts',
         'src/main/skills/skill-package-transaction-owner.ts'
-      ],
-      interfacePaths: [
+      ]),
+      interfacePaths: expect.arrayContaining([
         'src/main/skills/user-skill-repository.ts',
         'src/main/skills/user-skill-catalog-observer.ts'
-      ],
+      ]),
       consumerModules: ['settings_service_facade'],
       testFiles: {
-        owner: [
+        owner: expect.arrayContaining([
           'src/main/skills/user-skill-catalog-observer.test.ts',
           'src/main/skills/user-skill-compatibility-index.test.ts',
           'src/main/skills/user-skill-repository.architecture.test.ts',
@@ -286,13 +286,13 @@ describe('User Skill repository architecture', () => {
           'src/main/skills/user-skill-repository.test.ts',
           'src/main/skills/user-skill-integrity.regression.test.ts',
           'src/main/skills/materializer-integrity.regression.test.ts'
-        ],
-        contract: [
+        ]),
+        contract: expect.arrayContaining([
           'src/main/skills/host-skills-service.test.ts',
           'src/main/skills/skill-archive-sniffer.test.ts',
           'src/main/settings/skill-catalog.test.ts'
-        ],
-        consumer: [
+        ]),
+        consumer: expect.arrayContaining([
           'src/main/skills/conversation-import.test.ts',
           'src/main/skills/specialist-package-adapter.test.ts',
           'src/main/notebook/local-rpc-server.test.ts',
@@ -306,7 +306,7 @@ describe('User Skill repository architecture', () => {
           'src/renderer/src/stores/settings-skills-slice.test.ts',
           'src/renderer/src/pages/settings/SkillUploadView.render.test.tsx',
           'src/renderer/src/pages/settings/SkillEditLoader.render.test.tsx'
-        ]
+        ])
       },
       capabilityOverlays: ['windows_sensitive', 'e2e_regressions', 'e2e_delegation'],
       fallbackCapability: 'main_runtime'

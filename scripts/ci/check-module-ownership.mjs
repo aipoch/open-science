@@ -7,7 +7,7 @@ import {
   changeImpactManifestPath,
   parseNameStatus
 } from './classify-pr-changes.mjs'
-import { createAffectedTestPlan } from './module-test-impact.mjs'
+import { isModuleOwnershipPath } from './module-ownership-paths.mjs'
 import { validateModuleImpactManifest } from './validate-module-impact.mjs'
 
 const manifestPath = 'scripts/ci/module-impact.json'
@@ -16,14 +16,12 @@ const globalRoots = new Set(
     .rules.filter((rule) => rule.role === 'global' || rule.mode === 'full')
     .map((rule) => rule.id)
 )
-const graph = { status: 'unavailable-manifest-only', testFiles: [] }
-const isCode = (path) => /^(src|packages)\/.*\.[cm]?[jt]sx?$/.test(path)
 
 function covered(path, manifest) {
   const changes = [{ path, status: 'modified' }]
   // Explicit global routing is intentional, not an ownership omission.
   if (classifyChanges(changes).roots.some((root) => globalRoots.has(root))) return true
-  return createAffectedTestPlan(changes, graph, manifest).mode === 'selective'
+  return Object.values(manifest.modules).some((module) => module.ownerPaths.includes(path))
 }
 
 export function checkModuleOwnership({
@@ -41,7 +39,7 @@ export function checkModuleOwnership({
   const manifestChanged = changed.has(manifestPath)
   const violations = []
   const legacyGaps = []
-  for (const path of headFiles.filter(isCode)) {
+  for (const path of headFiles.filter(isModuleOwnershipPath)) {
     if (before.has(path) && !changed.has(path) && !manifestChanged) continue
     if (covered(path, headManifest)) continue
     if (!before.has(path)) {

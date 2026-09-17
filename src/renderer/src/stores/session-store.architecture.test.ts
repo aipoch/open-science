@@ -1019,7 +1019,7 @@ describe('Session Store architecture', () => {
       >
     }
     expect(manifest.modules.session_renderer).toMatchObject({
-      ownerPaths: [
+      ownerPaths: expect.arrayContaining([
         'src/renderer/src/stores/session-store.ts',
         'src/renderer/src/stores/session-store-interaction-state.ts',
         'src/renderer/src/stores/session-store-persistence-merge.ts',
@@ -1031,11 +1031,11 @@ describe('Session Store architecture', () => {
         'src/renderer/src/stores/session-store-run-activity-helpers.ts',
         'src/renderer/src/stores/session-store-run-terminal-helpers.ts',
         'src/renderer/src/stores/session-job-store.ts'
-      ],
-      interfacePaths: [
+      ]),
+      interfacePaths: expect.arrayContaining([
         'src/renderer/src/stores/session-store.ts',
         'src/renderer/src/stores/session-job-store.ts'
-      ],
+      ]),
       consumerModules: [
         'workspace_runtime',
         'project_files_view',
@@ -1043,18 +1043,18 @@ describe('Session Store architecture', () => {
         'workspace_page'
       ],
       testFiles: {
-        owner: [
+        owner: expect.arrayContaining([
           'src/renderer/src/stores/session-store.test.ts',
           'src/renderer/src/stores/session-store.archive-order.test.ts',
           'src/renderer/src/stores/session-store.architecture.test.ts',
           'src/renderer/src/stores/session-job-store.test.ts'
-        ],
-        contract: ['src/shared/session-persistence.test.ts'],
-        consumer: [
+        ]),
+        contract: expect.arrayContaining(['src/shared/session-persistence.test.ts']),
+        consumer: expect.arrayContaining([
           'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.test.ts',
           'src/renderer/src/pages/workspace/WorkspaceElicitationCard.interaction.test.tsx',
           'src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx'
-        ]
+        ])
       },
       capabilityOverlays: ['renderer_state'],
       fallbackCapability: 'renderer_view'

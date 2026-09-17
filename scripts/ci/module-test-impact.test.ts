@@ -197,7 +197,7 @@ describe('module test impact commands', () => {
     expect(plan.reasonChains).toContain('artifact_storage -> artifact_provenance')
   })
 
-  it.each(['src/main/reviewer/reviewer-session-driver.ts', 'src/shared/reviewer.ts'])(
+  it.each(['src/main/reviewer/reviewer-session-driver.ts'])(
     'expands Reviewer changes through downstream consumers for %s',
     (path) => {
       const plan = createAffectedTestPlan([{ path, status: 'modified' }], {

@@ -9,6 +9,12 @@ const readManifest = (): ReturnType<JSON['parse']> =>
   JSON.parse(readFileSync(resolve('scripts/ci/module-impact.json'), 'utf8'))
 
 describe('module ownership and test impact manifest', () => {
+  it.each(['', '   ', false, 123])('rejects an invalid full validation reason: %s', (reason) => {
+    const manifest = readManifest()
+    manifest.modules.artifact_storage.fullTestReason = reason
+    expect(() => validateModuleImpactManifest(manifest)).toThrow('fullTestReason must explain')
+  })
+
   it('validates the repository manifest and every declared evidence path', () => {
     const manifest = readManifest()
 
@@ -73,7 +79,7 @@ describe('module ownership and test impact manifest', () => {
       validateModuleImpactManifest(manifest, {
         pathExists: (repoPath: string) => repoPath !== 'src/main/artifacts/repository.test.ts'
       })
-    ).toThrow('artifact_storage.testFiles does not exist: src/main/artifacts/repository.test.ts')
+    ).toThrow('does not exist: src/main/artifacts/repository.test.ts')
   })
 
   it('rejects unknown module capability references', () => {

@@ -14,6 +14,7 @@ type Manifest = {
   modules: Record<
     string,
     {
+      fullTestReason?: string
       ownerPaths: string[]
       interfacePaths: string[]
       consumerModules: string[]
@@ -27,7 +28,7 @@ const manifest = (): Manifest => ({
   schemaVersion: 1,
   modules: {
     sample: {
-      ownerPaths: [source],
+      ownerPaths: [source, test],
       interfacePaths: [source],
       consumerModules: [],
       testFiles: { owner: [test], contract: [], consumer: [] },
@@ -48,17 +49,36 @@ const check = (overrides: Record<string, unknown> = {}): ReturnType<typeof check
   })
 
 describe('module ownership admission', () => {
-  it.each([fresh, 'src/main/new.test.ts', 'src/renderer/src/new.tsx', 'packages/example/new.ts'])(
-    'blocks an unregistered new code file: %s',
-    (path) => {
-      expect(
-        check({ headFiles: [...files, path], changes: [{ path, status: 'added' }] })
-      ).toMatchObject({
-        ok: false,
-        violations: [expect.objectContaining({ path, rule: 'module-ownership-new' })]
-      })
-    }
-  )
+  it('accepts explicit ownership with intentional full validation', () => {
+    const headManifest = manifest()
+    headManifest.modules.sample.fullTestReason = 'Dynamic consumers require full validation'
+    headManifest.modules.sample.ownerPaths.push(fresh)
+    expect(
+      check({
+        headManifest,
+        headFiles: [...files, fresh],
+        changes: [{ path: fresh, status: 'added' }]
+      }).ok
+    ).toBe(true)
+  })
+
+  it.each([
+    fresh,
+    'src/main/new.test.ts',
+    'src/renderer/src/new.tsx',
+    'packages/example/new.ts',
+    'packages/native/src/new.cc',
+    'packages/native/src/new.rs',
+    'src/main/notebook/fixture.py',
+    'src/main/notebook/fixture.R'
+  ])('blocks an unregistered new code file: %s', (path) => {
+    expect(
+      check({ headFiles: [...files, path], changes: [{ path, status: 'added' }] })
+    ).toMatchObject({
+      ok: false,
+      violations: [expect.objectContaining({ path, rule: 'module-ownership-new' })]
+    })
+  })
   it('accepts registration in the same PR using manifest data', () => {
     const headManifest = manifest()
     headManifest.modules.sample.ownerPaths.push(fresh)
@@ -122,7 +142,7 @@ describe('module ownership admission', () => {
   })
   it('accepts a registered rename without retaining a deleted source path', () => {
     const headManifest = manifest()
-    headManifest.modules.sample.ownerPaths = [fresh]
+    headManifest.modules.sample.ownerPaths = [fresh, test]
     headManifest.modules.sample.interfacePaths = [fresh]
     expect(
       check({

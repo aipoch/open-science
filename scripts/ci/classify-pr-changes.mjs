@@ -227,7 +227,7 @@ export function platformExecutionPlan(plan, changes, event) {
     ) ||
     (plan.mode === 'full' && paths.some((path) => path.startsWith('src/main/'))) ||
     paths.some((path) =>
-      /^(src\/preload\/|src\/shared\/(ipc|notebook|shell|runtime|window|keyboard|shortcut|sandbox|native)|packages\/(notebook-network-sandbox|process-tree-native)\/|patches\/|resources\/|build\/|scripts\/|e2e\/|package(?:-lock)?\.json$|electron|playwright|tsconfig|vitest|vite\.|\.nvmrc$|\.github\/)/.test(
+      /^(src\/preload\/|src\/shared\/(ipc|notebook|shell|runtime|window|keyboard|shortcut|sandbox|native)|packages\/(notebook-network-sandbox|process-tree-native|safe-file-publisher-native)\/|patches\/|resources\/|build\/|scripts\/|e2e\/|package(?:-lock)?\.json$|electron|playwright|tsconfig|vitest|vite\.|\.nvmrc$|\.github\/)/.test(
         path
       )
     ) ||

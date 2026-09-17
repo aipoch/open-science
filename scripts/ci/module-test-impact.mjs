@@ -21,7 +21,11 @@ function declaredTests(module) {
   return testKinds.flatMap((kind) => module.testFiles[kind])
 }
 
-function modulesForPath(manifest, path) {
+export function modulesForPath(manifest, path) {
+  const owners = Object.entries(manifest.modules)
+    .filter(([, module]) => module.ownerPaths.includes(path))
+    .map(([moduleId]) => moduleId)
+  if (owners.length > 0) return owners
   const explicit = Object.entries(manifest.modules)
     .filter(([, module]) =>
       [...module.ownerPaths, ...module.interfacePaths, ...declaredTests(module)].includes(path)
@@ -84,6 +88,9 @@ function fullPlan(reason) {
 export function createModuleTestPlan(moduleId, manifest = defaultManifest) {
   validateModuleImpactManifest(manifest)
   if (!manifest.modules[moduleId]) throw new Error(`Unknown module: ${moduleId}`)
+  if (manifest.modules[moduleId].fullTestReason) {
+    return fullPlan(`${moduleId} -> ${manifest.modules[moduleId].fullTestReason} -> full`)
+  }
   return selectivePlan(manifest, [moduleId], [`module ${moduleId} -> declared tests`], {
     status: 'not-requested',
     testFiles: []
@@ -101,6 +108,8 @@ export function createAffectedTestPlan(changes, graph, manifest = defaultManifes
   }
 
   const seeds = new Set()
+  const directTests = new Set()
+  const testModules = new Set()
   const reasons = []
   for (const change of changes) {
     const pathPlan = classifyChanges([change])
@@ -117,6 +126,12 @@ export function createAffectedTestPlan(changes, graph, manifest = defaultManifes
     for (const path of [change.path, change.previousPath].filter(Boolean)) {
       const matchedModules = modulesForPath(manifest, path)
       if (matchedModules.length === 0) return fullPlan(`${path} -> unknown module owner -> full`)
+      if (/\.(test|spec)\.[cm]?[jt]sx?$/.test(path)) {
+        directTests.add(path)
+        for (const moduleId of matchedModules) testModules.add(moduleId)
+        reasons.push(`${path} -> registered test -> direct execution`)
+        continue
+      }
       for (const moduleId of matchedModules) {
         seeds.add(moduleId)
         reasons.push(`${path} -> ${moduleId}`)
@@ -125,6 +140,10 @@ export function createAffectedTestPlan(changes, graph, manifest = defaultManifes
   }
 
   const modules = expandConsumers(manifest, [...seeds])
+  const fullModule = modules.find((moduleId) => manifest.modules[moduleId].fullTestReason)
+  if (fullModule) {
+    return fullPlan(`${fullModule} -> ${manifest.modules[fullModule].fullTestReason} -> full`)
+  }
   for (const moduleId of seeds) {
     const visit = (consumer, chain) => {
       reasons.push([...chain, consumer].join(' -> '))
@@ -136,7 +155,15 @@ export function createAffectedTestPlan(changes, graph, manifest = defaultManifes
       visit(consumer, [moduleId])
     }
   }
-  return selectivePlan(manifest, modules, reasons, graph)
+  const plan = selectivePlan(manifest, [...modules, ...testModules], reasons, graph)
+  // Editing a registered test runs that test; changing implementations or shared fixtures
+  // still runs every declared owner, contract and transitive consumer test.
+  plan.testFiles = sorted([
+    ...modules.flatMap((moduleId) => declaredTests(manifest.modules[moduleId])),
+    ...directTests,
+    ...graph.testFiles
+  ])
+  return plan
 }
 
 function isCurrentGraph(status) {

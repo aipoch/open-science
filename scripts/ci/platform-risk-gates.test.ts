@@ -58,6 +58,9 @@ describe('platform risk execution policy', () => {
     'src/shared/notebook-runtime.ts',
     'src/shared/window.ts',
     'packages/notebook-network-sandbox/src/index.ts',
+    'packages/process-tree-native/src/process_tree_native.cc',
+    'packages/safe-file-publisher-native/src/safe_file_publisher_native.cc',
+    'src/main/second-instance-router.ts',
     'package-lock.json',
     'electron.vite.config.ts',
     'tsconfig.node.json'
@@ -191,7 +194,7 @@ it('does not give old PR workflows a smoke lane they cannot execute', () => {
       { execute: () => changes, write: () => undefined }
     )
     expect(plan.macosProfile).toBe(policy ? 'smoke' : undefined)
-    expect(macosGroupsForPlan(plan)).toHaveLength(policy ? 1 : 4)
+    expect(macosGroupsForPlan(plan)).toHaveLength(policy ? 1 : 3)
   }
 })
 

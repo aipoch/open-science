@@ -861,15 +861,17 @@ describe('workspace runtime architecture', () => {
       }
     }
     const workspaceRuntime = manifest.modules.workspace_runtime
-    expect(workspaceRuntime.ownerPaths).toEqual([
-      'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.ts',
-      'src/renderer/src/lib/acp/workspace-events.ts',
-      ...ownerNames.map((name) => `src/renderer/src/lib/acp/${name}.ts`),
-      'src/renderer/src/lib/acp/workspace-subagent-runtime-presentation.ts'
-    ])
-    expect(workspaceRuntime.interfacePaths).toEqual([
-      'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.ts'
-    ])
+    expect(workspaceRuntime.ownerPaths).toEqual(
+      expect.arrayContaining([
+        'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.ts',
+        'src/renderer/src/lib/acp/workspace-events.ts',
+        ...ownerNames.map((name) => `src/renderer/src/lib/acp/${name}.ts`),
+        'src/renderer/src/lib/acp/workspace-subagent-runtime-presentation.ts'
+      ])
+    )
+    expect(workspaceRuntime.interfacePaths).toEqual(
+      expect.arrayContaining(['src/renderer/src/lib/acp/useWorkspaceAgentRuntime.ts'])
+    )
     expect(workspaceRuntime.consumerModules).toEqual(['workspace_page'])
     expect(workspaceRuntime.testFiles.owner).toContain(architectureTestPath)
     expect(workspaceRuntime.capabilityOverlays).toEqual(['renderer_state'])

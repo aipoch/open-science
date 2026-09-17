@@ -411,6 +411,17 @@ describe('PR Gate workflow', () => {
     expect(enforce?.run).toContain('check typechecks "$TYPECHECKS_OUTCOME"')
   })
 
+  it('checks complete ownership and import consumers for selective source plans', () => {
+    const guard = workflow.jobs.static.steps?.find(
+      ({ name }) => name === 'Check complete module ownership and consumer evidence'
+    )
+    expect(guard?.run).toContain('scripts/ci/audit-module-ownership.test.ts')
+    expect(guard?.run).toContain('scripts/ci/module-consumer-coverage.test.ts')
+    expect(guard?.if).toContain(".mode != 'full'")
+    expect(guard?.if).toContain(".bundles, 'unit'")
+    expect(guard?.['continue-on-error']).not.toBe(true)
+  })
+
   it('runs the i18n catalog guard as a named static check', () => {
     const i18n = workflow.jobs.static.steps?.find(({ name }) => name === 'Check i18n catalog')
     const enforce = workflow.jobs.static.steps?.find(

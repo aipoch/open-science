@@ -388,6 +388,11 @@ jobs:
           echo "node=$node_outcome" >> "$GITHUB_OUTPUT"
           echo "web=$web_outcome" >> "$GITHUB_OUTPUT"
           exit "$failed"
+      - name: Check complete module ownership and consumer evidence
+        # Full portable shards already run these guards. Selective source plans must also
+        # detect newly introduced imports that make their checked-in consumer evidence stale.
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') && fromJSON(needs.preflight.outputs.plan).mode != 'full' }}
+        run: npx vitest run scripts/ci/audit-module-ownership.test.ts scripts/ci/module-consumer-coverage.test.ts
       - name: Check interface contract baseline (shadow)
         id: interface_contracts
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'interface_contracts') }}

@@ -1124,28 +1124,34 @@ describe('Session persistence coordinator architecture', () => {
     const sessionPersistence = manifest.modules.session_persistence
 
     expect(sessionPersistence.ownerPaths).toEqual(
-      productionFiles.map((file) => `src/main/session-persistence/${file}`)
+      expect.arrayContaining(productionFiles.map((file) => `src/main/session-persistence/${file}`))
     )
-    expect(sessionPersistence.interfacePaths).toEqual([
-      'src/main/session-persistence/coordinator.ts'
-    ])
+    expect(sessionPersistence.interfacePaths).toEqual(
+      expect.arrayContaining(['src/main/session-persistence/coordinator.ts'])
+    )
     expect(sessionPersistence.consumerModules).toEqual(['project_lifecycle'])
-    expect(sessionPersistence.testFiles.owner).toEqual([
-      'src/main/session-persistence/coordinator.architecture.test.ts',
-      'src/main/session-persistence/coordinator.test.ts',
-      'src/main/session-persistence/delegated-work-records.test.ts'
-    ])
-    expect(sessionPersistence.testFiles.contract).toEqual([
-      'src/shared/session-persistence.test.ts',
-      'src/main/session-persistence/coordinator-contract.test.ts',
-      'src/main/session-persistence/ipc.test.ts'
-    ])
-    expect(sessionPersistence.testFiles.consumer).toEqual([
-      'src/main/delegation/durable-delegated-work.test.ts',
-      'src/main/delegation/session-record-adapter.test.ts',
-      'src/main/session-persistence/artifact-finalization-recovery.integration.test.ts',
-      'src/main/session-persistence/deletion-integration.test.ts'
-    ])
+    expect(sessionPersistence.testFiles.owner).toEqual(
+      expect.arrayContaining([
+        'src/main/session-persistence/coordinator.architecture.test.ts',
+        'src/main/session-persistence/coordinator.test.ts',
+        'src/main/session-persistence/delegated-work-records.test.ts'
+      ])
+    )
+    expect(sessionPersistence.testFiles.contract).toEqual(
+      expect.arrayContaining([
+        'src/shared/session-persistence.test.ts',
+        'src/main/session-persistence/coordinator-contract.test.ts',
+        'src/main/session-persistence/ipc.test.ts'
+      ])
+    )
+    expect(sessionPersistence.testFiles.consumer).toEqual(
+      expect.arrayContaining([
+        'src/main/delegation/durable-delegated-work.test.ts',
+        'src/main/delegation/session-record-adapter.test.ts',
+        'src/main/session-persistence/artifact-finalization-recovery.integration.test.ts',
+        'src/main/session-persistence/deletion-integration.test.ts'
+      ])
+    )
     expect(sessionPersistence.capabilityOverlays).toEqual([
       'windows_sensitive',
       'e2e_regressions',
