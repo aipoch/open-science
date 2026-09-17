@@ -1181,6 +1181,26 @@ const ConversationPanel = ({
           <WorkspaceMessageEditStateProvider canEditMessage={canEditMessage}>
             <WorkspaceMessageScroller
               activeSession={activeSession}
+              forkSourceContent={
+                activeSession?.forkOrigin &&
+                activeSession.branchSource &&
+                sessionTools.openSession ? (
+                  <div className="mb-2 flex items-center gap-2 text-xs">
+                    <span className="h-px flex-1 bg-border" aria-hidden="true" />
+                    <GitBranch className="size-3 text-muted-foreground" aria-hidden="true" />
+                    <button
+                      type="button"
+                      className="text-primary hover:underline"
+                      onClick={() =>
+                        sessionTools.openSession?.(activeSession.branchSource!.sessionId)
+                      }
+                    >
+                      {t('Continued from chat')}
+                    </button>
+                    <span className="h-px flex-1 bg-border" aria-hidden="true" />
+                  </div>
+                ) : null
+              }
               credentialPending={pendingCredentialRequest !== undefined}
               visiblePermissionPending={pendingPermissions.length > 0}
               optimisticMessage={optimisticMessage}
@@ -1215,24 +1235,6 @@ const ConversationPanel = ({
           <div className="px-2 pb-[max(env(safe-area-inset-bottom),0.5rem)] md:px-4 md:pb-[6px]">
             {/* Runtime and session errors stay near the composer so recovery is visible. */}
             <div className={composerContentClassName}>
-              {activeSession?.forkOrigin &&
-              activeSession.branchSource &&
-              sessionTools.openSession ? (
-                <div className="mb-2 flex items-center gap-2 text-xs">
-                  <span className="h-px flex-1 bg-border" aria-hidden="true" />
-                  <GitBranch className="size-3 text-muted-foreground" aria-hidden="true" />
-                  <button
-                    type="button"
-                    className="text-primary hover:underline"
-                    onClick={() =>
-                      sessionTools.openSession?.(activeSession.branchSource!.sessionId)
-                    }
-                  >
-                    {t('Continued from chat')}
-                  </button>
-                  <span className="h-px flex-1 bg-border" aria-hidden="true" />
-                </div>
-              ) : null}
               <div className="px-1 md:px-3">
                 {conversation.planProjectionRecoveryError && activeSession ? (
                   <UnavailablePlanNotice
