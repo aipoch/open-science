@@ -82,7 +82,7 @@ const clickAction = async (): Promise<void> => {
 }
 
 describe('ActionMenuProvider and ActionMenuTarget', () => {
-  it('shows why an action is disabled and prevents execution', async () => {
+  it('keeps disabled actions on one line with a hover explanation and prevents execution', async () => {
     const execute = vi.fn()
     await render(
       <ActionMenuProvider>
@@ -104,7 +104,9 @@ describe('ActionMenuProvider and ActionMenuTarget', () => {
     await openContextMenu(container.querySelector('button')!)
     const item = document.body.querySelector('[data-action-id="copy"]')
     expect(item?.hasAttribute('data-disabled')).toBe(true)
-    expect(item?.textContent).toContain('Wait for the active operation.')
+    expect(item?.getAttribute('title')).toBe('Wait for the active operation.')
+    expect(item?.textContent).not.toContain('Wait for the active operation.')
+    expect(item?.classList.contains('data-[disabled]:pointer-events-auto')).toBe(true)
     await clickAction()
     expect(execute).not.toHaveBeenCalled()
   })
