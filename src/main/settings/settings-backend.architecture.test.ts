@@ -1462,7 +1462,9 @@ describe('Settings backend ownership architecture', () => {
       'src/renderer/src/stores/settings-connectors-slice.test.ts',
       'src/shared/renderer-surface-inventory.test.ts',
       'src/shared/renderer-surface-matrix.test.ts',
-      'src/main/session-package/fork.test.ts'
+      'src/main/session-package/fork.test.ts',
+      'src/renderer/src/lib/session-persistence/session-persistence.test.ts',
+      'src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts'
     ])
     expect(
       [
