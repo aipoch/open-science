@@ -1986,9 +1986,13 @@ const ArtifactProvenancePanel = ({
                         </p>
                       ) : null
                     )}
-                    {/* Provenance runs omit the full Notebook capture record. Environment
-                        evidence belongs to this version's Environment tab. */}
-                    <NotebookDialogCell run={run} index={index} showExecutionEvidence={false} />
+                    {/* This projection omits capture status; keep saved run identity while
+                        leaving environment completeness to the Environment tab. */}
+                    <NotebookDialogCell
+                      run={run}
+                      index={index}
+                      showEnvironmentCaptureWarning={false}
+                    />
                   </div>
                 ))}
               </div>

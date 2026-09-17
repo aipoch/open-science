@@ -2815,11 +2815,13 @@ describe('Provenance selection and evidence completeness', () => {
   })
 })
 
-it('does not describe saved provenance environment evidence as a historical gap', async () => {
+it('preserves saved run identity without describing provenance evidence as a historical gap', async () => {
   notebookEvidenceProbe.enabled = true
   await clickTab('Execution Log')
   await flush()
   expect(container.querySelector('[data-testid="session-notebook-cell"]')).not.toBeNull()
+  const evidence = container.querySelector('[data-testid="notebook-run-evidence"]')
+  expect(evidence?.textContent ?? '').toContain('notebook-run-2')
   expect(container.textContent).not.toContain(
     'Environment evidence is incomplete or unavailable. Current packages cannot fill historical gaps.'
   )
