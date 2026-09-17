@@ -1179,13 +1179,23 @@ class ElectronAppHarness implements ElectronApp {
         : undefined
     const result = await terminateProcessTree(child)
     let reaped = result.reaped
-    // taskkill can fail when a short-lived descendant exits during enumeration. Accept that
-    // race only after a complete query confirms the observed tree and its descendants are gone.
-    if (!reaped && before?.complete) {
-      const after = await readProcessTable()
-      reaped =
-        after.complete &&
-        before.processes.every(({ pid }) => selectProcessTree(after.processes, pid).length === 0)
+    // Windows termination is asynchronous even when taskkill succeeds. Playwright's child is
+    // a shell, so wait for the observed Electron descendants too before reusing the profile lock.
+    if (process.platform === 'win32') {
+      reaped = false
+      if (before?.complete) {
+        const deadline = Date.now() + 10_000
+        do {
+          const after = await readProcessTable()
+          reaped =
+            after.complete &&
+            before.processes.every(
+              ({ pid }) => selectProcessTree(after.processes, pid).length === 0
+            )
+          if (reaped || Date.now() >= deadline) break
+          await new Promise((resolve) => setTimeout(resolve, 100))
+        } while (Date.now() < deadline)
+      }
     }
     if (!reaped) throw new Error('Electron crash simulation did not reap the process tree.')
     this.resourceProfiler?.detach(application)
