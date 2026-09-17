@@ -33,33 +33,28 @@ it('retains every statically reachable consumer test and declared runtime-loadin
   }
   const cache = ts.createModuleResolutionCache(process.cwd(), (path) => path, options)
   for (const file of code) {
-    const source = ts.createSourceFile(
-      file,
-      readFileSync(file, 'utf8'),
-      ts.ScriptTarget.Latest,
-      true
+    const text = readFileSync(file, 'utf8')
+    // The TypeScript scanner collects imports, exports, require and dynamic import without
+    // building an AST for every implementation file. Mock helpers still need the AST below.
+    const specs = new Set(
+      ts.preProcessFile(text, true, true).importedFiles.map(({ fileName }) => fileName)
     )
-    const specs = new Set<string>()
-    const visit = (node: ts.Node): void => {
-      if (
-        (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
-        node.moduleSpecifier &&
-        ts.isStringLiteral(node.moduleSpecifier)
-      )
-        specs.add(node.moduleSpecifier.text)
-      if (
-        ts.isCallExpression(node) &&
-        node.arguments[0] &&
-        ts.isStringLiteral(node.arguments[0]) &&
-        (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
-          ['require', 'vi.mock', 'vi.doMock', 'vi.importActual', 'jest.mock'].includes(
+    if (/\b(?:vi|jest)\s*\./.test(text)) {
+      const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, false)
+      const visit = (node: ts.Node): void => {
+        if (
+          ts.isCallExpression(node) &&
+          node.arguments[0] &&
+          ts.isStringLiteral(node.arguments[0]) &&
+          ['vi.mock', 'vi.doMock', 'vi.importActual', 'jest.mock'].includes(
             node.expression.getText(source)
-          ))
-      )
-        specs.add(node.arguments[0].text)
-      ts.forEachChild(node, visit)
+          )
+        )
+          specs.add(node.arguments[0].text)
+        ts.forEachChild(node, visit)
+      }
+      visit(source)
     }
-    visit(source)
     for (const spec of specs) {
       const resolved = ts.resolveModuleName(spec, resolve(file), options, ts.sys, cache)
         .resolvedModule?.resolvedFileName
