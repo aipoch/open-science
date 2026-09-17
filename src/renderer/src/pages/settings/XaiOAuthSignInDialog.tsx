@@ -1,3 +1,4 @@
+import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { InlineNotice } from '@/components/ui/inline-notice'
 /* Hallmark · component: device authorization · genre: modern-minimal · theme: project Settings tokens */
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 · contrast: pass (40–41) · slop: pass */
@@ -33,7 +34,9 @@ export const XaiOAuthSignInDialog = ({
   onCancel
 }: Props): React.JSX.Element => {
   const { t } = useTranslation()
-  const verificationUrl = session?.verificationUriComplete ?? session?.verificationUri
+  const retainedSession = useRetainedDialogValue(session)
+  const dialogSession = open ? session : retainedSession
+  const verificationUrl = dialogSession?.verificationUriComplete ?? dialogSession?.verificationUri
   return (
     <AlertDialog.Root open={open} onOpenChange={(next) => !next && onCancel()}>
       <AlertDialog.Portal>
@@ -59,18 +62,20 @@ export const XaiOAuthSignInDialog = ({
             <AlertDialog.Description className={dialogDescriptionClassName}>
               {t('Open the xAI verification page and enter this one-time device code.')}
             </AlertDialog.Description>
-            {session ? (
+            {dialogSession ? (
               <div className="mt-4 space-y-4">
                 <div className="rounded-lg border border-border bg-muted/30 p-4 text-center">
                   <div className="font-mono text-2xl font-semibold tracking-[0.2em] text-foreground">
-                    {session.userCode}
+                    {dialogSession.userCode}
                   </div>
                   <Button
                     type="button"
                     variant="ghost"
                     size="sm"
                     className="mt-2"
-                    onClick={() => void navigator.clipboard.writeText(session.userCode)}
+                    onClick={() => {
+                      if (open && session) void navigator.clipboard.writeText(session.userCode)
+                    }}
                   >
                     <Copy className="size-4" aria-hidden="true" />
                     {t('Copy code')}

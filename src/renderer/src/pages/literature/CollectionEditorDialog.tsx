@@ -1,3 +1,4 @@
+import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { useLiteratureChanges } from './useLiteratureChanges'
 import * as Dialog from '@/components/ui/dialog'
 import { Info, LoaderCircle, X } from 'lucide-react'
@@ -55,6 +56,7 @@ export const CollectionEditorDialog = forwardRef<
   const generation = useRef(0)
   const latestRead = useRef(0)
   const [mode, setMode] = useState<CollectionEditorMode>()
+  const dialogMode = useRetainedDialogValue(mode)
   const [editingCollection, setEditingCollection] = useState<LiteratureCollectionView>()
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
@@ -211,7 +213,7 @@ export const CollectionEditorDialog = forwardRef<
             <div className={dialogHeaderClassName}>
               <div className="min-w-0">
                 <Dialog.Title className={dialogTitleClassName}>
-                  {mode === 'create' ? t('New collection') : t('Edit collection')}
+                  {dialogMode === 'create' ? t('New collection') : t('Edit collection')}
                 </Dialog.Title>
                 <Dialog.Description className="sr-only">
                   {t('Organize references with a name and optional description.')}
@@ -372,7 +374,7 @@ export const CollectionEditorDialog = forwardRef<
                       aria-hidden="true"
                     />
                   ) : null}
-                  {mode === 'create' ? t('Create collection') : t('Save changes')}
+                  {dialogMode === 'create' ? t('Create collection') : t('Save changes')}
                 </span>
               </Button>
             </div>

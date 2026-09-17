@@ -1,3 +1,4 @@
+import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { fieldErrorClassName } from '@/components/ui/notice-chrome'
 import { TooltipProvider } from '@/components/ui/tooltip'
 /* Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4 */
@@ -750,6 +751,7 @@ const SkillEditLoader = ({ skillId, onDone }: SkillEditLoaderProps): React.JSX.E
   const updateSkill = useSettingsStore((state) => state.updateSkill)
   const [draft, setDraft] = useState<SkillDraft | null>(null)
   const [conflict, setConflict] = useState<{ draft: SkillDraft; latest: SkillDraft } | null>(null)
+  const dialogConflict = useRetainedDialogValue(conflict)
   const [resolving, setResolving] = useState(false)
   const [conflictError, setConflictError] = useState<string | null>(null)
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error' | 'not-found'>('loading')
@@ -884,12 +886,12 @@ const SkillEditLoader = ({ skillId, onDone }: SkillEditLoaderProps): React.JSX.E
                 </Dialog.Description>
               </div>
             </div>
-            {conflict ? (
+            {dialogConflict ? (
               <div className={`${dialogBodyClassName} min-h-0 overflow-y-auto`}>
                 <div className="grid gap-4 md:grid-cols-2">
                   {[
-                    { label: t('Your draft'), value: conflict.draft },
-                    { label: t('Latest version'), value: conflict.latest }
+                    { label: t('Your draft'), value: dialogConflict.draft },
+                    { label: t('Latest version'), value: dialogConflict.latest }
                   ].map(({ label, value }) => (
                     <section
                       key={label}
