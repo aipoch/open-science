@@ -10,6 +10,8 @@ export default class WindowsShardReporter implements Reporter {
     testRun
   }: Parameters<NonNullable<Reporter['preprocess']>>[0]): Promise<void> {
     if (!config.shard || !config.fullyParallel) return
+    // Browser configuration inherits the reporter list but uses a named Chromium project.
+    if (config.projects.some((project) => project.name !== '')) return
 
     const { current, total } = config.shard
     testRun.skipSharding()

@@ -8,12 +8,17 @@ import { describe, expect, it } from 'vitest'
 
 const require = createRequire(import.meta.url)
 
-const run = (args: string[], failing = false): { exit: number | null; report: JSONReport } => {
+const run = (
+  args: string[],
+  failing = false,
+  namedProject = false
+): { exit: number | null; report: JSONReport } => {
   const root = mkdtempSync(join(tmpdir(), 'windows-e2e-sharding-'))
   try {
     writeFileSync(
       join(root, 'config.cjs'),
       `module.exports = { testDir: __dirname, fullyParallel: true, workers: 1,
+        projects: ${JSON.stringify(namedProject ? [{ name: 'chromium' }] : undefined)},
         retries: 1, outputDir: ${JSON.stringify(join(root, 'results'))},
         reporter: [[${JSON.stringify(resolve('e2e/windows-shard-reporter.ts'))}], ['json']] };`
     )
@@ -88,4 +93,15 @@ describe('Windows Electron round-robin sharding', () => {
       }
     }
   })
+
+  it('preserves native sharding in named browser projects inheriting the reporter', () => {
+    const { exit, report } = run(['--shard=1/3'], false, true)
+    expect(exit).toBe(0)
+    expect(report.suites.flatMap((suite) => suite.specs.map((spec) => spec.title))).toEqual([
+      'fast 0',
+      'fast 1',
+      'fast 2',
+      'fast 3'
+    ])
+  }, 25_000)
 })
