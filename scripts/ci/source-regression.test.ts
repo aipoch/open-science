@@ -272,7 +272,7 @@ describe('independent source regression', () => {
       group: 'source-regression-${{ github.event_name }}-${{ github.ref }}',
       'cancel-in-progress': true
     })
-    expect(Object.keys(scheduled.jobs)).toEqual(['regression'])
+    expect(Object.keys(scheduled.jobs)).toEqual(['regression', 'report'])
     expect(scheduled.jobs.regression.needs).toBeUndefined()
     expect(scheduled.jobs.regression['runs-on']).toBe(pr.jobs.macos_e2e['runs-on'])
     expect(scheduled.jobs.regression['continue-on-error']).toBeUndefined()

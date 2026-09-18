@@ -466,6 +466,8 @@ if ($artifactSaveBase -eq $artifactSaveCommit) {
       'nightly.yml',
       'nightly-publish.yml',
       'release.yml',
+      'runtime-resource-soak.yml',
+      'source-regression.yml',
       'windows-full-test.yml',
       'windows-upgrade-smoke.yml'
     ]) {
@@ -476,6 +478,49 @@ if ($artifactSaveBase -eq $artifactSaveCommit) {
         }
       }
     }
+  })
+
+  it.each([
+    'nightly.yml',
+    'windows-full-test.yml',
+    'source-regression.yml',
+    'runtime-resource-soak.yml'
+  ])('reports scheduled %s outcomes to a tracking issue after every job', (name) => {
+    const document = workflow(name)
+    const { report, ...jobs } = document.jobs
+    const script = step(report, 'Open, refresh, or close the tracking issue')
+
+    expect(report.name).toBe('Report scheduled outcome')
+    expect(report.if).toBe("${{ always() && github.event_name == 'schedule' }}")
+    expect([...(report.needs as string[])].sort()).toEqual(Object.keys(jobs).sort())
+    expect(report).toMatchObject({
+      'runs-on': 'ubuntu-latest',
+      'timeout-minutes': 5,
+      permissions: { contents: 'read', issues: 'write' }
+    })
+    expect(document.permissions).toEqual({ actions: 'read', contents: 'read' })
+    for (const [id, job] of Object.entries(jobs)) {
+      expect(
+        (job as Job & { permissions?: Record<string, string> }).permissions,
+        id
+      ).toBeUndefined()
+    }
+    expect(step(report, 'Checkout reporter')).toMatchObject({
+      uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
+      with: {
+        'persist-credentials': false,
+        'sparse-checkout': 'scripts/ci/report-scheduled-failure.mjs'
+      }
+    })
+    expect(script.uses).toBe('actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3')
+    expect(script.env?.CONCLUSION).toBe(
+      "${{ (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) && 'failure' || 'success' }}"
+    )
+    expect(script.with?.script).toContain(`workflowFile: '${name}'`)
+    expect(script.with?.script).toContain('conclusion: process.env.CONCLUSION')
+    expect(readFileSync(join(process.cwd(), '.github/workflows', name), 'utf8')).toContain(
+      'tracking issue labelled ci-scheduled-failure'
+    )
   })
 })
 
