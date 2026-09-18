@@ -305,6 +305,9 @@ const registerSettingsIpcHandlers = ({
       return snapshotCommits.currentSnapshotAfter(workflows.appearance.setAppIconVariant(variant))
     }
   )
+  ipcMainHandle('settings:save-validated-provider', (_event, request: UpsertProviderRequest) =>
+    snapshotCommits.projectAfter(workflows.runtime.saveValidatedProvider(request))
+  )
   ipcMainHandle('settings:validate-provider', (_event, request: ValidateProviderRequest) =>
     snapshotCommits.projectAfter(service.validateProvider(request))
   )

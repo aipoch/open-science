@@ -14,7 +14,7 @@ on:
         required: true
 
       dry_run:
-        description: Run isolated baseline-selection tests without downloading or installing releases
+        description: Test baseline selection and the installer observer without downloading or installing releases
         type: boolean
         default: false
 
@@ -238,5 +238,7 @@ jobs:
           node-version: 22
       - name: Install test dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
-      - name: Test actual Windows baseline selection
-        run: npx vitest run scripts/windows-upgrade-baseline.test.ts
+      - name: Generate test database client
+        run: npx prisma generate
+      - name: Test actual Windows baseline selection and installer observation
+        run: npx vitest run scripts/windows-upgrade-baseline.test.ts scripts/windows-updater-certification.test.ts

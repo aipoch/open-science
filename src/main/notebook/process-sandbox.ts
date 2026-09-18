@@ -1,3 +1,5 @@
+import type { RequestNotebookNetworkAccessResult } from '../../shared/notebook'
+
 export type NotebookSandboxTarget =
   | Readonly<{ kind: 'native' }>
   | Readonly<{
@@ -39,8 +41,13 @@ export type NotebookSandboxInvocation = Readonly<{
   inheritedFileDescriptorCount?: number
   // Package installers opt in so standard Windows mode can contain helpers in a native Job Object.
   superviseProcessTree?: boolean
+  /** Transient R admission decision; launch must retain this protection requirement. */
+  windowsProtectionRequired?: boolean
+  /** A durable grant used for admission must still be authorized at launch. */
+  windowsRuntimeAccessRequired?: boolean
   filesystem: Readonly<{
     readOnlyRoots: readonly string[]
+    optionalReadOnlyRoots?: readonly string[]
     readWriteRoots: readonly string[]
     deniedReadRoots: readonly string[]
     deniedWriteRoots: readonly string[]
@@ -73,10 +80,7 @@ export type NotebookNetworkAccessDecisionRequest = Readonly<{
   signal?: AbortSignal
 }>
 
-export type NotebookNetworkAccessDecisionResult = Readonly<{
-  hostname: string
-  status: 'alreadyAllowed' | 'allowedOnce' | 'alwaysAllowed' | 'denied' | 'blocked' | 'unavailable'
-}>
+export type NotebookNetworkAccessDecisionResult = RequestNotebookNetworkAccessResult
 
 // The native UAC decision cancels preparation before any cell is dispatched.
 export class NotebookRuntimeAccessCancelledError extends Error {
@@ -88,10 +92,15 @@ export class NotebookRuntimeAccessCancelledError extends Error {
   }
 }
 
+export type NotebookRuntimeAccessAdmission = Readonly<{
+  windowsProtectionRequired: boolean
+  windowsRuntimeAccessRequired: boolean
+}>
+
 export interface NotebookProcessSandbox {
   ensureRuntimeAccess?(
     request: Pick<NotebookSandboxInvocation, 'runtime' | 'executable' | 'sessionId' | 'signal'>
-  ): Promise<void>
+  ): Promise<NotebookRuntimeAccessAdmission | void>
   wrap(invocation: NotebookSandboxInvocation): Promise<NotebookSandboxedSpawn>
   requestNetworkAccess?(
     request: NotebookNetworkAccessDecisionRequest

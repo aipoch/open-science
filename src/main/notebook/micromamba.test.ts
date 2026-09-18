@@ -300,7 +300,7 @@ describe('micromambaSpawnEnv', () => {
       verifyOwnership: () => true
     })
 
-    expect(env.CONDA_PKGS_DIRS).toMatch(/^C:\\OpenScienceTmp\\m-[0-9a-hjkmnp-tv-z]{8}$/)
+    expect(env.CONDA_PKGS_DIRS).toMatch(/^C:\\Open-ScienceTmp\\m-[0-9a-hjkmnp-tv-z]{8}$/)
   })
 
   it('cleans inherited conda/mamba values before injecting the Windows app cache and CA vars', () => {

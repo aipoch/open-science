@@ -192,12 +192,14 @@ const LiteratureCitationPanel = ({
                     }
                     onClick={() => void copyCitation(kind)}
                   >
-                    {copied === kind ? (
-                      <Check className="size-3.5" aria-hidden="true" />
-                    ) : (
-                      <Copy className="size-3.5" aria-hidden="true" />
-                    )}
-                    {copied === kind ? t('Copied') : t('Copy')}
+                    <span key={String(copied === kind)} className="button-feedback">
+                      {copied === kind ? (
+                        <Check className="size-3.5" aria-hidden="true" />
+                      ) : (
+                        <Copy className="size-3.5" aria-hidden="true" />
+                      )}
+                      {copied === kind ? t('Copied') : t('Copy')}
+                    </span>
                   </Button>
                 </div>
               ))}
@@ -222,12 +224,14 @@ const LiteratureCitationPanel = ({
             }
             onClick={() => void copyCitation(format)}
           >
-            {copied === format ? (
-              <Check className="size-3.5" aria-hidden="true" />
-            ) : (
-              <Copy className="size-3.5" aria-hidden="true" />
-            )}
-            {format === 'bibtex' ? t('BibTeX') : t('RIS')}
+            <span key={String(copied === format)} className="button-feedback">
+              {copied === format ? (
+                <Check className="size-3.5" aria-hidden="true" />
+              ) : (
+                <Copy className="size-3.5" aria-hidden="true" />
+              )}
+              {format === 'bibtex' ? t('BibTeX') : t('RIS')}
+            </span>
           </Button>
         ))}
       </div>

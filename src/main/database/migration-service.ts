@@ -1,4 +1,5 @@
 import { literatureCollectionRevisionMigration } from './migrations/0040-literature-collection-revision'
+import { bookmarksMigration } from './migrations/0041-bookmarks'
 import {
   literatureSearchTextMigration,
   backfillLiteratureSearchText
@@ -804,6 +805,17 @@ const MIGRATION_MANIFEST = [
     ),
     backupOnApply: 'required',
     backupRetention: 'retain'
+  },
+  {
+    ...bookmarksMigration,
+    checksum: checksumMigrationPayload(
+      bookmarksMigration.id,
+      bookmarksMigration.statements,
+      bookmarksMigration.verifiers,
+      bookmarksMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
   }
 ] as const satisfies readonly MigrationManifestEntry[]
 // schema-locality: begin frozen-0001-repairs
@@ -1546,7 +1558,7 @@ const validateLedger = (
     const newerMigration = ledger[manifest.length]!
     throw new DatabaseMigrationError(
       'database_newer_than_app',
-      'The database was updated by a newer version of Open Science.',
+      'The database was updated by a newer version of Open-Science.',
       false,
       newerMigration.id
     )
@@ -1625,7 +1637,7 @@ const classifyDatabaseFailure = (
   if (phase !== 'migration') {
     return new DatabaseMigrationError(
       'database_open_failed',
-      'Open Science could not open its database.',
+      'Open-Science could not open its database.',
       transient,
       undefined,
       { cause: error }
@@ -1633,7 +1645,7 @@ const classifyDatabaseFailure = (
   }
   return new DatabaseMigrationError(
     'database_migration_failed',
-    'Open Science could not update its database. Existing data was not reset.',
+    'Open-Science could not update its database. Existing data was not reset.',
     transient,
     migrationId,
     { cause: error }

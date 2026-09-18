@@ -3,6 +3,7 @@ export {
   installWindows,
   setWindowsRuntimeAccess,
   getWindowsRuntimeAccess,
+  isWindowsProtectionConfigured,
   removeWindows,
   statusForPlatform,
   type NetworkAskCallback,

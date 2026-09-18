@@ -1,4 +1,89 @@
+import type { CredentialIdentity } from './credential-identity/selection'
+vi.mock('./credential-identity/bootstrap', () => ({
+  selectStartupCredentialIdentity: (...args: unknown[]) =>
+    fixture.selectCredentialIdentity(...args),
+  prepareCredentialValidation: (...args: unknown[]) => {
+    const prepared: unknown = fixture.prepareCredentialValidation(...args)
+    return typeof prepared === 'function' ? prepared : fixture.validateCredentials
+  }
+}))
+vi.mock('./storage/electron-profile', () => ({
+  resolveBootstrapConfigRoot: () => '/isolated-test',
+  resolveElectronProfile: (...args: unknown[]) => fixture.resolveProfile(...args)
+}))
+vi.mock('./storage/initialize-location', () => ({
+  prepareApplicationLocations: async () => {
+    await fixture.prepareLocations()
+    return {
+      settingsStore: {},
+      repository: { getSettings: async () => ({}) }
+    }
+  },
+  initializeDataLocation: vi.fn()
+}))
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+
+// Native integration stays behind filesystem/process doubles, even in packaged/no-override cases.
+// Import the real startup entry; mocking the removed brand helper would conceal a lingering call.
+vi.mock('node:fs', async (original) => {
+  const actual = await original<typeof import('node:fs')>()
+  return {
+    ...actual,
+    existsSync: (path: string) => fixture.bundles.has(path) || actual.existsSync(path),
+    renameSync: (...args: unknown[]) => fixture.renameBundle(...args)
+  }
+})
+vi.mock('node:child_process', async (original) => ({
+  ...(await original<typeof import('node:child_process')>()),
+  execFileSync: (...args: unknown[]) => fixture.systemCommand(...args),
+  spawnSync: (...args: unknown[]) => fixture.nativeProbe(...args)
+}))
+
+it.each([
+  ['Open-Science.app', true],
+  ['Open Science.app', true],
+  ['Open Science.app', false],
+  ['OpenScience.app', false]
+] as const)(
+  'starts from %s with old/new coexistence=%s without changing system entries',
+  async (name, coexist) => {
+    fixture.failAt = 'none'
+    fixture.headless = false
+    const bundle = `/virtual/Applications/${name}`
+    fixture.bundles.add(bundle)
+    if (coexist) {
+      fixture.bundles.add('/virtual/Applications/Open Science.app')
+      fixture.bundles.add('/virtual/Applications/Open-Science.app')
+    }
+    const before = [...fixture.bundles]
+    vi.stubGlobal(
+      'process',
+      Object.defineProperties(Object.create(process), {
+        platform: { value: 'darwin' },
+        execPath: { value: `${bundle}/Contents/MacOS/Open-Science` },
+        // Simulate ordinary packaged startup, without invoking any real native integration.
+        env: {
+          value: {
+            ...process.env,
+            OPEN_SCIENCE_CONFIG_ROOT: '',
+            OPEN_SCIENCE_USER_DATA: '',
+            OPEN_SCIENCE_E2E_STORAGE_ROOT: ''
+          }
+        }
+      })
+    )
+    await import('./index')
+    await Promise.race([fixture.ready, fixture.exited])
+    expect.soft(fixture.configureDesktop).toHaveBeenCalledOnce()
+    expect.soft(fixture.electron.app.setName).toHaveBeenLastCalledWith('Open-Science')
+    expect.soft(fixture.electron.dialog.showErrorBox).not.toHaveBeenCalled()
+    expect.soft(fixture.electron.app.relaunch).not.toHaveBeenCalled()
+    expect.soft(fixture.electron.app.exit).not.toHaveBeenCalled()
+    expect.soft(fixture.systemCommand).not.toHaveBeenCalled()
+    expect.soft(fixture.renameBundle).not.toHaveBeenCalled()
+    expect([...fixture.bundles]).toEqual(before)
+  }
+)
 
 const { ipcEvents, startupWindow } = await vi.hoisted(async () => {
   const { EventEmitter } = await import('node:events')
@@ -16,6 +101,38 @@ const fixture = vi.hoisted(() => {
   const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() }
   return {
     log,
+    selectCredentialIdentity: vi.fn((...args: unknown[]): CredentialIdentity => {
+      void args
+      return {
+        backend: 'mac-keychain',
+        appName: 'Open-Science',
+        exists: true
+      }
+    }),
+    prepareCredentialValidation: vi.fn((...args: unknown[]) => {
+      void args
+    }),
+    nativeProbe: vi.fn((...args: unknown[]): unknown => {
+      void args
+      throw new Error('Unexpected native process in startup fixture')
+    }),
+    validateCredentials: vi.fn(),
+    resolveProfile: vi.fn((...args: unknown[]) => {
+      void args
+      return '/isolated-test/profile'
+    }),
+    bundles: new Set<string>(),
+    renameBundle: vi.fn((...args: unknown[]) => {
+      void args
+    }),
+    systemCommand: vi.fn((...args: unknown[]) => {
+      void args
+      return 'com.aipoch.open-science'
+    }),
+    prepareLocations: vi.fn(async () => {}),
+    initializeDiagnostics: vi.fn(),
+    routeSecondInstance: vi.fn(),
+    openSessionPackageFile: vi.fn(),
     startupFailure: vi.fn(),
     disposeLocaleIpc: vi.fn(),
     disposeDatabaseGuard: vi.fn(),
@@ -41,16 +158,22 @@ const fixture = vi.hoisted(() => {
       app: {
         isPackaged: true,
         setName: vi.fn(),
+        setPath: vi.fn(),
+        setAppLogsPath: vi.fn(),
+        requestSingleInstanceLock: vi.fn(() => true),
         getPath: () => '/isolated-test',
         getVersion: () => '0.0.0',
         on: vi.fn(),
         whenReady: async () => {},
         getPreferredSystemLanguages: () => ['en'],
         quit: vi.fn(),
+        relaunch: vi.fn(),
         exit: vi.fn(),
         setBadgeCount: vi.fn(),
         isUnityRunning: () => false
       },
+      dialog: { showErrorBox: vi.fn() },
+      Menu: { setApplicationMenu: vi.fn(), buildFromTemplate: vi.fn() },
       BrowserWindow: { getAllWindows: () => [] },
       protocol: { registerSchemesAsPrivileged: vi.fn() },
       nativeImage: {},
@@ -72,21 +195,28 @@ vi.mock('node:module', async (importOriginal) => {
     }
   }
 })
-vi.mock('./logger', () => ({
+vi.mock('./logger', async (importOriginal) => ({
+  errorLogFields: (await importOriginal<typeof import('./logger')>()).errorLogFields,
   createLogger: () => fixture.log,
-  diagnosticErrorFields: (e: unknown) => e,
+  diagnosticErrorFields: vi.fn((e: unknown) => e),
   flushLogs: vi.fn(),
   writeFatalLogSync: vi.fn()
 }))
 vi.mock('./diagnostics/startup', () => ({
-  initializeApplicationDiagnostics: () => ({
-    log: fixture.log,
-    operation: { phase: vi.fn(), fail: vi.fn(), complete: vi.fn() },
-    flush: vi.fn()
-  }),
+  initializeApplicationDiagnostics: () => {
+    fixture.initializeDiagnostics()
+    return {
+      log: fixture.log,
+      operation: { phase: vi.fn(), fail: vi.fn(), complete: vi.fn() },
+      flush: vi.fn()
+    }
+  },
   reportApplicationStartupFailure: fixture.startupFailure
 }))
-vi.mock('./settings/credential-store-mode', () => ({ configureCredentialStore: vi.fn() }))
+vi.mock('./settings/credential-store-mode', () => ({
+  configureCredentialStore: vi.fn(),
+  getCredentialStore: () => 'os'
+}))
 vi.mock('./crash-diagnostics', () => ({
   installChildProcessGoneLogging: vi.fn(),
   startLocalCrashReporting: () => ({ enabled: false })
@@ -99,9 +229,12 @@ vi.mock('./renderer-diagnostics', () => ({
   createRendererFailureReporter: vi.fn(),
   registerRendererDiagnosticsIpc: vi.fn()
 }))
-vi.mock('./single-instance', () => ({ acquireSingleInstanceLock: () => true }))
 vi.mock('./web-service/options', () => ({
-  parseWebModeOptions: () => ({ headless: fixture.headless, enabled: true, port: 44100 })
+  parseWebModeOptions: (argv: string[]) => ({
+    headless: fixture.headless,
+    enabled: !argv.some((arg) => arg.endsWith('.science')),
+    port: 44100
+  })
 }))
 vi.mock('./system-lifecycle-adapters', () => ({
   installSystemLifecycleAdapters: () => ({
@@ -155,6 +288,7 @@ vi.mock('./settings/repository', () => ({
 vi.mock('./ipc', () => ({
   registerIpcHandlers: async () => ({
     dispose: fixture.disposeRuntime,
+    openSessionPackageFile: fixture.openSessionPackageFile,
     notificationInbox: {
       configureDesktop: fixture.configureDesktop,
       syncViewState: fixture.syncViewState,
@@ -200,7 +334,7 @@ vi.mock('./web-service', () => ({
   }),
   buildAuthenticatedWebUrl: vi.fn()
 }))
-vi.mock('./second-instance-router', () => ({ routeSecondInstance: vi.fn() }))
+vi.mock('./second-instance-router', () => ({ routeSecondInstance: fixture.routeSecondInstance }))
 vi.mock('./window-close-confirm', () => ({ createElectronCloseConfirm: vi.fn() }))
 vi.mock('./session-persistence/renderer-flush', () => ({
   createElectronSessionPersistenceFlush: vi.fn(),
@@ -241,6 +375,11 @@ const monitorListeners = process.listeners('uncaughtExceptionMonitor')
 beforeEach(() => {
   vi.resetModules()
   vi.clearAllMocks()
+  fixture.bundles.clear()
+  fixture.renameBundle.mockReset().mockImplementation((from, to) => {
+    fixture.bundles.delete(String(from))
+    fixture.bundles.add(String(to))
+  })
   ipcEvents.removeAllListeners()
   fixture.exited = new Promise<void>((resolve) => {
     fixture.finishExit = resolve
@@ -250,6 +389,13 @@ beforeEach(() => {
     fixture.finishReady = resolve
   })
   fixture.shutdownBackends = undefined
+  fixture.selectCredentialIdentity.mockClear()
+  fixture.prepareCredentialValidation.mockClear()
+  fixture.validateCredentials.mockClear()
+  fixture.resolveProfile.mockReset().mockReturnValue('/isolated-test/profile')
+  fixture.prepareLocations.mockReset().mockResolvedValue()
+  fixture.electron.app.requestSingleInstanceLock.mockReset().mockReturnValue(true)
+  fixture.electron.app.isPackaged = true
   fixture.failAt = 'web'
   fixture.headless = true
   fixture.disposeDatabaseGuard.mockReset()
@@ -265,6 +411,8 @@ beforeEach(() => {
   fixture.disposeRuntime.mockReset().mockResolvedValue()
 })
 afterEach(() => {
+  vi.unstubAllEnvs()
+  vi.unstubAllGlobals()
   for (const listener of process.listeners('uncaughtExceptionMonitor')) {
     if (!monitorListeners.includes(listener))
       process.removeListener('uncaughtExceptionMonitor', listener)
@@ -542,4 +690,552 @@ it('reports each IPC cleanup failure and still attempts registry disposal on lif
       message === 'application surface shutdown failed' && fields?.surface === 'ipc-handlers'
   )
   expect(errors).toHaveLength(2)
+})
+
+it.each(['Open Science.app', 'Open-Science.app'])(
+  'a losing second instance launched from %s shares the profile and never initializes writers',
+  async (name) => {
+    const { mkdtemp, mkdir, rm } = await import('node:fs/promises')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const root = await mkdtemp(join(tmpdir(), 'profile-lock-'))
+    const legacy = join(root, 'Open Science')
+    await mkdir(legacy)
+    const actual = await vi.importActual<typeof import('./storage/electron-profile')>(
+      './storage/electron-profile'
+    )
+    fixture.resolveProfile.mockImplementationOnce(() =>
+      actual.resolveElectronProfile({
+        appData: root,
+        configRoot: join(root, 'config'),
+        packaged: true,
+        env: {}
+      })
+    )
+    try {
+      vi.stubGlobal(
+        'process',
+        Object.defineProperty(Object.create(process), 'execPath', {
+          value: `/virtual/Applications/${name}/Contents/MacOS/Open-Science`
+        })
+      )
+      fixture.electron.app.requestSingleInstanceLock.mockReturnValue(false)
+      await import('./index')
+      expect(fixture.electron.app.setPath).toHaveBeenCalledWith('userData', legacy)
+      expect(fixture.electron.app.quit).toHaveBeenCalledOnce()
+      expect(fixture.prepareLocations).not.toHaveBeenCalled()
+      expect(fixture.electron.app.setAppLogsPath).not.toHaveBeenCalled()
+      expect(fixture.initializeDiagnostics).not.toHaveBeenCalled()
+      expect(fixture.prepareCredentialValidation).not.toHaveBeenCalled()
+      expect(fixture.validateCredentials).not.toHaveBeenCalled()
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+)
+
+it.each([false, true])(
+  'allows multiple isolated instances only in development (packaged=%s)',
+  async (packaged) => {
+    vi.stubEnv('OPEN_SCIENCE_ALLOW_MULTI_INSTANCE', '1')
+    fixture.electron.app.isPackaged = packaged
+    fixture.electron.app.requestSingleInstanceLock.mockReturnValue(false)
+    await import('./index')
+    if (packaged) {
+      expect(fixture.electron.app.quit).toHaveBeenCalledOnce()
+      expect(fixture.prepareLocations).not.toHaveBeenCalled()
+    } else {
+      await fixture.exited
+      expect(fixture.electron.app.requestSingleInstanceLock).not.toHaveBeenCalled()
+      expect(fixture.prepareLocations).toHaveBeenCalledOnce()
+    }
+  }
+)
+
+it('forwards second-instance arguments received during synchronous credential preflight', async () => {
+  fixture.failAt = 'none'
+  const argv = ['electron', 'open-science', '--serve', '--port=44123']
+  fixture.prepareCredentialValidation.mockImplementationOnce(() => {
+    const listener = fixture.electron.app.on.mock.calls.find(
+      ([event]) => event === 'second-instance'
+    )![1]
+    listener({}, argv, '/isolated-test/cli')
+    listener({}, ['electron', 'relative.science'], '/isolated-test/packages')
+  })
+  await import('./index')
+  await fixture.ready
+  await vi.waitFor(() =>
+    expect(fixture.routeSecondInstance).toHaveBeenCalledWith(argv, expect.any(Object))
+  )
+  const { resolve } = await import('node:path')
+  await vi.waitFor(() =>
+    expect(fixture.openSessionPackageFile).toHaveBeenCalledWith(
+      resolve('/isolated-test/packages', 'relative.science')
+    )
+  )
+})
+
+it.each([
+  ['invalid JSON', '{invalid'],
+  ['invalid dataRoot', '{"version":2,"dataRoot":"relative"}'],
+  ['unsupported version', '{"version":99,"providers":[]}'],
+  ['unreadable file', null]
+])(
+  'shows a native recovery error for %s before renderer and file logging',
+  async (_name, contents) => {
+    const { mkdtemp, writeFile, mkdir, rm, readFile } = await import('node:fs/promises')
+    const { join } = await import('node:path')
+    const { tmpdir } = await import('node:os')
+    const fixtureDir = await mkdtemp(join(tmpdir(), 'startup-settings-error-'))
+    const path = join(fixtureDir, 'settings.json')
+    if (contents === null) await mkdir(path)
+    else await writeFile(path, contents)
+    try {
+      const { readCredentialCiphertexts } = await vi.importActual<
+        typeof import('./credential-identity/ciphertext-inventory')
+      >('./credential-identity/ciphertext-inventory')
+      fixture.prepareCredentialValidation.mockImplementation(() => {
+        readCredentialCiphertexts({
+          configRoot: fixtureDir,
+          profilePath: join(fixtureDir, 'profile')
+        })
+      })
+      await import('./index')
+      await fixture.exited
+      expect(fixture.electron.dialog.showErrorBox).toHaveBeenCalledWith(
+        'Open-Science',
+        expect.stringContaining(path)
+      )
+      expect(fixture.electron.dialog.showErrorBox.mock.calls[0][1]).toMatch(/restore|recover/i)
+      expect(fixture.configureDesktop).not.toHaveBeenCalled()
+      expect(fixture.initializeDiagnostics).not.toHaveBeenCalled()
+      expect(fixture.validateCredentials).not.toHaveBeenCalled()
+      expect(fixture.startupFailure).not.toHaveBeenCalled()
+      if (contents !== null) expect(await readFile(path, 'utf8')).toBe(contents)
+    } finally {
+      await rm(fixtureDir, { recursive: true, force: true })
+    }
+  }
+)
+
+it('selects and validates the credential identity before any settings writer', async () => {
+  await import('./index')
+  await fixture.exited
+  expect(fixture.selectCredentialIdentity).toHaveBeenCalledOnce()
+  expect(fixture.prepareCredentialValidation).toHaveBeenCalledOnce()
+  expect(fixture.validateCredentials).toHaveBeenCalledOnce()
+  expect(fixture.selectCredentialIdentity.mock.invocationCallOrder[0]).toBeLessThan(
+    fixture.electron.app.setPath.mock.invocationCallOrder[0]
+  )
+  expect(fixture.prepareCredentialValidation.mock.invocationCallOrder[0]).toBeLessThan(
+    fixture.prepareLocations.mock.invocationCallOrder[0]
+  )
+  expect(fixture.validateCredentials.mock.invocationCallOrder[0]).toBeLessThan(
+    fixture.prepareLocations.mock.invocationCallOrder[0]
+  )
+})
+
+it('keeps second-instance arguments while credential validation waits for Electron ready', async () => {
+  fixture.failAt = 'none'
+  let release!: () => void
+  const ready = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const readiness = vi.spyOn(fixture.electron.app, 'whenReady').mockReturnValue(ready)
+  try {
+    await import('./index')
+    const listener = fixture.electron.app.on.mock.calls.find(
+      ([event]) => event === 'second-instance'
+    )![1]
+    const argv = ['electron', 'open-science', '--serve', '--port=44123']
+    listener({}, argv, '/isolated-test/cli')
+    expect(fixture.prepareLocations).not.toHaveBeenCalled()
+    expect(fixture.validateCredentials).not.toHaveBeenCalled()
+    release()
+    await fixture.ready
+    await vi.waitFor(() =>
+      expect(fixture.routeSecondInstance).toHaveBeenCalledWith(argv, expect.any(Object))
+    )
+  } finally {
+    readiness.mockRestore()
+    release()
+  }
+})
+
+it('stops synchronously on a failed credential preflight before Electron ready or profile writers', async () => {
+  const { CredentialIdentityError } = await import('./credential-identity/selection')
+  fixture.prepareCredentialValidation.mockImplementationOnce(() => {
+    throw new CredentialIdentityError('windows-profile-key-unavailable')
+  })
+  const readiness = vi.spyOn(fixture.electron.app, 'whenReady')
+  try {
+    await import('./index')
+    await fixture.exited
+    expect(readiness).not.toHaveBeenCalled()
+    expect(fixture.prepareLocations).not.toHaveBeenCalled()
+    expect(fixture.electron.dialog.showErrorBox).toHaveBeenCalledWith(
+      'Open-Science',
+      expect.stringContaining('windows-profile-key-unavailable')
+    )
+  } finally {
+    readiness.mockRestore()
+  }
+})
+
+it.each([
+  'fresh',
+  'existing',
+  'missing key',
+  'locked',
+  'decrypt failure',
+  'backend unavailable',
+  'second instance'
+])('runs the real Linux credential bootstrap at the startup boundary: %s', async (scenario) => {
+  const { mkdtemp, mkdir, writeFile, readFile, rm } = await import('node:fs/promises')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const root = await mkdtemp(join(tmpdir(), 'linux-startup-'))
+  try {
+    const paths = { configRoot: join(root, 'config'), profilePath: join(root, 'profile') }
+    await mkdir(paths.configRoot)
+    await mkdir(paths.profilePath)
+    const settingsPath = join(paths.configRoot, 'settings.json')
+    const settings = JSON.stringify({
+      version: 2,
+      providers: [{ keyRef: `enc:${Buffer.from('v11original').toString('base64')}` }]
+    })
+    if (scenario !== 'fresh') await writeFile(settingsPath, settings)
+    vi.stubGlobal(
+      'process',
+      Object.defineProperty(Object.create(process), 'platform', { value: 'linux' })
+    )
+    vi.stubEnv('XDG_CURRENT_DESKTOP', 'GNOME')
+    const metadata = await import('./credential-identity/linux-secret-service')
+    vi.spyOn(metadata, 'probeLinuxCredentialIdentity').mockReturnValue({
+      status:
+        scenario === 'locked'
+          ? 'access-blocked'
+          : ['fresh', 'missing key'].includes(scenario)
+            ? 'not-found'
+            : 'exists'
+    })
+    const real = await vi.importActual<typeof import('./credential-identity/bootstrap')>(
+      './credential-identity/bootstrap'
+    )
+    fixture.selectCredentialIdentity.mockImplementationOnce((options) =>
+      real.selectStartupCredentialIdentity(
+        options as Parameters<typeof real.selectStartupCredentialIdentity>[0]
+      )
+    )
+    fixture.prepareCredentialValidation.mockImplementationOnce((identity) =>
+      real.prepareCredentialValidation(
+        identity as Parameters<typeof real.prepareCredentialValidation>[0],
+        paths
+      )
+    )
+    const cipher = {
+      getSelectedStorageBackend: vi.fn(() => 'gnome_libsecret'),
+      isEncryptionAvailable: vi.fn(() => scenario !== 'backend unavailable'),
+      encryptString: vi.fn(),
+      decryptString: vi.fn(() => {
+        if (scenario === 'decrypt failure') throw Error('denied')
+        return 'original'
+      })
+    }
+    Object.assign(fixture.electron, { safeStorage: cipher })
+    fixture.failAt = 'none'
+    fixture.headless = false
+    if (scenario === 'second instance')
+      fixture.electron.app.requestSingleInstanceLock.mockReturnValue(false)
+    await import('./index')
+    if (scenario === 'second instance') {
+      await vi.waitFor(() => expect(fixture.electron.app.quit).toHaveBeenCalled())
+      expect(fixture.prepareCredentialValidation).not.toHaveBeenCalled()
+      expect(cipher.isEncryptionAvailable).not.toHaveBeenCalled()
+    } else {
+      await Promise.race([fixture.ready, fixture.exited])
+      if (['fresh', 'existing'].includes(scenario)) {
+        expect(fixture.configureDesktop).toHaveBeenCalledOnce()
+        expect(fixture.electron.app.setName).toHaveBeenNthCalledWith(1, 'Open Science')
+        expect(fixture.electron.app.setName).toHaveBeenLastCalledWith('Open-Science')
+        expect(fixture.electron.dialog.showErrorBox).not.toHaveBeenCalled()
+        if (scenario === 'existing')
+          expect(cipher.decryptString).toHaveBeenCalledWith(Buffer.from('v11original'))
+      } else {
+        expect(fixture.electron.dialog.showErrorBox).toHaveBeenCalledWith(
+          'Open-Science',
+          expect.stringContaining('CREDENTIAL_IDENTITY')
+        )
+        expect(fixture.prepareLocations).not.toHaveBeenCalled()
+        expect(fixture.configureDesktop).not.toHaveBeenCalled()
+        if (['missing key', 'locked'].includes(scenario)) {
+          expect(cipher.isEncryptionAvailable).not.toHaveBeenCalled()
+        }
+      }
+    }
+    expect(cipher.encryptString).not.toHaveBeenCalled()
+    if (scenario !== 'fresh') expect(await readFile(settingsPath, 'utf8')).toBe(settings)
+  } finally {
+    Reflect.deleteProperty(fixture.electron, 'safeStorage')
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+it('prints credential failure details before a native recovery dialog can be shown', async () => {
+  const { CredentialIdentityError } = await import('./credential-identity/selection')
+  fixture.selectCredentialIdentity.mockReset().mockImplementationOnce(() => {
+    throw new CredentialIdentityError('probe-access-blocked')
+  })
+  await import('./index')
+  await fixture.exited
+  expect(fixture.log.error).toHaveBeenCalledWith(
+    'application startup failed',
+    expect.objectContaining({
+      phase: 'credential-identity',
+      name: 'CredentialIdentityError',
+      recoveryReason: 'probe-access-blocked',
+      error: expect.stringContaining('Credential storage needs recovery'),
+      stack: expect.stringContaining('CredentialIdentityError')
+    })
+  )
+})
+
+it('redacts secrets in detailed startup errors and identifies their phase', async () => {
+  fixture.selectCredentialIdentity.mockReset().mockReturnValue({
+    backend: 'mac-keychain',
+    appName: 'Open-Science',
+    exists: true
+  })
+  fixture.prepareCredentialValidation.mockReset().mockImplementationOnce(() => {
+    throw new Error('credential preflight failed: password=local-test-secret')
+  })
+  await import('./index')
+  await fixture.exited
+  const entry = fixture.log.error.mock.calls.find(
+    ([message]) => message === 'application startup failed'
+  )
+  expect(entry?.[1]).toMatchObject({
+    phase: 'credential-validation-preflight',
+    name: 'Error',
+    error: expect.stringContaining('credential preflight failed:')
+  })
+  const { formatLine } = await vi.importActual<typeof import('./logger')>('./logger')
+  expect(formatLine('error', 'bootstrap', 'application startup failed', entry?.[1])).not.toContain(
+    'local-test-secret'
+  )
+})
+
+it.each([
+  [false, 'metadata-query-failed', -25308],
+  [true, 'metadata-query-failed', -25308],
+  [false, 'keychain-locked', 0],
+  [false, 'keychain-search-incomplete', 0],
+  [false, 'keychain-state-changed', 0]
+] as const)(
+  'logs native probe diagnostics through startup (legacy=%s, reason=%s)',
+  async (legacy, reason, osStatus) => {
+    vi.stubGlobal(
+      'process',
+      Object.defineProperties(Object.create(process), {
+        platform: { value: 'darwin' },
+        mas: { value: false }
+      })
+    )
+    const realLogger = await vi.importActual<typeof import('./logger')>('./logger')
+    const mockedLogger = await import('./logger')
+    vi.mocked(mockedLogger.diagnosticErrorFields).mockImplementationOnce(
+      realLogger.diagnosticErrorFields
+    )
+    const { selectStartupCredentialIdentity, prepareCredentialValidation } = await vi.importActual<
+      typeof import('./credential-identity/bootstrap')
+    >('./credential-identity/bootstrap')
+    const inventory = await import('./credential-identity/ciphertext-inventory')
+    const readInventory = vi
+      .spyOn(inventory, 'readCredentialCiphertexts')
+      .mockReturnValue([Buffer.from('v10-existing')])
+    fixture.prepareCredentialValidation.mockReset().mockImplementationOnce((identity) =>
+      prepareCredentialValidation(identity as CredentialIdentity, {
+        configRoot: '/isolated-test',
+        profilePath: '/isolated-test/profile'
+      })
+    )
+    fixture.selectCredentialIdentity
+      .mockReset()
+      .mockImplementationOnce(() =>
+        selectStartupCredentialIdentity({ platform: 'darwin', packaged: false })
+      )
+    fixture.nativeProbe.mockReset().mockImplementation((_executable, args) => {
+      const identity = (args as string[])[0]
+      const absent = legacy && identity === 'Open-Science (DEV)'
+      return {
+        status: 0,
+        signal: null,
+        stdout: JSON.stringify({
+          schemaVersion: 1,
+          platform: 'darwin',
+          identity,
+          status: absent ? 'not-found' : 'access-blocked',
+          reason: absent ? 'account-not-found' : reason,
+          osStatus,
+          secret: 'private-native-secret'
+        })
+      }
+    })
+    await import('./index')
+    await fixture.exited
+    const entry = fixture.log.error.mock.calls.find(
+      ([message]) => message === 'application startup failed'
+    )
+    expect(entry?.[1]).toMatchObject({
+      phase: 'credential-validation-preflight',
+      recoveryReason: 'key-missing-for-existing-ciphertext'
+    })
+    const { formatLine } = await vi.importActual<typeof import('./logger')>('./logger')
+    expect(fixture.nativeProbe).toHaveBeenCalledTimes(2)
+    const summary = fixture.log.info.mock.calls.find(
+      ([message]) => message === 'identity selection completed'
+    )
+    expect(summary?.[1]).toMatchObject({
+      outcome: 'selected',
+      appName: 'Open-Science (DEV)',
+      exists: false,
+      reason: 'no-identity-confirmed',
+      probes: [
+        { appName: 'Open-Science (DEV)', status: legacy ? 'not-found' : 'access-blocked' },
+        { appName: 'Open Science (DEV)', status: 'access-blocked' }
+      ]
+    })
+    const line = formatLine(
+      'info',
+      'credential-identity',
+      'identity selection completed',
+      summary?.[1]
+    )
+    expect(JSON.parse(line).data.probes[1]).toMatchObject({ reason, osStatus })
+    expect(line).not.toContain('private-native-secret')
+    expect(fixture.prepareCredentialValidation).toHaveBeenCalledOnce()
+    readInventory.mockRestore()
+  }
+)
+
+it.each(['access-blocked', 'error', 'unsupported'] as const)(
+  'blocks unconfirmed empty-profile initialization after selection: %s',
+  async (status) => {
+    const legacy = false
+    const reason = 'keychain-locked'
+    const osStatus = 0
+    vi.stubGlobal(
+      'process',
+      Object.defineProperties(Object.create(process), {
+        platform: { value: 'darwin' },
+        mas: { value: false }
+      })
+    )
+    const realLogger = await vi.importActual<typeof import('./logger')>('./logger')
+    const mockedLogger = await import('./logger')
+    vi.mocked(mockedLogger.diagnosticErrorFields).mockImplementationOnce(
+      realLogger.diagnosticErrorFields
+    )
+    const { selectStartupCredentialIdentity, prepareCredentialValidation } = await vi.importActual<
+      typeof import('./credential-identity/bootstrap')
+    >('./credential-identity/bootstrap')
+    const inventory = await import('./credential-identity/ciphertext-inventory')
+    const readInventory = vi.spyOn(inventory, 'readCredentialCiphertexts').mockReturnValue([])
+    fixture.prepareCredentialValidation.mockReset().mockImplementationOnce((identity) =>
+      prepareCredentialValidation(identity as CredentialIdentity, {
+        configRoot: '/isolated-test',
+        profilePath: '/isolated-test/profile'
+      })
+    )
+    fixture.selectCredentialIdentity
+      .mockReset()
+      .mockImplementationOnce(() =>
+        selectStartupCredentialIdentity({ platform: 'darwin', packaged: false })
+      )
+    fixture.nativeProbe.mockReset().mockImplementation((_executable, args) => {
+      const identity = (args as string[])[0]
+      const absent = legacy && identity === 'Open-Science (DEV)'
+      return {
+        status: 0,
+        signal: null,
+        stdout: JSON.stringify({
+          schemaVersion: 1,
+          platform: 'darwin',
+          identity,
+          status: absent ? 'not-found' : status,
+          reason: absent ? 'account-not-found' : reason,
+          osStatus,
+          secret: 'private-native-secret'
+        })
+      }
+    })
+    await import('./index')
+    await fixture.exited
+    const entry = fixture.log.error.mock.calls.find(
+      ([message]) => message === 'application startup failed'
+    )
+    expect(entry?.[1]).toMatchObject({
+      phase: 'credential-validation-preflight',
+      recoveryReason: `initialization-probe-${status}`
+    })
+    const { formatLine } = await vi.importActual<typeof import('./logger')>('./logger')
+    expect(fixture.nativeProbe).toHaveBeenCalledTimes(3)
+    const summary = fixture.log.info.mock.calls.find(
+      ([message]) => message === 'identity selection completed'
+    )
+    expect(summary?.[1]).toMatchObject({
+      outcome: 'selected',
+      appName: 'Open-Science (DEV)',
+      exists: false,
+      reason: 'no-identity-confirmed',
+      probes: [
+        { appName: 'Open-Science (DEV)', status },
+        { appName: 'Open Science (DEV)', status }
+      ]
+    })
+    const line = formatLine(
+      'info',
+      'credential-identity',
+      'identity selection completed',
+      summary?.[1]
+    )
+    expect(JSON.parse(line).data.probes[1]).toMatchObject({ reason, osStatus })
+    expect(line).not.toContain('private-native-secret')
+    expect(fixture.prepareLocations).not.toHaveBeenCalled()
+    expect(fixture.configureDesktop).not.toHaveBeenCalled()
+    expect(fixture.prepareCredentialValidation).toHaveBeenCalledOnce()
+    readInventory.mockRestore()
+  }
+)
+
+it('logs later credential recovery with concrete diagnostics after normal startup', async () => {
+  fixture.failAt = 'none'
+  await import('./index')
+  await fixture.ready
+  const { CredentialIdentityError } = await import('./credential-identity/selection')
+  const recover = fixture.validateCredentials.mock.calls[0][1] as (error: Error) => void
+  recover(
+    new CredentialIdentityError('access-access-blocked', {
+      appName: 'Open-Science',
+      status: 'access-blocked',
+      reason: 'keychain-locked',
+      osStatus: 0
+    })
+  )
+  await fixture.exited
+  const entry = fixture.log.error.mock.calls.find(
+    ([message]) => message === 'credential access failed'
+  )
+  const { formatLine } = await vi.importActual<typeof import('./logger')>('./logger')
+  const line = formatLine('error', 'bootstrap', 'credential access failed', entry?.[1])
+  expect(JSON.parse(line).data).toMatchObject({
+    recoveryReason: 'access-access-blocked',
+    identityProbe: {
+      appName: 'Open-Science',
+      status: 'access-blocked',
+      reason: 'keychain-locked',
+      osStatus: 0
+    }
+  })
+  expect(fixture.electron.app.exit).toHaveBeenCalledWith(1)
 })

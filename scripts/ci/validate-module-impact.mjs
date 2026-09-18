@@ -2,10 +2,9 @@
 
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { loadModuleImpactManifest } from './load-module-impact.mjs'
 
-const defaultManifest = JSON.parse(
-  readFileSync(new URL('./module-impact.json', import.meta.url), 'utf8')
-)
+const defaultManifest = loadModuleImpactManifest()
 const changeImpactManifest = JSON.parse(
   readFileSync(new URL('./change-impact.json', import.meta.url), 'utf8')
 )
@@ -56,6 +55,12 @@ export function validateModuleImpactManifest(
   const ownedPaths = new Map()
 
   for (const [moduleId, module] of Object.entries(modules)) {
+    if (
+      module.fullTestReason !== undefined &&
+      (typeof module.fullTestReason !== 'string' || !module.fullTestReason.trim())
+    ) {
+      throw new Error(`${moduleId}.fullTestReason must explain intentional full validation`)
+    }
     if (!/^[a-z][a-z0-9_]*$/.test(moduleId)) {
       throw new Error(`Invalid module-impact module id: ${moduleId}`)
     }

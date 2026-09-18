@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act } from 'react'
+import { fireEvent, screen } from '@testing-library/react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -24,8 +25,10 @@ const annotation = (id: string, quote: string): TextAnnotation => ({
 describe('TextAnnotationSurface highlight restoration', () => {
   let container: HTMLDivElement
   let root: Root
+  let originalClientRects: PropertyDescriptor | undefined
 
   beforeEach(() => {
+    originalClientRects = Object.getOwnPropertyDescriptor(Range.prototype, 'getClientRects')
     highlights = installCssHighlightsMock()
     container = document.createElement('div')
     document.body.appendChild(container)
@@ -36,6 +39,11 @@ describe('TextAnnotationSurface highlight restoration', () => {
     await act(async () => root.unmount())
     subscribeAnnotationReveal(() => true)()
     vi.unstubAllGlobals()
+    if (originalClientRects) {
+      Object.defineProperty(Range.prototype, 'getClientRects', originalClientRects)
+    } else {
+      Reflect.deleteProperty(Range.prototype, 'getClientRects')
+    }
     container.remove()
   })
 
@@ -252,77 +260,52 @@ describe('TextAnnotationSurface highlight restoration', () => {
     expect(disconnect).toHaveBeenCalledOnce()
   })
 
-  it('overlays a zero-layout pencil and edits the annotation locally with Cancel/Save', async () => {
-    Object.defineProperty(Range.prototype, 'getClientRects', {
-      configurable: true,
-      value: () => [{ left: 10, right: 90, top: 24, bottom: 40, width: 80, height: 16 }]
-    })
-    const active = [{ ...annotation('editable', 'repeat'), note: 'Check this wording' }]
-    const onUpdateNote = vi.fn(() => undefined)
-    await act(async () =>
-      root.render(
-        <TextAnnotationSurface
-          source={{ kind: 'agent-message', sessionId: 'session-1', messageId: 'message-1' }}
-          activeAnnotations={active}
-          onAdd={vi.fn()}
-          onUpdateNote={onUpdateNote}
-          onError={vi.fn()}
-        >
-          <p>repeat then repeat</p>
-        </TextAnnotationSurface>
+  it.each(['Save', 'Cancel', 'Remove annotation'] as const)(
+    'opens an existing annotation note and handles %s',
+    async (action) => {
+      Object.defineProperty(Range.prototype, 'getClientRects', {
+        configurable: true,
+        value: () => [{ left: 10, right: 90, top: 24, bottom: 40, width: 80, height: 16 }]
+      })
+      const active = [{ ...annotation('editable', 'repeat'), note: 'Check this wording' }]
+      const onUpdateNote = vi.fn(() => undefined)
+      const onRemove = vi.fn()
+      await act(async () =>
+        root.render(
+          <TextAnnotationSurface
+            source={{ kind: 'agent-message', sessionId: 'session-1', messageId: 'message-1' }}
+            activeAnnotations={active}
+            onAdd={vi.fn()}
+            onUpdateNote={onUpdateNote}
+            onRemove={onRemove}
+            onError={vi.fn()}
+          >
+            <p>repeat then repeat</p>
+          </TextAnnotationSurface>
+        )
       )
-    )
 
-    const pencil = container.querySelector<HTMLButtonElement>('[data-text-annotation-edit]')
-    expect(pencil?.parentElement?.className).toContain('absolute')
-    expect(pencil?.className).toContain('bg-transparent')
-    expect(pencil?.dataset.annotationNote).toBe('Check this wording')
-    expect(pencil?.parentElement?.style.left).toBe('90px')
-    await act(async () =>
-      container
-        .querySelector('p')
-        ?.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX: 30, clientY: 30 }))
-    )
-    const hoverNote = container.querySelector('[data-text-annotation-hover-note]')
-    expect(hoverNote?.textContent).toBe('Check this wording')
-    expect(hoverNote?.className).toContain('bg-muted')
-    expect(hoverNote?.className).toContain('truncate')
-    await act(async () =>
-      container.querySelector<HTMLButtonElement>('[data-text-annotation-edit]')?.click()
-    )
-    expect(
-      document.querySelector<HTMLTextAreaElement>('[data-source-annotation-note]')?.value
-    ).toBe('Check this wording')
-    expect(
-      Array.from(document.querySelectorAll('button')).some(
-        (button) => button.textContent === 'Cancel'
+      await act(async () =>
+        fireEvent.click(screen.getByRole('button', { name: 'Edit annotation note' }))
       )
-    ).toBe(true)
-    const editor = document.querySelector<HTMLTextAreaElement>('[data-source-annotation-note]')!
-    await act(async () => {
-      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
-      setter?.call(editor, 'Updated locally')
-      editor.dispatchEvent(new Event('input', { bubbles: true }))
-    })
-    await act(async () =>
-      Array.from(document.querySelectorAll('button'))
-        .find((button) => button.textContent === 'Save')
-        ?.click()
-    )
-    expect(onUpdateNote).toHaveBeenCalledWith('editable', 'Updated locally')
-    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
-    await act(async () =>
-      container.querySelector<HTMLButtonElement>('[data-text-annotation-edit]')?.click()
-    )
-    await act(async () =>
-      Array.from(document.querySelectorAll('button'))
-        .find((button) => button.textContent === 'Cancel')
-        ?.click()
-    )
-    expect(document.querySelector('[data-source-annotation-note]')).toBeNull()
-    expect(onUpdateNote).toHaveBeenCalledTimes(1)
-    Reflect.deleteProperty(Range.prototype, 'getClientRects')
-  })
+      const editor = screen.getByRole('textbox', { name: 'Annotation note' }) as HTMLTextAreaElement
+      expect(editor.value).toBe('Check this wording')
+      await act(async () => fireEvent.change(editor, { target: { value: 'Updated locally' } }))
+      await act(async () => fireEvent.click(screen.getByRole('button', { name: action })))
+
+      expect(screen.queryByRole('textbox', { name: 'Annotation note' })).toBeNull()
+      if (action === 'Save') {
+        expect(onUpdateNote).toHaveBeenCalledExactlyOnceWith('editable', 'Updated locally')
+      } else {
+        expect(onUpdateNote).not.toHaveBeenCalled()
+      }
+      if (action === 'Remove annotation') {
+        expect(onRemove).toHaveBeenCalledExactlyOnceWith('editable')
+      } else {
+        expect(onRemove).not.toHaveBeenCalled()
+      }
+    }
+  )
 })
 
 describe('TextAnnotationSurface note editor highlight', () => {

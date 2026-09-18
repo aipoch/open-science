@@ -21,6 +21,8 @@ const boundary = vi.hoisted(() => ({
   fixtureTimeout: undefined as number | undefined,
   launch: vi.fn(),
   reap: vi.fn(),
+  processTree: vi.fn(),
+  processTable: vi.fn(),
   rendererFailure: vi.fn(),
   ready: vi.fn(),
   settingsWait: vi.fn(),
@@ -45,6 +47,11 @@ vi.mock('@playwright/test', async (importOriginal) => {
 })
 vi.mock('playwright', () => ({ _electron: { launch: boundary.launch } }))
 vi.mock('../src/main/process-tree', () => ({ terminateProcessTree: boundary.reap }))
+vi.mock('./performance/process-snapshot', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./performance/process-snapshot')>()),
+  readProcessTree: boundary.processTree,
+  readProcessTable: boundary.processTable
+}))
 vi.mock('../e2e/fixtures/renderer-failure-gate', () => ({
   RendererFailureGate: class {
     observe = async (): Promise<void> => undefined
@@ -60,6 +67,7 @@ const forcedCleanupBudget =
 let root: string
 const close = vi.fn()
 const attach = vi.fn()
+const originalPlatform = process.platform
 beforeEach(() => {
   vi.clearAllMocks()
   boundary.realPolling = false
@@ -69,6 +77,8 @@ beforeEach(() => {
   boundary.settingsWait.mockResolvedValue(undefined)
   close.mockResolvedValue(undefined)
   boundary.reap.mockResolvedValue({ reaped: false })
+  boundary.processTree.mockResolvedValue({ complete: false, processes: [] })
+  boundary.processTable.mockResolvedValue({ complete: false, processes: [] })
   boundary.launch.mockImplementation(async ({ env }) => {
     root = dirname(env.OPEN_SCIENCE_STORAGE_ROOT)
     const logs = join(root, 'logs')
@@ -90,6 +100,7 @@ beforeEach(() => {
     }
     return {
       firstWindow: async () => page,
+      browserWindow: async () => ({ evaluate: async () => 1 }),
       evaluate: async () => logs,
       close,
       process: () => ({ pid: 12345 })
@@ -97,6 +108,7 @@ beforeEach(() => {
   })
 })
 afterEach(async () => {
+  Object.defineProperty(process, 'platform', { value: originalPlatform })
   vi.useRealTimers()
   vi.restoreAllMocks()
   const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
@@ -273,6 +285,46 @@ it.each([true, false])(
   }
 )
 
+it.each([
+  { name: 'all observed processes exited', complete: true, survivors: [], succeeds: true },
+  { name: 'a child survived', complete: true, survivors: [[12346, 12345]], succeeds: false },
+  { name: 'the root survived', complete: true, survivors: [[12345, 1]], succeeds: false },
+  { name: 'a child was reparented', complete: true, survivors: [[12346, 1]], succeeds: false },
+  {
+    name: 'a new grandchild survived',
+    complete: true,
+    survivors: [[12347, 12346]],
+    succeeds: false
+  },
+  { name: 'the process query failed', complete: false, survivors: [], succeeds: false }
+])(
+  'checks Windows crash termination when taskkill reports failure: $name',
+  async ({ complete, survivors, succeeds }) => {
+    Object.defineProperty(process, 'platform', { value: 'win32' })
+    boundary.processTree.mockResolvedValue({
+      complete: true,
+      processes: [
+        { pid: 12345, parentPid: 1 },
+        { pid: 12346, parentPid: 12345 }
+      ]
+    })
+    boundary.processTable.mockResolvedValue({
+      complete,
+      processes: survivors.map(([pid, parentPid]) => ({ pid, parentPid }))
+    })
+    const operation = boundary.fixture(
+      { windowMode: 'hidden' },
+      async (app) => {
+        await app.restartAfterCrash()
+      },
+      { status: succeeds ? 'passed' : 'failed', expectedStatus: 'passed', attach }
+    )
+    if (succeeds) await operation
+    else await expect(operation).rejects.toThrow('crash simulation did not reap')
+    expect(boundary.launch).toHaveBeenCalledTimes(succeeds ? 2 : 1)
+  }
+)
+
 it.each([true, false])(
   'shares the startup deadline with settings loading (finishes=%s)',
   async (finishes) => {
@@ -332,6 +384,7 @@ it('restarts without passing the timing label as a package file argument', async
     { status: 'passed', expectedStatus: 'passed', attach }
   )
   expect(boundary.launch).toHaveBeenCalledTimes(2)
+  expect(boundary.reap).not.toHaveBeenCalled()
   expect(boundary.launch.mock.calls[1][0].args).toEqual(boundary.launch.mock.calls[0][0].args)
 })
 

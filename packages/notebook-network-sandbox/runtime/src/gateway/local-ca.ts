@@ -25,7 +25,7 @@ export async function createLocalCertificateAuthority(): Promise<LocalCertificat
     'sign',
     'verify'
   ])
-  const issuer = 'CN=Open Science process inspection CA'
+  const issuer = 'CN=Open-Science process inspection CA'
   const certificate = await x509.X509CertificateGenerator.createSelfSigned(
     {
       name: issuer,

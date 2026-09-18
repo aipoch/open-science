@@ -151,7 +151,7 @@ export type SessionCapabilityNotebookOptions = {
     memoryTools: boolean
   }) => Promise<NotebookRpcConnection>
   registerSessionAlias?: (aliasSessionId: string, sessionId: string) => void
-  releaseSessionCapabilities?: (sessionId: string) => void
+  releaseSessionCapabilities?: (sessionId: string, capabilityTokens: readonly string[]) => void
   getShellRuntimeBinding?: () => ShellRuntimeBinding | Promise<ShellRuntimeBinding>
 }
 
@@ -161,7 +161,7 @@ export type SessionCapabilitySkillImportOptions = {
   isEnabled?: () => Promise<boolean>
   getRpcConnection: (binding: { sessionId: string }) => Promise<SkillImportRpcConnection>
   registerSessionAlias?: (aliasSessionId: string, sessionId: string) => void
-  releaseSessionCapabilities?: (sessionId: string) => void
+  releaseSessionCapabilities?: (sessionId: string, capabilityTokens: readonly string[]) => void
 }
 
 export type SessionCapabilityPlanOptions = {
@@ -170,6 +170,7 @@ export type SessionCapabilityPlanOptions = {
   getRpcConnection: (binding: {
     sessionId: string
     projectId: string
+    replaceExisting: false
   }) => Promise<NotebookRpcConnection>
   registerSessionAlias?: (aliasSessionId: string, sessionId: string) => void
 }
@@ -191,6 +192,7 @@ type BuildSessionCapabilitiesRequest = {
   onNotebookConnection?: (connection: NotebookRpcConnection) => void
   onSkillImportConnection?: (connection: SkillImportRpcConnection) => void
   onPlanConnection?: (connection: NotebookRpcConnection) => void
+  onPlanHttpRoute?: (prepareRollback: () => (() => void) | undefined) => void
 }
 
 type SessionCapabilities = Readonly<{
@@ -212,6 +214,7 @@ export type ProvisionSessionCapabilitiesRequest = Omit<
   | 'onNotebookConnection'
   | 'onSkillImportConnection'
   | 'onPlanConnection'
+  | 'onPlanHttpRoute'
   | 'literatureEnabled'
   | 'wslSetupEnabled'
 > & {
@@ -244,6 +247,7 @@ type CommitSessionCapabilitiesRequest = {
   notebookRelease?: () => void
   skillImportRelease?: () => void
   planRelease?: () => void
+  capabilityTokens: readonly string[]
 }
 
 type RevokeProvisionalSessionCapabilitiesRequest = {
@@ -253,7 +257,9 @@ type RevokeProvisionalSessionCapabilitiesRequest = {
   notebookRelease?: () => void
   skillImportRelease?: () => void
   planRelease?: () => void
+  preparePlanHttpRouteRollback?: () => (() => void) | undefined
   ownsStableIdentity: boolean
+  capabilityTokens: readonly string[]
 }
 
 type SessionCapabilityOwnerOptions = {
@@ -317,6 +323,8 @@ const safeLogError = (message: string, fields: Record<string, unknown>): void =>
 }
 
 export class AcpSessionCapabilityOwner {
+  // Concrete credentials prove cleanup ownership across independent runtime instances.
+  private readonly sessionCapabilityTokens = new Map<string, readonly string[]>()
   private readonly artifactRoutingIds = new Map<string, string>()
   private readonly notebookRoutingIds = new Map<string, string>()
   private readonly notebookCapabilityReleases = new Map<string, () => void>()
@@ -364,6 +372,8 @@ export class AcpSessionCapabilityOwner {
     let notebookRelease: (() => void) | undefined
     let skillImportRelease: (() => void) | undefined
     let planRelease: (() => void) | undefined
+    let preparePlanHttpRouteRollback: (() => (() => void) | undefined) | undefined
+    const capabilityTokens: string[] = []
     let built: BuiltSessionCapabilities
     try {
       built = await this.build({
@@ -381,18 +391,25 @@ export class AcpSessionCapabilityOwner {
         setupSessionToken: request.setupSessionToken,
         wslSetupEnabled,
         onNotebookConnection: (connection) => {
+          capabilityTokens.push(connection.token)
           notebookRelease = connection.release
         },
         onSkillImportConnection: (connection) => {
+          capabilityTokens.push(connection.token)
           skillImportRelease = connection.release
         },
         onPlanConnection: (connection) => {
+          capabilityTokens.push(connection.token)
           planRelease = connection.release
+        },
+        onPlanHttpRoute: (prepareRollback) => {
+          preparePlanHttpRouteRollback = prepareRollback
         }
       })
     } catch (error) {
       const ownsStableIdentity = this.ownsProvisionalRoutingIds(routingIds, routingOwner)
       this.revokeProvisional({
+        capabilityTokens,
         routingIds: [
           routingIds.artifact,
           routingIds.notebook,
@@ -410,6 +427,7 @@ export class AcpSessionCapabilityOwner {
         notebookRelease,
         skillImportRelease,
         planRelease,
+        preparePlanHttpRouteRollback,
         ownsStableIdentity
       })
       if (ownsStableIdentity && request.stableAppSessionId) {
@@ -508,6 +526,7 @@ export class AcpSessionCapabilityOwner {
         const ownsRoutingIds = this.ownsProvisionalRoutingIds(routingIds, routingOwner)
         if (provisionGeneration !== this.provisionalGeneration) {
           this.revokeProvisional({
+            capabilityTokens,
             routingIds: [
               routingIds.artifact,
               routingIds.notebook,
@@ -527,6 +546,7 @@ export class AcpSessionCapabilityOwner {
             notebookRelease,
             skillImportRelease,
             planRelease,
+            preparePlanHttpRouteRollback,
             ownsStableIdentity: ownsRoutingIds
           })
           if (ownsRoutingIds && request.stableAppSessionId) {
@@ -542,12 +562,14 @@ export class AcpSessionCapabilityOwner {
         }
         if (!ownsRoutingIds) {
           this.revokeProvisional({
+            capabilityTokens,
             routingIds: [],
             usedHttpTransport: false,
             notebookSessionId: routingIds.notebook || undefined,
             notebookRelease,
             skillImportRelease,
             planRelease,
+            preparePlanHttpRouteRollback,
             ownsStableIdentity: false
           })
           this.finishProvisionalRoutingOwner(routingIds, routingOwner)
@@ -582,6 +604,7 @@ export class AcpSessionCapabilityOwner {
           throw new Error('WSL setup Session capability was not prepared.')
         }
         this.commit({
+          capabilityTokens,
           appSessionId,
           routingIds,
           mcpServers: built.mcpServers,
@@ -613,6 +636,7 @@ export class AcpSessionCapabilityOwner {
           ownershipFacts.ownsStableIdentity &&
           this.ownsProvisionalRoutingIds(routingIds, routingOwner)
         this.revokeProvisional({
+          capabilityTokens,
           routingIds: [
             routingIds.artifact,
             routingIds.notebook,
@@ -632,6 +656,7 @@ export class AcpSessionCapabilityOwner {
           notebookRelease,
           skillImportRelease,
           planRelease,
+          preparePlanHttpRouteRollback,
           ownsStableIdentity
         })
         if (ownsStableIdentity && request.stableAppSessionId) {
@@ -892,6 +917,7 @@ export class AcpSessionCapabilityOwner {
 
   private commit(request: CommitSessionCapabilitiesRequest): void {
     const { appSessionId, routingIds, descriptor } = request
+    this.sessionCapabilityTokens.set(appSessionId, [...request.capabilityTokens])
     if (routingIds.artifact) this.artifactRoutingIds.set(appSessionId, routingIds.artifact)
     if (routingIds.notebook) {
       this.notebookRoutingIds.set(appSessionId, routingIds.notebook)
@@ -964,7 +990,12 @@ export class AcpSessionCapabilityOwner {
   }
 
   private revokeProvisional(request: RevokeProvisionalSessionCapabilitiesRequest): void {
+    // Check ownership before concrete releases remove the current credential projections.
+    if (request.notebookSessionId && request.ownsStableIdentity) {
+      this.releaseSessionCapabilities(request.notebookSessionId, request.capabilityTokens)
+    }
     if (request.usedHttpTransport && this.options.mcpHttpHost) {
+      const restorePlanRoute = request.preparePlanHttpRouteRollback?.()
       for (const routingId of new Set(request.routingIds)) {
         if (!routingId) continue
         try {
@@ -976,6 +1007,7 @@ export class AcpSessionCapabilityOwner {
           })
         }
       }
+      restorePlanRoute?.()
     }
 
     if (request.notebookRelease) {
@@ -1005,9 +1037,6 @@ export class AcpSessionCapabilityOwner {
           ...diagnosticErrorFields(error)
         })
       }
-    }
-    if (request.notebookSessionId && request.ownsStableIdentity) {
-      this.releaseSessionCapabilities(request.notebookSessionId)
     }
   }
 
@@ -1048,10 +1077,11 @@ export class AcpSessionCapabilityOwner {
     this.descriptors.delete(appSessionId)
     this.shellRuntimeBindings.delete(appSessionId)
     this.committedSessionIds.delete(appSessionId)
+    this.releaseSessionCapabilities(appSessionId)
+    this.sessionCapabilityTokens.delete(appSessionId)
     this.releaseCommittedNotebookCapability(appSessionId)
     this.releaseCommittedSkillImportCapability(appSessionId)
     this.releaseCommittedPlanCapability(appSessionId)
-    this.releaseSessionCapabilities(appSessionId)
   }
 
   forgetSetupSession(appSessionId: string): Promise<void> | undefined {
@@ -1080,11 +1110,12 @@ export class AcpSessionCapabilityOwner {
       ...this.committedSessionIds
     ])
     for (const sessionId of ownedSessionIds) {
+      this.releaseSessionCapabilities(sessionId)
       this.releaseCommittedNotebookCapability(sessionId)
       this.releaseCommittedSkillImportCapability(sessionId)
       this.releaseCommittedPlanCapability(sessionId)
-      this.releaseSessionCapabilities(sessionId)
     }
+    this.sessionCapabilityTokens.clear()
     this.artifactRoutingIds.clear()
     this.notebookRoutingIds.clear()
     this.skillImportRoutingIds.clear()
@@ -1261,7 +1292,11 @@ export class AcpSessionCapabilityOwner {
     onConnection?: (connection: NotebookRpcConnection) => void
   ): Promise<PlanMcpEnvironment | undefined> {
     if (!this.options.plan || !routingId) return undefined
-    const connection = await this.options.plan.getRpcConnection({ sessionId: routingId, projectId })
+    const connection = await this.options.plan.getRpcConnection({
+      sessionId: routingId,
+      projectId,
+      replaceExisting: false
+    })
     onConnection?.(connection)
     return { ...connection, projectId, sessionId: routingId }
   }
@@ -1429,7 +1464,8 @@ export class AcpSessionCapabilityOwner {
         request.onPlanConnection
       )
       if (environment && this.canPublishHttpRoute(request)) {
-        host.registerPlan(request.routingIds.plan, environment)
+        const prepareRollback = host.registerPlan(request.routingIds.plan, environment)
+        request.onPlanHttpRoute?.(prepareRollback)
         servers.push({
           type: 'http',
           name: PLAN_MCP_SERVER_NAME,
@@ -1595,12 +1631,17 @@ export class AcpSessionCapabilityOwner {
     }
   }
 
-  private releaseSessionCapabilities(sessionId: string): void {
+  private releaseSessionCapabilities(
+    sessionId: string,
+    capabilityTokens = this.sessionCapabilityTokens.get(sessionId)
+  ): void {
+    // A startup that never acquired a credential has no authority to clear shared Session state.
+    if (!capabilityTokens?.length) return
     try {
       const release =
         this.options.notebook?.releaseSessionCapabilities ??
         this.options.skillImport?.releaseSessionCapabilities
-      release?.(sessionId)
+      release?.(sessionId, capabilityTokens)
     } catch (error) {
       safeLogError('release session capabilities failed', {
         ...diagnosticErrorFields(error),

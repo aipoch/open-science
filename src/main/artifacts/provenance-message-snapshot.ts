@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 
 import type { PrismaClient } from '@prisma/client'
 
@@ -11,6 +12,7 @@ import {
   type PersistedChatSession
 } from '../../shared/session-persistence'
 import {
+  rebindConversationGraphSessionId,
   resolveMessageBranchPath,
   type PersistedMessageNode
 } from '../../shared/conversation-graph'
@@ -242,6 +244,134 @@ class ProvenanceMessageSnapshotRepository {
     }
 
     for (const version of scopes.values()) this.resolveScopePath(session, version)
+  }
+
+  // Undo only the Session-only pending-root rewrite shipped before 0fea6ceb5. Artifact scopes and
+  // checksum-verified snapshots are independent witnesses; an arbitrary mismatch is not a repair.
+  // This returns a candidate without mutating SQLite or files. Startup owns backup and publication.
+  async recoverLegacySessionGraph(
+    session: PersistedChatSession
+  ): Promise<PersistedChatSession | undefined> {
+    const graph = session.conversationGraph
+    if (
+      !graph ||
+      graph.rootFrameId !== `root-frame-${session.id}` ||
+      graph.frames.length !== 1 ||
+      session.packageOrigin ||
+      session.activeRun ||
+      (session.status !== 'idle' && session.status !== 'error') ||
+      session.runtimeContext?.delegatedWork ||
+      session.runtimeContext?.sideChat ||
+      session.runtimeContext?.sideChats?.length ||
+      session.runtimeContext?.sideChatRelays?.length
+    )
+      return undefined
+
+    const client = await this.options.getClient()
+    const versions = await client.artifactVersion.findMany({
+      where: {
+        originKind: 'agent_generated',
+        artifact: { is: { projectId: session.projectId, sessionId: session.id } }
+      },
+      select: {
+        originKind: true,
+        rootFrameId: true,
+        agentFrameId: true,
+        messageBranchId: true,
+        runtimeSegmentId: true,
+        promptMessageId: true,
+        messageId: true,
+        messageSnapshotId: true,
+        state: true
+      }
+    })
+    const roots = new Set(versions.map((version) => version.rootFrameId))
+    const root = versions[0]?.rootFrameId
+    if (roots.size !== 1 || !root?.startsWith('root-frame-pending-session-')) return undefined
+    const historicalId = root.slice('root-frame-'.length)
+    const historicalBranch = `message-branch-${historicalId}`
+    const historicalSegment = `runtime-segment-${historicalId}`
+    if (
+      graph.branches.some(({ id }) => id === historicalBranch) ||
+      graph.runtimeSegments.some(({ id }) => id === historicalSegment) ||
+      (await client.backgroundResultDelivery.count({
+        where: { projectId: session.projectId, sessionId: session.id }
+      }))
+    )
+      return undefined
+
+    const restoredGraph = rebindConversationGraphSessionId(graph, session.id, historicalId)
+    if (
+      !isDeepStrictEqual(
+        rebindConversationGraphSessionId(restoredGraph, historicalId, session.id),
+        graph
+      )
+    )
+      return undefined
+    const restored = { ...session, conversationGraph: restoredGraph }
+    const snapshots = await client.artifactMessageSnapshot.findMany({
+      where: { projectId: session.projectId, sessionId: session.id }
+    })
+    const snapshotsById = new Map(snapshots.map((snapshot) => [snapshot.id, snapshot]))
+    const finalized = versions.filter((version) => version.state === 'finalized')
+    if (!finalized.length || finalized.some((version) => !version.messageSnapshotId))
+      return undefined
+
+    try {
+      for (const version of versions) {
+        const scope = requireAgentMessageScope(version)
+        const branch = restoredGraph.branches.find(({ id }) => id === scope.messageBranchId)
+        if (scope.agentFrameId !== root || branch?.agentFrameId !== root) return undefined
+        const segment = restoredGraph.runtimeSegments.find(
+          ({ id }) => id === version.runtimeSegmentId
+        )
+        if (segment?.agentFrameId !== root) return undefined
+        const path = resolveMessageBranchPath(restoredGraph, branch.id)
+        if (!path.some(({ id }) => id === version.promptMessageId)) return undefined
+        if (version.state === 'finalized') {
+          const snapshot = snapshotsById.get(version.messageSnapshotId!)
+          if (
+            !snapshot ||
+            snapshot.rootFrameId !== root ||
+            snapshot.agentFrameId !== scope.agentFrameId ||
+            snapshot.messageBranchId !== scope.messageBranchId ||
+            snapshot.terminalMessageId !== version.messageId
+          )
+            return undefined
+          this.resolveScopePath(restored, scope)
+        }
+      }
+      for (const snapshot of snapshots) {
+        // Do not use checksum backfill or incomplete snapshots as migration authority.
+        if (snapshot.rootFrameId !== root || !snapshot.checksum || snapshot.state !== 'ready') {
+          return undefined
+        }
+        const payload = await this.verifyReadySnapshot(snapshot, snapshot)
+        const scopePath = this.resolveScopePath(restored, {
+          ...snapshot,
+          messageId: snapshot.terminalMessageId
+        })
+        if (!scopePath) return undefined
+        const nodes = scopePath.fullPath.slice(0, scopePath.terminalIndex + 1)
+        if (
+          nodes.length !== payload.messages.length ||
+          nodes.some((node, index) => {
+            const message = payload.messages[index]
+            return (
+              node.id !== message.id ||
+              node.parentMessageId !== message.parentMessageId ||
+              node.role !== message.role ||
+              node.content !== message.content
+            )
+          })
+        )
+          return undefined
+      }
+    } catch {
+      // Missing bytes, invalid ownership, or a checksum mismatch leave the original save guard intact.
+      return undefined
+    }
+    return restored
   }
 
   async captureFinalizedMessages(input: PersistedChatSession): Promise<void> {
@@ -1057,7 +1187,7 @@ class ProvenanceMessageSnapshotRepository {
       terminalMessageId: string
     },
     storagePath = resolveStorageKey(this.options.storageRoot, snapshot.storageKey)
-  ): Promise<void> {
+  ): Promise<ArtifactMessageSnapshotFile> {
     if (snapshot.state !== 'ready') {
       throw new Error(`Artifact Message snapshot is not ready: ${snapshot.id}`)
     }
@@ -1114,6 +1244,7 @@ class ProvenanceMessageSnapshotRepository {
         throw new Error(`Artifact Message snapshot checksum backfill raced: ${snapshot.id}`)
       }
     }
+    return payload
   }
 }
 

@@ -212,6 +212,31 @@ describe('codebuddy framework', () => {
     expect(tools).not.toContain('Bash')
   })
 
+  it('renders app MCP names at CodeBuddy system and turn prompt boundaries', () => {
+    const framework = createCodeBuddyFramework({ platform: 'linux' })
+    const config = framework.prepareModelConfig(provider, {
+      storageRoot: '/app-data',
+      executablePath: '/usr/bin/codebuddy',
+      systemPromptAppends: ['Read Plan details with `bash_execute`, then call `generate_plan`.'],
+      reasoningEfforts: []
+    })
+    const persistentPrompt = config.configFiles?.find((file) =>
+      file.path.endsWith('system-prompt.md')
+    )?.content
+    const setup = framework.buildSessionSetup({
+      systemPromptAppends: ['Read Plan details with `bash_execute`.'],
+      turnPromptReminders: ['Report progress with `update_step_status`.']
+    })
+
+    expect(persistentPrompt).toContain('`mcp__open_science_notebook__bash_execute`')
+    expect(persistentPrompt).toContain('`mcp__open_science_plan__generate_plan`')
+    expect(setup.promptPrefix).toContain('`mcp__open_science_notebook__bash_execute`')
+    expect(setup.promptPrefix).toContain('`mcp__open_science_plan__update_step_status`')
+    expect(`${persistentPrompt}${setup.promptPrefix}`).not.toMatch(
+      /mcp__open_science_[a-z_]+__mcp__/u
+    )
+  })
+
   it('replays dynamic MCP servers when activating the target Session before a prompt', async () => {
     const request = vi.fn(async () => ({}))
     const mcpServers = [

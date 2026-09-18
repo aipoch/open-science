@@ -1,3 +1,4 @@
+import { initDataRoot } from '../storage-root'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { PersistedChatSession } from '../../shared/session-persistence'
@@ -56,6 +57,7 @@ const createSession = (id: string, projectId = 'project-a'): PersistedChatSessio
 
 describe('session persistence repository save ordering', () => {
   beforeEach(() => {
+    initDataRoot('/in-memory-session-storage')
     vi.resetAllMocks()
     fsMock.lstat.mockImplementation((path: string) =>
       path.endsWith('.json')

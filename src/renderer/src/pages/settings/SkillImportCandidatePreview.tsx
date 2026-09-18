@@ -1,3 +1,4 @@
+import { InlineNotice } from '@/components/ui/inline-notice'
 import { FileText, LoaderCircle, X } from 'lucide-react'
 import * as Dialog from '@/components/ui/dialog'
 import { useTranslation } from 'react-i18next'
@@ -12,7 +13,8 @@ import { Button } from '@/components/ui/button'
 import {
   dialogCloseButtonClassName,
   dialogOverlayClassName,
-  dialogPanelClassName
+  dialogPanelClassName,
+  dialogTitleClassName
 } from '@/components/ui/dialog-chrome'
 
 type SkillImportCandidatePreviewProps = {
@@ -30,7 +32,7 @@ export const SkillReplacementSummary = ({
 }): React.JSX.Element => {
   const { t } = useTranslation()
   return (
-    <div className="my-3 rounded-lg border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
+    <InlineNotice level="warning" className="my-3">
       <p className="font-medium text-foreground">
         {t('Replace {{target}}', { target: replacement.targetId })}
       </p>
@@ -75,7 +77,7 @@ export const SkillReplacementSummary = ({
       <p className="mt-2">
         {t('Compared at preview time. Files or the remote source may change before import.')}
       </p>
-    </div>
+    </InlineNotice>
   )
 }
 
@@ -107,7 +109,7 @@ const SkillImportCandidatePreview = ({
             <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <FileText className="size-5 shrink-0 text-primary" aria-hidden="true" />
-                <Dialog.Title className="truncate text-base font-semibold text-foreground">
+                <Dialog.Title className={`${dialogTitleClassName} truncate`}>
                   {content?.name ?? t('Skill preview')}
                 </Dialog.Title>
               </div>

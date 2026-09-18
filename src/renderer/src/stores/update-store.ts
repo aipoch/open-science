@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-import type { AppInfo, UpdateStatus } from '../../../shared/update'
+import type { AppInfo, UpdateStatus, UpdateApplyOptions } from '../../../shared/update'
 
 type UpdateStore = {
   appInfo: AppInfo | null
@@ -13,7 +13,7 @@ type UpdateStore = {
   closeDialog: () => void
   download: () => Promise<void>
   cancel: () => Promise<void>
-  apply: (options?: { force?: boolean }) => Promise<void>
+  apply: (options?: UpdateApplyOptions) => Promise<void>
 }
 
 let cleanupUpdateSubscriptions: (() => void) | undefined
@@ -121,7 +121,7 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
     await acceptUpdateResponse(() => cancel())
   },
 
-  apply: async (options?: { force?: boolean }) => {
+  apply: async (options?: UpdateApplyOptions) => {
     const api = window.api?.update
     if (!api) return
     await acceptUpdateResponse(() => api.apply(options))

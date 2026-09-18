@@ -100,7 +100,7 @@ describe('contribution template ZIP', () => {
 
     await expect(exportContributionTemplate()).resolves.toEqual({ saved: true })
     expect(showSaveDialog).toHaveBeenCalledWith(
-      expect.objectContaining({ defaultPath: 'openscience-specialist-template.zip' })
+      expect.objectContaining({ defaultPath: 'open-science-specialist-template.zip' })
     )
     expect(writeFile).toHaveBeenCalledWith('/chosen/template.zip', expect.any(Uint8Array))
   })
@@ -128,7 +128,7 @@ describe('contribution template ZIP', () => {
     const repositoryRoot = join(import.meta.dirname, '..', '..', '..', '..')
     const developmentPath = resolveContributionTemplateReadmePath(repositoryRoot)
     const packagedPath = resolveContributionTemplateReadmePath(
-      '/Applications/Open Science.app/Contents/Resources/app.asar'
+      '/Applications/Open-Science.app/Contents/Resources/app.asar'
     )
 
     await expect(readFile(developmentPath, 'utf8')).resolves.toContain('50 MB')

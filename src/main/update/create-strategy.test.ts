@@ -8,7 +8,10 @@ const loggerMocks = vi.hoisted(() => {
   return { log, createLogger: vi.fn(() => log) }
 })
 
-vi.mock('node:child_process', () => ({ spawnSync }))
+vi.mock('node:child_process', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('node:child_process')>()),
+  spawnSync
+}))
 vi.mock('../logger', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../logger')>()),
   createLogger: loggerMocks.createLogger
@@ -19,7 +22,7 @@ vi.mock('../logger', async (importOriginal) => ({
 // autoUpdater), so stub them enough to instantiate without a real Electron runtime.
 vi.mock('electron', () => ({
   app: {
-    getPath: () => '/Applications/Open Science.app/Contents/MacOS/Open Science',
+    getPath: () => '/Applications/Open-Science.app/Contents/MacOS/Open-Science',
     getVersion: () => '0.0.0',
     isPackaged: false
   },

@@ -1,3 +1,4 @@
+import { fieldErrorClassName } from '@/components/ui/notice-chrome'
 import { ErrorNotice } from '@/components/error-notice'
 import { useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
@@ -253,7 +254,7 @@ const SpecialistEditor = ({
       <div className="max-w-2xl">
         {/* Save error — shown at the top so it is immediately visible */}
         {saveError ? (
-          <ErrorNotice role="alert" tone="amber" className="mb-4" description={saveError} />
+          <ErrorNotice inline role="alert" tone="amber" className="mb-4" description={saveError} />
         ) : null}
 
         {/* Saved identity bar — stable reference of what's currently persisted (edit only).
@@ -421,7 +422,7 @@ const SpecialistEditor = ({
               className={cn(getFieldError('name') && 'border-destructive')}
             />
             {getFieldError('name') ? (
-              <p id="sp-name-err" className="mt-1 text-xs text-destructive" role="alert">
+              <p id="sp-name-err" className={`mt-1 ${fieldErrorClassName}`} role="alert">
                 {getFieldError('name')}
               </p>
             ) : null}
@@ -457,7 +458,7 @@ const SpecialistEditor = ({
               placeholder={t('Short description shown in the list and picker')}
             />
             {getFieldError('description') ? (
-              <p id="sp-description-err" className="mt-1 text-xs text-destructive" role="alert">
+              <p id="sp-description-err" className={`mt-1 ${fieldErrorClassName}`} role="alert">
                 {getFieldError('description')}
               </p>
             ) : null}
@@ -554,7 +555,7 @@ const SpecialistEditor = ({
                 {getFieldError('packageVersion') ? (
                   <p
                     id="sp-package-version-err"
-                    className="mt-1 text-xs text-destructive"
+                    className={`mt-1 ${fieldErrorClassName}`}
                     role="alert"
                   >
                     {getFieldError('packageVersion')}
@@ -603,7 +604,7 @@ const SpecialistEditor = ({
               {formatDisplayNumber(SPECIALIST_SYSTEM_PROMPT_MAX_LENGTH)}
             </span>
             {getFieldError('systemPrompt') ? (
-              <p className="mt-1 text-xs text-danger-000">{getFieldError('systemPrompt')}</p>
+              <p className={`mt-1 ${fieldErrorClassName}`}>{getFieldError('systemPrompt')}</p>
             ) : null}
           </div>
         </section>

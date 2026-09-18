@@ -89,9 +89,9 @@ const findWindowsStorageDefault = async (
       if (signal.aborted) return null
       if (inspection.kind === 'move' && inspection.targetWasAbsent === true) {
         return {
-          chosenParent: drive.path,
           chosenDataRoot: inspection.dataRoot,
-          chosenKind: 'move'
+          chosenKind: 'move',
+          selection: inspection.selection
         }
       }
     } catch {
@@ -234,7 +234,6 @@ const OnboardingWizard = ({
   // Like the provider draft, the data-location choice belongs to the stable shell so Back/Continue
   // does not discard it when LocationStep unmounts.
   const [locationDraft, setLocationDraft] = useState<LocationDraft>({
-    chosenParent: '',
     chosenDataRoot: '',
     chosenKind: null
   })
@@ -378,7 +377,7 @@ const OnboardingWizard = ({
       if (cancelled || locationDraftTouched.current) return
 
       if (recommendedDraft) {
-        setLocationDraft((current) => (current.chosenParent ? current : recommendedDraft))
+        setLocationDraft((current) => (current.chosenDataRoot ? current : recommendedDraft))
       }
       setDidResolveStorageDefault(true)
     })
@@ -436,7 +435,7 @@ const OnboardingWizard = ({
           rel="noreferrer"
           className="font-serif text-[26px] font-medium leading-none tracking-[-0.02em] text-text-000 transition-colors duration-150 ease-out hover:text-text-100"
         >
-          Open Science
+          Open-Science
         </a>
 
         <div

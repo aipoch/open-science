@@ -35,11 +35,14 @@ import {
   loadSessionMutationAuthority
 } from './repository'
 
+import { initDataRoot } from '../storage-root'
+
 let storageRoot: string | undefined
 let externalRoot: string | undefined
 
 const createStorageRoot = async (): Promise<string> => {
   storageRoot = await mkdtemp(join(tmpdir(), 'open-science-sessions-'))
+  initDataRoot(storageRoot)
   return storageRoot
 }
 
@@ -94,6 +97,120 @@ afterEach(async () => {
 })
 
 describe('session persistence repository (per-session files)', () => {
+  it.each([false, true])(
+    'deletes binding repair backups when the primary is missing: %s',
+    async (missingPrimary) => {
+      const root = await createStorageRoot()
+      const repository = new SessionRepository(root)
+      const original = await repository.saveSession(createSession())
+      await repository.saveSessionWithBindingRepair(original, original.revision!)
+      const projectDir = join(root, 'sessions', original.projectId)
+      const primaryPath = join(projectDir, `${original.id}.json`)
+      const backup = (await readdir(projectDir)).find((name) =>
+        name.includes('.pre-artifact-binding-')
+      )!
+      expect(backup).toBeDefined()
+      const unrelated = `${primaryPath}.pre-artifact-binding-not-a-checksum.backup`
+      await writeFile(unrelated, 'unowned file')
+      const otherSession = join(projectDir, backup.replace('session-1.json', 'session-2.json'))
+      await writeFile(otherSession, 'another session backup')
+      if (missingPrimary) await rm(primaryPath)
+
+      await repository.deleteSession(original.projectId, original.id)
+
+      await expect(readFile(join(projectDir, backup))).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(readFile(unrelated, 'utf8')).resolves.toBe('unowned file')
+      await expect(readFile(otherSession, 'utf8')).resolves.toBe('another session backup')
+      await expect(
+        repository.deleteSession(original.projectId, original.id)
+      ).resolves.toBeUndefined()
+    }
+  )
+
+  it('keeps the primary and retries when binding repair backup deletion fails', async () => {
+    const root = await createStorageRoot()
+    const remove = vi.fn(rm)
+    const repository = new SessionRepository(root, { remove })
+    const original = await repository.saveSession(createSession())
+    await repository.saveSessionWithBindingRepair(original, original.revision!)
+    const projectDir = join(root, 'sessions', original.projectId)
+    const primary = join(projectDir, `${original.id}.json`)
+    const before = await readFile(primary, 'utf8')
+    const backup = (await readdir(projectDir)).find((name) =>
+      name.includes('.pre-artifact-binding-')
+    )!
+    const failure = new Error('backup is locked')
+    remove.mockRejectedValueOnce(failure)
+
+    await expect(repository.deleteSession(original.projectId, original.id)).rejects.toBe(failure)
+    await expect(readFile(primary, 'utf8')).resolves.toBe(before)
+    await expect(lstat(join(projectDir, backup))).resolves.toBeDefined()
+
+    await repository.deleteSession(original.projectId, original.id)
+    await expect(lstat(primary)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(lstat(join(projectDir, backup))).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('binding repair checks the revision before creating a backup', async () => {
+    const root = await createStorageRoot()
+    const repository = new SessionRepository(root)
+    const original = await repository.saveSession(createSession())
+    const current = await repository.saveSession(
+      { ...original, title: 'A newer edit' },
+      original.revision
+    )
+    const filePath = join(root, 'sessions', 'project-a', 'session-1.json')
+    const before = await readFile(filePath, 'utf8')
+
+    await expect(
+      repository.saveSessionWithBindingRepair(original, original.revision!)
+    ).rejects.toMatchObject({
+      name: 'SessionRevisionConflictError'
+    })
+    await expect(readFile(filePath, 'utf8')).resolves.toBe(before)
+    await expect(repository.loadSession('project-a', 'session-1')).resolves.toMatchObject({
+      title: 'A newer edit',
+      revision: current.revision
+    })
+    expect(
+      (await readdir(join(root, 'sessions', 'project-a'))).filter((name) =>
+        name.includes('.pre-artifact-binding-')
+      )
+    ).toEqual([])
+  })
+
+  it('binding repair retains original bytes across a failed replacement and reuses the backup on retry', async () => {
+    const root = await createStorageRoot()
+    const renameFile = vi.fn(rename)
+    const repository = new SessionRepository(root, { renameFile })
+    const original = await repository.saveSession(createSession())
+    const projectDir = join(root, 'sessions', 'project-a')
+    const filePath = join(projectDir, 'session-1.json')
+    const before = await readFile(filePath, 'utf8')
+    renameFile.mockRejectedValueOnce(
+      Object.assign(new Error('repair replacement failed'), { code: 'EIO' })
+    )
+    const repaired = { ...original, title: 'Repaired' }
+
+    await expect(
+      repository.saveSessionWithBindingRepair(repaired, original.revision!)
+    ).rejects.toThrow('repair replacement failed')
+    await expect(readFile(filePath, 'utf8')).resolves.toBe(before)
+    const backups = (await readdir(projectDir)).filter((name) =>
+      name.includes('.pre-artifact-binding-')
+    )
+    expect(backups).toHaveLength(1)
+    await expect(readFile(join(projectDir, backups[0]), 'utf8')).resolves.toBe(before)
+
+    await expect(
+      repository.saveSessionWithBindingRepair(repaired, original.revision!)
+    ).resolves.toMatchObject({ title: 'Repaired' })
+    expect(
+      (await readdir(projectDir)).filter((name) => name.includes('.pre-artifact-binding-'))
+    ).toEqual(backups)
+    await expect(readFile(join(projectDir, backups[0]), 'utf8')).resolves.toBe(before)
+  })
+
   it.each([
     { id: 'import-session-1', projectId: 'project-a' },
     { id: 'session-1', projectId: 'import-project-a' }
@@ -274,6 +391,62 @@ describe('session persistence repository (per-session files)', () => {
       authority.status === 'found' ? authority.session.resumeRecovery : undefined
     ).toBeUndefined()
   })
+
+  it.each(['packageOrigin', 'forkOrigin'] as const)(
+    'saves already-versioned %s history without inventing an upgrade backup',
+    async (field) => {
+      const repository = new SessionRepository(await createStorageRoot())
+      const session = createSession({
+        [field]: {
+          importId: 'copy-receipt',
+          sourceProjectId: 'source',
+          sourceSessionId: 'source-session',
+          importedAt: 1,
+          manifestChecksum: 'a'.repeat(64)
+        },
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          delegatedWork: {
+            records: [
+              {
+                agentFrameId: 'child-frame-1',
+                attempts: [
+                  {
+                    id: 'attempt-1',
+                    initiatingTurnMessageId: 'message-1',
+                    status: 'cancelled',
+                    resolvedAgent: { kind: 'main' },
+                    executionModel: {
+                      frameworkId: 'opencode',
+                      providerId: 'provider-a',
+                      backendId: 'provider-a',
+                      modelRoute: 'opencode-openai',
+                      model: 'model-a',
+                      reasoningEffort: 'high'
+                    },
+                    runtimeSegmentIds: [],
+                    startedAt: 1,
+                    endedAt: 2,
+                    cancellationReason: 'main_agent_stop'
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      })
+      await repository.saveSession(session)
+      await expect(
+        repository.saveSession({ ...session, title: 'Saved copy' })
+      ).resolves.toBeDefined()
+      const local = { ...session, id: 'local-without-backup', [field]: undefined }
+      await repository.saveSession(local)
+      await expect(repository.saveSession({ ...local, [field]: session[field] })).rejects.toThrow(
+        'required pre-S2 backup is missing'
+      )
+    }
+  )
 
   it('preserves one immutable pre-S2 Session backup before the first initiating-Turn write', async () => {
     const repository = new SessionRepository(await createStorageRoot())

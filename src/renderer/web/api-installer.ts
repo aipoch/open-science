@@ -29,9 +29,15 @@ const transformArguments = (contract: RendererContractDescriptor, args: unknown[
     case 'default-empty-object-absent-only':
       return args.length === 0 ? [{}] : args
     case 'storage-parent-object':
-      return [{ parent: args[0] }]
+      return [{ parent: args[0], ...(args[1] === undefined ? {} : { selection: args[1] }) }]
     case 'storage-data-root-object':
-      return [{ parent: args[0], markOnboarding: args[1] }]
+      return [
+        {
+          parent: args[0],
+          markOnboarding: args[1],
+          ...(args[2] === undefined ? {} : { selection: args[2] })
+        }
+      ]
     case 'runtime-language-environment-object':
       return [{ language: args[0], envId: args[1] }]
     case 'runtime-language-object':

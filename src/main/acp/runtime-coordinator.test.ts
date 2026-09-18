@@ -256,15 +256,30 @@ const createFakeRuntime = (options: {
     promptMessageId: 'prompt-live'
   }))
   const sendApplicationPrompt = vi.fn(
-    (
-      ...[request, _attribution, promptAttemptId]: Parameters<AcpRuntime['sendApplicationPrompt']>
+    async (
+      ...[request, _attribution, admission]: Parameters<AcpRuntime['sendApplicationPrompt']>
     ) => {
       void _attribution
-      return runPrompt(request, promptAttemptId)
+      await admission?.onPromptAdmitted?.()
+      return runPrompt(request, admission?.promptAttemptId)
     }
   )
   const sendAppContinuation = vi.fn(runPrompt)
+  const sessionEfforts = new Map<
+    string,
+    import('../../shared/reasoning-effort').ResolvedReasoningEffort
+  >()
   const runtime = {
+    getSessionReasoningEffort: (id: string) => sessionEfforts.get(id),
+    applySessionReasoningEffortChange: vi.fn(
+      async (
+        id: string,
+        effort: import('../../shared/reasoning-effort').ResolvedReasoningEffort
+      ) => {
+        sessionEfforts.set(id, effort)
+        return true
+      }
+    ),
     getSnapshot: () => snapshot,
     getState: () => toAcpStateCommandResponse({ ...snapshot, revision: 0 }).result,
     getActivePromptSessions: () => options.activePromptSessions ?? [],
@@ -392,6 +407,95 @@ const createFakeRuntime = (options: {
 }
 
 describe('AcpRuntimeCoordinator', () => {
+  it.each([false, true])(
+    'updates Codex effort on the existing writer (draining: %s)',
+    async (draining) => {
+      const created: ReturnType<typeof createFakeRuntime>[] = []
+      const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+        const fake = createFakeRuntime({
+          frameworkId: 'codex',
+          sessionIds: ['thread-1'],
+          callbacks,
+          beforeResume: async () => {
+            if (writer && writer !== fake) throw new Error('already has an active writer')
+          }
+        })
+        created.push(fake)
+        return fake.runtime
+      })
+      const target = {
+        frameworkId: 'codex',
+        providerId: 'subscription',
+        model: 'gpt-6-astra',
+        reasoningEffort: 'xhigh'
+      } as const
+      const session = await coordinator.createSession({
+        agentTarget: target,
+        projectId: 'project-a'
+      })
+      const count = created.length
+      const owner = created.at(-1)!
+      const writer = owner
+      if (draining)
+        owner.emitState({ promptInFlight: true, promptInFlightSessionIds: [session.sessionId] })
+      const change = coordinator.resumeSession({
+        sessionId: session.sessionId,
+        cwd: '/workspace',
+        agentTarget: { ...target, reasoningEffort: 'high' }
+      })
+      void change.catch(() => undefined)
+      if (draining) {
+        await new Promise((resolve) => setTimeout(resolve, 0))
+        expect(owner.runtime.applySessionReasoningEffortChange).not.toHaveBeenCalled()
+        owner.emitState({ promptInFlight: false, promptInFlightSessionIds: [] })
+      }
+      await change
+      expect(created).toHaveLength(count)
+      expect(owner.runtime.applySessionReasoningEffortChange).toHaveBeenCalledWith(
+        'thread-1',
+        'high'
+      )
+      expect(owner.disconnect).not.toHaveBeenCalled()
+      expect(owner.deleteSession).not.toHaveBeenCalled()
+      await coordinator.resumeSession({
+        sessionId: session.sessionId,
+        cwd: '/workspace',
+        agentTarget: target
+      })
+      expect(created).toHaveLength(count)
+      expect(owner.runtime.getSessionReasoningEffort('thread-1')).toBe('xhigh')
+    }
+  )
+
+  it('keeps the existing Codex writer when a live effort update is rejected', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({ frameworkId: 'codex', sessionIds: ['thread-1'], callbacks })
+      created.push(fake)
+      return fake.runtime
+    })
+    const target = {
+      frameworkId: 'codex',
+      providerId: 'subscription',
+      model: 'gpt-6-astra',
+      reasoningEffort: 'xhigh'
+    } as const
+    const session = await coordinator.createSession({ agentTarget: target })
+    const count = created.length
+    const owner = created.at(-1)!
+    vi.mocked(owner.runtime.applySessionReasoningEffortChange).mockResolvedValueOnce(false)
+    await expect(
+      coordinator.resumeSession({
+        sessionId: session.sessionId,
+        cwd: '/workspace',
+        agentTarget: { ...target, reasoningEffort: 'high' }
+      })
+    ).rejects.toThrow('could not be applied')
+    expect(created).toHaveLength(count)
+    expect(owner.resumeSession).not.toHaveBeenCalled()
+    expect(owner.disconnect).not.toHaveBeenCalled()
+  })
+
   it('lazily recreates a runtime for cold Session Plan operations after retirement', async () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
     const coordinator = new AcpRuntimeCoordinator((callbacks) => {
@@ -655,6 +759,97 @@ describe('AcpRuntimeCoordinator', () => {
     expect(created[1].requestRetirement).toHaveBeenCalledOnce()
     await expect(coordinator.createSession({ agentTarget })).rejects.toThrow('create failed')
     expect(created).toHaveLength(3)
+  })
+
+  it.each(['create', 'resume'] as const)(
+    'completes pending resumes when another Session %s fails on the shared target',
+    async (failedOperation) => {
+      const adoption = createDeferred<void>()
+      const created: ReturnType<typeof createFakeRuntime>[] = []
+      const coordinator = new AcpRuntimeCoordinator((callbacks, _permissionGrants, target) => {
+        const fake = createFakeRuntime({
+          frameworkId: target?.frameworkId ?? 'claude-code',
+          sessionIds: [],
+          callbacks,
+          beforeResume: () => adoption.promise
+        })
+        fake.createSession.mockRejectedValue(
+          Object.assign(new Error('Internal error'), {
+            name: 'RequestError',
+            code: -32603,
+            data: { details: 'Timed out waiting for MCP servers: skills' }
+          })
+        )
+        created.push(fake)
+        return fake.runtime
+      })
+      const agentTarget = {
+        frameworkId: 'claude-code',
+        providerId: 'provider-a',
+        model: 'model-a',
+        reasoningEffort: 'high'
+      } as const
+
+      const resumed = Promise.allSettled(
+        ['session-a', 'session-b'].map((sessionId) =>
+          coordinator.resumeSession({ sessionId, cwd: '/workspace', agentTarget })
+        )
+      )
+      await vi.waitFor(() => expect(created[1]?.resumeSession).toHaveBeenCalledTimes(2))
+      if (failedOperation === 'create') {
+        await expect(coordinator.createSession({ agentTarget })).rejects.toThrow('Internal error')
+      } else {
+        created[1].resumeSession.mockRejectedValueOnce(new Error('provider resume failed'))
+        await expect(
+          coordinator.resumeSession({ sessionId: 'failed-session', cwd: '/workspace', agentTarget })
+        ).rejects.toThrow('provider resume failed')
+      }
+      adoption.resolve()
+
+      expect(await resumed).toEqual([
+        { status: 'fulfilled', value: expect.objectContaining({ sessionId: 'session-a' }) },
+        { status: 'fulfilled', value: expect.objectContaining({ sessionId: 'session-b' }) }
+      ])
+      expect(created[1].requestRetirement).not.toHaveBeenCalled()
+      await coordinator.sendPrompt({ sessionId: 'session-a', text: 'continue' })
+      expect(created[1].sendPrompt).toHaveBeenCalledOnce()
+    }
+  )
+
+  it('keeps a pending creation usable when another creation fails on the shared target', async () => {
+    const creation = createDeferred<void>()
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks, _permissionGrants, target) => {
+      const fake = createFakeRuntime({
+        frameworkId: target?.frameworkId ?? 'claude-code',
+        sessionIds: ['new-session'],
+        callbacks
+      })
+      if (target) {
+        const createSession =
+          fake.createSession.getMockImplementation() as AcpRuntime['createSession']
+        fake.createSession.mockImplementationOnce(async (request) => {
+          await creation.promise
+          return createSession(request)
+        })
+        fake.createSession.mockRejectedValueOnce(new Error('create failed'))
+      }
+      created.push(fake)
+      return fake.runtime
+    })
+    const agentTarget = {
+      frameworkId: 'claude-code',
+      providerId: 'provider-a',
+      model: 'model-a',
+      reasoningEffort: 'high'
+    } as const
+    const pending = coordinator.createSession({ agentTarget })
+    await vi.waitFor(() => expect(created[1]?.createSession).toHaveBeenCalledOnce())
+    await expect(coordinator.createSession({ agentTarget })).rejects.toThrow('create failed')
+    creation.resolve()
+    await expect(pending).resolves.toMatchObject({ sessionId: 'new-session' })
+    await coordinator.sendPrompt({ sessionId: 'new-session', text: 'continue' })
+    expect(created[1].requestRetirement).not.toHaveBeenCalled()
   })
 
   it('retires an unused targeted runtime after Session resume fails', async () => {
@@ -4928,6 +5123,51 @@ describe('AcpRuntimeCoordinator', () => {
     expect(newBackendId).toBe('codex:owned')
   })
 
+  it.each(['direct', 'activity'] as const)(
+    'preserves application admission rejection through %s dispatch',
+    async (route) => {
+      let fake!: ReturnType<typeof createFakeRuntime>
+      const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+        fake = createFakeRuntime({ frameworkId: 'codex', sessionIds: ['session-1'], callbacks })
+        return fake.runtime
+      })
+      await coordinator.createSession({ cwd: '/workspace' })
+      const failure = new Error('Reviewed conversation changed before admission')
+      const onPromptAdmitted = vi.fn(async () => {
+        throw failure
+      })
+      const send = (
+        runtime: Pick<AcpRuntime, 'sendApplicationPrompt'>
+      ): ReturnType<AcpRuntime['sendApplicationPrompt']> =>
+        runtime.sendApplicationPrompt(
+          {
+            sessionId: 'session-1',
+            text: '[Auditor] fix',
+            provenanceContext: { promptMessageId: 'correction' }
+          },
+          {
+            kind: 'application',
+            feature: 'reviewer',
+            purpose: 'correction',
+            causeReviewId: 'review'
+          },
+          { onPromptAdmitted }
+        )
+      await expect(
+        route === 'direct' ? send(coordinator) : coordinator.withActivity({}, send)
+      ).rejects.toBe(failure)
+      expect(onPromptAdmitted).toHaveBeenCalledOnce()
+      expect(fake.runtime.sendApplicationPrompt).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.any(Object),
+        expect.objectContaining({
+          promptAttemptId: expect.any(String),
+          onPromptAdmitted: expect.any(Function)
+        })
+      )
+    }
+  )
+
   it('lazily adopts the main session on the pinned runtime only when an activity sends a prompt', async () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
     const coordinator = new AcpRuntimeCoordinator((callbacks) => {
@@ -4999,7 +5239,7 @@ describe('AcpRuntimeCoordinator', () => {
         purpose: 'correction',
         causeReviewId: 'review-1'
       },
-      'prompt-attempt-1'
+      { promptAttemptId: 'prompt-attempt-1', onPromptAdmitted: undefined }
     )
     expect(vi.mocked(created[0].runtime.sendPrompt)).not.toHaveBeenCalled()
   })
@@ -5112,4 +5352,34 @@ describe('AcpRuntimeCoordinator', () => {
       }
     })
   })
+})
+
+it('queries Side chat interaction authority on the session owner after framework retirement', async () => {
+  const oldPrompt = createDeferred<{ stopReason: string }>()
+  const created: ReturnType<typeof createFakeRuntime>[] = []
+  const checks: ReturnType<typeof vi.fn>[] = []
+  const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+    const index = created.length
+    const fake = createFakeRuntime({
+      frameworkId: index === 0 ? 'claude-code' : 'codex',
+      sessionIds: [`side-admission-${index}`],
+      callbacks,
+      ...(index === 0 ? { prompt: () => oldPrompt.promise } : {})
+    })
+    const check = vi.fn(() => index === 0)
+    Object.assign(fake.runtime, { hasPendingSideChatInteraction: check })
+    checks.push(check)
+    created.push(fake)
+    return fake.runtime
+  })
+  const old = await coordinator.createSession({ cwd: '/workspace' })
+  const turn = coordinator.sendPrompt({ sessionId: old.sessionId, text: 'keep old runtime alive' })
+  await coordinator.requestAgentFrameworkSwitch()
+  const current = await coordinator.createSession({ cwd: '/workspace' })
+  expect(coordinator.hasPendingSideChatInteraction(old.sessionId)).toBe(true)
+  expect(coordinator.hasPendingSideChatInteraction(current.sessionId)).toBe(false)
+  expect(checks[0]).toHaveBeenCalledWith(old.sessionId)
+  expect(checks[1]).toHaveBeenCalledWith(current.sessionId)
+  oldPrompt.resolve({ stopReason: 'end_turn' })
+  await turn
 })

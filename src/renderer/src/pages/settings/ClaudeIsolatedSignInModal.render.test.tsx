@@ -114,7 +114,7 @@ describe('ClaudeIsolatedSignInModal UI state', () => {
   it('accurately describes where the encrypted setup token is stored', () => {
     renderModal({})
 
-    expect(document.body.textContent).toContain('encrypted in Open Science app storage')
+    expect(document.body.textContent).toContain('encrypted in Open-Science app storage')
     expect(document.body.textContent).not.toContain(
       'stored encrypted in your app-owned Claude config'
     )

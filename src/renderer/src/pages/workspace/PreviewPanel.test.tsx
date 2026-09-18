@@ -1,3 +1,5 @@
+import { annotationTransfers, ANNOTATION_DRAG_TYPE } from './annotations/annotation-transfer'
+import { SideChatProvider, useSideChatController } from './use-side-chat-controller'
 // @vitest-environment jsdom
 import { act, StrictMode, useEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -100,6 +102,15 @@ const createSourceItem = (overrides: Partial<PreviewSourceItem> = {}): PreviewSo
 })
 
 describe('PreviewPanel', () => {
+  const getRetryButton = (): HTMLButtonElement => {
+    const button = Array.from(
+      container.querySelectorAll<HTMLButtonElement>(
+        '[data-testid="preview-tab-action-error"] button'
+      )
+    ).find((button) => button.textContent === 'Retry')
+    if (!button) throw new Error('Retry button not found')
+    return button
+  }
   let container: HTMLDivElement
   let root: Root
   let sourcePreviewListener: ((state: Record<string, unknown>) => void) | undefined
@@ -1468,6 +1479,281 @@ describe('PreviewPanel', () => {
     expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('item-1')
   })
 
+  it.each(['before', 'after'] as const)(
+    'shows a restored Side chat when preview persistence finishes %s hydration',
+    async (order) => {
+      const store = usePreviewWorkbenchStore.getState()
+      store.activateProject('default')
+      const restorePreview = (): void => {
+        usePreviewWorkbenchStore
+          .getState()
+          .activateProject('default', { items: [], panelState: 'collapsed' })
+      }
+      if (order === 'before') restorePreview()
+      window.api.sideChat = {
+        list: vi.fn(async () => ({
+          revision: 1,
+          chats: [
+            {
+              revision: 1,
+              sideSessionId: 'saved-side',
+              parentSessionId: 'saved-parent',
+              projectId: 'default',
+              running: false,
+              entries: [
+                {
+                  id: 'saved-answer',
+                  kind: 'message',
+                  role: 'assistant',
+                  text: 'Answer retained across restart'
+                }
+              ]
+            }
+          ]
+        })),
+        close: vi.fn(),
+        onEvent: vi.fn(() => () => undefined)
+      } as unknown as Window['api']['sideChat']
+      root = createRoot(container)
+      await act(async () =>
+        root.render(
+          <SideChatProvider>
+            <PreviewPanel
+              panelRef={{ current: null }}
+              defaultSize="40%"
+              minSize="30%"
+              onResize={vi.fn()}
+            />
+          </SideChatProvider>
+        )
+      )
+      if (order === 'after') act(restorePreview)
+      expect(usePreviewWorkbenchStore.getState().panelState).toBe('open')
+      expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain(
+        'Side chat'
+      )
+      const panel = container.querySelector('[data-testid="side-chat-panel"]')
+      expect(panel?.textContent).toContain('Answer retained across restart')
+      expect(panel?.querySelector('textarea')).not.toBeNull()
+      expect(window.api.sideChat.close).not.toHaveBeenCalled()
+      act(() => usePreviewWorkbenchStore.getState().collapsePanel())
+      expect(usePreviewWorkbenchStore.getState().panelState).toBe('collapsed')
+    }
+  )
+
+  it('keeps sibling Side chat tab names fixed when conversations differ', async () => {
+    usePreviewWorkbenchStore.getState().activateProject('default')
+    window.api.sideChat = {
+      list: vi.fn(async () => ({
+        revision: 2,
+        chats: ['Compare cohorts', 'Check confidence intervals'].map((text, index) => ({
+          revision: index + 1,
+          sideSessionId: `side-${index + 1}`,
+          parentSessionId: 'parent-session',
+          projectId: 'default',
+          running: false,
+          entries: [
+            {
+              id: `user-${index + 1}`,
+              kind: 'message' as const,
+              role: 'user' as const,
+              text
+            }
+          ]
+        }))
+      })),
+      close: vi.fn(),
+      onEvent: vi.fn(() => () => undefined)
+    } as unknown as Window['api']['sideChat']
+    root = createRoot(container)
+    await act(async () =>
+      root.render(
+        <SideChatProvider>
+          <PreviewPanel
+            panelRef={{ current: null }}
+            defaultSize="40%"
+            minSize="30%"
+            onResize={vi.fn()}
+          />
+        </SideChatProvider>
+      )
+    )
+
+    const labels = [...container.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent)
+    expect(labels).toEqual(['Side chat', 'Side chat'])
+  })
+
+  it('renders a live Side chat and its independent composer inside the right panel', async () => {
+    useProjectStore.setState({
+      projects: [
+        {
+          id: 'default',
+          name: 'Default',
+          description: '',
+          isExample: false,
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      isLoaded: true
+    })
+    useSessionStore.setState({
+      sessions: [
+        {
+          id: 'right-parent',
+          projectId: 'default',
+          title: 'Main analysis',
+          description: 'Compare the two cohorts',
+          cwd: '/workspace',
+          status: 'idle',
+          createdAt: 1,
+          updatedAt: 1,
+          messages: [
+            {
+              id: 'right-user',
+              eventIds: [],
+              role: 'user',
+              content: 'Compare the two cohorts',
+              status: 'complete',
+              createdAt: 1,
+              updatedAt: 1
+            }
+          ]
+        } satisfies ChatSession
+      ]
+    })
+    const openSession = vi.spyOn(useNavigationStore.getState(), 'openSession').mockReturnValue(true)
+    usePreviewWorkbenchStore.getState().activateProject('default')
+    window.api.sideChat = {
+      start: vi.fn(async () => ({
+        sideSessionId: 'right-side',
+        frameworkId: 'claude-code' as const
+      })),
+      send: vi.fn(),
+      close: vi.fn(),
+      cancel: vi.fn(),
+      onEvent: vi.fn(() => () => undefined)
+    } as unknown as Window['api']['sideChat']
+    let chat!: ReturnType<typeof useSideChatController>
+    const Harness = (): null => {
+      chat = useSideChatController({ sessionId: 'right-parent', projectId: 'default' })
+      return null
+    }
+    root = createRoot(container)
+    await act(async () =>
+      root.render(
+        <SideChatProvider>
+          <Harness />
+          <PreviewPanel
+            panelRef={{ current: null }}
+            defaultSize="40%"
+            minSize="30%"
+            onResize={vi.fn()}
+          />
+        </SideChatProvider>
+      )
+    )
+    await act(async () => {
+      await chat.start('Question in the right panel')
+    })
+    const panel = container.querySelector('#right-panel [data-testid="side-chat-panel"]')
+    expect(panel).not.toBeNull()
+    expect(panel?.textContent).toContain('Question in the right panel')
+    expect(panel?.querySelector('textarea')).not.toBeNull()
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain(
+      'Side chat'
+    )
+    expect(container.querySelector('[role="tab"]')?.textContent).not.toContain('Main analysis')
+    const viewMain = panel!.querySelector<HTMLButtonElement>('[aria-label="View main session"]')!
+    await act(async () => viewMain.click())
+    expect(openSession).toHaveBeenCalledWith('default', 'right-parent', 'user')
+    await act(async () => viewMain.focus())
+    expect(document.body.textContent).toContain('Main analysis')
+    expect(document.body.textContent).toContain('Compare the two cohorts')
+    openSession.mockRestore()
+  })
+
+  it('switches to a matching Side chat after a drag hover and cancels a departed hover', async () => {
+    const store = usePreviewWorkbenchStore.getState()
+    store.upsertAndActivateItem(
+      createToolItem({
+        id: 'side-one',
+        sideChatId: 'one',
+        toolKind: 'side-chat',
+        projectId: 'default',
+        title: 'Side chat'
+      })
+    )
+    store.upsertAndActivateItem(
+      createToolItem({
+        id: 'side-two',
+        sideChatId: 'two',
+        toolKind: 'side-chat',
+        projectId: 'default',
+        title: 'Side chat'
+      })
+    )
+    await renderPanel()
+    const unregister = annotationTransfers.register('hover-source', {
+      read: () => ({
+        projectId: 'default',
+        parentSessionId: 'session-1',
+        annotation: {
+          id: 'quote',
+          kind: 'text',
+          target: 'agent',
+          quote: 'Evidence',
+          source: { kind: 'agent-message', sessionId: 'session-1', messageId: 'message' }
+        }
+      }),
+      remove: vi.fn()
+    })
+    annotationTransfers.begin('hover-source')
+    vi.useFakeTimers()
+    const tab = container.querySelector('[role="tab"][aria-selected="false"]')!
+    const hover = (): void => {
+      const event = new Event('dragover', { bubbles: true, cancelable: true })
+      Object.defineProperty(event, 'dataTransfer', { value: { types: [ANNOTATION_DRAG_TYPE] } })
+      tab.dispatchEvent(event)
+    }
+    act(() => {
+      hover()
+    })
+    expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('side-two')
+    act(() => {
+      tab.dispatchEvent(new Event('dragleave', { bubbles: true }))
+      vi.runOnlyPendingTimers()
+    })
+    expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('side-two')
+    act(() => {
+      hover()
+      vi.runOnlyPendingTimers()
+    })
+    expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('side-one')
+    annotationTransfers.cancel()
+    unregister()
+  })
+
+  it('navigates to a Side chat parent from its shared context menu', async () => {
+    const openSession = vi.spyOn(useNavigationStore.getState(), 'openSession').mockReturnValue(true)
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(
+      createToolItem({
+        id: 'side-chat-tab',
+        projectId: 'default',
+        sessionId: 'side-parent',
+        toolKind: 'side-chat',
+        title: 'Side chat'
+      })
+    )
+    await renderPanel()
+    expect(container.querySelector('[role="tab"] [aria-label="View main session"]')).toBeNull()
+    await openTabContextMenu(0)
+    await clickMenuCommand('view-session')
+    expect(openSession).toHaveBeenCalledTimes(1)
+    expect(openSession).toHaveBeenLastCalledWith('default', 'side-parent', 'user')
+    openSession.mockRestore()
+  })
+
   it('opens a tab menu on right-click without activating the tab', async () => {
     await renderTwoFileTabs()
 
@@ -2104,9 +2390,7 @@ describe('PreviewPanel', () => {
       await renderPanel()
       await openTabContextMenu(0)
       await clickMenuCommand(command)
-      const retry = container.querySelector<HTMLButtonElement>(
-        '[data-testid="preview-tab-action-error"] button:last-child'
-      )!
+      const retry = getRetryButton()
       await act(async () => retry.click())
       expect(operation).toHaveBeenCalledTimes(2)
       try {
@@ -2221,9 +2505,7 @@ describe('PreviewPanel', () => {
     await renderPanel()
     await openTabContextMenu(0)
     await clickMenuCommand('save-as-artifact')
-    const retry = container.querySelector<HTMLButtonElement>(
-      '[data-testid="preview-tab-action-error"] button'
-    )!
+    const retry = getRetryButton()
     expect(retry).not.toBeNull()
     await act(async () => {
       useNavigationStore.setState({ activeProjectId: 'project-b' })
@@ -2262,24 +2544,22 @@ describe('PreviewPanel', () => {
         })
       )
     }
-    const retryButton = (): HTMLButtonElement =>
-      container.querySelector<HTMLButtonElement>('[data-testid="preview-tab-action-error"] button')!
     openProject('project-a')
     await renderPanel()
     try {
       await openTabContextMenu(0)
       await clickMenuCommand('save-as-artifact')
-      await act(async () => retryButton().click())
+      await act(async () => getRetryButton().click())
       expect(save).toHaveBeenCalledTimes(2)
       await act(async () => openProject('project-b'))
       await openTabContextMenu(0)
       await clickMenuCommand('save-as-artifact')
       expect(save).toHaveBeenCalledTimes(3)
-      expect(retryButton().disabled).toBe(false)
-      await act(async () => retryButton().click())
+      expect(getRetryButton().disabled).toBe(false)
+      await act(async () => getRetryButton().click())
       expect(save).toHaveBeenCalledTimes(4)
       await act(async () => finishA?.())
-      expect(retryButton().disabled).toBe(true)
+      expect(getRetryButton().disabled).toBe(true)
       await act(async () => finishB?.())
       expect(container.querySelector('[data-testid="preview-tab-action-error"]')).toBeNull()
     } finally {
@@ -2321,16 +2601,14 @@ describe('PreviewPanel', () => {
       })
     )
     await renderPanel()
-    const retryButton = (): HTMLButtonElement =>
-      container.querySelector<HTMLButtonElement>('[data-testid="preview-tab-action-error"] button')!
 
     try {
       await openTabContextMenu(0)
       await clickMenuCommand('save-as-artifact')
-      await act(async () => retryButton().click())
+      await act(async () => getRetryButton().click())
       await openTabContextMenu(1)
       await clickMenuCommand('save-as-artifact')
-      await act(async () => retryButton().click())
+      await act(async () => getRetryButton().click())
 
       await openTabContextMenu(0)
       expect(

@@ -221,10 +221,10 @@ const nativeFallback = async (
           buttons: [translate('Stay'), translate('Retry saving'), translate('Force quit')],
           defaultId: 0,
           cancelId: 0,
-          title: 'Open Science',
+          title: 'Open-Science',
           message: translate('Saving is not finished'),
           detail: translate(
-            'Open Science could not confirm that all recent changes were saved. Retry saving, or force quit and risk losing recent changes.'
+            'Open-Science could not confirm that all recent changes were saved. Retry saving, or force quit and risk losing recent changes.'
           )
         }
       : hasDelegatedWork
@@ -235,10 +235,10 @@ const nativeFallback = async (
             ],
             defaultId: 0,
             cancelId: 0,
-            title: 'Open Science',
+            title: 'Open-Science',
             message: translate('Subagents are still running'),
             detail: translate(
-              'Return to the running tasks and stop their subagents before quitting Open Science.'
+              'Return to the running tasks and stop their subagents before quitting Open-Science.'
             )
           }
         : variant === 'quit'
@@ -247,8 +247,8 @@ const nativeFallback = async (
               buttons: [translate('Cancel'), translate('Quit', { context: 'verb' })],
               defaultId: 0,
               cancelId: 0,
-              title: 'Open Science',
-              message: translate('Quit Open Science?'),
+              title: 'Open-Science',
+              message: translate('Quit Open-Science?'),
               detail: translate('Work is still running and will be interrupted if you quit.')
             }
           : {
@@ -256,7 +256,7 @@ const nativeFallback = async (
               buttons: [translate('Minimize to tray'), translate('Quit', { context: 'verb' })],
               defaultId: 0,
               cancelId: 0,
-              title: 'Open Science',
+              title: 'Open-Science',
               message: translate('Minimize to tray or quit?'),
               detail: translate('Background work may still be running.'),
               checkboxLabel: translate("Don't ask again"),
@@ -292,7 +292,8 @@ export const createElectronCloseConfirm =
   ) => Promise<CloseConfirmChoice>) =>
   (variant, sessions, unlistedWorkActive) => {
     const window = getWindow()
-    const webContents = window?.webContents
+    // BrowserWindow's native webContents getter throws after the window has closed.
+    const webContents = window && !window.isDestroyed() ? window.webContents : undefined
     return createCloseConfirm({
       // Reveal the window before asking: a tray/Ctrl+Q quit can arrive while the window is hidden
       // (minimized to tray), and a modal sent to a hidden window would never be seen — leaving the
@@ -302,7 +303,7 @@ export const createElectronCloseConfirm =
         if (window.isMinimized()) window.restore()
         if (!window.isVisible()) window.show()
         window.focus()
-        window.webContents.send(WINDOW_CLOSE_CONFIRM_REQUEST_CHANNEL, payload)
+        webContents?.send(WINDOW_CLOSE_CONFIRM_REQUEST_CHANNEL, payload)
       },
       onResponse: (cb) => {
         const listener = (event: IpcMainEvent, payload: CloseConfirmResponse): void => {
@@ -312,12 +313,12 @@ export const createElectronCloseConfirm =
         return () => ipcMain.removeListener(WINDOW_CLOSE_CONFIRM_RESPONSE_CHANNEL, listener)
       },
       isRendererAvailable: () => {
-        return Boolean(window && !window.isDestroyed() && !window.webContents.isDestroyed())
+        return Boolean(window && !window.isDestroyed() && webContents && !webContents.isDestroyed())
       },
       onRenderGone: (cb) => {
-        if (!window) return () => undefined
-        window.webContents.on('render-process-gone', cb)
-        return () => window.webContents.off('render-process-gone', cb)
+        if (!webContents) return () => undefined
+        webContents.on('render-process-gone', cb)
+        return () => webContents.off('render-process-gone', cb)
       },
       onPageLost: (cb) => {
         if (!webContents) return () => undefined
@@ -337,12 +338,12 @@ export const createElectronCloseConfirm =
         }
       },
       onRendererUnresponsive: ({ onHang, onRecover }) => {
-        if (!window) return () => undefined
-        window.webContents.on('unresponsive', onHang)
-        window.webContents.on('responsive', onRecover)
+        if (!webContents) return () => undefined
+        webContents.on('unresponsive', onHang)
+        webContents.on('responsive', onRecover)
         return () => {
-          window.webContents.off('unresponsive', onHang)
-          window.webContents.off('responsive', onRecover)
+          webContents.off('unresponsive', onHang)
+          webContents.off('responsive', onRecover)
         }
       },
       nativeFallback: (variant, sessions) =>

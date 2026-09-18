@@ -498,6 +498,8 @@ class NotebookRuntimeService {
       runtimeSettings,
       repairPolicy: this.repairPolicy,
       discoverRuntimes: options.discoverRuntimes,
+      acquireEnvironmentBindingLease: (environment) =>
+        this.environmentOperations.acquireBindingLease(environment),
       waitForEnvironmentStartup: () => this.environmentStartupBarrier,
       platform: options.platform
     })
@@ -698,7 +700,9 @@ class NotebookRuntimeService {
         }
       }
     })
-    this.shellProcessOwnership = new ShellProcessOwnershipRegistry(options.dataRoot)
+    this.shellProcessOwnership = new ShellProcessOwnershipRegistry(options.dataRoot, {
+      processHostPath: resolveNotebookResource(undefined, 'kernel_process_host.js')
+    })
     this.helperModules = new NotebookHelperModuleHost(options.helperModuleCatalog)
     this.executionOwner = new NotebookExecutionOwner({
       configRoot: options.configRoot,
@@ -1283,8 +1287,10 @@ class NotebookRuntimeService {
                       ? ((error as { code: string }).code ?? 'BACKGROUND_RUN_ADMISSION_FAILED')
                       : 'BACKGROUND_RUN_ADMISSION_FAILED',
                   stage: 'pre-admission',
-                  retryable: true,
-                  hint: 'Query by submissionIdentity before deciding whether to submit again.',
+                  retryable: Boolean(request.executionInvocationId),
+                  hint: request.executionInvocationId
+                    ? 'Query background_run with this submissionIdentity before deciding whether to submit again.'
+                    : 'No Run lookup identity is available, so this result cannot confirm whether a Run was accepted. Do not resubmit the same work; application-side recovery is required.',
                   ...(request.executionInvocationId
                     ? { submissionIdentity: request.executionInvocationId }
                     : {})
@@ -1506,7 +1512,8 @@ class NotebookRuntimeService {
   // terminalization, and completion interception belong to NotebookExecutionOwner.
   async executeControl(
     request: ExecuteNotebookControlRequest,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    onExecutionSettled?: (error?: unknown) => void
   ): Promise<NotebookControlResult> {
     if (request.background) {
       throw new NotebookBackgroundRunError(
@@ -1525,7 +1532,9 @@ class NotebookRuntimeService {
       return this.executionOwner.executeControl(
         session,
         request,
-        signal ? AbortSignal.any([signal, deletionSignal]) : deletionSignal
+        signal ? AbortSignal.any([signal, deletionSignal]) : deletionSignal,
+        undefined,
+        onExecutionSettled
       )
     })
   }
@@ -1593,8 +1602,10 @@ class NotebookRuntimeService {
                     ? ((error as { code: string }).code ?? 'BACKGROUND_RUN_ADMISSION_FAILED')
                     : 'BACKGROUND_RUN_ADMISSION_FAILED',
                 stage: 'pre-admission',
-                retryable: true,
-                hint: 'Query by submissionIdentity before deciding whether to submit again.',
+                retryable: Boolean(request.executionInvocationId),
+                hint: request.executionInvocationId
+                  ? 'Query background_run with this submissionIdentity before deciding whether to submit again.'
+                  : 'No Run lookup identity is available, so this result cannot confirm whether a Run was accepted. Do not resubmit the same work; application-side recovery is required.',
                 ...(request.executionInvocationId
                   ? { submissionIdentity: request.executionInvocationId }
                   : {})
@@ -1710,8 +1721,10 @@ class NotebookRuntimeService {
                       ? ((error as { code: string }).code ?? 'BACKGROUND_RUN_ADMISSION_FAILED')
                       : 'BACKGROUND_RUN_ADMISSION_FAILED',
                   stage: 'pre-admission',
-                  retryable: true,
-                  hint: 'Query by submissionIdentity before deciding whether to submit again.',
+                  retryable: Boolean(backgroundRequest.executionInvocationId),
+                  hint: backgroundRequest.executionInvocationId
+                    ? 'Query background_run with this submissionIdentity before deciding whether to submit again.'
+                    : 'No Run lookup identity is available, so this result cannot confirm whether a Run was accepted. Do not resubmit the same work; application-side recovery is required.',
                   ...(backgroundRequest.executionInvocationId
                     ? { submissionIdentity: backgroundRequest.executionInvocationId }
                     : {})
@@ -1757,7 +1770,12 @@ class NotebookRuntimeService {
     signal?: AbortSignal
   ): Promise<RequestNotebookNetworkAccessResult> {
     if (!this.options.processSandbox?.requestNetworkAccess) {
-      return { hostname: request.hostname, status: 'unavailable' }
+      return {
+        hostname: request.hostname,
+        status: 'unavailable',
+        message:
+          'Network access approval is unavailable for the current Notebook runtime. No user decision was requested and no access was granted.'
+      }
     }
     return this.options.processSandbox.requestNetworkAccess({
       sessionId: request.sessionId,
@@ -2320,13 +2338,27 @@ class NotebookRuntimeService {
   // Shuts down every live interpreter, used by app-level cleanup paths. Returns { reaped }: true only
   // when every kernel tree was cleanly reaped, so the update-install gate can refuse to trigger the
   // NSIS uninstall while a kernel may still hold file handles under the install dir.
-  async shutdownAll(): Promise<{ reaped: boolean }> {
+  async shutdownAll(options?: { legacyShellRecoveryToken?: string }): Promise<{
+    reaped: boolean
+    legacyShellRecovery?: { token: string; count: number }
+  }> {
     const releaseFence = this.executionOwner.fenceShellRuns({ global: true })
     try {
       const shell = await this.executionOwner.cancelShellRuns(
         {},
         new Error('Notebook runtime is shutting down.')
       )
+      const sessions = await this.sessionLifecycle.shutdownAll()
+      if (shell.reaped && sessions.reaped && options?.legacyShellRecoveryToken) {
+        try {
+          this.shellProcessOwnership.archiveLegacyLaunches(options.legacyShellRecoveryToken)
+        } catch {
+          return {
+            reaped: false,
+            legacyShellRecovery: this.shellProcessOwnership.getLegacyRecovery()
+          }
+        }
+      }
       const shellRecoveryReaped =
         shell.reaped && !this.shellProcessOwnership.hasReceipts()
           ? true
@@ -2334,8 +2366,12 @@ class NotebookRuntimeService {
               .recover()
               .then(() => true)
               .catch(() => false)
-      const sessions = await this.sessionLifecycle.shutdownAll()
-      return { reaped: shellRecoveryReaped && sessions.reaped }
+      return {
+        reaped: shell.reaped && shellRecoveryReaped && sessions.reaped,
+        ...(!shellRecoveryReaped && shell.reaped && sessions.reaped
+          ? { legacyShellRecovery: this.shellProcessOwnership.getLegacyRecovery() }
+          : {})
+      }
     } finally {
       // shutdownAll is reusable when an update/migration is cancelled.
       releaseFence()

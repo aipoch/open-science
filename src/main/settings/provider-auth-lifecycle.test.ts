@@ -171,6 +171,31 @@ describe('ProviderAuthLifecycleOwner', () => {
     expect(resolveCodexExecutable).not.toHaveBeenCalled()
   })
 
+  it('keeps a keyless loopback custom gateway usable while a remote one needs its key', async () => {
+    // Local model servers (Ollama, LM Studio, …) never carry a key; preflight must not block
+    // their spawn on a credential they will not have.
+    await expect(
+      owner.isProviderKeyUsable({
+        id: 'ollama',
+        type: 'custom',
+        name: 'Ollama (local)',
+        baseUrl: 'http://localhost:11434',
+        model: 'qwen3:14b',
+        apiEndpoints: ['openai']
+      })
+    ).resolves.toBe(true)
+
+    await expect(
+      owner.isProviderKeyUsable({
+        id: 'remote',
+        type: 'custom',
+        name: 'Remote gateway',
+        baseUrl: 'https://gateway.example/v1',
+        model: 'some-model'
+      })
+    ).resolves.toBe(false)
+  })
+
   it('does not resolve the Codex executable while inspecting stored credentials', async () => {
     await storeAppCodexAuth()
     const stored = await storeCodexProvider('isolated')
@@ -321,7 +346,7 @@ describe('ProviderAuthLifecycleOwner', () => {
       id: CODEX_SUBSCRIPTION_PROVIDER_ID,
       type: 'codex-isolated',
       codexAuthMode: 'isolated',
-      name: 'Open Science Codex login',
+      name: 'Open-Science Codex login',
       apiEndpoints: ['responses']
     })
 
@@ -338,7 +363,7 @@ describe('ProviderAuthLifecycleOwner', () => {
     await repository.upsertProvider({
       id: CLAUDE_ISOLATED_PROVIDER_ID,
       type: 'claude-isolated',
-      name: 'Open Science Claude login',
+      name: 'Open-Science Claude login',
       apiEndpoints: ['anthropic'],
       keyRef: 'plain:old-token'
     })
@@ -364,7 +389,7 @@ describe('ProviderAuthLifecycleOwner', () => {
     await repository.upsertProvider({
       id: CLAUDE_ISOLATED_PROVIDER_ID,
       type: 'claude-isolated',
-      name: 'Open Science Claude login',
+      name: 'Open-Science Claude login',
       apiEndpoints: ['anthropic'],
       expiresAt: 123,
       lastValidatedAt: 456
@@ -424,7 +449,7 @@ describe('ProviderAuthLifecycleOwner', () => {
     await repository.upsertProvider({
       id: CLAUDE_ISOLATED_PROVIDER_ID,
       type: 'claude-isolated',
-      name: 'Open Science Claude login',
+      name: 'Open-Science Claude login',
       apiEndpoints: ['anthropic'],
       keyRef: 'plain:setup-token'
     })
@@ -444,7 +469,7 @@ describe('ProviderAuthLifecycleOwner', () => {
     await repository.upsertProvider({
       id: CLAUDE_ISOLATED_PROVIDER_ID,
       type: 'claude-isolated',
-      name: 'Open Science Claude login',
+      name: 'Open-Science Claude login',
       apiEndpoints: ['anthropic']
     })
     vi.mocked(claudeIsolatedAuth.loginIsolatedBrowser).mockResolvedValueOnce({

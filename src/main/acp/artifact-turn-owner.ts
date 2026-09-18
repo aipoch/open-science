@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, rm, rmdir, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
+import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
 import type { ArtifactFile, ArtifactWriteEncoding } from '../../shared/artifacts'
 import type { ArtifactLiteratureRequest } from '../../shared/artifact-literature'
 import type {
@@ -135,6 +136,7 @@ type ArtifactTurnOwnerOptions = {
       sessionId: string,
       binding: {
         ownerExecutionId: string
+        artifactRunId?: string
         projectId: string
         provenanceContext: {
           rootFrameId: string
@@ -146,7 +148,7 @@ type ArtifactTurnOwnerOptions = {
         }
       }
     ) => void
-    clearArtifactTurnBinding?: (sessionId: string, ownerExecutionId: string) => void
+    clearArtifactTurnBinding?: (sessionId: string, ownerExecutionId: string) => void | Promise<void>
   }
 }
 
@@ -260,6 +262,7 @@ class ArtifactTurnOwner {
         if (turn.updatesSessionNotebookContext) {
           this.options.notebook?.setArtifactTurnBinding?.(turn.appSessionId, {
             ownerExecutionId: turn.executionId,
+            artifactRunId: turn.runId,
             projectId: turn.projectId,
             provenanceContext: {
               rootFrameId: turn.rootFrameId,
@@ -287,7 +290,10 @@ class ArtifactTurnOwner {
           }
           if (turn.updatesSessionNotebookContext) {
             try {
-              this.options.notebook?.clearArtifactTurnBinding?.(turn.appSessionId, turn.executionId)
+              await this.options.notebook?.clearArtifactTurnBinding?.(
+                turn.appSessionId,
+                turn.executionId
+              )
             } catch {
               // The original activation failure remains the caller-visible error.
             }
@@ -626,6 +632,7 @@ class ArtifactTurnOwner {
 
   private async disposeTurn(turn: ArtifactTurn): Promise<void> {
     const cleanupErrors: unknown[] = []
+    let notebookStopFailure: NotebookExecutionStopError | undefined
     try {
       await this.closeWrites(turn)
     } catch (error) {
@@ -660,10 +667,16 @@ class ArtifactTurnOwner {
       }
       try {
         if (turn.updatesSessionNotebookContext) {
-          this.options.notebook?.clearArtifactTurnBinding?.(turn.appSessionId, turn.executionId)
+          await this.options.notebook?.clearArtifactTurnBinding?.(
+            turn.appSessionId,
+            turn.executionId
+          )
         }
       } catch (error) {
-        cleanupErrors.push(error)
+        // The Notebook binding is already removed when its drain reports a failed stop. Preserve
+        // that failure for the Task, while releasing the completed Artifact-side ownership.
+        if (error instanceof NotebookExecutionStopError) notebookStopFailure = error
+        else cleanupErrors.push(error)
       }
       if (cleanupErrors.length === 0) {
         if (this.activeTurnsByHandoffFile.get(turn.currentRunFile) === turn) {
@@ -676,6 +689,7 @@ class ArtifactTurnOwner {
         turn.phase = 'disposed'
       }
     })
+    if (notebookStopFailure) throw notebookStopFailure
     if (cleanupErrors.length > 0) throw cleanupErrors[0]
   }
 

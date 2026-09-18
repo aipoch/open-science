@@ -1,3 +1,4 @@
+import { SkillMarketplaceUpdateDialog } from './SkillMarketplaceUpdateDialog'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { CircleCheck, ChevronDown, Download, LoaderCircle, Trash2 } from 'lucide-react'
 import { useSettingsStore } from '@/stores/settings-store'
@@ -8,6 +9,7 @@ import type {
   SkillMarketplaceDetail,
   SkillMarketplaceInstallation,
   SkillMarketplaceInstallResult,
+  SkillMarketplaceUpdatePreview,
   SkillMarketplaceResult
 } from '../../../../shared/skill-marketplace'
 import { ErrorNotice } from '@/components/error-notice'
@@ -28,6 +30,8 @@ import { SettingsSearchInput } from './SettingsSearchInput'
 import { SkillMarketplaceBatchControls, type MarketplaceBatchMode } from './SkillMarketplaceBatch'
 import {
   filterSkillMarketplace,
+  skillMarketplaceAttribution,
+  skillMarketplaceSourceOwner,
   skillMarketplaceCategories,
   skillMarketplaceRepository,
   SKILL_MARKETPLACE_PAGE_SIZE,
@@ -128,12 +132,14 @@ function MarketplaceInstallControls({
   compact?: boolean
   disabled?: boolean
   onOpenDetail?: () => void
-  onManageLocal?: () => void
+  onManageLocal?: (id?: string) => void
 }): React.JSX.Element {
   const { t } = useTranslation()
   const [confirm, setConfirm] = useState(false)
-  const [pending, setPending] = useState<'install' | 'uninstall' | 'toggle'>()
-  const packagePending = pending === 'install' || pending === 'uninstall'
+  const [pending, setPending] = useState<'install' | 'uninstall' | 'toggle' | 'preview'>()
+  const packagePending = pending === 'install' || pending === 'uninstall' || pending === 'preview'
+  const [updatePreview, setUpdatePreview] = useState<SkillMarketplaceUpdatePreview>()
+  const [updateError, setUpdateError] = useState<string>()
   const [failure, setFailure] = useState<Extract<SkillMarketplaceInstallResult, { ok: false }>>()
   const [refreshFailed, setRefreshFailed] = useState(false)
   const [uninstallConfirm, setUninstallConfirm] = useState(false)
@@ -141,6 +147,7 @@ function MarketplaceInstallControls({
   const [managementFailure, setManagementFailure] = useState<string>()
   const installed = installation.kind === 'installed' ? installation : undefined
   const localSkillId = installed?.localSkillId
+  const conflictSkillId = installation.kind === 'conflict' ? installation.localSkillId : undefined
   const localSkill = useSettingsStore((state) =>
     state.skills.find((skill) => skill.id === localSkillId)
   )
@@ -168,9 +175,71 @@ function MarketplaceInstallControls({
   }
   const conflict = installation.kind === 'conflict' || failure?.error === 'conflict'
   const canUninstallInline = Boolean(
-    installed && !installed.canUpdate && localSkillId && !conflict && !disabled && !pending
+    installed &&
+    !installed.protected &&
+    !installed.canUpdate &&
+    localSkillId &&
+    !conflict &&
+    !disabled &&
+    !pending
   )
   const uninstallArmed = canUninstallInline && uninstallPreview
+  const conflictReason =
+    failure?.reason ?? (installation.kind === 'conflict' ? installation.reason : undefined)
+  const conflictDescription =
+    conflictReason === 'name-taken'
+      ? t(
+          'A Skill with this name is already installed. Review its differences before updating it in place.'
+        )
+      : conflictReason === 'local-content-changed'
+        ? t('This Skill has local changes. Updating will replace them.')
+        : conflictReason === 'version-changed'
+          ? t(
+              'The Skill or its affected Specialists changed after preview. Refresh and review the update again.'
+            )
+          : conflictReason === 'release-mismatch'
+            ? t(
+                'This release would downgrade the Skill or change an existing release. Installation remains blocked.'
+              )
+            : conflictReason === 'invalid-name' || conflictReason === 'installation-unverifiable'
+              ? t('The existing installation cannot be safely verified. No files were replaced.')
+              : t(
+                  'Local changes or an existing Skill prevent installation. No files were replaced.'
+                )
+  const reviewUpdate = async (): Promise<void> => {
+    if (inFlight.current) return
+    inFlight.current = true
+    setPending('preview')
+    setFailure(undefined)
+    setUpdateError(undefined)
+    try {
+      const result = await window.api.settings.getSkillMarketplaceDetail({
+        id: entry.id,
+        snapshotId,
+        previewUpdate: true
+      })
+      if (!active.current) return
+      if (result.ok && result.value.updatePreview) setUpdatePreview(result.value.updatePreview)
+      else
+        setFailure(
+          result.ok
+            ? {
+                ok: false,
+                error: 'conflict',
+                reason:
+                  result.value.installation?.kind === 'conflict'
+                    ? result.value.installation.reason
+                    : 'installation-unverifiable'
+              }
+            : result
+        )
+    } catch {
+      if (active.current) setFailure({ ok: false, error: 'installation-failed' })
+    } finally {
+      inFlight.current = false
+      if (active.current) setPending(undefined)
+    }
+  }
   const manage = async (remove: boolean): Promise<void> => {
     if (!localSkillId || inFlight.current) return
     inFlight.current = true
@@ -200,7 +269,7 @@ function MarketplaceInstallControls({
       if (active.current) setPending(undefined)
     }
   }
-  const install = async (): Promise<void> => {
+  const install = async (updateToken?: string): Promise<void> => {
     if (inFlight.current) return
     inFlight.current = true
     setPending('install')
@@ -210,7 +279,8 @@ function MarketplaceInstallControls({
       result = await window.api.settings.installSkillMarketplace({
         id: entry.id,
         snapshotId,
-        expectedVersion: installed?.version ?? null
+        expectedVersion: installed?.version ?? null,
+        ...(updateToken ? { updateToken } : {})
       })
     } catch {
       result = { ok: false, error: 'installation-failed' }
@@ -220,14 +290,28 @@ function MarketplaceInstallControls({
     setPending(undefined)
     setConfirm(false)
     if (result.ok) {
+      setUpdatePreview(undefined)
+      setUpdateError(undefined)
       setRefreshFailed(result.value.refreshFailed === true)
       onChanged({
         kind: 'installed',
         version: result.value.version,
         canUpdate: false,
-        localSkillId: result.value.id
+        localSkillId: result.value.id,
+        ...(updateToken
+          ? {
+              requiresPreview: true,
+              protected: updatePreview ? updatePreview.specialists.length > 0 : installed?.protected
+            }
+          : {})
       })
-    } else setFailure(result)
+    } else if (updateToken)
+      setUpdateError(
+        t(
+          'The update could not be completed. Close this preview and review the current installation again.'
+        )
+      )
+    else setFailure(result)
   }
   return (
     <div
@@ -243,7 +327,7 @@ function MarketplaceInstallControls({
           )}
           primaryButton={{
             label: t('Retry'),
-            onClick: () => void install(),
+            onClick: () => void (installed.requiresPreview ? reviewUpdate() : install()),
             disabled: disabled || Boolean(pending)
           }}
         />
@@ -257,36 +341,70 @@ function MarketplaceInstallControls({
       {(conflict && !compact) || failure ? (
         <ErrorNotice
           tone={conflict ? 'amber' : 'red'}
-          title={t('Skill installation failed')}
-          description={
-            conflict
-              ? t(
-                  'Local changes or an existing Skill prevent installation. No files were replaced.'
-                )
-              : undefined
+          role={failure ? 'alert' : 'status'}
+          title={failure ? t('Skill installation failed') : t('Skill installation blocked')}
+          description={conflict ? conflictDescription : undefined}
+          errorCode={[failure?.error ?? 'conflict', conflictReason, conflictSkillId]
+            .filter(Boolean)
+            .join(' · ')}
+          diagnosticsLabel={t('Details')}
+          primaryButton={
+            conflict && onManageLocal
+              ? {
+                  label: conflictSkillId ? t('View installed Skill') : t('Manage local skills'),
+                  onClick: () => onManageLocal(conflictSkillId),
+                  disabled: disabled || Boolean(pending)
+                }
+              : {
+                  label:
+                    failure?.error === 'network' || failure?.error === 'installation-failed'
+                      ? t('Retry')
+                      : t('Refresh'),
+                  disabled: disabled || Boolean(pending),
+                  onClick: () => {
+                    if (failure?.error === 'network' || failure?.error === 'installation-failed') {
+                      if (installed) setConfirm(true)
+                      else void install()
+                    } else {
+                      setFailure(undefined)
+                      onChanged()
+                    }
+                  }
+                }
           }
-          errorCode={failure?.error ?? 'conflict'}
-          primaryButton={{
-            label:
-              failure?.error === 'network' || failure?.error === 'installation-failed'
-                ? t('Retry')
-                : t('Refresh'),
-            disabled: disabled || Boolean(pending),
-            onClick: () => {
-              if (failure?.error === 'network' || failure?.error === 'installation-failed') {
-                if (installed) setConfirm(true)
-                else void install()
-              } else {
-                setFailure(undefined)
-                onChanged()
-              }
-            }
-          }}
           secondaryButton={
-            onManageLocal ? { label: t('Manage'), onClick: onManageLocal } : undefined
+            conflict && onManageLocal
+              ? {
+                  label: t('Refresh'),
+                  disabled: disabled || Boolean(pending),
+                  onClick: () => {
+                    setFailure(undefined)
+                    onChanged()
+                  }
+                }
+              : undefined
           }
         />
       ) : null}
+      {conflict &&
+      !compact &&
+      conflictSkillId &&
+      (conflictReason === 'name-taken' || conflictReason === 'local-content-changed') ? (
+        <Button disabled={disabled || Boolean(pending)} onClick={() => void reviewUpdate()}>
+          {pending === 'preview' ? t('Loading…') : t('Review Skill update')}
+        </Button>
+      ) : null}
+      <SkillMarketplaceUpdateDialog
+        preview={updatePreview}
+        version={entry.version}
+        pending={Boolean(pending)}
+        error={updateError}
+        onCancel={() => {
+          setUpdatePreview(undefined)
+          setUpdateError(undefined)
+        }}
+        onConfirm={() => void install(updatePreview?.token)}
+      />
       {managementFailure ? (
         <ErrorNotice
           role="alert"
@@ -296,111 +414,125 @@ function MarketplaceInstallControls({
           primaryButton={{ label: t('Retry'), onClick: onChanged }}
         />
       ) : null}
-      <div
-        className="skill-marketplace-primary-action flex flex-wrap items-center gap-3"
-        role={!compact ? 'group' : undefined}
-        aria-label={!compact ? t('Manage') : undefined}
-        data-slot={!compact ? 'skill-marketplace-detail-actions' : undefined}
-      >
-        {!compact && localSkill ? (
-          <label className="inline-flex items-center gap-2 text-sm text-muted-foreground">
-            {t('Enable')}
-            <Switch
-              aria-label={t('Enable')}
-              aria-busy={pending === 'toggle' || undefined}
-              checked={localSkill.enabled}
-              disabled={disabled || Boolean(pending)}
-              onCheckedChange={() => void manage(false)}
-            />
-          </label>
-        ) : null}
-        <Button
-          ref={trigger}
-          size={compact ? 'sm' : 'default'}
-          variant={uninstallArmed ? 'destructive' : compact ? 'outline' : 'default'}
-          data-installed={Boolean(
-            installed && !installed.canUpdate && !conflict && !packagePending && !uninstallArmed
-          )}
-          className="skill-marketplace-install-action"
-          aria-live="polite"
-          aria-disabled={pending === 'toggle' || undefined}
-          disabled={
-            disabled ||
-            packagePending ||
-            Boolean(installed && !installed.canUpdate && !localSkillId) ||
-            (!compact && conflict)
-          }
-          onBlur={() => setUninstallArmed(false)}
-          onPointerEnter={(event) => {
-            if (event.pointerType === 'mouse' && canUninstallInline) setUninstallArmed(true)
-          }}
-          onPointerLeave={(event) => {
-            if (event.pointerType === 'mouse') setUninstallArmed(false)
-          }}
-          onFocus={(event) => {
-            if (canUninstallInline && event.currentTarget.matches(':focus-visible'))
-              setUninstallArmed(true)
-          }}
-          onKeyDown={(event) => {
-            if (event.key === 'Escape' && uninstallArmed) {
-              event.preventDefault()
-              event.stopPropagation()
-              setUninstallArmed(false)
-            }
-          }}
-          onClick={() => {
-            if (inFlight.current) return
-            if (compact && conflict) onOpenDetail?.()
-            else if (installed && !installed.canUpdate) {
-              if (uninstallArmed) {
-                if (compact) void manage(true)
-                else setUninstallConfirm(true)
-              } else setUninstallArmed(true)
-            } else if (installed) setConfirm(true)
-            else void install()
-          }}
+      {compact && conflict ? (
+        <span className="text-xs text-status-warning-foreground dark:text-status-warning-dark-foreground">
+          {t('Local conflict')}
+        </span>
+      ) : null}
+      {compact || !conflict ? (
+        <div
+          className="skill-marketplace-primary-action flex flex-wrap items-center gap-3"
+          role={!compact ? 'group' : undefined}
+          aria-label={!compact ? t('Manage') : undefined}
+          data-slot={!compact ? 'skill-marketplace-detail-actions' : undefined}
         >
-          {packagePending ? (
-            <LoaderCircle
-              className="size-4 animate-spin motion-reduce:animate-none"
-              aria-hidden="true"
-            />
-          ) : uninstallArmed ? (
-            <Trash2 data-icon="inline-start" className="size-4" aria-hidden="true" />
-          ) : installed && !installed.canUpdate && !conflict ? (
-            <CircleCheck data-icon="inline-start" className="size-4" aria-hidden="true" />
-          ) : !compact ? (
-            <Download className="size-4" aria-hidden="true" />
+          {!compact && localSkill ? (
+            <label className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+              {t('Enable')}
+              <Switch
+                aria-label={t('Enable')}
+                aria-busy={pending === 'toggle' || undefined}
+                checked={localSkill.enabled}
+                disabled={disabled || Boolean(pending)}
+                onCheckedChange={() => void manage(false)}
+              />
+            </label>
           ) : null}
-          {packagePending
-            ? pending === 'install'
-              ? t('Installing…')
-              : t('Uninstalling…')
-            : uninstallArmed
-              ? t('Uninstall')
-              : compact && conflict
-                ? t('Manage')
-                : installed
-                  ? installed.canUpdate
-                    ? t('Update')
-                    : t('Installed')
-                  : t('Install')}
-        </Button>
-        {!compact && localSkillId && installed?.canUpdate ? (
           <Button
-            ref={uninstallTrigger}
-            variant="outline"
-            className="text-destructive"
+            ref={trigger}
+            size={compact ? 'sm' : 'default'}
+            variant={uninstallArmed ? 'destructive' : compact ? 'outline' : 'default'}
+            data-installed={Boolean(
+              installed && !installed.canUpdate && !conflict && !packagePending && !uninstallArmed
+            )}
+            className="skill-marketplace-install-action"
+            aria-live="polite"
             aria-disabled={pending === 'toggle' || undefined}
-            disabled={disabled || packagePending}
+            disabled={
+              disabled ||
+              packagePending ||
+              Boolean(installed && !installed.canUpdate && !localSkillId) ||
+              (!compact && conflict)
+            }
+            onBlur={() => setUninstallArmed(false)}
+            onPointerEnter={(event) => {
+              if (event.pointerType === 'mouse' && canUninstallInline) setUninstallArmed(true)
+            }}
+            onPointerLeave={(event) => {
+              if (event.pointerType === 'mouse') setUninstallArmed(false)
+            }}
+            onFocus={(event) => {
+              if (canUninstallInline && event.currentTarget.matches(':focus-visible'))
+                setUninstallArmed(true)
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape' && uninstallArmed) {
+                event.preventDefault()
+                event.stopPropagation()
+                setUninstallArmed(false)
+              }
+            }}
             onClick={() => {
-              if (!inFlight.current) setUninstallConfirm(true)
+              if (inFlight.current) return
+              if (compact && conflict) onOpenDetail?.()
+              else if (installed && !installed.canUpdate) {
+                if (installed.protected) {
+                  onManageLocal?.(localSkillId)
+                  return
+                }
+                if (uninstallArmed) {
+                  if (compact) void manage(true)
+                  else setUninstallConfirm(true)
+                } else setUninstallArmed(true)
+              } else if (installed?.requiresPreview) void reviewUpdate()
+              else if (installed) setConfirm(true)
+              else void install()
             }}
           >
-            {t('Uninstall')}
+            {packagePending ? (
+              <LoaderCircle
+                className="size-4 animate-spin motion-reduce:animate-none"
+                aria-hidden="true"
+              />
+            ) : uninstallArmed ? (
+              <Trash2 data-icon="inline-start" className="size-4" aria-hidden="true" />
+            ) : installed && !installed.canUpdate && !conflict ? (
+              <CircleCheck data-icon="inline-start" className="size-4" aria-hidden="true" />
+            ) : !compact ? (
+              <Download className="size-4" aria-hidden="true" />
+            ) : null}
+            {packagePending
+              ? pending === 'install'
+                ? t('Installing…')
+                : pending === 'preview'
+                  ? t('Loading…')
+                  : t('Uninstalling…')
+              : uninstallArmed
+                ? t('Uninstall')
+                : compact && conflict
+                  ? t('View details')
+                  : installed
+                    ? installed.canUpdate
+                      ? t('Update')
+                      : t('Installed')
+                    : t('Install')}
           </Button>
-        ) : null}
-      </div>
+          {!compact && localSkillId && installed?.canUpdate && !installed.protected ? (
+            <Button
+              ref={uninstallTrigger}
+              variant="outline"
+              className="text-destructive"
+              aria-disabled={pending === 'toggle' || undefined}
+              disabled={disabled || packagePending}
+              onClick={() => {
+                if (!inFlight.current) setUninstallConfirm(true)
+              }}
+            >
+              {t('Uninstall')}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
       <ConfirmActionDialog
         open={uninstallConfirm}
         title={t('Uninstall')}
@@ -458,7 +590,7 @@ export function SkillMarketplace({
 }: {
   view: SkillMarketplaceView
   onNavigate: (view: SkillMarketplaceView) => void
-  onManageLocal?: () => void
+  onManageLocal?: (id?: string) => void
 }): React.JSX.Element {
   const { t, i18n } = useTranslation()
   const heading = useRef<HTMLHeadingElement>(null)
@@ -665,7 +797,7 @@ export function SkillMarketplace({
         if (!skillMarketplaceStableVersionPattern.test(item.version)) continue
         const state = installations[item.id]
         if (!state || state.kind === 'not-installed') install++
-        else if (state.kind === 'installed' && state.canUpdate) update++
+        else if (state.kind === 'installed' && state.canUpdate && !state.requiresPreview) update++
       }
     return { install, update }
   }, [items, installations])
@@ -674,7 +806,7 @@ export function SkillMarketplace({
       if (!installations || !skillMarketplaceStableVersionPattern.test(item.version)) return false
       const state = installations[item.id]
       return batchMode === 'update'
-        ? state?.kind === 'installed' && state.canUpdate
+        ? state?.kind === 'installed' && state.canUpdate && !state.requiresPreview
         : !state || state.kind === 'not-installed'
     },
     [installations, batchMode]
@@ -967,7 +1099,11 @@ export function SkillMarketplace({
                               name: selected.authors.map((a) => a.name).join(', ')
                             })}
                           </span>
-                        ) : null}
+                        ) : (
+                          <span>
+                            {t('Upstream source')}: {skillMarketplaceSourceOwner(selected)}
+                          </span>
+                        )}
                         <span>
                           {t('Version')}: {selected.version}
                         </span>
@@ -1298,9 +1434,9 @@ export function SkillMarketplace({
                           </span>
                           <span
                             className="min-w-0 truncate text-muted-foreground"
-                            title={item.authors?.map((a) => a.name).join(', ')}
+                            title={skillMarketplaceAttribution(item)}
                           >
-                            {item.authors?.map((a) => a.name).join(', ')}
+                            {skillMarketplaceAttribution(item)}
                           </span>
                           {item.evaluation ? (
                             <Tooltip>

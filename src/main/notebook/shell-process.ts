@@ -2,6 +2,7 @@ import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'n
 import { dirname } from 'node:path'
 import type { NotebookExecutionRecovery } from '../../shared/execution-recovery'
 import { assertShellSearchScope } from './shell-search-scope'
+import type { ShellProcessLaunchOwnership } from './shell-process-ownership.windows-posix'
 
 import { protectManagedRuntimeWrites } from './managed-runtime-guard'
 import { wsl2BashPreviewStatus } from '../wsl/wsl2-preview-gate'
@@ -321,6 +322,8 @@ const prepareShellLaunchOptions = async (
           options.runtimeRoot,
           workloadCacheEnv
         )
+    if (options.inputRoot) shellEnv.OPEN_SCIENCE_INPUT_DIR = options.inputRoot
+    else delete shellEnv.OPEN_SCIENCE_INPUT_DIR
   } catch (error) {
     throw new ShellPreparationError({
       stdout: '',
@@ -348,7 +351,8 @@ const prepareShellLaunchOptions = async (
           env: baseEnv,
           pathEnvironment: {
             OPEN_SCIENCE_HANDOFF_DIR: options.handoffDir,
-            ...workloadCacheEnv
+            ...workloadCacheEnv,
+            ...(options.inputRoot ? { OPEN_SCIENCE_INPUT_DIR: options.inputRoot } : {})
           },
           cwd: options.cwd,
           commandText: options.command,
@@ -367,9 +371,14 @@ const prepareShellLaunchOptions = async (
                 ? []
                 : [
                     dirname(invocation.executable),
-                    ...environmentPathRoots(baseEnv, runtimePlatform)
+                    ...(runtimePlatform === 'win32'
+                      ? []
+                      : environmentPathRoots(baseEnv, runtimePlatform))
                   ])
             ],
+            ...(runtimePlatform === 'win32'
+              ? { optionalReadOnlyRoots: environmentPathRoots(baseEnv, runtimePlatform) }
+              : {}),
             readWriteRoots: [
               options.notebookSessionRoot ?? options.cwd,
               options.cwd,
@@ -377,7 +386,10 @@ const prepareShellLaunchOptions = async (
               notebookWorkloadCacheRoot(options.runtimeRoot)
             ],
             deniedReadRoots: options.protectedDirs ?? [],
-            deniedWriteRoots: options.protectedDirs ?? []
+            deniedWriteRoots: [
+              ...(options.inputRoot ? [options.inputRoot] : []),
+              ...(options.protectedDirs ?? [])
+            ]
           },
           ...(options.signal ? { signal: options.signal } : {})
         })
@@ -449,10 +461,7 @@ const runShellCommand = (
     platform?: NodeJS.Platform
     processSandbox?: NotebookProcessSandbox
     claimProcess?: (child: ChildProcess, platform: NodeJS.Platform) => () => void
-    prepareProcessOwnership?: () => {
-      claim(child: ChildProcess, platform: NodeJS.Platform): () => void
-      abort(): void
-    }
+    prepareProcessOwnership?: (options: { hosted: boolean }) => ShellProcessLaunchOwnership
     preparedLaunch?: PreparedShellLaunch
     terminateTree?: (process: ChildProcess) => Promise<ProcessTreeKillResult>
     previewAvailable?: () => boolean
@@ -543,16 +552,32 @@ const runShellCommand = (
 
     const spawnAdmission = sandboxed?.beginSpawn?.()
     let processTreeOwnership: ReturnType<typeof createPosixProcessTreeOwnership>
-    const launchOwnership = options.prepareProcessOwnership?.()
+    const launchOwnership = options.prepareProcessOwnership?.({
+      hosted: platform === 'win32' && Boolean(sandboxed?.confirmProcessTreeTermination)
+    })
+    const ownershipHost = launchOwnership?.host
     let child: ChildProcessWithoutNullStreams
     try {
       processTreeOwnership = createPosixProcessTreeOwnership(sandboxed?.env ?? baseEnv, platform)
       child = spawn(
-        sandboxed?.executable ?? invocation.executable,
-        sandboxed?.args ?? invocation.args,
+        ownershipHost ? process.execPath : (sandboxed?.executable ?? invocation.executable),
+        ownershipHost
+          ? [
+              ownershipHost.path,
+              ownershipHost.pendingPath,
+              ownershipHost.receiptId,
+              '--restore-electron-run-as-node',
+              JSON.stringify(processTreeOwnership.env?.ELECTRON_RUN_AS_NODE ?? null),
+              sandboxed?.executable ?? invocation.executable,
+              ...(sandboxed?.args ?? invocation.args)
+            ]
+          : (sandboxed?.args ?? invocation.args),
         {
           cwd: options.cwd,
-          env: processTreeOwnership.env,
+          env: ownershipHost
+            ? { ...processTreeOwnership.env, ELECTRON_RUN_AS_NODE: '1' }
+            : processTreeOwnership.env,
+          windowsHide: true,
           // On POSIX this makes the shell the leader of a private process group/session. Keep its handle
           // and stdio referenced (no unref), preserving normal completion while enabling safe -PGID kills.
           detached: platform !== 'win32'
@@ -856,10 +881,8 @@ class NotebookShellProcessAdapter implements NotebookShellProcess {
         projectId: string
         sessionId: string
         platform?: NodeJS.Platform
-      }): {
-        claim(child: ChildProcess, platform: NodeJS.Platform): () => void
-        abort(): void
-      }
+        hosted?: boolean
+      }): ShellProcessLaunchOwnership
     }
   ) {}
 
@@ -907,20 +930,18 @@ class NotebookShellProcessAdapter implements NotebookShellProcess {
 
   private ownershipClaim(request: NotebookShellProcessRequest): {
     claimProcess?: (child: ChildProcess, platform: NodeJS.Platform) => () => void
-    prepareProcessOwnership?: () => {
-      claim(child: ChildProcess, platform: NodeJS.Platform): () => void
-      abort(): void
-    }
+    prepareProcessOwnership?: (options: { hosted: boolean }) => ShellProcessLaunchOwnership
   } {
     if (!this.processOwnership || !request.runId) return {}
     if (this.processOwnership.beginLaunch) {
       return {
-        prepareProcessOwnership: () =>
+        prepareProcessOwnership: ({ hosted }) =>
           this.processOwnership!.beginLaunch!({
             runId: request.runId!,
             projectId: request.projectId,
             sessionId: request.sessionId,
-            platform: this.platform
+            platform: this.platform,
+            hosted: this.platform === 'win32' && hosted
           })
       }
     }

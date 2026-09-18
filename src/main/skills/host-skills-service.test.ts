@@ -8,9 +8,22 @@ import type { BundledSkill } from './registry'
 import { HostSkillsService, type HostSkillsCatalog } from './host-skills-service'
 import { UserSkillRepository } from './user-skill-repository'
 
+const cleanupFailure = vi.hoisted(() => ({ path: undefined as string | undefined }))
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return {
+    ...actual,
+    rm: async (path: Parameters<typeof actual.rm>[0], options: Parameters<typeof actual.rm>[1]) => {
+      if (path === cleanupFailure.path) throw new Error('cleanup failed')
+      return actual.rm(path, options)
+    }
+  }
+})
+
 const roots: string[] = []
 
 afterEach(async () => {
+  cleanupFailure.path = undefined
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
@@ -68,6 +81,53 @@ const makeFixture = async (): Promise<{
 }
 
 describe('HostSkillsService', () => {
+  it.each(['draft-cleanup', 'catalog-refresh'] as const)(
+    'reports committed publication after %s fails',
+    async (phase) => {
+      const { service, root, reload, userSkills } = await makeFixture()
+      await service.dispatch({
+        op: 'edit',
+        params: {
+          name: 'committed',
+          path: 'SKILL.md',
+          content: '---\nname: committed\ndescription: Test skill.\n---\nInstructions.'
+        }
+      })
+      if (phase === 'catalog-refresh') reload.mockRejectedValueOnce(new Error('refresh failed'))
+      else {
+        cleanupFailure.path = join(root, 'skills', 'drafts', 'committed')
+      }
+      await expect(
+        service.dispatch({ op: 'publish', params: { name: 'committed' } })
+      ).rejects.toThrow(/was published.*failed/)
+      const installed = (await userSkills.list()).find((skill) => skill.name === 'committed')!
+      expect(installed).toBeDefined()
+      await expect(
+        service.dispatch({ op: 'read', params: { name: installed.id } })
+      ).resolves.toMatchObject({ origin: 'personal' })
+      expect(reload).toHaveBeenCalledTimes(phase === 'catalog-refresh' ? 1 : 0)
+    }
+  )
+
+  it('reports committed deletion when catalog refresh fails', async () => {
+    const { service, reload, userSkills } = await makeFixture()
+    await service.dispatch({
+      op: 'edit',
+      params: {
+        name: 'committed',
+        path: 'SKILL.md',
+        content: '---\nname: committed\ndescription: Test skill.\n---\nInstructions.'
+      }
+    })
+    await service.dispatch({ op: 'publish', params: { name: 'committed' } })
+    const id = (await userSkills.list()).find((skill) => skill.name === 'committed')!.id
+    reload.mockRejectedValueOnce(new Error('refresh failed'))
+    await expect(service.dispatch({ op: 'delete', params: { name: id } })).rejects.toThrow(
+      `Skill "${id}" was deleted, but catalog refresh failed`
+    )
+    expect(await userSkills.list()).toEqual([])
+  })
+
   it('validates a draft through the same frontmatter contract used by publish', async () => {
     const { service } = await makeFixture()
     await service.dispatch({

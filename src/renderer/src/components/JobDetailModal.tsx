@@ -7,12 +7,16 @@ import { useTranslation } from 'react-i18next'
 import type { JobSummary } from '../../../shared/compute'
 import { useSessionJobStore } from '@/stores/session-job-store'
 import { Button } from '@/components/ui/button'
-import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
+import {
+  dialogOverlayClassName,
+  dialogPanelClassName,
+  dialogTitleClassName
+} from '@/components/ui/dialog-chrome'
 import { cn, formatByteSize } from '@/lib/utils'
 import { JobStatusBadge } from './JobStatusBadge'
 import { JobTerminalOutput } from './JobTerminalOutput'
 import { ErrorNotice } from './error-notice'
-import { formatDuration, jobElapsedMs } from './remote-job-badge-utils'
+import { formatDuration, isJobElapsedLive, jobElapsedMs } from './remote-job-badge-utils'
 import { FileBrowserModal } from '../pages/settings/FileBrowserModal'
 import { useSettingsStore } from '@/stores/settings-store'
 import {
@@ -44,10 +48,12 @@ function SessionJobsList({
     .sort((a, b) => b.created_at - a.created_at)
 
   const [now, setNow] = useState(() => Date.now())
+  const hasLiveElapsed = jobs.some(isJobElapsedLive)
   useEffect(() => {
+    if (!hasLiveElapsed) return
     const id = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(id)
-  }, [])
+  }, [hasLiveElapsed])
 
   return (
     <>
@@ -59,7 +65,7 @@ function SessionJobsList({
           </div>
         ) : (
           jobs.map((job) => {
-            const isRunning = job.status === 'running' || job.status === 'submitted'
+            const isRunning = isJobElapsedLive(job)
             const elapsedMs = jobElapsedMs(job, now)
             const elapsedStr = formatDuration(elapsedMs)
             const intentDisplay =
@@ -144,7 +150,7 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
 
   // Track elapsed time for running jobs
   const [now, setNow] = useState(() => Date.now())
-  const isRunning = latestJob.status === 'running' || latestJob.status === 'submitted'
+  const isRunning = isJobElapsedLive(latestJob)
   const isActive =
     latestJob.status === 'queued' ||
     latestJob.status === 'submitted' ||
@@ -421,10 +427,10 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
                 )
               : latestJob.last_poll_error.includes('recovery_pending')
                 ? t(
-                    'Checking whether the original job started. Open Science will check again without resubmitting it.'
+                    'Checking whether the original job started. Open-Science will check again without resubmitting it.'
                   )
                 : t(
-                    'The latest remote observation failed. The last confirmed execution state is shown; Open Science will check again.'
+                    'The latest remote observation failed. The last confirmed execution state is shown; Open-Science will check again.'
                   )}
         </div>
       ) : null}
@@ -436,7 +442,7 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
             tone="amber"
             title={
               latestJob.harvested_at === undefined
-                ? t('Harvest pending. Open Science will retry automatically.')
+                ? t('Harvest pending. Open-Science will retry automatically.')
                 : t('Harvest failed. Remote files were left untouched.')
             }
             description={
@@ -635,7 +641,7 @@ export function JobDetailModal({
           >
             {/* Header */}
             <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
-              <span className="text-[14px] font-semibold">{t('Remote job details')}</span>
+              <span className={dialogTitleClassName}>{t('Remote job details')}</span>
               <Dialog.Close asChild>
                 <Button type="button" variant="ghost" size="icon-sm" aria-label={t('Close')}>
                   <X className="size-4" />

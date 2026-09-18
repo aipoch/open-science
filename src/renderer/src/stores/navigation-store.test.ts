@@ -5,6 +5,7 @@ import {
   type PersistedChatSession
 } from '../../../shared/session-persistence'
 import type { Project } from '../../../shared/projects'
+import { createLinearConversationGraph } from '../../../shared/conversation-graph'
 import { recordLastOpenedProject } from '@/lib/last-opened-project'
 import { createInitialProjectState, useProjectStore } from './project-store'
 import { createInitialSessionState, useSessionStore } from './session-store'
@@ -76,6 +77,136 @@ beforeEach(() => {
 })
 
 describe('navigation store', () => {
+  it.each(['library', 'project', 'collection', 'item'] as const)(
+    'returns from %s to the selected older conversation instead of the latest one',
+    (entry) => {
+      useSessionStore
+        .getState()
+        .hydrateSessions([
+          createSession({ id: 'older', updatedAt: 1 }),
+          createSession({ id: 'newer', updatedAt: 2 })
+        ])
+      useNavigationStore.getState().openSession('project-a', 'older', 'user')
+      const sessions = useSessionStore.getState().sessions
+      const navigation = useNavigationStore.getState()
+      if (entry === 'project') navigation.openProjectLiterature('project-a', 'user')
+      else if (entry === 'collection') navigation.openCollectionLiterature('collection-1', 'user')
+      else if (entry === 'item') navigation.openLiteratureItem('item-1', 'user')
+      else navigation.openLibrary('user')
+      vi.mocked(recordLastOpenedProject).mockClear()
+
+      useNavigationStore.getState().returnFromLibrary('user')
+
+      expect(useNavigationStore.getState()).toMatchObject({
+        view: 'workspace',
+        activeProjectId: 'project-a',
+        userNavigationRevision: 3,
+        explicitNavigationRevision: 3
+      })
+      expect(useSessionStore.getState().selectedSessionId).toBe('older')
+      expect(useSessionStore.getState().sessions).toBe(sessions)
+      expect(recordLastOpenedProject).not.toHaveBeenCalled()
+    }
+  )
+
+  // Both Codex execution paths use the same renderer framework identity.
+  it.each(['claude-code', 'opencode', 'codex'] as const)(
+    'retains the active conversation branch for %s on return',
+    (agentFrameworkId) => {
+      const graph = createLinearConversationGraph({
+        sessionId: 'session-1',
+        messages: [],
+        createdAt: 1,
+        updatedAt: 1
+      })
+      graph.branches.push({
+        ...graph.branches[0],
+        id: 'alternate',
+        parentBranchId: graph.branches[0].id
+      })
+      graph.frames[0].activeBranchId = 'alternate'
+      useSessionStore
+        .getState()
+        .hydrateSessions([createSession({ agentFrameworkId, conversationGraph: graph })])
+      useNavigationStore.getState().openSession('project-a', 'session-1', 'user')
+      const selected = useSessionStore.getState().sessions[0]
+      useNavigationStore.getState().openLibrary('user')
+      useNavigationStore.getState().returnFromLibrary('user')
+      expect(useSessionStore.getState().sessions[0]).toBe(selected)
+      expect(selected.conversationGraph?.frames[0].activeBranchId).toBe('alternate')
+    }
+  )
+
+  it('returns to the New Conversation without selecting an existing Session', () => {
+    useSessionStore.getState().hydrateSessions([createSession({})])
+    useNavigationStore.getState().openProject('project-a', 'user')
+    useSessionStore.getState().clearSelection()
+    useNavigationStore.getState().openProjectLiterature('project-a', 'user')
+    useNavigationStore.getState().returnFromLibrary('user')
+    expect(useNavigationStore.getState()).toMatchObject({
+      view: 'workspace',
+      activeProjectId: 'project-a'
+    })
+    expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
+    expect(useSessionStore.getState().sessions).toHaveLength(1)
+  })
+
+  it('returns Home after a Home entry even with a retained Session selection', () => {
+    useSessionStore.getState().hydrateSessions([createSession({})])
+    useNavigationStore.getState().openSession('project-a', 'session-1', 'user')
+    useNavigationStore.getState().goHome('user')
+    useNavigationStore.getState().openLibrary('user')
+    useNavigationStore.getState().returnFromLibrary('user')
+    expect(useNavigationStore.getState()).toMatchObject({
+      view: 'home',
+      activeProjectId: undefined
+    })
+    expect(useSessionStore.getState().selectedSessionId).toBe('session-1')
+  })
+
+  it.each(['deleted', 'archived'] as const)(
+    'returns Home when the Project is %s in Library',
+    (kind) => {
+      useNavigationStore.getState().openProject('project-a', 'user')
+      useNavigationStore.getState().openLibrary('user')
+      useProjectStore.setState({
+        projects: kind === 'deleted' ? [] : [{ ...createProject('project-a'), archivedAt: 2 }]
+      })
+      useNavigationStore.getState().returnFromLibrary('user')
+      expect(useNavigationStore.getState()).toMatchObject({
+        view: 'home',
+        activeProjectId: undefined
+      })
+    }
+  )
+
+  it.each(['missing', 'archived', 'foreign'] as const)(
+    'clears a %s Session selection before returning to the Project',
+    (kind) => {
+      useNavigationStore.setState({ view: 'library', activeProjectId: 'project-a' })
+      useSessionStore.getState().hydrateSessions([
+        createSession({
+          ...(kind === 'archived' ? { archivedAt: 2 } : {}),
+          ...(kind === 'foreign' ? { projectId: 'project-b' } : {})
+        })
+      ])
+      useSessionStore.setState({ selectedSessionId: kind === 'missing' ? 'missing' : 'session-1' })
+      useNavigationStore.getState().returnFromLibrary('user')
+      expect(useNavigationStore.getState()).toMatchObject({
+        view: 'workspace',
+        activeProjectId: 'project-a'
+      })
+      expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
+    }
+  )
+
+  it('ignores a stale return action after explicit navigation has already left Library', () => {
+    useNavigationStore.getState().openProject('project-b', 'user')
+    const before = useNavigationStore.getState()
+    useNavigationStore.getState().returnFromLibrary('user')
+    expect(useNavigationStore.getState()).toBe(before)
+  })
+
   it.each(['library', 'item'] as const)(
     'guards %s navigation until dirty preview leave is approved',
     (target) => {

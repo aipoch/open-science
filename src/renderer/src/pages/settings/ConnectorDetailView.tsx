@@ -154,7 +154,7 @@ const ConnectorDetailView = ({
         <SettingsLoadNotice
           state={loadState === 'error' ? 'error' : 'loading'}
           loadingLabel={t('Loading Connector…')}
-          errorMessage={t('Open Science could not load this Connector.')}
+          errorMessage={t('Open-Science could not load this Connector.')}
           onRetry={retryLoad}
         />
       </div>
@@ -201,7 +201,13 @@ const ConnectorDetailView = ({
       ) : null}
 
       {operationError ? (
-        <ErrorNotice role="alert" tone="amber" className="mt-4" description={operationError} />
+        <ErrorNotice
+          inline
+          role="alert"
+          tone="amber"
+          className="mt-4"
+          description={operationError}
+        />
       ) : null}
 
       <ResourceAvailability

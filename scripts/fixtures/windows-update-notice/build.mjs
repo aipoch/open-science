@@ -39,7 +39,7 @@ for (const [directory, version, code, hook] of [
       name,
       version,
       description: 'Isolated Windows update notice test',
-      author: 'Open Science'
+      author: 'Open-Science'
     })
   )
   await writeFile(

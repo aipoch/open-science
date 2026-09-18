@@ -1,3 +1,4 @@
+import { initDataRoot } from '../storage-root'
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -39,6 +40,7 @@ const { SettingsRepository } = await import('./repository')
 
 it('bootstraps through real local HTTP, restarts the profile, and submits a persisted Task', async () => {
   const root = await mkdtemp(join(tmpdir(), 'osci-bootstrap-integration-'))
+  initDataRoot(root)
   const adapterPath = join(root, 'adapter.mjs')
   const nativePath = join(root, 'codex')
   let installed = false
@@ -190,7 +192,7 @@ it('bootstraps through real local HTTP, restarts the profile, and submits a pers
       applicationEvents: events,
       tasks: api,
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: 'test',
         configRoot: root,
         platform: process.platform,

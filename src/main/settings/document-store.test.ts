@@ -61,6 +61,24 @@ afterEach(async () => {
 })
 
 describe('settings document store', () => {
+  it('checks the target after staging and keeps the original document on a failed publication guard', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'guarded-settings-store-'))
+    const store = new SettingsDocumentStore(storageRoot)
+    await store.mutate((settings) => ({ ...settings, dataRoot: '/original/research' }))
+    const original = await readFile(join(storageRoot, 'settings.json'), 'utf8')
+    const guard = vi.fn(() => {
+      throw new Error('target changed')
+    })
+    await expect(
+      store.mutate((settings) => ({ ...settings, dataRoot: '/other/research' }), guard)
+    ).rejects.toThrow('target changed')
+    expect(guard).toHaveBeenCalledOnce()
+    expect(await readFile(join(storageRoot, 'settings.json'), 'utf8')).toBe(original)
+    expect(await readdir(storageRoot)).toEqual(['settings.json'])
+    await store.mutate((settings) => ({ ...settings, notificationsEnabled: false }))
+    expect((await store.read()).dataRoot).toBe('/original/research')
+  })
+
   it('exposes one atomic document owner', async () => {
     expect(Object.keys(await import('./document-store')).sort()).toEqual(['SettingsDocumentStore'])
   })
@@ -163,8 +181,16 @@ describe('settings document store', () => {
     const store = new SettingsDocumentStore(storageRoot)
     const update = vi.fn((settings) => ({ ...settings, notificationsEnabled: false }))
 
-    await expect(store.read()).rejects.toBeInstanceOf(SyntaxError)
-    await expect(store.mutate(update)).rejects.toBeInstanceOf(SyntaxError)
+    await expect(store.read()).rejects.toMatchObject({
+      name: 'SettingsDocumentReadError',
+      path: settingsPath,
+      cause: expect.any(SyntaxError)
+    })
+    await expect(store.mutate(update)).rejects.toMatchObject({
+      name: 'SettingsDocumentReadError',
+      path: settingsPath,
+      cause: expect.any(SyntaxError)
+    })
 
     expect(update).not.toHaveBeenCalled()
     await expect(readFile(settingsPath, 'utf8')).resolves.toBe(corruptContents)
@@ -218,7 +244,11 @@ describe('settings document store', () => {
     })
     faults.failOpenOnceWith = readFailure
 
-    await expect(store.mutate(update)).rejects.toBe(readFailure)
+    await expect(store.mutate(update)).rejects.toMatchObject({
+      name: 'SettingsDocumentReadError',
+      path: settingsPath,
+      cause: readFailure
+    })
     expect(openFile).toHaveBeenCalledWith(settingsPath, 'r')
     expect(update).not.toHaveBeenCalled()
     await expect(readFile(settingsPath, 'utf8')).resolves.toBe(originalContents)
@@ -282,4 +312,23 @@ describe('settings document store', () => {
       now.mockRestore()
     }
   })
+})
+
+it.each([
+  ['invalid JSON', '{invalid', /JSON|property|position/i],
+  ['invalid dataRoot', '{"version":2,"dataRoot":"relative"}', /dataRoot/i],
+  ['unsupported version', '{"version":99,"providers":[]}', /version 99/i]
+])('reports the file, reason and recovery action for %s', async (_name, contents, reason) => {
+  storageRoot = await mkdtemp(join(tmpdir(), 'settings-recovery-'))
+  const path = join(storageRoot, 'settings.json')
+  await writeFile(path, contents as string)
+  const error = await new SettingsDocumentStore(storageRoot).read().catch((error: unknown) => error)
+  expect(error).toMatchObject({
+    name: 'SettingsDocumentReadError',
+    path,
+    message: expect.stringContaining(path)
+  })
+  expect((error as Error).message).toMatch(reason as RegExp)
+  expect((error as Error).message).toMatch(/restore|recover/i)
+  expect(await readFile(path, 'utf8')).toBe(contents)
 })

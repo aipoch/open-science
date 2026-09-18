@@ -5,6 +5,7 @@
 // only while the user is actively typing one in.
 
 import type { OfficialVendorId } from './provider-registry'
+import { customProviderRequiresKey } from './provider-base-url'
 import type { PermissionProfileId } from './permission-profiles'
 import type {
   CustomReasoningEffortTransport,
@@ -133,6 +134,15 @@ export const selectClaudeSubscriptionProvider = <T extends { id: string; type: P
 // A provider advertises the explicit set of endpoints it serves; a framework supports a set too.
 export type ChatApiEndpoint = 'anthropic' | 'openai' | 'responses'
 
+// Route path each chat endpoint speaks. Raw API paths are literal and identical in every locale
+// (they must match a gateway's own documentation); only the surrounding copy is localized per
+// surface. Main and renderer share this one map so no surface keeps a private copy.
+export const ENDPOINT_PATHS: Record<ChatApiEndpoint, string> = {
+  anthropic: '/v1/messages',
+  openai: '/v1/chat/completions',
+  responses: '/v1/responses'
+}
+
 // The endpoints a provider offers. Absent/empty ⇒ treat as ['anthropic'] (every legacy provider, and
 // the migration target for the removed 'both' apiType, which mapped to ['anthropic','openai']).
 export const providerEndpoints = (provider: {
@@ -149,10 +159,15 @@ export const canUseClaudeProviderTransport = (provider: {
   type: ProviderType
   apiEndpoints?: readonly ChatApiEndpoint[]
   key?: string
+  baseUrl?: string
 }): boolean =>
   usesAppProviderTransport(provider.type) &&
   providerEndpoints(provider).includes('anthropic') &&
-  (provider.type !== 'custom' || Boolean(provider.key))
+  // A custom gateway needs credentials unless it is a loopback local model server, which serves the
+  // Anthropic route without one; the transport adapters already treat the key as optional.
+  (provider.type !== 'custom' ||
+    Boolean(provider.key) ||
+    !customProviderRequiresKey(provider.baseUrl))
 
 // A provider's endpoints are compatible with a framework only when they share at least one endpoint.
 // Codex's Responses-compatible bridge is a separate local gateway: it does not change the provider's
@@ -293,6 +308,9 @@ export type ProviderValidationFailure = {
   status?: number
   message?: string
   target?: ProviderValidationTarget
+  // Additional independently unavailable models/routes, only for model-not-found failures.
+  // Includes target; omitted for a single failure and for provider-wide failures.
+  targets?: ProviderValidationTarget[]
 }
 
 // Renderer-facing provider view: masked and stripped of every secret field.
@@ -371,9 +389,17 @@ export const providerValidationFailed = (
   target?: ProviderValidationTarget
 ): boolean =>
   provider.lastValidationFailure !== undefined &&
+  // A legacy 'incompatible' verdict is a derivable (provider, framework) relationship, not endpoint
+  // health; validation no longer records it, and stored copies must not hide the provider either.
+  provider.lastValidationFailure.category !== 'incompatible' &&
   (provider.lastValidationFailure.target === undefined ||
     (target !== undefined &&
-      providerValidationTargetMatches(provider.lastValidationFailure.target, target))) &&
+      [
+        provider.lastValidationFailure.target,
+        ...(provider.lastValidationFailure.category === 'model-not-found'
+          ? (provider.lastValidationFailure.targets ?? [])
+          : [])
+      ].some((failed) => providerValidationTargetMatches(failed, target)))) &&
   (provider.lastValidatedAt === undefined ||
     (target !== undefined &&
       provider.lastValidatedTarget !== undefined &&
@@ -511,8 +537,8 @@ export type AppIconVariantInfo = {
 
 // The ordered icon variants shown in Settings. The default (light) leads.
 export const APP_ICON_VARIANT_INFOS: readonly AppIconVariantInfo[] = [
-  { id: 'light', label: 'Light', description: 'The light Open Science logo.' },
-  { id: 'dark', label: 'Dark', description: 'The dark Open Science logo.' }
+  { id: 'light', label: 'Light', description: 'The light Open-Science logo.' },
+  { id: 'dark', label: 'Dark', description: 'The dark Open-Science logo.' }
 ]
 
 // Renderer-facing descriptor for one selectable agent framework (built from the main registry).
@@ -756,6 +782,9 @@ export type SetActiveProviderRequest = {
 
 // Validation may target a saved provider (key resolved from storage) or an unsaved draft.
 export type ValidateProviderRequest = {
+  // Test prospective form values; existing credentials are merged only in main.
+  // A definitive failure of the unchanged saved connection updates its health, not its config.
+  edit?: UpsertProviderRequest
   providerId?: string
   draft?: ProviderDraft
   // Optional model override for validating a saved provider before that model becomes active.
@@ -777,6 +806,8 @@ export type ValidationCategory =
   | 'unknown'
 
 export type ValidateProviderResult = {
+  // Exact prospective model and route tested by the edit/save operation.
+  testedTarget?: ProviderValidationTarget
   ok: boolean
   category: ValidationCategory
   status?: number
@@ -785,11 +816,26 @@ export type ValidateProviderResult = {
   // (`ok: true`) yet discarded — the provider was switched, deleted, or superseded by a newer test
   // while an async sign-in/probe was in flight. Callers that gate navigation on success (onboarding)
   // must treat `applied === false` as "do not advance": the stored provider does not reflect it.
-  // Absent means applied (the ordinary synchronous path).
+  // For prospective edits, absence makes no claim about persisted health; only true confirms it.
   applied?: boolean
   // Set when the user explicitly cancelled a browser sign-in. Distinct from applied:false (provider
   // changed): the login was intentionally stopped, not invalidated by a concurrent edit.
   cancelled?: boolean
+  // True when the endpoint itself was probed (ok carries endpoint health) but the active agent
+  // framework cannot drive this provider. A derivable (provider, framework) relationship surfaced
+  // for immediate UI feedback — never persisted as a validation failure, because it goes stale the
+  // moment the framework changes.
+  frameworkIncompatible?: boolean
+}
+
+export type SaveValidatedProviderResult = {
+  runtimeReconnectFailed?: boolean
+  validation: ValidateProviderResult
+  // Present only after the atomic configuration and health write has completed.
+  providerId?: string
+  // May also reflect a health-only update after rejected validation, without providerId.
+  // Snapshot refresh can fail after a committed write; providerId still records that outcome.
+  snapshot?: SettingsSnapshot
 }
 
 // Request to refresh a saved provider's model list from the vendor's live API (fills the bundled
@@ -1391,6 +1437,7 @@ export type ConversationSkillImportResult = {
     status: 'imported' | 'unchanged' | 'updated'
   }>
   errors?: Array<{ name: string; error: string }>
+  warnings?: string[]
 }
 
 // Search GitHub by keyword, or scan a direct repo reference for skill directories.

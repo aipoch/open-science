@@ -15,7 +15,7 @@ describe('startLocalCrashReporting', () => {
 
       const status = startLocalCrashReporting({
         platform,
-        productName: 'Open Science',
+        productName: 'Open-Science',
         companyName: 'aipoch',
         appVersion: '0.9.1',
         start
@@ -23,7 +23,7 @@ describe('startLocalCrashReporting', () => {
 
       expect(status).toEqual({ enabled: true, uploadsEnabled: false })
       expect(start).toHaveBeenCalledWith({
-        productName: 'Open Science',
+        productName: 'Open-Science',
         companyName: 'aipoch',
         uploadToServer: false,
         compress: false,
@@ -37,7 +37,7 @@ describe('startLocalCrashReporting', () => {
 
     const status = startLocalCrashReporting({
       platform: 'freebsd',
-      productName: 'Open Science',
+      productName: 'Open-Science',
       companyName: 'aipoch',
       appVersion: '0.9.1',
       start
@@ -55,7 +55,7 @@ describe('startLocalCrashReporting', () => {
 
     startLocalCrashReporting({
       platform: 'darwin',
-      productName: 'Open Science',
+      productName: 'Open-Science',
       companyName: 'aipoch',
       appVersion: '0.25.1',
       start

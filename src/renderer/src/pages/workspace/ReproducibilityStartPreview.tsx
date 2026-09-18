@@ -1,3 +1,4 @@
+import { InlineNotice } from '@/components/ui/inline-notice'
 import { useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
@@ -50,67 +51,73 @@ export const ReproducibilityStartPreview = ({
           {preview.requested ? (
             <p className="font-medium text-text-100">{frontierLabel(preview.requested)}</p>
           ) : null}
-          {preview.dependencies.length ? (
-            <div className="space-y-1 text-status-warning-foreground dark:text-status-warning-dark-foreground">
-              <p>{t('This point still depends on earlier Notebook state.')}</p>
-              <ul className="space-y-1">
-                {preview.dependencies.map((dependency, index) => (
-                  <li key={index} className="[overflow-wrap:anywhere]">
-                    {dependency.from && dependency.to
-                      ? t('{{run}} requires state from {{upstream}}.', {
-                          run: activityLabel(dependency.to),
-                          upstream: activityLabel(dependency.from)
-                        })
-                      : t('The complete dependency path could not be reconstructed.')}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-          {preview.needsPreparation && preview.effective ? (
-            <div className="space-y-1 rounded-md bg-bg-200/55 p-2.5">
-              <p>
-                {t('The check will start earlier and rerun the preparation steps listed below.')}
-              </p>
-              <p className="font-medium">{frontierLabel(preview.effective)}</p>
-            </div>
-          ) : null}
-          {preview.unavailableFiles.length ? (
-            <div className="space-y-1 text-status-warning-foreground dark:text-status-warning-dark-foreground">
-              <p>{t('Some required files cannot be restored safely.')}</p>
-              <ul>
-                {preview.unavailableFiles.map((file) => (
-                  <li key={file.entityId} className="[overflow-wrap:anywhere]">
-                    {file.label}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-          {!preview.effective ? (
-            <div
-              role="status"
-              className="space-y-1 text-status-warning-foreground dark:text-status-warning-dark-foreground"
-            >
-              <p>
-                {preview.noDownstream
-                  ? t('No downstream runs remain after this point.')
-                  : !preview.requested
-                    ? t('No saved starting point is available for this node.')
-                    : t('This starting point cannot be restored safely.')}
-              </p>
-              {!preview.noDownstream && issues.map((issue) => <p key={issue}>{issue}</p>)}
-            </div>
-          ) : null}
-          {preview.missingFileMetadata ? (
-            <p className="text-status-warning-foreground dark:text-status-warning-dark-foreground">
-              {t('Captured file metadata is missing.')}
-            </p>
-          ) : null}
-          {preview.missingRunMetadata ? (
-            <p className="text-status-warning-foreground dark:text-status-warning-dark-foreground">
-              {t('The complete dependency path could not be reconstructed.')}
-            </p>
+          {preview.dependencies.length > 0 ||
+          preview.needsPreparation ||
+          preview.unavailableFiles.length > 0 ||
+          !preview.effective ||
+          preview.missingFileMetadata ||
+          preview.missingRunMetadata ? (
+            <InlineNotice>
+              {preview.dependencies.length ? (
+                <div className="space-y-1 text-muted-foreground">
+                  <p>{t('This point still depends on earlier Notebook state.')}</p>
+                  <ul className="space-y-1">
+                    {preview.dependencies.map((dependency, index) => (
+                      <li key={index} className="[overflow-wrap:anywhere]">
+                        {dependency.from && dependency.to
+                          ? t('{{run}} requires state from {{upstream}}.', {
+                              run: activityLabel(dependency.to),
+                              upstream: activityLabel(dependency.from)
+                            })
+                          : t('The complete dependency path could not be reconstructed.')}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {preview.needsPreparation && preview.effective ? (
+                <div className="space-y-1 rounded-md bg-bg-200/55 p-2.5">
+                  <p>
+                    {t(
+                      'The check will start earlier and rerun the preparation steps listed below.'
+                    )}
+                  </p>
+                  <p className="font-medium">{frontierLabel(preview.effective)}</p>
+                </div>
+              ) : null}
+              {preview.unavailableFiles.length ? (
+                <div className="space-y-1 text-muted-foreground">
+                  <p>{t('Some required files cannot be restored safely.')}</p>
+                  <ul>
+                    {preview.unavailableFiles.map((file) => (
+                      <li key={file.entityId} className="[overflow-wrap:anywhere]">
+                        {file.label}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {!preview.effective ? (
+                <div role="status" className="space-y-1 text-muted-foreground">
+                  <p>
+                    {preview.noDownstream
+                      ? t('No downstream runs remain after this point.')
+                      : !preview.requested
+                        ? t('No saved starting point is available for this node.')
+                        : t('This starting point cannot be restored safely.')}
+                  </p>
+                  {!preview.noDownstream && issues.map((issue) => <p key={issue}>{issue}</p>)}
+                </div>
+              ) : null}
+              {preview.missingFileMetadata ? (
+                <p className="text-muted-foreground">{t('Captured file metadata is missing.')}</p>
+              ) : null}
+              {preview.missingRunMetadata ? (
+                <p className="text-muted-foreground">
+                  {t('The complete dependency path could not be reconstructed.')}
+                </p>
+              ) : null}
+            </InlineNotice>
           ) : null}
           {plan ? (
             <>

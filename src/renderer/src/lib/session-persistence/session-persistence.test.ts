@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { hydrateSession } from '../../stores/session-store-persistence-owner'
 import { usePackageOperationStore } from '../../stores/package-operation-store'
 
+import { AcpPermissionWaitOwner } from '../../../../main/acp/permission-wait-owner'
 import { SessionPersistenceStateOwner } from '../../../../main/session-persistence/state-owner'
 import { preserveImportedSession } from '../../../../main/session-persistence/imported-session'
 import { ARTIFACT_FINALIZATION_INVALID_PROOF } from '../../../../shared/artifacts'
@@ -8,6 +10,8 @@ import {
   activateConversationBranch,
   createLinearConversationGraph,
   forkEditedConversationMessage,
+  projectConversationMessage,
+  resolveActiveConversationMessages,
   synchronizeActiveConversationMessages
 } from '../../../../shared/conversation-graph'
 import {
@@ -54,6 +58,70 @@ const createPersistedSession = (
   updatedAt: 1710000000000,
   ...overrides
 })
+
+const createCompletedTaskReplyConflict = (
+  agentFrameworkId: PersistedChatSession['agentFrameworkId'] = 'opencode'
+): {
+  base: PersistedChatSession
+  submitted: PersistedChatSession
+  latest: PersistedChatSession
+} => {
+  const prompt = {
+    id: 'cli-prompt',
+    role: 'user' as const,
+    content: 'CLI request',
+    status: 'complete' as const,
+    eventIds: [],
+    createdAt: 1,
+    updatedAt: 1
+  }
+  const base = materializeSessionConversationGraph(
+    createPersistedSession({
+      revision: 2,
+      agentFrameworkId,
+      status: 'running',
+      activeRun: { promptMessageId: prompt.id, startedAt: 1 },
+      messages: [prompt]
+    })
+  )
+  const reply = {
+    id: 'renderer-stream',
+    role: 'agent' as const,
+    content: 'Same runtime reply',
+    status: 'streaming' as const,
+    streamId: 'provider-stream',
+    responseToMessageId: prompt.id,
+    eventIds: ['runtime-event'],
+    createdAt: 3,
+    updatedAt: 3
+  }
+  const submitted = materializeSessionConversationGraph({
+    ...base,
+    messages: [prompt, reply],
+    title: 'Local title'
+  })
+  const latest = materializeSessionConversationGraph({
+    ...base,
+    revision: 3,
+    taskRunCommitId: 'completed-task',
+    status: 'idle',
+    activeRun: undefined,
+    messages: [
+      prompt,
+      {
+        ...reply,
+        id: 'durable-task-reply',
+        streamId: undefined,
+        status: 'complete',
+        createdAt: 2,
+        updatedAt: 2,
+        completedAt: 2,
+        turnUsageUnavailable: true
+      }
+    ]
+  })
+  return { base, submitted, latest }
+}
 
 const createHistoricalPlan = (
   artifactVersionId: string,
@@ -2817,6 +2885,187 @@ describe('renderer session persistence bridge', () => {
     })
   })
 
+  it.each([
+    'delayed',
+    'delivered',
+    'new-run',
+    'new-branch',
+    'new-permission',
+    'competing-content'
+  ] as const)(
+    'saves a completed turn after Main clears its last durable permission wait (%s)',
+    async (scenario) => {
+      const prompt = {
+        id: 'prompt-1',
+        role: 'user' as const,
+        content: 'Run the analysis',
+        status: 'complete' as const,
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+      const partial = {
+        id: 'agent-message-1',
+        role: 'agent' as const,
+        content: 'Analysis result',
+        status: 'streaming' as const,
+        streamId: 'run-1',
+        responseToMessageId: prompt.id,
+        eventIds: ['event-1'],
+        createdAt: 2,
+        updatedAt: 2
+      }
+      let durable = materializeSessionConversationGraph(
+        createPersistedSession({
+          revision: 116,
+          agentFrameworkId: 'opencode',
+          status: 'running',
+          activeRun: { promptMessageId: prompt.id, startedAt: 1 },
+          messages: [prompt, partial]
+        })
+      )
+      const main = new SessionPersistenceStateOwner({
+        repository: {
+          loadSessionWithDiagnostics: async () => ({
+            status: 'found',
+            session: structuredClone(durable)
+          }),
+          saveSession: async (candidate) => {
+            durable = JSON.parse(
+              JSON.stringify({ ...candidate, revision: (durable.revision ?? 0) + 1 })
+            )
+            return structuredClone(durable)
+          }
+        },
+        fileIndex: { syncSession: async () => [] },
+        assertMutable: () => undefined,
+        notifyFilesChanged: () => undefined,
+        notifyRuntimeContextSessionUpdated: () => undefined,
+        log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+      })
+      const permissions = new AcpPermissionWaitOwner({
+        readSessionRuntimeContext: (projectId, sessionId) =>
+          main.readRuntimeContext(projectId, sessionId),
+        patchSessionRuntimeContext: (command) => main.patchRuntimeContext(command),
+        containsMessageOnActiveBranch: (projectId, sessionId, messageId) =>
+          main.containsMessageOnActiveBranch(projectId, sessionId, messageId),
+        loadSessionForContinuation: async () => structuredClone(durable)
+      })
+      const candidate = {
+        projectId: durable.projectId,
+        promptMessageId: prompt.id,
+        fingerprint: 'a'.repeat(64),
+        request: {
+          requestId: 'permission-1',
+          sessionId: durable.id,
+          toolCallId: 'tool-1',
+          title: 'Write analysis output',
+          options: [{ optionId: 'allow', name: 'Allow', kind: 'allow_once' as const }]
+        }
+      }
+      await permissions.persist(candidate)
+      expect(durable).toMatchObject({ revision: 117, status: 'waiting-permission' })
+      useSessionStore.getState().hydrateSessions([durable])
+      const saveSession = vi.fn<SessionPersistenceApi['saveSession']>((session, options) =>
+        main.saveSession(session, options)
+      )
+      const api = createApi({ loadOne: async () => structuredClone(durable), saveSession })
+      const save = createStoreSaver(api, useSessionStore.getState())
+
+      // The permission-clear snapshot can arrive after runtime output and stop have been projected.
+      await permissions.clearLive(candidate)
+      if (scenario === 'new-run') {
+        await main.saveSession({
+          ...durable,
+          activeRun: { promptMessageId: 'another-prompt', startedAt: 3 }
+        })
+      }
+      if (scenario === 'new-branch') {
+        const graph = forkEditedConversationMessage(
+          durable.conversationGraph!,
+          prompt.id,
+          'other-branch',
+          3
+        )
+        await main.saveSession({
+          ...durable,
+          conversationGraph: graph,
+          messages: resolveActiveConversationMessages(graph).map(projectConversationMessage)
+        })
+      }
+      if (scenario === 'new-permission') {
+        await permissions.persist({
+          ...candidate,
+          request: { ...candidate.request, requestId: 'permission-2' }
+        })
+      }
+      if (scenario === 'competing-content') {
+        await main.saveSession(
+          materializeSessionConversationGraph({
+            ...durable,
+            messages: [prompt, { ...partial, content: 'Remote replacement' }],
+            conversationGraph: synchronizeActiveConversationMessages(
+              durable.conversationGraph!,
+              [prompt, { ...partial, content: 'Remote replacement', updatedAt: 3 }],
+              3
+            )
+          })
+        )
+        useSessionStore.getState().appendAgentMessageChunk({
+          sessionId: durable.id,
+          streamId: partial.streamId,
+          eventId: 'local-output',
+          promptMessageId: prompt.id,
+          content: ' local continuation'
+        })
+      }
+      if (scenario === 'delivered') {
+        useSessionStore.getState().upsertPersistedSession(durable)
+        await save(useSessionStore.getState())
+      }
+      useSessionStore.getState().clearPermissionPending(durable.id, { authority: 'settled' })
+      useSessionStore.getState().finishRun(durable.id, undefined, prompt.id)
+      expect(toPersistedSession(useSessionStore.getState().sessions[0])).toMatchObject({
+        status: 'idle'
+      })
+      if (scenario === 'competing-content') {
+        expect(
+          durable.conversationGraph?.messages.find(({ id }) => id === partial.id)?.content
+        ).toBe('Remote replacement')
+        expect(
+          toPersistedSession(
+            useSessionStore.getState().sessions[0]
+          ).conversationGraph?.messages.find(({ id }) => id === partial.id)?.content
+        ).toBe('Analysis result local continuation')
+      }
+      if (scenario === 'new-run' || scenario === 'new-branch' || scenario === 'competing-content') {
+        const before = structuredClone(durable)
+        await expect(save(useSessionStore.getState())).rejects.toThrow('Session revision conflict:')
+        expect(durable).toEqual(before)
+        return
+      }
+      await expect(save(useSessionStore.getState())).resolves.toBeUndefined()
+      if (scenario === 'new-permission') {
+        expect(durable.status).toBe('waiting-permission')
+        expect(durable.runtimeContext?.permission?.request.requestId).toBe('permission-2')
+        return
+      }
+      expect(durable).toMatchObject({
+        status: 'idle',
+        messages: [
+          expect.objectContaining({ id: prompt.id }),
+          expect.objectContaining({
+            id: partial.id,
+            status: 'complete',
+            content: 'Analysis result'
+          })
+        ]
+      })
+      expect(durable.activeRun).toBeUndefined()
+      expect(durable.runtimeContext?.permission).toBeUndefined()
+    }
+  )
+
   it('retries a local graph save over a concurrent main-owned permission revision', async () => {
     const base = materializeSessionConversationGraph(
       createPersistedSession({
@@ -4410,6 +4659,115 @@ describe('renderer session persistence bridge', () => {
     }
   })
 
+  it.each(['claude-code', 'opencode', 'codex-response', 'codex-bridge'] as const)(
+    'adopts the durable identity of the same completed %s Task reply before export',
+    async (agentFrameworkId) => {
+      const { base, submitted, latest } = createCompletedTaskReplyConflict(
+        agentFrameworkId === 'codex-response' || agentFrameworkId === 'codex-bridge'
+          ? 'codex'
+          : agentFrameworkId
+      )
+      const saveSession = vi
+        .fn<SessionPersistenceApi['saveSession']>()
+        .mockRejectedValueOnce(new SessionRevisionConflictError(2, 3))
+        .mockImplementation(async (session) => ({ ...session, revision: 4 }))
+      const api = createApi({ loadOne: vi.fn().mockResolvedValue(latest), saveSession })
+      const persistence = createOrderedSessionPersistence(api)
+      persistence.seedAcknowledgedSessions([base])
+
+      const saved = await saveSessionInOrder(submitted, persistence, api)
+      expect(saved).toMatchObject({
+        revision: 4,
+        status: 'idle',
+        title: 'Local title',
+        taskRunCommitId: 'completed-task'
+      })
+      expect(saved.activeRun).toBeUndefined()
+      expect(saved.conversationGraph).toEqual(latest.conversationGraph)
+      expect(saved.messages.map(({ id }) => id)).toEqual(['cli-prompt', 'durable-task-reply'])
+      await expect(persistence.flush()).resolves.toBeUndefined()
+    }
+  )
+
+  it('retains the renderer terminal context sample while reconciling the Task reply identity', async () => {
+    const { base, submitted, latest } = createCompletedTaskReplyConflict()
+    const sample = {
+      id: 'stop-event',
+      timestamp: 4,
+      termination: { kind: 'stop' as const, stopReason: 'end_turn' as const },
+      contextWindow: { used: 10, size: 100 },
+      source: 'local-estimate' as const
+    }
+    submitted.conversationGraph!.messages[0].contextWindowSamples = [sample]
+    submitted.conversationGraph!.messages[0].updatedAt = 4
+    const saveSession = vi
+      .fn<SessionPersistenceApi['saveSession']>()
+      .mockRejectedValueOnce(new SessionRevisionConflictError(2, 3))
+      .mockImplementation(async (session) => ({ ...session, revision: 4 }))
+    const api = createApi({ loadOne: vi.fn().mockResolvedValue(latest), saveSession })
+    const persistence = createOrderedSessionPersistence(api)
+    persistence.seedAcknowledgedSessions([base])
+    const saved = await saveSessionInOrder(submitted, persistence, api)
+    expect(saved.status).toBe('idle')
+    expect(saved.messages[0].contextWindowSamples).toEqual([sample])
+    expect(saved.messages.map(({ id }) => id)).toEqual(['cli-prompt', 'durable-task-reply'])
+    await expect(persistence.flush()).resolves.toBeUndefined()
+  })
+
+  it.each(['content', 'events', 'attachment', 'branch', 'existing-reply'] as const)(
+    'retains a real Task reply conflict when %s differs',
+    async (difference) => {
+      const { base, submitted, latest } = createCompletedTaskReplyConflict()
+      const reply = submitted.conversationGraph!.messages.at(-1)!
+      if (difference === 'content') reply.content = 'Different local content'
+      if (difference === 'events') reply.eventIds = ['unrelated-event']
+      if (difference === 'attachment') reply.artifactIds = ['local-artifact']
+      if (difference === 'branch')
+        submitted.conversationGraph!.frames[0].activeBranchId = 'other-branch'
+      if (difference === 'existing-reply') {
+        base.conversationGraph = structuredClone(submitted.conversationGraph)
+        base.conversationGraph!.messages.at(-1)!.content = 'Earlier local reply'
+      }
+      const conflict = new SessionRevisionConflictError(2, 3)
+      const saveSession = vi.fn<SessionPersistenceApi['saveSession']>().mockRejectedValue(conflict)
+      const api = createApi({ loadOne: vi.fn().mockResolvedValue(latest), saveSession })
+      const persistence = createOrderedSessionPersistence(api)
+      persistence.seedAcknowledgedSessions([base])
+      await expect(saveSessionInOrder(submitted, persistence, api)).rejects.toBe(conflict)
+      expect(saveSession).toHaveBeenCalledOnce()
+      await expect(persistence.flush()).rejects.toBe(conflict)
+    }
+  )
+
+  it.each([false, true])(
+    'does not let a queued Task projection (reply=%s) resurrect a completion',
+    async (hasReply) => {
+      const { base, submitted, latest } = createCompletedTaskReplyConflict()
+      if (!hasReply) {
+        submitted.messages = base.messages
+        submitted.conversationGraph = base.conversationGraph
+      }
+      useSessionStore.getState().hydrateSessions([base])
+      const api = createApi({
+        saveSession: vi.fn(async (session) => ({ ...session, revision: 4 }))
+      })
+      const save = createStoreSaver(api, useSessionStore.getState())
+      // Mutate the live projection before its queued write starts, then receive Main completion.
+      useSessionStore.setState({
+        sessions: [hydrateSession(submitted)]
+      })
+      const queued = save(useSessionStore.getState())
+      useSessionStore.getState().upsertPersistedSession(latest)
+      await save(useSessionStore.getState())
+      await queued
+      const saved = vi.mocked(api.saveSession).mock.calls[0][0]
+      expect(saved).toMatchObject({ revision: 3, status: 'idle', title: 'Local title' })
+      expect(saved.activeRun).toBeUndefined()
+      expect(saved.conversationGraph).toEqual(latest.conversationGraph)
+      expect(api.saveSession).toHaveBeenCalledOnce()
+    }
+  )
+
   it('rebases an explicit Session save over a disjoint concurrent main-process update', async () => {
     const base = createPersistedSession({ revision: 8, computeConcurrencyLimit: 1 })
     const submitted = createPersistedSession({
@@ -4592,3 +4950,72 @@ const flushMicrotasks = async (): Promise<void> => {
   await Promise.resolve()
   await Promise.resolve()
 }
+
+describe('passive plan projection hydration', () => {
+  it('does not save the conversation merely to display its existing plan', async () => {
+    const base = createPersistedSession({ revision: 42 })
+    useSessionStore.getState().hydrateSessions([base])
+    const api = createApi()
+    const save = createStoreSaver(api, useSessionStore.getState())
+    useSessionStore.getState().setActivePlanProjection(base.id, createHistoricalPlan('plan-a', 1))
+    await save(useSessionStore.getState())
+    expect(api.saveSession).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions[0].updatedAt).toBe(base.updatedAt)
+    expect(useSessionStore.getState().sessions[0].activePlanProjection?.artifactVersionId).toBe(
+      'plan-a'
+    )
+    useSessionStore
+      .getState()
+      .invalidateActivePlanProjection(base.id, { artifactVersionId: 'plan-a', revision: 1 })
+    await save(useSessionStore.getState())
+    useSessionStore.getState().setActivePlanProjection(base.id, createHistoricalPlan('plan-a', 1))
+    await save(useSessionStore.getState())
+    expect(api.saveSession).not.toHaveBeenCalled()
+  })
+
+  it('still saves a real local title edit after displaying a plan', async () => {
+    const base = createPersistedSession({ revision: 42 })
+    useSessionStore.getState().hydrateSessions([base])
+    const api = createApi()
+    const save = createStoreSaver(api, useSessionStore.getState())
+    useSessionStore.getState().setActivePlanProjection(base.id, createHistoricalPlan('plan-a', 1))
+    useSessionStore.getState().renameSession(base.id, 'Edited title')
+    await save(useSessionStore.getState())
+    expect(api.saveSession).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Edited title' }),
+      { conflictRebaseFields: ['title'] }
+    )
+  })
+})
+
+describe('passive summary hydration', () => {
+  it('does not read and rewrite full sessions when the project list is hydrated', async () => {
+    const base = createPersistedSession({ revision: 42 })
+    const api = createApi({ loadOne: vi.fn().mockResolvedValue(base) })
+    const save = createStoreSaver(api, useSessionStore.getState())
+    const summary: SessionSummary = {
+      number: 1,
+      id: base.id,
+      projectId: base.projectId,
+      title: base.title,
+      status: 'idle',
+      presentedStatus: 'idle',
+      revision: 42,
+      pinned: false,
+      activeMessageCount: 0,
+      artifactCount: 0,
+      filesRevision: 0,
+      createdAt: base.createdAt,
+      updatedAt: base.updatedAt,
+      needsStartupRecovery: false
+    }
+    useSessionStore.getState().hydrateSessionSummaries([summary], undefined)
+    await save(useSessionStore.getState())
+    expect(api.saveSession).not.toHaveBeenCalled()
+    expect(api.loadOne).not.toHaveBeenCalled()
+    useSessionStore.getState().hydrateSessionSummaries([{ ...summary }], undefined)
+    await save(useSessionStore.getState())
+    expect(api.saveSession).not.toHaveBeenCalled()
+    expect(api.loadOne).not.toHaveBeenCalled()
+  })
+})

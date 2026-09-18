@@ -54,7 +54,7 @@ jobs:
           test -n "$zip"
           mkdir -p extracted
           ditto -x -k "$zip" extracted
-          executable=$(find extracted -type f -path '*/Open Science.app/Contents/MacOS/Open Science' -print -quit)
+          executable=$(find extracted -type f -path '*/Open-Science.app/Contents/MacOS/Open-Science' -print -quit)
           test -n "$executable"
           echo "executable=$(node -e 'process.stdout.write(require("path").resolve(process.argv[1]))' "$executable")" >> "$GITHUB_OUTPUT"
           shasum -a 256 "$zip" > package/SHA256-tested.txt

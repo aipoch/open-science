@@ -26,7 +26,8 @@ export const normalizeBibtexEntry = (entry: Record<string, unknown>): Record<str
   }
 }
 
-const literalNamePrefix = 'Open Science literal creator: '
+const literalNamePrefix = 'Open-Science literal creator: '
+const readableLiteralNamePrefixes = [literalNamePrefix, 'Open Science literal creator: ']
 
 const lineValue = (value: string): string => value.replace(/[\r\n]+/gu, ' ').trim()
 const nameText = (name: CslName): string =>
@@ -76,9 +77,10 @@ export const importRisFields = (
     if (tag === 'N1') {
       const identifier = /^(PMID|PMCID|arXiv):\s*(\S+)$/u.exec(value)
       if (identifier) result[identifier[1]!] = identifier[2]
-      if (value.startsWith(literalNamePrefix)) {
+      const prefix = readableLiteralNamePrefixes.find((candidate) => value.startsWith(candidate))
+      if (prefix) {
         try {
-          const marker: unknown = JSON.parse(value.slice(literalNamePrefix.length))
+          const marker: unknown = JSON.parse(value.slice(prefix.length))
           if (
             Array.isArray(marker) &&
             marker.length === 3 &&

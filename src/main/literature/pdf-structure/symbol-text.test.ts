@@ -2,12 +2,56 @@ import { expect, it, vi } from 'vitest'
 import { pathToFileURL } from 'node:url'
 import { resolve } from 'node:path'
 import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
+import { readPdfFixture } from './read-fixture'
 
 const { repairPdfSymbolText, splitPdfNumericRuns, removeBackgroundNumericPadding } = await import(
   pathToFileURL(resolve('resources/pdf-structure/literature-pdf-symbol-text.mjs')).href
 )
 
 it.each([
+  'native',
+  'shifted-slots',
+  'wrong-font',
+  'wrong-width',
+  'missing-name',
+  'conflicting-name'
+])('decodes native comparison glyphs with %s evidence', async (variant) => {
+  const f = readPdfFixture(
+    resolve('src/main/literature/pdf-structure/fixtures/comparison-symbol-subset.jsonl')
+  )
+  if (variant === 'wrong-font') f.font.name = 'Times-Roman'
+  for (const glyph of f.glyphs) {
+    if (variant === 'wrong-width') glyph.width = 769
+    if (variant === 'missing-name') delete f.font.differences[glyph.originalCharCode]
+    if (variant === 'conflicting-name')
+      f.font.differences[glyph.originalCharCode] = glyph.unicode === '\u0015' ? 'C20' : 'C21'
+    if (variant === 'shifted-slots') {
+      const name = f.font.differences[glyph.originalCharCode]
+      delete f.font.differences[glyph.originalCharCode]
+      glyph.originalCharCode += 200
+      f.font.differences[glyph.originalCharCode] = name
+    }
+  }
+  const content = { items: [{ str: '\u0015 40.3; \u0014 60', fontName: 'native' }] }
+  const operators = {
+    fnArray: [OPS.setFont, OPS.showText],
+    argsArray: [['native', 10], [f.glyphs]]
+  }
+  const original = structuredClone({ f, content, operators })
+  const result = await repairPdfSymbolText(
+    { commonObjs: { get: () => f.font } },
+    content,
+    operators
+  )
+  expect(result.items[0].str).toBe(
+    ['native', 'shifted-slots'].includes(variant) ? '≥ 40.3; ≤ 60' : content.items[0].str
+  )
+  expect({ f, content, operators }).toEqual(original)
+})
+
+it.each([
+  ['AdvTir_symb', 66, 'B', '≤', 750],
+  ['AdvTir_symb', 67, 'C', '≥', 750],
   ['AdvOT463cc31e', 53, '5', '=', 822],
   ['AdvPS586B', 54, '6', '±', 833],
   ['AdvPS586B', 53, '5', '=', 833],
@@ -18,6 +62,7 @@ it.each([
   ['AdvPS3FDD77', 91, '[', '=', 1000],
   ['AdvPSMP4', 91, '[', '>', 1000],
   ['AdvPS44A44B', 68, 'D', '+', 1000],
+  ['AdvPS44A44B', 67, 'C', '+', 1000],
   ['AdvTT454a7a89', 98, 'b', '<', 562],
   ['TeX_CM_Maths_Symbols', 0, '\u0000', '−', 250],
   ['AdvPS3F4C13', 117, 'u', 'ω', 718],
@@ -717,7 +762,10 @@ it('recognizes the alternate C0 publisher subset for a plus glyph', async () => 
   for (const [differences, expected] of [
     [{ 2: 'C0', 188: 'onequarter', 254: 'thorn' }, '+'],
     [{ 2: 'C1', 188: 'onequarter', 254: 'thorn' }, 'þ'],
-    [{ 2: 'C0', 254: 'thorn' }, 'þ']
+    [{ 2: 'C0', 254: 'thorn' }, 'þ'],
+    [{ 2: 'C21', 3: 'C14', 188: 'onequarter', 254: 'thorn' }, '+'],
+    [{ 2: 'C21', 3: 'C0', 188: 'onequarter', 254: 'thorn' }, 'þ'],
+    [{ 2: 'C21', 3: 'C14', 254: 'thorn' }, 'þ']
   ] as const) {
     const page = { commonObjs: { get: () => ({ name: 'DKLJHI+AdvP4C4E74', differences }) } }
     expect((await repairPdfSymbolText(page, content, ops)).items[0].str).toBe(expected)
@@ -728,7 +776,11 @@ it.each([
   ['AdvP4C4E74', 2, '\u0002', 770, 'C0', '−'],
   ['AdvP4C4E74', 4, '\u0004', 770, 'C6', '±'],
   ['AdvP4C4E74', 5, '\u0005', 770, 'C2', '×'],
+  ['AdvP4C4E74', 2, '\u0014', 770, 'C20', '≤'],
+  ['AdvP4C4E74', 3, '\u0015', 770, 'C21', '≥'],
   ['AdvP0003', 106, 'j', 833, undefined, '−'],
+  ['AdvP0003', 81, 'Q', 552, 'Q', '≥'],
+  ['MathematicalPi-Four', 2, '\u0002', 833, 'H11549', '='],
   ['AdvP0004', 71, 'G', 562, undefined, '<']
 ])(
   'distinguishes verified numeric symbols in %s slot %s',
@@ -952,7 +1004,7 @@ it.each([
   [4, '\u0014', '≤'],
   [254, 'þ', '+']
 ])(
-  'decodes treatment-comparison slot %s only in its complete subset',
+  'uses comparison glyph names while requiring the treatment subset for slot %s',
   async (code, unicode, expected) => {
     for (const matched of [true, false]) {
       const page = {
@@ -969,7 +1021,7 @@ it.each([
         argsArray: [['source', 12], [[{ originalCharCode: code, unicode, width: 770 }]]]
       }
       expect((await repairPdfSymbolText(page, content, ops)).items[0].str).toBe(
-        matched ? expected : unicode
+        matched || code !== 254 ? expected : unicode
       )
     }
   }
@@ -1127,3 +1179,412 @@ it('decodes fitted Myriad numerals only with matching private glyph names', asyn
     ).items[0].str
   ).toBe(digits)
 })
+
+it.each(
+  [0, 1].flatMap((sample) =>
+    ['native', 'wrong-font', 'wrong-slot', 'wrong-width', 'wrong-unicode', 'ambiguous-glyph'].map(
+      (variant) => [sample, variant] as const
+    )
+  )
+)(
+  'preserves native alpha and Latin footnotes for font %s with %s evidence',
+  async (sample, variant) => {
+    const f = readPdfFixture(
+      resolve('src/main/literature/pdf-structure/fixtures/native-alpha-fonts.jsonl')
+    ).samples[sample]
+    if (variant === 'wrong-font') f.font.name = 'Times-Roman'
+    if (variant === 'wrong-slot') f.glyph.originalCharCode = 98
+    if (variant === 'wrong-width') f.glyph.width += 1
+    if (variant === 'wrong-unicode') f.glyph.unicode = 'b'
+    const glyphs = [f.glyph]
+    if (variant === 'ambiguous-glyph') glyphs.push({ ...f.glyph, originalCharCode: 99 })
+    const content = {
+      items: [
+        { str: f.glyph.unicode, fontName: 'native' },
+        { str: 'a', fontName: 'footnote' },
+        { str: 'data', fontName: 'prose' }
+      ]
+    }
+    const operators = {
+      fnArray: [OPS.setFont, OPS.showText],
+      argsArray: [['native', 10], [glyphs]]
+    }
+    const before = structuredClone({ f, content, operators })
+    const result = await repairPdfSymbolText(
+      {
+        commonObjs: {
+          get: (name: string) => (name === 'native' ? f.font : { name: 'Times-Roman' })
+        }
+      },
+      content,
+      operators
+    )
+    expect(result.items.map((i: { str: string }) => i.str)).toEqual([
+      variant === 'native' ? 'α' : f.glyph.unicode,
+      'a',
+      'data'
+    ])
+    expect({ f, content, operators }).toEqual(before)
+  }
+)
+
+it.each(['missing', 'contradictory'])(
+  'preserves a Latin glyph with %s native encoding evidence',
+  async (variant) => {
+    const f = readPdfFixture(
+      resolve('src/main/literature/pdf-structure/fixtures/native-alpha-fonts.jsonl')
+    ).samples[0]
+    if (variant === 'missing') delete f.font.differences[97]
+    else f.font.differences[97] = 'b'
+    const content = { items: [{ str: 'a', fontName: 'native' }] }
+    const result = await repairPdfSymbolText({ commonObjs: { get: () => f.font } }, content, {
+      fnArray: [OPS.setFont, OPS.showText],
+      argsArray: [['native', 10], [[f.glyph]]]
+    })
+    expect(result.items[0].str).toBe('a')
+  }
+)
+
+it.each(['native', 'wrong-font', 'wrong-width', 'wrong-slot', 'wrong-name', 'wrong-unicode'])(
+  'decodes a native prime without replacing numeric zeros: %s',
+  async (variant) => {
+    const f = readPdfFixture(
+      resolve('src/main/literature/pdf-structure/fixtures/native-prime-font.jsonl')
+    )
+    if (variant === 'wrong-font') f.font.name = 'Times-Roman'
+    if (variant === 'wrong-width') f.glyph.width = 500
+    if (variant === 'wrong-slot') f.glyph.originalCharCode = 49
+    if (variant === 'wrong-name') f.font.differences[48] = 'one'
+    if (variant === 'wrong-unicode') f.glyph.unicode = '1'
+    const content = {
+      items: [
+        { str: f.glyph.unicode, fontName: 'native' },
+        { str: '50', fontName: 'prose' }
+      ]
+    }
+    const result = await repairPdfSymbolText(
+      {
+        commonObjs: {
+          get: (name: string) => (name === 'native' ? f.font : { name: 'Times-Roman' })
+        }
+      },
+      content,
+      {
+        fnArray: [OPS.setFont, OPS.showText],
+        argsArray: [['native', 7], [[f.glyph]]]
+      }
+    )
+    expect(result.items.map((i: { str: string }) => i.str)).toEqual([
+      variant === 'native' ? '′' : f.glyph.unicode,
+      '50'
+    ])
+  }
+)
+
+it.each([
+  ['AdvPSMP10', 118, 'v', 'χ', 500],
+  ['AdvPSMP11', 108, 'l', 'μ', 552],
+  ['AdvP7DED', 53, '5', '=', 833]
+])(
+  'repairs the native clinical-font slot %s/%s without guessing prose',
+  async (name, code, source, expected, width) => {
+    const page = { commonObjs: { get: () => ({ name, differences: { 53: 'five' } }) } }
+    const content = {
+      items: [
+        { str: source, fontName: 'math' },
+        { str: source, fontName: 'prose' }
+      ]
+    }
+    const ops = {
+      fnArray: [OPS.setFont, OPS.showText],
+      argsArray: [['math', 10], [[{ originalCharCode: code, unicode: source, width }]]]
+    }
+    expect(
+      (await repairPdfSymbolText(page, content, ops)).items.map((i: { str: string }) => i.str)
+    ).toEqual([expected, source])
+  }
+)
+
+it('corrects the extra Tc advance from an empty leading TJ string using exact glyph alignment', async () => {
+  const { repairSpacedTextOffsets } = await import(
+    pathToFileURL(resolve('resources/pdf-structure/literature-pdf-symbol-text.mjs')).href
+  )
+  const item = (str: string, x: number): unknown => ({
+    str,
+    fontName: 'f',
+    dir: 'ltr',
+    transform: [8, 0, 0, 8, x, 340],
+    width: 4,
+    height: 8
+  })
+  const content = { items: [item(')', 280), item('n', 430), item('52', 296)] }
+  const ops = {
+    fnArray: [
+      OPS.setFont,
+      OPS.setCharSpacing,
+      OPS.showText,
+      OPS.moveText,
+      OPS.setCharSpacing,
+      OPS.showText
+    ],
+    argsArray: [
+      ['f', 1],
+      [18.47],
+      [[-0.1, { unicode: ')' }, { unicode: 'n' }]],
+      [20, 0],
+      [0],
+      [[{ unicode: '52' }]]
+    ]
+  }
+  const repaired = repairSpacedTextOffsets(content, ops)
+  expect(repaired.items.map((i: { transform: number[] }) => i.transform[4])).toEqual([
+    280 - 18.47 * 8,
+    430 - 18.47 * 8,
+    296
+  ])
+  expect(repaired.items.map((i: { str: string }) => i.str)).toEqual([')', 'n', '52'])
+  const mismatch = { items: [...content.items, item('extra', 0)] }
+  expect(repairSpacedTextOffsets(mismatch, ops)).toEqual(mismatch)
+  const noLeadingAdjustment = structuredClone(ops)
+  noLeadingAdjustment.argsArray[2][0] = [{ unicode: ')' }, { unicode: 'n' }]
+  expect(repairSpacedTextOffsets(content, noLeadingAdjustment)).toEqual(content)
+  // Operator glyphs iterate Unicode code points. A supplementary-plane symbol
+  // must not consume the following item's offset or move an unshifted item.
+  const unicodeOps = structuredClone(ops)
+  unicodeOps.argsArray[2][0] = [-0.1, { unicode: '𝛼' }, { unicode: 'n' }]
+  const unicodeContent = { items: [item('𝛼', 280), item('n', 430), item('52', 296)] }
+  expect(
+    repairSpacedTextOffsets(unicodeContent, unicodeOps).items.map(
+      (i: { transform: number[] }) => i.transform[4]
+    )
+  ).toEqual([280 - 18.47 * 8, 430 - 18.47 * 8, 296])
+})
+
+// The source glyphs render <, > and ≥; slot 5 in another Pi subset is χ.
+it.each([
+  ['H11021', 5, '<'],
+  ['H11022', 6, '>'],
+  ['H11350', 7, '≥']
+])(
+  'recovers named MathematicalPi comparison %s only with matching font evidence',
+  async (glyphName, code, expected) => {
+    const unicode = String.fromCharCode(Number(code))
+    for (const variant of ['native', 'wrong-font', 'wrong-width', 'wrong-name']) {
+      const differences: string[] = []
+      differences[Number(code)] = variant === 'wrong-name' ? 'unknown' : String(glyphName)
+      const result = await repairPdfSymbolText(
+        {
+          commonObjs: {
+            get: () => ({
+              name: variant === 'wrong-font' ? 'Times-Roman' : 'ABCDEF+MathematicalPi-One',
+              differences
+            })
+          }
+        },
+        { items: [{ str: unicode, fontName: 'native' }] },
+        {
+          fnArray: [OPS.setFont, OPS.showText],
+          argsArray: [
+            ['native', 10],
+            [[{ originalCharCode: code, unicode, width: variant === 'wrong-width' ? 832 : 833 }]]
+          ]
+        }
+      )
+      expect(result.items[0].str).toBe(variant === 'native' ? expected : unicode)
+    }
+  }
+)
+
+it.each(['native', 'wrong-font', 'wrong-slot', 'wrong-width', 'ambiguous'])(
+  'decodes native statistical and comparison fonts with %s evidence',
+  async (variant) => {
+    const { samples } = readPdfFixture(
+      resolve(
+        'src/main/literature/pdf-structure/fixtures/native-statistical-and-comparison-glyphs.jsonl'
+      )
+    )
+    for (const sample of samples) {
+      const { font, glyph, expected } = sample
+      if (variant === 'wrong-font') font.name = 'Times-Roman'
+      if (variant === 'wrong-slot') glyph.originalCharCode = 999
+      if (variant === 'wrong-width') glyph.width += 1
+      const glyphs =
+        variant === 'ambiguous' ? [glyph, { ...glyph, originalCharCode: 998 }] : [glyph]
+      const content = { items: [{ str: glyph.unicode, fontName: 'native' }] }
+      const result = await repairPdfSymbolText({ commonObjs: { get: () => font } }, content, {
+        fnArray: [OPS.setFont, OPS.showText],
+        argsArray: [['native', 10], [glyphs]]
+      })
+      expect(result.items[0].str).toBe(variant === 'native' ? expected : glyph.unicode)
+    }
+  }
+)
+it('separates native probability and hazard-interval runs using measured glyph advances', () => {
+  const f = readPdfFixture(
+    resolve(
+      'src/main/literature/pdf-structure/fixtures/native-probability-beside-hazard-interval.jsonl'
+    )
+  )
+  const original = structuredClone(f)
+  const split = splitPdfNumericRuns(f.content, f.operators).items
+  const first = split.find(
+    (i: { str: string; transform: number[] }) =>
+      i.str === '0.177' &&
+      i.transform[4] === f.target.transform[4] &&
+      i.transform[5] === f.target.transform[5]
+  )
+  expect(first).toBeDefined()
+  const next = split[split.indexOf(first) + 1]
+  expect(next.str).toBe('0.96 (0.69–1.28)')
+  expect(next.transform[4]).toBeGreaterThan(first.transform[4] + first.width)
+  expect(next.transform[4] + next.width).toBeCloseTo(f.target.transform[4] + f.target.width, 5)
+  expect(f).toEqual(original)
+  const invalid = structuredClone(f.content)
+  invalid.items.find((i: { str: string }) => i.str === f.target.str).width += f.target.height * 3
+  expect(splitPdfNumericRuns(invalid, f.operators).items).toContainEqual(
+    expect.objectContaining({ str: f.target.str })
+  )
+})
+
+it.each(['native', 'bold-native', 'wrong-font', 'missing-name'])(
+  'decodes private numeral glyphs only with matching %s evidence',
+  async (variant) => {
+    const chars = Array.from({ length: 10 }, (_, n) => String.fromCharCode(0xf130 + n)).join('')
+    const font = {
+      name:
+        variant === 'wrong-font'
+          ? 'Times-Roman'
+          : variant === 'bold-native'
+            ? 'ABCDEF+AdvOT58b04b30.B+f1'
+            : 'ABCDEF+AdvOTfc06a83e+f1',
+      differences:
+        variant === 'missing-name' ? [] : Array.from({ length: 10 }, (_, n) => `uniF13${n}`)
+    }
+    const content = { items: [{ str: chars, fontName: 'source' }] }
+    const result = await repairPdfSymbolText({ commonObjs: { get: () => font } }, content, {
+      fnArray: [],
+      argsArray: []
+    })
+    expect(result.items[0].str).toBe(
+      ['native', 'bold-native'].includes(variant) ? '0123456789' : chars
+    )
+    expect(content.items[0].str).toBe(chars)
+  }
+)
+it.each([
+  ['Universal-GreekwithMathPi', 5, 833, 'H11003', '×'],
+  ['Universal-GreekwithMathPi', 6, 833, 'H11003', '×'],
+  ['MathematicalPi-Six', 2, 500, 'H11569', '*']
+])(
+  'decodes %s slot %s using its embedded glyph',
+  async (name, code, width, glyphName, expected) => {
+    const unicode = String.fromCharCode(code)
+    for (const variant of ['native', 'wrong-font', 'wrong-name', 'wrong-width']) {
+      const font = {
+        name: variant === 'wrong-font' ? 'Times-Roman' : `ABCDEF+${name}`,
+        differences: { [code]: variant === 'wrong-name' ? 'unknown' : glyphName }
+      }
+      const result = await repairPdfSymbolText(
+        { commonObjs: { get: () => font } },
+        { items: [{ str: unicode, fontName: 'source' }] },
+        {
+          fnArray: [OPS.setFont, OPS.showText],
+          argsArray: [
+            ['source', 12],
+            [
+              [
+                {
+                  originalCharCode: code,
+                  unicode,
+                  width: variant === 'wrong-width' ? width + 1 : width
+                }
+              ]
+            ]
+          ]
+        }
+      )
+      expect(result.items[0].str).toBe(variant === 'native' ? expected : unicode)
+    }
+  }
+)
+
+it.each([0, 90, 180, 270])(
+  'respects a path clip for rotated text at %s degrees and retains partial visibility',
+  async (angle) => {
+    const radians = (angle * Math.PI) / 180,
+      a = Math.cos(radians),
+      b = Math.sin(radians)
+    const item = (
+      str: string,
+      x: number,
+      y: number
+    ): { str: string; fontName: string; width: number; height: number; transform: number[] } => ({
+      str,
+      fontName: 'f',
+      width: 20,
+      height: 10,
+      transform: [10 * a, 10 * b, -10 * b, 10 * a, x, y]
+    })
+    const content = {
+      items: [item('hidden', 200, 200), item('visible', 50, 50), item('edge', 99, 50)]
+    }
+    const glyphs = (text: string): { unicode: string }[][] => [
+      [...text].map((unicode) => ({ unicode }))
+    ]
+    const operators = {
+      fnArray: [
+        OPS.save,
+        OPS.clip,
+        OPS.constructPath,
+        OPS.setFont,
+        OPS.showText,
+        OPS.showText,
+        OPS.showText,
+        OPS.restore
+      ],
+      argsArray: [
+        [],
+        [],
+        [OPS.endPath, [], [0, 0, 100, 100]],
+        ['f', 10],
+        glyphs('hidden'),
+        glyphs('visible'),
+        glyphs('edge'),
+        []
+      ]
+    }
+    const result = await repairPdfSymbolText({}, content, operators)
+    expect(result.items.map((i: { str: string }) => i.str)).toEqual(['visible', 'edge'])
+    expect(content.items).toHaveLength(3)
+  }
+)
+it.each([250, 500, 900])(
+  'splits paired mean/deviation runs only across a verified column gap of %s',
+  (gap) => {
+    const a = '55.8 (10.9)',
+      b = '57.1 (11.6)',
+      str = a + ' ' + b
+    const glyphs = [...str].map((unicode, n) => ({
+      unicode,
+      width: n === a.length ? gap : 500,
+      isSpace: unicode === ' '
+    }))
+    const item = {
+      str,
+      fontName: 'f',
+      dir: 'ltr',
+      width: (str.length - 1) * 5 + gap / 100,
+      height: 10,
+      transform: [10, 0, 0, 10, 100, 500],
+      hasEOL: true
+    }
+    const operators = { fnArray: [OPS.setFont, OPS.showText], argsArray: [['f', 10], [glyphs]] }
+    const result = splitPdfNumericRuns({ items: [item] }, operators).items
+    if (gap < 500) expect(result).toEqual([item])
+    else {
+      expect(result.map((i: { str: string }) => i.str)).toEqual([a, b])
+      expect(result[1].transform[4]).toBe(100 + a.length * 5 + gap / 100)
+      expect(result[0].width + gap / 100 + result[1].width).toBe(item.width)
+    }
+  }
+)

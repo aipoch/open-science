@@ -20,6 +20,8 @@ export type NotebookTrustBundle = Readonly<{
 export type NotebookFilesystemPolicy = Readonly<{
   privateRoot?: string
   readOnlyRoots: readonly string[]
+  /** Incidental Windows PATH directories; inability to grant them must not block the workload. */
+  optionalReadOnlyRoots?: readonly string[]
   readWriteRoots: readonly string[]
   deniedReadRoots: readonly string[]
   deniedWriteRoots: readonly string[]
@@ -85,6 +87,10 @@ export type NotebookSandboxCommand = Readonly<{
   inheritedFileDescriptorCount?: number
   // Opt-in ownership for short-lived workers; ordinary persistent kernels keep their current path.
   superviseProcessTree?: boolean
+  /** Transient R admission decision; launch must retain this protection requirement. */
+  windowsProtectionRequired?: boolean
+  /** A durable grant used for admission must still be authorized at launch. */
+  windowsRuntimeAccessRequired?: boolean
   filesystem?: NotebookFilesystemPolicy
   onNetworkAccessRequest: NotebookNetworkDecisionHandler
 }>
@@ -105,6 +111,8 @@ export type NotebookSandboxedProcess = Readonly<{
 }>
 
 export type NotebookNetworkSandboxOptions = Readonly<{
+  /** The application supplies its mode; standalone consumers default to production. */
+  packaged?: boolean
   policy: NotebookNetworkPolicy
   resources: NotebookSandboxResources
   parentProxy?: NotebookNetworkParentProxy

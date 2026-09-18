@@ -1,3 +1,4 @@
+import { initDataRoot } from '../storage-root'
 import { createHash } from 'node:crypto'
 import { parseLiteratureDeletionError } from '../../shared/literature-deletion'
 import { transactLiterature } from './transact'
@@ -36,6 +37,7 @@ import type { PersistedChatMessage } from '../../shared/session-persistence'
 import { PENDING_UPLOAD_SESSION_ID } from '../../shared/uploads'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { ContentRepository } from '../storage/content-repository'
+import { removeAnchoredFile } from '../uploads/atomic-no-replace-publisher'
 import { inspectPdfPageCount } from '../uploads/attachment-media'
 import { LiteratureAttachmentAuthority } from './attachment-authority'
 import { LiteratureCatalog } from './catalog'
@@ -58,6 +60,11 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   return { ...actual, rm: vi.fn(actual.rm) }
 })
 
+vi.mock('../uploads/atomic-no-replace-publisher', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../uploads/atomic-no-replace-publisher')>()
+  return { ...actual, removeAnchoredFile: vi.fn(actual.removeAnchoredFile) }
+})
+
 vi.mock('electron', () => ({ app: { getPath: () => '/home/user', isPackaged: true } }))
 
 describe('Literature PDF attachment reliability', () => {
@@ -67,6 +74,15 @@ describe('Literature PDF attachment reliability', () => {
     vi.mocked(rm).mockImplementation(
       (await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')).rm
     )
+    vi.mocked(removeAnchoredFile)
+      .mockReset()
+      .mockImplementation(
+        (
+          await vi.importActual<typeof import('../uploads/atomic-no-replace-publisher')>(
+            '../uploads/atomic-no-replace-publisher'
+          )
+        ).removeAnchoredFile
+      )
     await client?.$disconnect()
     if (root) await rm(root, { recursive: true, force: true })
   })
@@ -84,6 +100,7 @@ describe('Literature PDF attachment reliability', () => {
     coordinator: SessionPersistenceCoordinator
   }> => {
     root = await mkdtemp(join(tmpdir(), 'literature-pdf-reliability-'))
+    initDataRoot(root)
     client = createProjectDbClient(root)
     await migrateApplicationDatabase(client)
     const content = new ContentRepository({ storageRoot: root, getClient: async () => client! })
@@ -148,14 +165,9 @@ describe('Literature PDF attachment reliability', () => {
         itemIds: [request.itemId],
         state: 'deleted'
       })
-      const actualRm = (
-        await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
-      ).rm
       if (failure === 'unlink') {
-        vi.mocked(rm).mockImplementation(async (path, options) => {
-          if (String(path) === resolved!.path)
-            throw Object.assign(new Error('File is locked'), { code: 'EPERM' })
-          return actualRm(path, options)
+        vi.mocked(removeAnchoredFile).mockImplementationOnce(() => {
+          throw Object.assign(new Error('File is locked'), { code: 'EPERM' })
         })
       } else vi.spyOn(content, 'sweep').mockRejectedValueOnce(new Error('Cleanup unavailable'))
       const receipt = await transactLiterature(catalog, content, {
@@ -173,7 +185,6 @@ describe('Literature PDF attachment reliability', () => {
         state: 'deleted-permanently',
         cleanupPending: true
       })
-      vi.mocked(rm).mockImplementation(actualRm)
       const restarted = new ContentRepository({ storageRoot: root, getClient: async () => client! })
       expect(
         await restarted.sweep({ createdBefore: new Date(Date.now() + 1), contentIds: [contentId] })

@@ -1,4 +1,4 @@
-/* Hallmark · component: PDF navigation · genre: modern-minimal · theme: Open Science tokens */
+/* Hallmark · component: PDF navigation · genre: modern-minimal · theme: Open-Science tokens */
 import { ChevronRight, Files, ListTree, PanelLeft } from 'lucide-react'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import {

@@ -9,13 +9,13 @@ esac
 cli_link='/usr/bin/${executable}'
 if [ -e "$cli_link" ] || [ -L "$cli_link" ]; then
   if [ ! -L "$cli_link" ] || [ "$(readlink "$cli_link")" != '/etc/alternatives/${executable}' ]; then
-    echo "Open Science cannot unregister its CLI: $cli_link was replaced by an unmanaged entry." >&2
+    echo "Open-Science cannot unregister its CLI: $cli_link was replaced by an unmanaged entry." >&2
     exit 1
   fi
 fi
 alternative_state=$(LC_ALL=C update-alternatives --query '${executable}' 2>/dev/null) || alternative_state=
 if [ -n "$alternative_state" ] && ! printf '%s\n' "$alternative_state" | grep -Fxq "Link: $cli_link"; then
-  echo 'Open Science cannot modify an unrelated alternatives link group.' >&2
+  echo 'Open-Science cannot modify an unrelated alternatives link group.' >&2
   exit 1
 fi
 
@@ -23,14 +23,14 @@ fi
 alternative_link='/etc/alternatives/${executable}'
 if [ -e "$alternative_link" ] || [ -L "$alternative_link" ]; then
   if [ ! -L "$alternative_link" ]; then
-    echo "Open Science cannot modify an unmanaged $alternative_link." >&2
+    echo "Open-Science cannot modify an unmanaged $alternative_link." >&2
     exit 1
   fi
   selected_target=$(readlink "$alternative_link")
   if [ "$selected_target" != '/opt/${sanitizedProductName}/resources/open-science-cli' ] &&
      [ "$selected_target" != '/opt/${sanitizedProductName}/${executable}' ] &&
      ! printf '%s\n' "$alternative_state" | grep -Fxq "Alternative: $selected_target"; then
-    echo "Open Science cannot modify an unregistered target at $alternative_link." >&2
+    echo "Open-Science cannot modify an unregistered target at $alternative_link." >&2
     exit 1
   fi
 fi

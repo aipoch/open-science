@@ -43,6 +43,18 @@ import { canonicalJson, sha256, type CanonicalJson } from '../artifacts/provenan
 import { normalizeArtifactFilename } from '../artifacts/provenance-version-writer'
 import { LOCAL_RESOURCE_BUDGETS, assertWithinResourceBudget } from '../resource-budget'
 
+export type ArtifactProducerInputScope = {
+  appSessionId: string
+  artifactRunId: string
+  rootFrameId: string
+  agentFrameId: string
+  messageBranchId: string
+  runtimeSegmentId: string
+  promptMessageId: string
+  // Host-owned liveness check; never deserialize this capability from an RPC request.
+  assertActive: () => void
+}
+
 const COMPLETE_STATE = { artifact: 'finalized', upload: 'ready' } as const
 const STORAGE_COLLISION_MAX_ATTEMPTS = 16
 const INTEGRITY_AUDIT_BATCH_SIZE = 100
@@ -579,6 +591,53 @@ class ManagedFileVersionService {
     return this.openVersionLease(
       await this.resolveRecord({ ...request, versionId }, { unpublished: true })
     )
+  }
+
+  async openProducerVersion(
+    projectId: string,
+    versionId: string,
+    scope: ArtifactProducerInputScope
+  ): Promise<ManagedFileReadLease | undefined> {
+    scope.assertActive()
+    const { assertActive, appSessionId } = scope
+    const owner = {
+      artifactRunId: scope.artifactRunId,
+      rootFrameId: scope.rootFrameId,
+      agentFrameId: scope.agentFrameId,
+      messageBranchId: scope.messageBranchId,
+      runtimeSegmentId: scope.runtimeSegmentId,
+      promptMessageId: scope.promptMessageId
+    }
+    if (
+      [projectId, versionId, appSessionId, ...Object.values(owner)].some(
+        (value) => typeof value !== 'string' || !value.length
+      )
+    )
+      return undefined
+    const client = await this.options.getClient()
+    const version = await client.artifactVersion.findFirst({
+      where: {
+        id: versionId,
+        ...owner,
+        originKind: 'agent_generated',
+        state: { in: ['pending', 'finalized'] },
+        artifact: { is: { projectId, sessionId: appSessionId } }
+      },
+      select: { artifactId: true }
+    })
+    assertActive()
+    if (!version) return undefined
+    const lease = await this.openUnpublishedVersion(
+      { source: 'artifact', projectId, fileId: version.artifactId },
+      versionId
+    )
+    try {
+      assertActive()
+      return lease
+    } catch (error) {
+      await lease.close()
+      throw error
+    }
   }
 
   async diffText(request: ManagedFileVersionDiffRequest): Promise<ManagedFileVersionDiffResult> {

@@ -1,6 +1,6 @@
-# Open Science CLI
+# Open-Science CLI
 
-The `open-science` command controls the local Open Science service and submits research tasks without
+The `open-science` command controls the local Open-Science service and submits research tasks without
 requiring browser interaction.
 
 ## Installation
@@ -26,7 +26,7 @@ Debian-owned system entry; remove the Debian package to remove that entry.
 
 ### From other application packages
 
-Open **Settings > General > Command line tool** in Open Science and choose **Install command**. This
+Open **Settings > General > Command line tool** in Open-Science and choose **Install command**. This
 adds an `open-science` launcher to your PATH (`~/.local/bin` on macOS and Linux, or a per-user
 directory added to PATH on Windows). The launcher uses the application's bundled runtime, so it does
 not require a separate Node.js installation.
@@ -36,7 +36,7 @@ terminal after updating PATH. Choose **Uninstall command** in the same panel to 
 
 ### From npm
 
-The npm package requires Node.js 22.5 or later and an installed Open Science desktop application.
+The npm package requires Node.js 22.5 or later and an installed Open-Science desktop application.
 Install it globally after the package is published:
 
 ```bash
@@ -85,7 +85,17 @@ open-science url
 human-readable, JSON, and JSONL output never includes the local token.
 
 Use `--port <port>` to override the default port of `44100`. `--app-path <path>` selects a specific
-Open Science executable. Development builds also support `--config-root <path>`.
+Open-Science executable, taking priority over `OPEN_SCIENCE_APP_PATH`; both override automatic app
+location. An invalid explicit path is an error, never a reason to silently select another installation.
+Old-name, custom and mixed-name layouts remain usable through an explicit executable path.
+
+Standalone app discovery checks only current new-brand defaults: `/Applications/Open-Science.app`
+and `~/Applications/Open-Science.app` (internal executable `Contents/MacOS/Open-Science`) on macOS;
+`%LOCALAPPDATA%/Programs/Open-Science/open-science.exe` and
+`%PROGRAMFILES%/Open-Science/open-science.exe` on Windows; `/opt/Open-Science/open-science` on Linux.
+It does not search arbitrary PATH directories or use public CLI wrappers as desktop executables.
+Portable AppImages and nondefault installations require an explicit path. Existing repository
+build discovery still precedes installed defaults. Development builds also support `--config-root <path>`.
 
 `open-science stop` requests an authenticated graceful shutdown and waits for the service to exit. If
 the request cannot be accepted or a dedicated daemon remains alive after the shutdown deadline, the
@@ -198,14 +208,20 @@ the bundled CLI by absolute path using the application's Electron executable in 
 example on macOS):
 
 ```bash
-OPEN_SCIENCE_APP_PATH="/Applications/Open Science.app/Contents/MacOS/Open Science" \
-ELECTRON_RUN_AS_NODE=1 "/Applications/Open Science.app/Contents/MacOS/Open Science" \
-  "/Applications/Open Science.app/Contents/Resources/cli/index.mjs" start --no-open
+OPEN_SCIENCE_APP_PATH="/Applications/Open-Science.app/Contents/MacOS/Open-Science" \
+ELECTRON_RUN_AS_NODE=1 "/Applications/Open-Science.app/Contents/MacOS/Open-Science" \
+  "/Applications/Open-Science.app/Contents/Resources/cli/index.mjs" start --no-open
 ```
 
 Repeat the same absolute invocation with `cli install --json`. Respect the returned `pathHint`;
 Windows may require a new terminal and Unix shells may need the existing launcher directory on PATH.
 The launcher uses the existing ownership receipts and does not claim unrelated executables.
+An app-installed launcher stays bound to its installing application's actual executable. AppImage
+launchers use the stable AppImage file and mount its payload for each invocation. Startup maintenance
+repairs confirmed missing bindings, but does not rewrite an otherwise working launcher merely for
+new brand wording or take over a surviving binding to another installation. Use an explicit
+`cli install` to rebind and `cli uninstall` to remove an app-managed command. Old applications and
+launchers may remain; this does not authorize simultaneous writes to shared research data.
 
 ## Agent runtimes
 
@@ -218,7 +234,7 @@ open-science runtime list --json
 
 ## Application updates
 
-Check, download, and apply an Open Science application update without opening the browser or desktop
+Check, download, and apply an Open-Science application update without opening the browser or desktop
 window:
 
 ```bash
@@ -226,9 +242,9 @@ open-science update
 open-science update --json
 ```
 
-The command updates the installed Open Science application, not the npm package. It reuses the
+The command updates the installed Open-Science application, not the npm package. It reuses the
 application's release feed, artifact selection, checksum verification, and platform installer. If
-Open Science is not running, it starts the local headless service. It normally leaves that service
+Open-Science is not running, it starts the local headless service. It normally leaves that service
 available for later CLI commands. When the update requires a visible installer, the command stops a
 service it started after the installer is safely downloaded; a service that was already running is
 left alone, and the printed next step tells you to run `open-science stop` before the installer.
@@ -247,7 +263,7 @@ Common fields are `current` and, when known, `latest`. Manual outcomes may add `
 The CLI requires the running application to advertise the `update-cli-v1` RPC capability. If an older
 installation only advertises the legacy update commands, or does not advertise structured headless
 update behavior, it returns `manual-action-required` instead of guessing. Install the latest release from
-[the Open Science download page](https://www.aipoch.com/open-science), then run the command again.
+[the Open-Science download page](https://www.aipoch.com/open-science), then run the command again.
 Because the CLI is bundled with the installed application, installations predating this command need
 that one-time manual update before `open-science update` is available.
 
@@ -257,7 +273,7 @@ as `open-science start --no-sandbox`; prefer the Debian package or a sandbox-cap
 
 ## Codex subscription sign-in
 
-Sign the Open Science Codex profile in from a terminal without opening Settings:
+Sign the Open-Science Codex profile in from a terminal without opening Settings:
 
 ```bash
 open-science codex login
@@ -321,7 +337,7 @@ open-science project list --json
 Commands that accept `--project` allow either a project ID or an exact project name. The CLI resolves
 a unique display name to its ID before calling the Task API; use the ID when names are duplicated.
 
-Project Agent Context contains persistent instructions that are added when Open Science sets up an
+Project Agent Context contains persistent instructions that are added when Open-Science sets up an
 agent Session. Supply it directly with `--agent-context <text>` or read multiline instructions from a
 strict UTF-8 file with `--agent-context-file <path>`; the two options are mutually exclusive. The
 existing 16,000-character limit applies to both forms.
@@ -397,14 +413,14 @@ Enabled hosts. JSON output uses the server's compatibility-named
 When the selection is non-empty, the agent is instructed to run tool-backed task work on one of
 those hosts and not silently fall back to local execution or another Available Compute Host. Pure answers
 and lightweight orchestration do not require remote execution. Each provider ID must refer to a
-host already configured in Open Science. This option does not create a host, configure SSH or
+host already configured in Open-Science. This option does not create a host, configure SSH or
 credentials, probe a connection, or pin scratch storage.
 
 `--cwd <path>` selects an externally owned working directory for the Session. The CLI resolves a
-relative path from the directory where the command is invoked. Open Science then resolves the real
+relative path from the directory where the command is invoked. Open-Science then resolves the real
 path, verifies that it exists, is a directory, and is readable and writable, and persists that
-canonical path on a newly created Session. Open Science does not take ownership of or remove an
-external working directory. Without `--cwd`, Open Science allocates its usual managed workspace.
+canonical path on a newly created Session. Open-Science does not take ownership of or remove an
+external working directory. Without `--cwd`, Open-Science allocates its usual managed workspace.
 
 The working directory is a Session boundary, not a per-Run override. When `--session` and `--cwd`
 are used together, the requested path must resolve to the Session's recorded working directory. A
@@ -427,7 +443,7 @@ CLI wait and returns exit code `1`; it does not cancel the run, which can still 
 the timeout; the command still reports the original timeout and returns exit code `1`. Explicit
 cancellation waits for provider work and application finalization to drain, and preserves partial
 output and successfully finalized artifacts. When the `ask` approval profile needs permission,
-human-readable output directs the user to approve the request in Open Science Desktop or the Web UI.
+human-readable output directs the user to approve the request in Open-Science Desktop or the Web UI.
 
 Pass an existing session ID to continue a conversation. Approval profiles are `ask`, `auto`, and
 `full`; `--skill` is repeatable:
@@ -622,13 +638,13 @@ Artifact output paths are resolved relative to the current working directory.
 
 ## Rollback to 0.7.3
 
-The current Session and file formats contain fields that Open Science 0.7.3 cannot safely write.
+The current Session and file formats contain fields that Open-Science 0.7.3 cannot safely write.
 Replacing only the application binary can therefore discard newer Upload, conversation-branch, and
 Artifact provenance data. Prepare a compatible copy before installing 0.7.3:
 
-1. Quit Open Science completely.
+1. Quit Open-Science completely.
 2. Run `open-science rollback-to-0.7.3 --yes`.
-3. Keep the paths printed by the command, then install and start Open Science 0.7.3.
+3. Keep the paths printed by the command, then install and start Open-Science 0.7.3.
 
 No pre-upgrade backup is required. The command is offline and does not rewrite the newer data: it
 copies Uploads, Artifacts, Notebooks, and workspaces into a new rollback Data Root; converts each
@@ -662,7 +678,7 @@ directories while that recovery runs.
 
 The 0.7.3 copy contains only the active branch of each conversation. Inactive branches, Artifact
 version history, reviews, and provenance snapshots remain preserved in the newer roots but are not
-visible to 0.7.3. The command refuses to run while Open Science appears active, when a source path is
+visible to 0.7.3. The command refuses to run while Open-Science appears active, when a source path is
 missing or aliases storage through a symbolic link/junction, when a Version's size or checksum does
 not match SQLite, or when a rollback target already exists.
 
@@ -750,7 +766,7 @@ creates files and temporary replacements with POSIX mode `0600`. Keep the config
 private; anyone who can read these files can recover the secrets. Do not copy them into images,
 repositories, logs, or support reports. A disposable container filesystem discards them when the
 container is removed; a persistent volume retains them. A tmpfs mount can be used when disk
-persistence is unwanted. Open Science does not delete configuration automatically on shutdown.
+persistence is unwanted. Open-Science does not delete configuration automatically on shutdown.
 
 Specify the option at every startup, including after updates. It is a startup choice, not a saved
 preference. The default (or `--credential-store=os`) requires OS protection. An already-running

@@ -5,6 +5,10 @@
 // teardown (all process trees gone, file handles released) from a degraded one.
 
 import { diagnosticErrorFields, type Logger } from './logger'
+import type { LegacyShellRecovery } from '../shared/update'
+
+export type NotebookShutdownOptions = { legacyShellRecoveryToken?: string }
+export type NotebookShutdownResult = { reaped: boolean; legacyShellRecovery?: LegacyShellRecovery }
 
 export type ShutdownStepOutcome = 'completed' | 'timeout' | 'failed' | 'degraded'
 
@@ -13,6 +17,7 @@ export type ShutdownOutcome = {
   completed: boolean
   // Every process tree was cleanly reaped. Only meaningful when completed is true; false otherwise.
   reaped: boolean
+  legacyShellRecovery?: LegacyShellRecovery
 }
 
 export class BackendShutdownOutcomeError extends Error {
@@ -54,7 +59,7 @@ export type BackendShutdownDeps = QuitShutdownDeps & {
   }
   notebook: QuitShutdownDeps['notebook'] & {
     // Reusable kernel teardown for update checks that may leave the current app running.
-    shutdownAll: () => Promise<{ reaped: boolean }>
+    shutdownAll: (options?: NotebookShutdownOptions) => Promise<NotebookShutdownResult>
   }
   sideChat: {
     shutdown: () => Promise<void>
@@ -90,11 +95,12 @@ export const UPDATE_SHUTDOWN_BUDGET_MS = 15000
 // whether every process tree was cleanly reaped.
 const runBounded = async (
   runtimeTeardown: Promise<{ reaped: boolean }>,
-  notebookTeardown: Promise<{ reaped: boolean }>,
+  notebookTeardown: Promise<NotebookShutdownResult>,
   budgetMs: number,
   log?: BackendShutdownDeps['log']
 ): Promise<ShutdownOutcome> => {
   let reaped = false
+  let legacyShellRecovery: LegacyShellRecovery | undefined
   const settled = { runtime: false, notebook: false }
   const logFailure = (backend: 'runtime' | 'notebook', error: unknown): void => {
     try {
@@ -139,6 +145,9 @@ const runBounded = async (
       const notebookReaped =
         notebookResult.status === 'fulfilled' && notebookResult.value?.reaped === true
       reaped = runtimeReaped && notebookReaped
+      if (runtimeReaped && notebookResult.status === 'fulfilled') {
+        legacyShellRecovery = notebookResult.value?.legacyShellRecovery
+      }
     }
   )
 
@@ -158,7 +167,11 @@ const runBounded = async (
     if (!settled.runtime) logTimeout('runtime')
     if (!settled.notebook) logTimeout('notebook')
   }
-  return { completed, reaped: completed && reaped }
+  return {
+    completed,
+    reaped: completed && reaped,
+    ...(completed && legacyShellRecovery ? { legacyShellRecovery } : {})
+  }
 }
 
 // Quit/relaunch helper (latching teardown). Kept as a standalone function for the data-root migration
@@ -195,17 +208,35 @@ export class BackendShutdownCoordinator {
     )
   }
 
-  runForUpdateGate(
+  async runForUpdateGate(
     budgetMs: number = UPDATE_SHUTDOWN_BUDGET_MS,
-    options: { holdSideChatAdmission?: boolean } = {}
+    options: NotebookShutdownOptions & { holdSideChatAdmission?: boolean } = {}
   ): Promise<ShutdownOutcome> {
-    return runBounded(
+    const started = Date.now()
+    const readiness = await runBounded(
       withSideChatShutdown(
         this.deps.runtime.shutdownForUpdateGate(),
         this.deps.sideChat.suspendAll({ holdAdmission: options.holdSideChatAdmission === true })
       ),
       this.deps.notebook.shutdownAll(),
       budgetMs,
+      this.deps.log
+    )
+    // Only offer/consume historical consent after every identifiable backend has stopped. A
+    // changed snapshot or a failed backend retains the normal refusal without touching records.
+    if (
+      !options.legacyShellRecoveryToken ||
+      readiness.legacyShellRecovery?.token !== options.legacyShellRecoveryToken
+    )
+      return readiness
+    const remaining = budgetMs - (Date.now() - started)
+    if (remaining <= 0) return { completed: false, reaped: false }
+    return runBounded(
+      Promise.resolve({ reaped: true }),
+      this.deps.notebook.shutdownAll({
+        legacyShellRecoveryToken: options.legacyShellRecoveryToken
+      }),
+      remaining,
       this.deps.log
     )
   }

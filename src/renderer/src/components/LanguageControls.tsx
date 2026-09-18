@@ -1,8 +1,8 @@
+import { Notice } from '@/components/notice'
 import { useTranslation } from 'react-i18next'
 
 import { ActionToast } from '@/components/ActionToast'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
-import { cn } from '@/lib/utils'
 import { useLocaleStore } from '@/stores/locale-store'
 import {
   LANGUAGE_PREFERENCES,
@@ -31,22 +31,25 @@ const LanguageSaveError = ({ className }: { className?: string }): React.JSX.Ele
   if (!saveFailed) return null
 
   return (
-    <p role="alert" className={cn('flex items-baseline gap-2 text-xs text-danger-000', className)}>
-      <span>
-        {t('Could not save the language.')}
-        <span className="sr-only">
-          {' '}
-          {t('The saved language has been restored. Select a language to try again.')}
-        </span>
-      </span>
-      <button
-        type="button"
-        className="shrink-0 underline underline-offset-2 focus-visible:outline-auto"
-        onClick={() => useLocaleStore.setState({ saveFailed: false })}
-      >
-        {t('Dismiss')}
-      </button>
-    </p>
+    <Notice
+      inline
+      level="error"
+      role="alert"
+      className={className}
+      content={
+        <>
+          <span>{t('Could not save the language.')}</span>
+          <span className="sr-only">
+            {' '}
+            {t('The saved language has been restored. Select a language to try again.')}
+          </span>
+        </>
+      }
+      dismissButton={{
+        label: t('Dismiss'),
+        onClick: () => useLocaleStore.setState({ saveFailed: false })
+      }}
+    />
   )
 }
 

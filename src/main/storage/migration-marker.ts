@@ -1,13 +1,10 @@
-import { createReadStream, existsSync, type Dirent } from 'node:fs'
+import { createReadStream, type Dirent } from 'node:fs'
 import { lstat, readFile, readdir, readlink, rm, stat, writeFile } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
 import { join, relative } from 'node:path'
 
-// Sentinel file dropped INTO a staging data root while a migration copy is in flight. Its presence
-// means "this OpenScience folder is a half-baked/uncommitted staging copy, not the live data root",
-// which both computeDefaultDataRoot (ignore it when picking the default) and the commit/discard gates
-// key off. Kept in a standalone module that imports ONLY node builtins so storage-root's pure getter
-// can call hasPendingMigrationMarker without pulling in electron or migration-service (import cycle).
+// Sentinel file in a staged data root. Commit/discard gates validate it before treating a copied
+// target as a committed location or deleting its staging data. Keep these helpers Electron-free.
 export const MIGRATION_MARKER_FILENAME = '.open-science-migration.json'
 
 export type MigrationInventory = {
@@ -52,10 +49,6 @@ const isSafeMigrationPath = (value: unknown): value is string =>
   !value.startsWith('/') &&
   !/^[A-Za-z]:[\\/]/.test(value) &&
   value.split(/[\\/]/).every((segment) => segment.length > 0 && segment !== '.' && segment !== '..')
-
-// Sync existence check so storage-root's synchronous computeDefaultDataRoot can consult it directly.
-export const hasPendingMigrationMarker = (root: string): boolean =>
-  existsSync(join(root, MIGRATION_MARKER_FILENAME))
 
 // Reads and validates the marker, returning null on a missing, unreadable, corrupt, or structurally
 // incomplete file (missing token/source/target) so callers can treat "no trustworthy marker" uniformly.

@@ -5,7 +5,11 @@ import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { publishNoReplace, removeAnchoredFile } from './atomic-no-replace-publisher'
+import {
+  publishNoReplace,
+  recoverAnchoredRemoval,
+  removeAnchoredFile
+} from './atomic-no-replace-publisher'
 
 const require = createRequire(import.meta.url)
 const nativeBindingAvailable = (() => {
@@ -92,6 +96,46 @@ describe.skipIf(!nativeBindingAvailable)('anchored publication removal', () => {
     ).toThrow(expect.objectContaining({ code: 'ESTALE' }))
     expect(await readFile(join(parent, 'attempt.tmp'), 'utf8')).toBe('replacement')
   })
+
+  it.skipIf(process.platform === 'win32')(
+    'binds native content receipts to their authority and rejects publication recovery',
+    async () => {
+      cleanupRoot = await mkdtemp(join(tmpdir(), 'safe-content-removal-'))
+      const parent = await lstat(cleanupRoot, { bigint: true })
+      const path = join(cleanupRoot, 'legacy.pdf')
+      await writeFile(path, 'original')
+      const file = await lstat(path, { bigint: true })
+      await writeFile(path, 'replacement bytes')
+      const recoveryName = `.content-recovery-${'a'.repeat(64)}`
+      expect(() =>
+        removeAnchoredFile(cleanupRoot!, '', 'legacy.pdf', parent, file, recoveryName)
+      ).toThrow(expect.objectContaining({ code: 'ESTALE' }))
+      expect(await readFile(join(cleanupRoot, recoveryName, 'receipt'), 'utf8')).toBe(
+        [
+          'content-removal-v1',
+          recoveryName,
+          'legacy.pdf',
+          parent.dev,
+          parent.ino,
+          file.dev,
+          file.ino,
+          file.size,
+          file.mtimeNs,
+          ''
+        ].join('\n')
+      )
+      expect(() => recoverAnchoredRemoval(cleanupRoot!, '', recoveryName, parent)).toThrow(
+        expect.objectContaining({ code: 'EINVAL' })
+      )
+      expect(() =>
+        recoverAnchoredRemoval(cleanupRoot!, '', recoveryName, parent, 'another.pdf')
+      ).toThrow(expect.objectContaining({ code: 'EINVAL' }))
+      expect(() =>
+        recoverAnchoredRemoval(cleanupRoot!, '', recoveryName, parent, 'legacy.pdf')
+      ).toThrow(expect.objectContaining({ code: 'ESTALE' }))
+      expect(await readFile(path, 'utf8')).toBe('replacement bytes')
+    }
+  )
 
   it.each(['root', 'ancestor', 'parent'] as const)(
     'refuses a linked %s directory',

@@ -2,6 +2,7 @@ import { availableParallelism, cpus } from 'node:os'
 import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import WindowsTestSequencer from './scripts/ci/windows-test-sequencer'
 
 import vitestConfig, {
   CHANGED_SOURCE_COVERAGE_THRESHOLDS,
@@ -20,6 +21,11 @@ import vitestConfig, {
 } from './vitest.config'
 
 describe('Vitest discovery boundaries', () => {
+  it('enables module-based sharding only in the Windows full-test profile', () => {
+    expect(vitestConfig.test?.sequence?.sequencer).toBe(
+      process.env.VITEST_WINDOWS_FULL_TEST === '1' ? WindowsTestSequencer : undefined
+    )
+  })
   it.each([
     '**/.pnpm-store/**',
     '**/tmp/**',
@@ -37,6 +43,20 @@ describe('Vitest discovery boundaries', () => {
     expect(vitestExcludePatternsFor({ VITEST_PORTABLE_CI: '1' })).toEqual(
       expect.arrayContaining([...VITEST_PORTABLE_CI_EXCLUDE_PATTERNS])
     )
+  })
+
+  it('assigns the Plan context Shell sandbox check to the native isolation lanes', () => {
+    const planContextTest = 'src/main/session-plan/plan-context-file.shell.integration.test.ts'
+    const linuxFilesystemTest =
+      'packages/notebook-network-sandbox/src/filesystem-enforcement.integration.test.ts'
+    const normalExcludes = vitestExcludePatternsFor({})
+    const portableExcludes = vitestExcludePatternsFor({ VITEST_PORTABLE_CI: '1' })
+
+    expect(VITEST_PROCESS_TEST_GLOBS).toContain('**/*.integration.test.ts')
+    expect(normalExcludes).not.toContain(planContextTest)
+    expect(normalExcludes).not.toContain(linuxFilesystemTest)
+    expect(portableExcludes).toContain(planContextTest)
+    expect(portableExcludes).toContain(linuxFilesystemTest)
   })
 })
 
@@ -168,7 +188,10 @@ const projectByName = (name: string): VitestProjectTest => {
 }
 
 it('runs whole-tree architecture scans in one reused worker after the parallel unit pool', () => {
-  expect(VITEST_ARCHITECTURE_TEST_GLOBS).toEqual(['**/*.architecture.test.ts'])
+  expect(VITEST_ARCHITECTURE_TEST_GLOBS).toEqual([
+    '**/*.architecture.test.ts',
+    'scripts/ci/module-consumer-coverage.test.ts'
+  ])
   const architecture = projectByName('architecture')
   expect(architecture.include).toEqual([...VITEST_ARCHITECTURE_TEST_GLOBS])
   expect(architecture.isolate).toBe(false)
@@ -202,7 +225,8 @@ it('serializes real kernels, TCP servers, and integration files', () => {
 it('serializes migration and Session package round trips after other schema-using projects', () => {
   expect(VITEST_DATABASE_TEST_GLOBS).toEqual([
     'scripts/database-migration-ledger-smoke.test.ts',
-    'src/main/session-package/service.test.ts'
+    'src/main/session-package/service.test.ts',
+    'src/main/session-package/literature.test.ts'
   ])
   const database = projectByName('database')
   expect(database.include).toEqual([...VITEST_DATABASE_TEST_GLOBS])

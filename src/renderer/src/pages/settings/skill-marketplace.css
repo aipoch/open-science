@@ -1,6 +1,6 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R5 V3
  * genre: modern-minimal · macrostructure: Catalogue · tone: utilitarian
- * Existing Open Science tokens and Settings navigation; no decorative reveals.
+ * Existing Open-Science tokens and Settings navigation; no decorative reveals.
  */
 [data-slot='skill-marketplace'] {
   container-type: inline-size;
@@ -73,6 +73,7 @@
 .skill-marketplace-card-controls > .skill-marketplace-primary-action {
   grid-column: 2;
   grid-row: 1;
+  justify-self: end;
 }
 .skill-marketplace-card-controls > :not(.skill-marketplace-primary-action) {
   grid-column: 1 / -1;

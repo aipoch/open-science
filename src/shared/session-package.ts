@@ -39,7 +39,7 @@ export const packageExcludedFileSchema = z
 export type PackageExcludedFile = z.infer<typeof packageExcludedFileSchema>
 export type PackageSelectableFile = PackageExcludedFile & {
   groupId: string
-  source: 'artifact' | 'upload' | 'reproducibility'
+  source: 'artifact' | 'upload' | 'reproducibility' | 'literature'
   versionNumber: number
   requiredForEvidence?: boolean
   dependentFiles: string[]
@@ -71,7 +71,7 @@ export type PackageProgress = {
 
 export type PackageOperationSnapshot = {
   id: string
-  kind: 'export' | 'import'
+  kind: 'export' | 'import' | 'fork'
   session?: SessionPackageRequest
   importTarget?: SessionPackageImportRequest
   presentationRevision?: number
@@ -84,7 +84,11 @@ export type PackageOperationSnapshot = {
   progress: PackageProgress
   files?: PackageSelectableFile[]
   summary?: PackageSelectionSummary
-  result?: { filePath?: string; imported?: SessionPackageRequest }
+  result?: {
+    filePath?: string
+    imported?: SessionPackageRequest
+    recovery?: SessionPackageRequest & { operationId: string; outcome: 'committed' | 'unconfirmed' }
+  }
   error?: string
   cleanupPending?: boolean
   transferBytesPerSecond?: number
@@ -160,6 +164,7 @@ export const packageInventoryEntrySchema = z
 export const sessionPackageManifestSchema = z
   .object({
     format: z.literal('open-science-session'),
+    requiredFeatures: z.array(z.literal('literature')).max(1).optional(),
     schemaVersion: z.literal(1),
     createdAt: z.number().int().nonnegative(),
     source: z
@@ -205,7 +210,9 @@ export const sessionPackageReceiptSchema = packageOriginSchema
     schemaVersion: z.literal(1),
     projectId: identity,
     sessionId: identity,
-    identities: z.record(identity, identity),
+    // Source graph/runtime IDs are opaque (including composite separators); only remapped
+    // destination IDs become filesystem identities and must satisfy the path-safe schema.
+    identities: z.record(z.string().min(1).max(4096), identity),
     files: z
       .array(
         z
@@ -230,7 +237,7 @@ export type SessionPackageImportResult = SessionPackageRequest | null
 const packageOperationSnapshotSchema: z.ZodType<PackageOperationSnapshot> = z
   .object({
     id: identity,
-    kind: z.enum(['export', 'import']),
+    kind: z.enum(['export', 'import', 'fork']),
     session: sessionPackageRequestSchema.optional(),
     importTarget: sessionPackageImportRequestSchema.optional(),
     presentationRevision: z.number().int().nonnegative().optional(),
@@ -275,7 +282,7 @@ const packageOperationSnapshotSchema: z.ZodType<PackageOperationSnapshot> = z
       .array(
         packageExcludedFileSchema.extend({
           groupId: z.string(),
-          source: z.enum(['artifact', 'upload', 'reproducibility']),
+          source: z.enum(['artifact', 'upload', 'reproducibility', 'literature']),
           versionNumber: z.number().int().positive(),
           requiredForEvidence: z.boolean().optional(),
           dependentFiles: z.array(z.string())
@@ -291,7 +298,13 @@ const packageOperationSnapshotSchema: z.ZodType<PackageOperationSnapshot> = z
       .strict()
       .optional(),
     result: z
-      .object({ filePath: z.string().optional(), imported: sessionPackageRequestSchema.optional() })
+      .object({
+        filePath: z.string().optional(),
+        imported: sessionPackageRequestSchema.optional(),
+        recovery: sessionPackageRequestSchema
+          .extend({ operationId: identity, outcome: z.enum(['committed', 'unconfirmed']) })
+          .optional()
+      })
       .strict()
       .optional(),
     error: z.string().optional(),
@@ -301,6 +314,10 @@ const packageOperationSnapshotSchema: z.ZodType<PackageOperationSnapshot> = z
   })
   .strict()
 export const sessionPackageCommandContracts = {
+  fork: defineApplicationCommandContract(
+    validationCodec(z.tuple([sessionPackageRequestSchema])),
+    validationCodec(sessionPackageRequestSchema.nullable())
+  ),
   operation: defineApplicationCommandContract(
     validationCodec(z.tuple([packageOperationRequestSchema])),
     validationCodec(packageOperationSnapshotSchema.nullable())

@@ -13,6 +13,7 @@ import {
   type PlanLifecycle,
   type PlanCommandErrorCode
 } from '../../shared/session-plan/contract'
+import { redactSensitiveText } from '../../shared/diagnostic-redaction'
 import type { SessionPlanApproval, SessionPlanStepStatus } from '../../shared/session-persistence'
 import { LOCAL_RESOURCE_BUDGETS } from '../resource-budget'
 import {
@@ -26,24 +27,45 @@ const PLAN_MCP_SERVER_NAME = 'open-science-plan'
 
 const generatePlanToolSchema = z.strictObject(
   {
-    decision: z.enum(['approved', 'rejected'], { error: formatPlanSchemaIssue }).optional(),
-    approve: z.literal(true, { error: formatPlanSchemaIssue }).optional(),
+    decision: z
+      .enum(['approved', 'rejected'], { error: formatPlanSchemaIssue })
+      .describe(
+        'A final explicit user decision for the pending Plan. Use this field by itself; approved permits execution and rejected ends the Plan.'
+      )
+      .optional(),
+    approve: z
+      .literal(true, { error: formatPlanSchemaIssue })
+      .describe('Legacy spelling for decision:"approved". Use this field by itself.')
+      .optional(),
     ...generatePlanContentToolSchema.shape
   },
   { error: formatPlanSchemaIssue }
 )
 
-const sessionPlanStepStatusSchema = z.enum([
-  'in_progress',
-  'completed',
-  'blocked',
-  'skipped'
-] satisfies readonly SessionPlanStepStatus[])
+const sessionPlanStepStatusSchema = z
+  .enum([
+    'in_progress',
+    'completed',
+    'blocked',
+    'skipped'
+  ] satisfies readonly SessionPlanStepStatus[])
+  .describe(
+    'The observed status. Use in_progress after work starts; completed after its check passes; blocked only for an irreversible failure and never for a pause; skipped only for unnecessary work that has not started. completed and blocked require in_progress. Terminal statuses cannot change later, and repeating one is a no-op.'
+  )
 
 const updateStepStatusToolSchema = {
-  title: z.string().min(1),
+  title: z
+    .string()
+    .min(1)
+    .describe('The exact, case-sensitive title of one step in the current approved Plan.'),
   status: sessionPlanStepStatusSchema,
-  notes: z.string().min(1).optional()
+  notes: z
+    .string()
+    .min(1)
+    .describe(
+      'Optional non-empty progress or blocker context. It is stored only when the status changes or remains in_progress; a repeated terminal-status no-op does not write new notes.'
+    )
+    .optional()
 }
 
 const sessionPlanApprovalSchema = z.enum([
@@ -88,17 +110,99 @@ type PlanMcpServerConfigRequest = PlanMcpEnvironment &
 type PlanToolCallResult = Readonly<{
   isError?: true
   structuredContent?: Readonly<{
-    error: Readonly<{ code: PlanCommandErrorCode; message: string }>
+    error: Readonly<{ code?: PlanCommandErrorCode; message: string; guidance?: string }>
   }>
   content: Array<{ type: 'text'; text: string }>
 }>
+
+class PlanRpcAuthenticationError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'PlanRpcAuthenticationError'
+  }
+}
 
 const toolResult = (result: unknown): PlanToolCallResult => ({
   content: [{ type: 'text' as const, text: JSON.stringify(result) }]
 })
 
+const INVALID_SUCCESS_MESSAGE =
+  'The Session Plan service returned an invalid result. The operation outcome is unconfirmed.'
+const OUTCOME_UNCONFIRMED_GUIDANCE =
+  'Stop automatic retries. Do not assume the operation failed or repeat it until later Session Plan context confirms whether it took effect. Do not repeat confirmed writes; report unresolved state for application recovery.'
+const AUTHENTICATION_REJECTED_GUIDANCE =
+  "Do not retry automatically or bypass the rejection. Report it so Open-Science can refresh this Session's Plan capability; retry only after the application provides a fresh capability."
+
+const boundedRedactedMessage = (message: string): string => {
+  const redacted = redactSensitiveText(message)
+  return redacted.length <= 2048 ? redacted : `${redacted.slice(0, 2018)}… [message truncated]`
+}
+
+const guidanceForPlanError = (error: PlanCommandError): string | undefined => {
+  if (error.code === 'invalid-backend-result') return OUTCOME_UNCONFIRMED_GUIDANCE
+  if (error.code === 'invalid-plan') return undefined
+  if (error.code === 'plan-unavailable') {
+    return 'The operation was not attempted. Do not rebuild or resubmit the Plan. Open-Science must provide the Session Plan capability before another Plan call.'
+  }
+  if (error.code === 'no-active-plan') {
+    return 'Do not retry this command unless later application context establishes an active Plan.'
+  }
+  if (error.code === 'plan-review-pending') {
+    return 'Do not repeat this Plan call. Preserve the pending state and follow the error message or later Session Plan context before another mutation.'
+  }
+  if (error.code === 'approval-already-pending') {
+    return 'Keep the current review pending. Do not regenerate automatically; wait for the current review result.'
+  }
+  if (error.code === 'approval-already-decided') {
+    return 'The recorded decision is irreversible. Do not retry or submit the opposite decision.'
+  }
+  if (error.code === 'stale-plan' || error.code === 'revision-conflict') {
+    return 'Stop automatic retries. Follow later Session Plan context for the current version and state before making another mutation.'
+  }
+  if (error.code === 'unknown-step') {
+    return 'Use an exact step title from the current approved Plan when that Plan context is available.'
+  }
+  if (error.code === 'invalid-transition' || error.code === 'dependency-not-satisfied') {
+    return 'Follow the allowed statuses or unmet dependency stated in the error before making another status update.'
+  }
+  if (error.code === 'plan-not-approved') {
+    return 'Do not update Plan steps unless later Session Plan context confirms that the current Plan is approved.'
+  }
+  if (error.code === 'artifact-unavailable') {
+    return 'Stop Plan mutations. The application or user must restore readable, verified Plan data before work can continue.'
+  }
+  if (error.code === 'interaction-mismatch') {
+    return 'The authorization or delivery context changed. Do not retry this mutation automatically.'
+  }
+  return undefined
+}
+
 const structuredPlanErrorResult = (error: PlanCommandError): PlanToolCallResult => {
-  const payload = { error: { code: error.code, message: error.message } }
+  const guidance = guidanceForPlanError(error)
+  const message = boundedRedactedMessage(error.message)
+  const payload = {
+    error: {
+      code: error.code,
+      message,
+      ...(guidance ? { guidance } : {})
+    }
+  }
+  return {
+    isError: true,
+    structuredContent: payload,
+    content: [{ type: 'text' as const, text: JSON.stringify(payload) }]
+  }
+}
+
+const authenticationRejectedResult = (error: PlanRpcAuthenticationError): PlanToolCallResult => {
+  const payload = {
+    error: {
+      message: boundedRedactedMessage(
+        `The Session Plan operation was not attempted because authentication was rejected: ${error.message}`
+      ),
+      guidance: AUTHENTICATION_REJECTED_GUIDANCE
+    }
+  }
   return {
     isError: true,
     structuredContent: payload,
@@ -114,7 +218,18 @@ const handlePlanToolCall = async (
     return toolResult(present(await call()))
   } catch (error) {
     if (error instanceof PlanCommandError) return structuredPlanErrorResult(error)
-    throw error
+    if (error instanceof PlanRpcAuthenticationError) return authenticationRejectedResult(error)
+    const payload = {
+      error: {
+        message: 'The Session Plan operation did not return a confirmed result.',
+        guidance: OUTCOME_UNCONFIRMED_GUIDANCE
+      }
+    }
+    return {
+      isError: true,
+      structuredContent: payload,
+      content: [{ type: 'text' as const, text: JSON.stringify(payload) }]
+    }
   }
 }
 
@@ -122,10 +237,7 @@ const recordOf = (value: unknown): Record<string, unknown> | undefined =>
   typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : undefined
 
 const invalidPlanToolSuccess = (): PlanCommandError =>
-  new PlanCommandError(
-    'invalid-plan',
-    'The Session Plan service returned an invalid success result.'
-  )
+  new PlanCommandError('invalid-backend-result', INVALID_SUCCESS_MESSAGE)
 
 const requirePlanToolState = (
   result: unknown
@@ -171,15 +283,56 @@ type PlanToolOutcomeContext =
   | Readonly<{ kind: 'decision'; decision: 'approved' | 'rejected' }>
   | Readonly<{ kind: 'generation-result' }>
 
+const decisionDeliveryContext = (
+  outcome: Record<string, unknown>,
+  projection: Record<string, unknown>
+): Record<string, string> => {
+  const deliveryWarning =
+    typeof outcome.deliveryWarning === 'string' &&
+    outcome.deliveryWarning.length > 0 &&
+    outcome.deliveryWarning.length <= 2048
+      ? outcome.deliveryWarning
+      : undefined
+  if (!deliveryWarning) return {}
+  const artifactVersionId =
+    typeof projection.artifactVersionId === 'string' &&
+    projection.artifactVersionId.length > 0 &&
+    projection.artifactVersionId.length <= 2048
+      ? projection.artifactVersionId
+      : undefined
+  const deliveryCommandId =
+    typeof outcome.deliveryCommandId === 'string' &&
+    outcome.deliveryCommandId.length > 0 &&
+    outcome.deliveryCommandId.length <= 2048
+      ? outcome.deliveryCommandId
+      : undefined
+  return {
+    deliveryWarning,
+    ...(artifactVersionId ? { artifactVersionId } : {}),
+    ...(deliveryCommandId ? { deliveryCommandId } : {})
+  }
+}
+
 const presentPlanToolOutcome = (result: unknown, context: PlanToolOutcomeContext): unknown => {
   const outcome = recordOf(result)
+  const planContext =
+    typeof outcome?.planContext === 'string' && outcome.planContext.length <= 2048
+      ? { planContext: outcome.planContext }
+      : {}
   if (context.kind === 'generation-result') {
     if (outcome?.kind === 'feedback' && typeof outcome.text === 'string') {
-      return { kind: 'feedback', text: outcome.text }
+      return { kind: 'feedback', text: outcome.text, ...planContext }
     }
   }
-  const { projection, changed, revision, approval, lifecycle } = requirePlanToolState(result)
-  const state = { changed, revision, lifecycle }
+  const {
+    outcome: validatedOutcome,
+    projection,
+    changed,
+    revision,
+    approval,
+    lifecycle
+  } = requirePlanToolState(result)
+  const state = { changed, revision, lifecycle, ...planContext }
   if (context.kind === 'step-update') {
     const step = recordOf(recordOf(projection.stepStates)?.[context.title])
     const stepStatus = sessionPlanStepStatusSchema.safeParse(step?.status)
@@ -194,15 +347,25 @@ const presentPlanToolOutcome = (result: unknown, context: PlanToolOutcomeContext
   if (context.kind === 'generation-result') {
     const decision = approval
     if (decision === 'approved' || decision === 'rejected') {
-      return { kind: 'decision', decision, ...state }
+      return {
+        kind: 'decision',
+        decision,
+        ...state,
+        ...decisionDeliveryContext(validatedOutcome, projection)
+      }
     }
-    return { kind: 'plan', ...state }
+    return {
+      kind: 'plan',
+      ...state,
+      guidance: 'Review is pending. Do not execute Plan steps until approval is recorded.'
+    }
   }
   if (approval !== context.decision) throw invalidPlanToolSuccess()
   return {
     kind: 'decision',
     decision: context.decision,
-    ...state
+    ...state,
+    ...decisionDeliveryContext(validatedOutcome, projection)
   }
 }
 
@@ -225,7 +388,7 @@ const createPlanMcpServer = (handler: PlanMcpHandler): ModelContextProtocolServe
     {
       title: 'Generate or decide Session Plan',
       description:
-        'Generation and decision use separate call shapes. For generation, submit one complete payload with all four top-level fields: task_summary, phases, desired_outputs, and feasibility. For a decision, submit only decision:"approved" or decision:"rejected". If validation fails, repair each reported path in the complete payload; never resend the same invalid arguments unchanged. Generation blocks until the user responds. Text responses always return as kind:feedback and remain ordinary user Messages; interpret the full meaning, then submit an unambiguous approval or rejection as a decision-only call, or revise and regenerate when changes are requested. An approved Plan remains active context on its durable Message Branch across later Attempts and context reconstruction. Never infer approval from message text alone. The legacy approval-only payload approve:true remains accepted.',
+        'Create a complete Session Plan for review, or record the user\'s explicit decision on the pending Plan. Use exactly one shape: (1) generation with task_summary, phases, desired_outputs, and feasibility; or (2) decision-only with decision:"approved" or decision:"rejected". Legacy decision-only approve:true remains accepted. Each step should state the work, concrete deliverable or finding, and completion check. A distinct new Plan supersedes the current Plan. When the current Plan needs revision, submit the complete revised Plan for fresh review. Do not regenerate merely to report progress or recover a transport failure. Generation waits for review: kind:plan remains pending, kind:decision records approval or rejection, and kind:feedback is an ordinary user Message. Never infer approval from ambiguous or conditional feedback. A timeout or disconnect neither approves the Plan nor proves submission failed; wait for later Plan context instead of resubmitting or executing steps. Repair every reported validation path. A deliveryWarning means the decision committed but handoff is unconfirmed; preserve its identities and follow the warning without repeating the decision.',
       inputSchema: generatePlanToolSchema
     },
     async ({ decision, approve, task_summary, phases, desired_outputs, feasibility }, extra) => {
@@ -272,6 +435,9 @@ const createPlanMcpServer = (handler: PlanMcpHandler): ModelContextProtocolServe
             desired_outputs,
             feasibility
           })
+          // A review pause cancels this transport before an approval result can rebind the cache.
+          // Pending updates remain rejected by the service; the next approved Plan is server-bound.
+          executionArtifactVersionId = undefined
           const result = await handler.generate(document, extra.signal)
           executionArtifactVersionId = projectionVersionId(result) ?? executionArtifactVersionId
           return result
@@ -284,7 +450,8 @@ const createPlanMcpServer = (handler: PlanMcpHandler): ModelContextProtocolServe
     'update_step_status',
     {
       title: 'Update Plan step status',
-      description: 'Update one exact step title on the server-bound active Plan.',
+      description:
+        'Report observed progress for one exact, case-sensitive step in the current approved Plan. Call soon after work starts and when completion, irreversible blockage, or skipping is known; update before moving to a later independent unit. Complete only after the promised check passes and its result is available. Waiting for user input or an external result preserves the current status; it is not blocked. Earlier steps in the same delegation and all earlier phases must be completed or skipped before starting or skipping; after a block, only already-started delegations may continue. A receipt confirms the stored status. Settle known results before finishing the task without inventing terminal statuses merely to end a turn.',
       inputSchema: updateStepStatusToolSchema
     },
     async (input) =>
@@ -338,6 +505,19 @@ const callPlanRpc = async (
     error?: string | { code?: unknown; message?: unknown }
   }
   if (!response.ok || payload.error) {
+    if (response.status === 401) {
+      const message =
+        typeof payload.error === 'string'
+          ? payload.error
+          : typeof payload.error === 'object' &&
+              payload.error !== null &&
+              typeof payload.error.message === 'string'
+            ? payload.error.message
+            : 'Session Plan RPC authentication was rejected.'
+      throw new PlanRpcAuthenticationError(
+        environment.token.length > 0 ? message.replaceAll(environment.token, '[redacted]') : message
+      )
+    }
     if (
       typeof payload.error === 'object' &&
       payload.error !== null &&
@@ -362,6 +542,7 @@ const createPlanMcpServerForEnvironment = (
 ): ModelContextProtocolServer =>
   createPlanMcpServer({
     generate: async (content, signal) => {
+      executionVersionByEnvironment.delete(environment)
       const result = await callPlanRpc(environment, 'generate', content, signal)
       const versionId = projectionVersionId(result)
       if (versionId) executionVersionByEnvironment.set(environment, versionId)

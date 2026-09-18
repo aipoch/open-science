@@ -37,6 +37,7 @@ type RuntimeProviderModelSelection =
   | { kind: 'provider-default' }
 
 type ProviderRuntimeTarget = {
+  configRevision?: number
   providerId: string
   providerType: StoredProvider['type']
   disconnectedAt?: number
@@ -111,6 +112,9 @@ class ProviderRuntimeProjectionOwner {
       needsKey,
       lastValidatedAt: provider.lastValidatedAt,
       lastValidatedTarget: provider.lastValidatedTarget,
+      // A legacy 'incompatible' verdict is a derivable (provider, framework) relationship, not
+      // endpoint health; validation no longer records it, and providerValidationFailed ignores
+      // stored copies — the single seam every reader of this field goes through.
       lastValidationFailure: provider.lastValidationFailure,
       ...(provider.expiresAt !== undefined ? { expiresAt: provider.expiresAt } : {})
     }
@@ -168,6 +172,7 @@ class ProviderRuntimeProjectionOwner {
 
     return {
       providerId: storedProvider.id,
+      configRevision: storedProvider.configRevision ?? 0,
       providerType: storedProvider.type,
       ...(storedProvider.disconnectedAt === undefined
         ? {}

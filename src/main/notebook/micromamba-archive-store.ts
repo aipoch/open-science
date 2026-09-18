@@ -317,8 +317,9 @@ export const publishMicromambaArchives = async (
           await rm(temp, { force: true })
         }
         if (!verified) {
-          throw new Error(
-            `authorized package archive is unavailable or failed verification: ${file}`
+          throw Object.assign(
+            new Error(`authorized package archive is unavailable or failed verification: ${file}`),
+            { data: { archiveFile: file, candidateCount: sourcesByFile.get(file)?.length ?? 0 } }
           )
         }
         await rename(temp, destination)

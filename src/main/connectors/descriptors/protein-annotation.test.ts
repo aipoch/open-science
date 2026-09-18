@@ -141,6 +141,23 @@ describe('protein-annotation / InterPro', () => {
     expect(out.summaries.Q00000.entries).toEqual([])
   })
 
+  it.each([
+    { next: null, error: 'pagination incomplete' },
+    { next: 'https://www.ebi.ac.uk/interpro/api/next', error: 'HTTP 204 mid-pagination' }
+  ])('rejects incomplete InterPro results: $error', async ({ next, error }) => {
+    const fetchImpl = mockFetch({
+      '/entry/pfam/': { json: { count: 2, results: [{ accession: 'PF00069' }], next } },
+      '/next': { text: '' }
+    })
+    await expect(
+      engine(fetchImpl).call(
+        tool('search_interpro_entries'),
+        { query: 'kinase', source_db: 'pfam' },
+        {}
+      )
+    ).rejects.toThrow(error)
+  })
+
   it('search_interpro_entries sorts rows by accession and carries the API count', async () => {
     const fetchImpl = mockFetch({
       '/entry/pfam/': {
@@ -324,6 +341,26 @@ describe('protein-annotation / Human Protein Atlas', () => {
 })
 
 describe('protein-annotation / STRING', () => {
+  it('get_string_network rejects blank symbols before making an upstream request', async () => {
+    const fetchImpl = mockFetch({})
+    await expect(
+      engine(fetchImpl).call(tool('get_string_network'), { symbols: [' ', '\t'] }, {})
+    ).rejects.toThrow('no input symbols provided')
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    { id: 'get_string_similarity_scores', expected: { n_pairs: 0, n_self: 0, pairs: [] } },
+    { id: 'get_string_best_similarity_hits', expected: { species_b: null, n_hits: 0, hits: [] } }
+  ])('$id skips homology requests when no input maps', async ({ id, expected }) => {
+    const fetchImpl = mockFetch({ '/json/get_string_ids': { text: '' } })
+    await expect(
+      engine(fetchImpl).call(tool(id), { symbols: ['NOTAGENE'] }, {})
+    ).resolves.toMatchObject({ mapped: [], unmapped: ['NOTAGENE'], ...expected })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(calls(fetchImpl)[0][0]).toContain('/json/get_string_ids')
+  })
+
   it('map_string_ids partitions input into mapped and unmapped by queryIndex', async () => {
     const fetchImpl = mockFetch({
       '/json/version': {
@@ -401,6 +438,287 @@ describe('protein-annotation / STRING', () => {
     expect(out.summary).toMatchObject({ n_edges: 1, n_nodes: 2 })
     expect(out.nodes.map((n) => n.degree)).toEqual([1, 1])
     expect(out.unmapped).toEqual([])
+  })
+
+  describe('get_string_network node identity and expansion', () => {
+    const mapped = (
+      queryIndex: number,
+      stringId: string,
+      preferredName: string
+    ): { queryIndex: number; stringId: string; preferredName: string; ncbiTaxonId: number } => ({
+      queryIndex,
+      stringId,
+      preferredName,
+      ncbiTaxonId: 9606
+    })
+    const networkTsv = (rows: string[][]): string =>
+      [
+        'stringId_A\tstringId_B\tpreferredName_A\tpreferredName_B\tncbiTaxonId\tscore\tnscore\tfscore\tpscore\tascore\tescore\tdscore\ttscore',
+        ...rows.map((row) =>
+          [...row, '9606', '0.9', '0', '0', '0', '0', '0.9', '0', '0'].join('\t')
+        )
+      ].join('\n')
+    type NetworkResult = {
+      nodes: Array<{
+        query: string | null
+        queries: string[]
+        is_query: boolean
+        name: string
+        string_id: string
+        degree: number
+      }>
+      edges: Array<{ a: string; b: string; string_id_a: string; string_id_b: string }>
+      summary: {
+        n_nodes: number
+        n_connected_nodes: number
+        n_isolated_nodes: number
+        n_expanded_nodes: number
+      }
+      unmapped: string[]
+      provenance: { parameters: Record<string, unknown>; endpoints_used: string[] }
+    }
+    async function runNetwork(
+      symbols: string[],
+      mappings: ReturnType<typeof mapped>[],
+      rows: string[][]
+    ): Promise<{ result: NetworkResult; params: URLSearchParams | undefined }> {
+      const fetchImpl = mockFetch({
+        '/json/version': { json: [{ string_version: '12.0' }] },
+        '/json/get_string_ids': { json: mappings },
+        '/tsv/network': { text: networkTsv(rows) }
+      })
+      const result = (await engine(fetchImpl).call(
+        tool('get_string_network'),
+        { symbols },
+        {}
+      )) as NetworkResult
+      // The returned graph must be closed over its endpoints, including isolated inputs.
+      const ids = new Set(result.nodes.map((node) => node.string_id))
+      expect(ids.size).toBe(result.nodes.length)
+      for (const edge of result.edges) {
+        expect(ids.has(edge.string_id_a)).toBe(true)
+        expect(ids.has(edge.string_id_b)).toBe(true)
+      }
+      expect(result.summary.n_nodes).toBe(result.nodes.length)
+      expect(result.summary.n_connected_nodes + result.summary.n_isolated_nodes).toBe(ids.size)
+      expect(result.nodes.reduce((sum, node) => sum + node.degree, 0)).toBe(result.edges.length * 2)
+      const networkCall = calls(fetchImpl).find(([url]) => String(url).includes('/tsv/network'))
+      const params = networkCall ? new URL(String(networkCall[0])).searchParams : undefined
+      if (params) {
+        expect(Number(params.get('add_nodes'))).toBe(
+          result.provenance.parameters['network.add_nodes']
+        )
+      }
+      return { result, params }
+    }
+
+    it.each(['', 'stringId_A\tstringId_B\n9606.p53\t9606.mdm2'])(
+      'handles empty or incomplete network TSV without inventing edges (%j)',
+      async (text) => {
+        const fetchImpl = mockFetch({
+          '/json/version': { text: '' },
+          '/json/get_string_ids': { json: [mapped(0, '9606.p53', 'TP53')] },
+          '/tsv/network': { text }
+        })
+        const result = engine(fetchImpl).call(tool('get_string_network'), { symbols: ['TP53'] }, {})
+        if (text) {
+          await expect(result).rejects.toThrow('network TSV is missing expected columns')
+        } else {
+          await expect(result).resolves.toMatchObject({
+            edges: [],
+            nodes: [{ string_id: '9606.p53', degree: 0 }],
+            summary: { n_nodes: 1, n_edges: 0, mean_score: null }
+          })
+        }
+      }
+    )
+
+    it('keeps the strongest duplicate edge and orders equal-name endpoints by ID', async () => {
+      const rows = [
+        ['9606.c', '9606.a', 'GENE', 'GENE'],
+        ['9606.b', '9606.a', 'GENE', 'GENE'],
+        ['9606.a', '9606.b', 'GENE', 'GENE']
+      ]
+      const fetchImpl = mockFetch({
+        '/json/version': { json: [{ string_version: '12.0' }] },
+        '/json/get_string_ids': {
+          json: [mapped(0, '9606.a', 'GENE'), mapped(0, '9606.ignored', 'OTHER')]
+        },
+        '/tsv/network': {
+          text:
+            networkTsv(rows).replaceAll('\t0.9\t', '\t0.7\t') +
+            '\n' +
+            networkTsv([rows[2]]).split('\n')[1]
+        }
+      })
+      const result = await engine(fetchImpl).call(
+        tool('get_string_network'),
+        { symbols: ['GENE'] },
+        {}
+      )
+      expect(result).toMatchObject({
+        edges: [
+          { string_id_a: '9606.a', string_id_b: '9606.b', score: 0.9 },
+          { string_id_a: '9606.a', string_id_b: '9606.c', score: 0.7 }
+        ],
+        nodes: [
+          { string_id: '9606.a', is_query: true, degree: 2 },
+          { string_id: '9606.b', is_query: false, degree: 1 },
+          { string_id: '9606.c', is_query: false, degree: 1 }
+        ],
+        summary: { n_nodes: 3, n_edges: 2, mean_score: 0.8, min_score: 0.7, max_score: 0.9 }
+      })
+    })
+
+    it.each([['TP53'], ['TP53', 'NOTAGENE']])(
+      'includes expanded endpoints when the only mapped protein is %s',
+      async (...symbols) => {
+        const { result, params } = await runNetwork(
+          symbols,
+          [mapped(0, '9606.p53', 'TP53')],
+          [
+            ['9606.p53', '9606.mdm2', 'TP53', 'MDM2'],
+            ['9606.atm', '9606.p53', 'ATM', 'TP53'],
+            ['9606.mdm2', '9606.atm', 'MDM2', 'ATM'],
+            // Reversed duplicate must not inflate degrees or counts.
+            ['9606.mdm2', '9606.p53', 'MDM2', 'TP53']
+          ]
+        )
+        expect(params?.get('add_nodes')).toBe('10')
+        expect(result.summary).toMatchObject({
+          n_input_symbols: symbols.length,
+          n_mapped: 1,
+          n_nodes: 3,
+          n_edges: 3,
+          n_connected_nodes: 3,
+          n_isolated_nodes: 0,
+          n_expanded_nodes: 2
+        })
+        expect(result.unmapped).toEqual(symbols.slice(1))
+        expect(result.nodes).toEqual([
+          {
+            query: null,
+            queries: [],
+            is_query: false,
+            name: 'ATM',
+            string_id: '9606.atm',
+            degree: 2
+          },
+          {
+            query: null,
+            queries: [],
+            is_query: false,
+            name: 'MDM2',
+            string_id: '9606.mdm2',
+            degree: 2
+          },
+          {
+            query: 'TP53',
+            queries: ['TP53'],
+            is_query: true,
+            name: 'TP53',
+            string_id: '9606.p53',
+            degree: 2
+          }
+        ])
+        expect(result.edges[0]).toMatchObject({
+          a: 'ATM',
+          b: 'MDM2',
+          string_id_a: '9606.atm',
+          string_id_b: '9606.mdm2'
+        })
+      }
+    )
+
+    it('keeps isolated inputs and requests no expansion for multiple distinct mapped proteins', async () => {
+      const { result, params } = await runNetwork(
+        ['TP53', 'MDM2', 'ISOLATED'],
+        [
+          mapped(0, '9606.p53', 'TP53'),
+          mapped(1, '9606.mdm2', 'MDM2'),
+          mapped(2, '9606.iso', 'ISOLATED')
+        ],
+        [['9606.p53', '9606.mdm2', 'TP53', 'MDM2']]
+      )
+      expect(params?.get('add_nodes')).toBe('0')
+      expect(result.summary).toMatchObject({
+        n_nodes: 3,
+        n_connected_nodes: 2,
+        n_isolated_nodes: 1,
+        n_expanded_nodes: 0
+      })
+      expect(result.nodes.find((node) => node.string_id === '9606.iso')).toMatchObject({
+        query: 'ISOLATED',
+        is_query: true,
+        degree: 0
+      })
+    })
+
+    it('counts same-name proteins separately by STRING ID', async () => {
+      const { result } = await runNetwork(
+        ['GENE'],
+        [mapped(0, '9606.input', 'GENE')],
+        [['9606.input', '9606.neighbor', 'GENE', 'GENE']]
+      )
+      expect(result.nodes.map((node) => node.degree)).toEqual([1, 1])
+      expect(result.summary).toMatchObject({
+        n_nodes: 2,
+        n_connected_nodes: 2,
+        n_isolated_nodes: 0,
+        n_expanded_nodes: 1
+      })
+    })
+
+    it('preserves mapped request entries while deduplicating graph nodes and retaining aliases', async () => {
+      // This tests graph construction when mappings contain aliases, not upstream mapping recovery.
+      const { result, params } = await runNetwork(
+        ['TP53', 'P53'],
+        [mapped(0, '9606.p53', 'TP53'), mapped(1, '9606.p53', 'TP53')],
+        []
+      )
+      expect(params?.get('identifiers')).toBe('9606.p53\r9606.p53')
+      expect(params?.get('add_nodes')).toBe('0')
+      expect(result.summary).toMatchObject({
+        n_input_symbols: 2,
+        n_mapped: 2,
+        n_nodes: 1,
+        n_expanded_nodes: 0
+      })
+      expect(result.nodes.find((node) => node.is_query)).toMatchObject({
+        query: 'TP53',
+        queries: ['TP53', 'P53'],
+        degree: 0
+      })
+    })
+
+    it('retains a single isolated input when expansion returns no edges', async () => {
+      const { result, params } = await runNetwork(['TP53'], [mapped(0, '9606.p53', 'TP53')], [])
+      expect(params?.get('add_nodes')).toBe('10')
+      expect(result.nodes[0]).toMatchObject({ query: 'TP53', degree: 0 })
+      expect(result.summary).toMatchObject({
+        n_nodes: 1,
+        n_connected_nodes: 0,
+        n_isolated_nodes: 1,
+        n_expanded_nodes: 0,
+        n_edges: 0,
+        mean_score: null
+      })
+    })
+
+    it('returns an empty graph without claiming a network request when nothing maps', async () => {
+      const { result, params } = await runNetwork(['NOTAGENE'], [], [])
+      expect(params).toBeUndefined()
+      expect(result.nodes).toEqual([])
+      expect(result.edges).toEqual([])
+      expect(result.unmapped).toEqual(['NOTAGENE'])
+      expect(result.summary).toMatchObject({
+        n_nodes: 0,
+        n_connected_nodes: 0,
+        n_isolated_nodes: 0,
+        n_expanded_nodes: 0
+      })
+      expect(result.provenance.endpoints_used).toEqual(['json/version', 'json/get_string_ids'])
+    })
   })
 
   it('get_string_similarity_scores canonicalizes homology pairs (id_a <= id_b, self flagged)', async () => {

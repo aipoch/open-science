@@ -334,7 +334,7 @@ test('persists Russian into the built main-process native quit dialog', async ({
       buttons: ['Отмена', 'Выйти'],
       detail: 'Выполнение ещё не завершено. При выходе работа будет прервана.',
       includesRendererCatalog: false,
-      message: 'Выйти из Open Science?'
+      message: 'Выйти из Open-Science?'
     })
 
   const screenshot = testInfo.outputPath('russian-locale-loaded.png')
@@ -342,6 +342,8 @@ test('persists Russian into the built main-process native quit dialog', async ({
   await testInfo.attach('russian-locale-loaded', { path: screenshot, contentType: 'image/png' })
   page = await app.restart()
   await expect(page.locator('html')).toHaveAttribute('lang', 'ru')
+  const localized = localizedSettingsCases.find((entry) => entry.locale === 'ru')!
+  await expect(page.getByRole('region', { name: localized.projects })).toBeVisible()
   expect(await loadedLocaleChunks(page)).toEqual(['ru'])
   await expect
     .poll(() => app.capturePersistedLocaleNativeQuitDialog())
@@ -349,7 +351,7 @@ test('persists Russian into the built main-process native quit dialog', async ({
       buttons: ['Отмена', 'Выйти'],
       detail: 'Выполнение ещё не завершено. При выходе работа будет прервана.',
       includesRendererCatalog: false,
-      message: 'Выйти из Open Science?'
+      message: 'Выйти из Open-Science?'
     })
 })
 
@@ -363,17 +365,22 @@ test('persists German into the built main-process native quit dialog', async ({ 
     buttons: ['Abbrechen', 'Beenden'],
     detail: 'Die Arbeit läuft noch und wird beim Beenden unterbrochen.',
     includesRendererCatalog: false,
-    message: 'Open Science beenden?'
+    message: 'Open-Science beenden?'
   }
 
   await expect.poll(() => app.capturePersistedLocaleNativeQuitDialog()).toEqual(expectedDialog)
 
   page = await app.restart()
   await expect(page.locator('html')).toHaveAttribute('lang', 'de')
+  const localized = localizedSettingsCases.find((entry) => entry.locale === 'de')!
+  await expect(page.getByRole('region', { name: localized.projects })).toBeVisible()
   await expect.poll(() => app.capturePersistedLocaleNativeQuitDialog()).toEqual(expectedDialog)
 })
 
-for (const localized of localizedSettingsCases) {
+// Russian and German restart/renderer checks are combined with their native-dialog journeys above.
+for (const localized of localizedSettingsCases.filter(
+  ({ locale }) => !['ru', 'de'].includes(locale)
+)) {
   test(`persists ${localized.language} after an Electron restart`, async ({ app }) => {
     let page = await app.completeOnboarding()
     await selectLanguage(page, localized.pickerLabel)

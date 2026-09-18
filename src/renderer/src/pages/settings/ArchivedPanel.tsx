@@ -1,3 +1,4 @@
+import { InlineNotice } from '@/components/ui/inline-notice'
 import { Archive, RotateCcw, Trash2 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -243,9 +244,9 @@ const ArchivedPanel = ({
         onOpenRecoveryFolder={window.api.sessions.openRecoveryFolder}
       />
       {panelError ? (
-        <p role="alert" className="text-sm text-danger-000">
+        <InlineNotice level="error" role="alert">
           {panelError}
-        </p>
+        </InlineNotice>
       ) : null}
       <ProjectDeletionCleanupNotice />
       {selectedProject ? (

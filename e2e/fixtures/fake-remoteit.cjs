@@ -38,7 +38,7 @@ if (command === 'service') {
   const state = readState()
   const operation = process.argv[2]
   const name = option('--name')
-  const id = option('--id') ?? (name === 'Open Science Remote' ? 'app-service' : 'browser-service')
+  const id = option('--id') ?? (name === 'Open-Science Remote' ? 'app-service' : 'browser-service')
   const existing = state.services.find((service) => service.id === id)
   const service = existing ?? { id }
   service.name = name ?? service.name

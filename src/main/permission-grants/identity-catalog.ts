@@ -59,7 +59,7 @@ const PRE_REGISTERED_PERMISSION_IDENTITIES: Readonly<
     'file:move'
   ],
   skill_operation: ['skill:invoke'],
-  builtin_tool: []
+  builtin_tool: ['builtin:web_fetch', 'builtin:web_search']
 }
 
 const PRE_REGISTERED_PERMISSION_IDENTITY_COUNT = Object.values(

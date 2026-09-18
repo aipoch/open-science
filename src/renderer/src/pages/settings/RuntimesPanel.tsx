@@ -1,6 +1,8 @@
+import { Notice } from '@/components/notice'
+import { InlineNotice } from '@/components/ui/inline-notice'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
 /* Hallmark · macrostructure: Workbench · genre: modern-minimal · tone: technical/austere
- * theme: existing Open Science Settings tokens · enrichment: none · motion: existing controls only
+ * theme: existing Open-Science Settings tokens · enrichment: none · motion: existing controls only
  */
 import {
   CheckCircle2,
@@ -431,8 +433,18 @@ const RuntimesPanel = ({
       )
       setEnablement(language, next)
     } catch (e) {
+      const message =
+        e instanceof Error
+          ? e.message
+              .replace(/^Error invoking remote method '[^']*':\s*/, '')
+              .replace(/^Error:\s*/, '')
+          : ''
       setError(
-        e instanceof Error ? e.message : t('Could not change package-install authorization.')
+        message === 'Select an existing personal library visible to this R runtime.'
+          ? t(
+              'This folder cannot be used to install packages for this R. Click Recheck and use a detected personal package folder, or use an app-managed R environment.'
+            )
+          : message || t('Could not change package-install authorization.')
       )
     } finally {
       setBusy(false)
@@ -608,13 +620,14 @@ const RuntimesPanel = ({
               </div>
             ) : null}
             {!operationActive && operation?.error ? (
-              <p
+              <InlineNotice
+                level="error"
                 role="alert"
-                className="mt-1 text-[13px] text-destructive"
+                className="mt-1"
                 data-testid={`runtime-operation-error-${language}`}
               >
                 {recoveryBlocked ? blockedLabel(language) : operation.error}
-              </p>
+              </InlineNotice>
             ) : null}
             <code className="mt-1 block truncate text-xs text-muted-foreground">
               {env.interpreterPath}
@@ -741,7 +754,7 @@ const RuntimesPanel = ({
                       'Authorize an existing personal R library. Installation may change packages used by other projects. Environment restoration requires a matching interpreter.'
                     )
                   : t(
-                      'Lets Open Science install packages into this environment. Installs go to your own environment, not the app-managed storage.'
+                      'Lets Open-Science install packages into this environment. Installs go to your own environment, not the app-managed storage.'
                     )
               }
             >
@@ -799,7 +812,7 @@ const RuntimesPanel = ({
                 ) : (
                   <p className="text-muted-foreground">
                     {t(
-                      'No personal R library detected. Select an existing folder in advanced options.'
+                      'No personal package folder was found for this R. Use an app-managed R environment, or set up a personal package folder in this R and click Recheck.'
                     )}
                   </p>
                 )}
@@ -807,7 +820,7 @@ const RuntimesPanel = ({
                   <summary className="cursor-pointer">{t('Advanced options')}</summary>
                   <p className="my-2 text-muted-foreground">
                     {t(
-                      'Choose an existing personal library visible to this R runtime. No folder will be created.'
+                      'If you have already set up a personal package folder in this R, select that folder here.'
                     )}
                   </p>
                   <Button
@@ -870,16 +883,19 @@ const RuntimesPanel = ({
                     loading ||
                     LANGUAGES.some(({ id }) => languageOperationActive(id))
                   }
+                  aria-busy={Boolean(importingEnvironmentLock)}
                 >
-                  {importingEnvironmentLock ? (
-                    <LoaderCircle
-                      className="animate-spin motion-reduce:animate-none"
-                      aria-hidden="true"
-                    />
-                  ) : (
-                    <Upload aria-hidden="true" />
-                  )}
-                  {importingEnvironmentLock ? t('Importing…') : t('Import environment…')}
+                  <span key={String(importingEnvironmentLock)} className="button-feedback">
+                    {importingEnvironmentLock ? (
+                      <LoaderCircle
+                        className="animate-spin motion-reduce:animate-none"
+                        aria-hidden="true"
+                      />
+                    ) : (
+                      <Upload aria-hidden="true" />
+                    )}
+                    {importingEnvironmentLock ? t('Importing…') : t('Import environment…')}
+                  </span>
                 </Button>
               ) : null}
               <Button
@@ -939,13 +955,13 @@ const RuntimesPanel = ({
           </p>
         ) : null}
         {error !== null && (
-          <p role="alert" className="text-sm text-destructive" data-testid="runtimes-error">
+          <InlineNotice level="error" role="alert" data-testid="runtimes-error">
             {error === 'Could not load runtimes.'
               ? t('Could not load runtimes.')
               : error === 'Could not re-check runtimes.'
                 ? t('Could not re-check runtimes.')
                 : error}
-          </p>
+          </InlineNotice>
         )}
         {!loading && envs !== null ? (
           <SettingsRow
@@ -1071,15 +1087,16 @@ const RuntimesPanel = ({
                             </div>
                           ) : null}
                           {!settingUp && langError ? (
-                            <p
+                            <InlineNotice
+                              level="error"
                               role="alert"
-                              className="mt-1 text-[13px] text-destructive"
+                              className="mt-1"
                               data-testid={`runtimes-provision-error-${id}`}
                             >
                               {langError.includes('RUNTIME_RECOVERY_BLOCKED')
                                 ? blockedLabel(id)
                                 : langError}
-                            </p>
+                            </InlineNotice>
                           ) : null}
                         </div>
                         {preparing ? (
@@ -1346,12 +1363,14 @@ const RuntimesPanel = ({
                   </Dialog.Close>
                 </div>
 
-                <div className={`${dialogBodyClassName} min-h-0 flex-1 overflow-hidden`}>
-                  <p className={dialogDescriptionClassName}>
+                <div
+                  className={`${dialogBodyClassName} flex min-h-0 flex-1 flex-col overflow-hidden`}
+                >
+                  <p className={cn(dialogDescriptionClassName, 'shrink-0')}>
                     {t('Installed packages in this environment.')}
                   </p>
 
-                  <div className="mt-2 flex flex-wrap items-center gap-2 text-[13px] text-muted-foreground">
+                  <div className="mt-2 flex shrink-0 flex-wrap items-center gap-2 text-[13px] text-muted-foreground">
                     <Badge variant="secondary">{providerType(dialogPackagesEnv, t)}</Badge>
                     {/* Conda env name badge — but only when the provenance badge doesn't already carry
                       it: providerType() returns the "Conda: <name>" label for user-own conda envs, so
@@ -1370,7 +1389,7 @@ const RuntimesPanel = ({
                     <code className="truncate text-xs">{dialogPackagesEnv.interpreterPath}</code>
                   </div>
 
-                  <div className="mt-3 flex items-center gap-3">
+                  <div className="mt-3 flex shrink-0 items-center gap-3">
                     <div className="relative max-w-sm flex-1">
                       <Search
                         aria-hidden="true"
@@ -1403,25 +1422,22 @@ const RuntimesPanel = ({
                     ) : null}
                   </div>
 
-                  <div className="mt-2 max-h-[48vh] min-h-0 overflow-y-auto rounded-md border border-border">
+                  <div className="relative mt-2 max-h-[48vh] min-h-0 flex-1 overflow-y-auto rounded-md border border-border">
                     {packagesError !== null ? (
-                      <div className="flex flex-col items-center gap-2 px-3 py-6">
-                        <p role="alert" className="text-sm text-destructive">
-                          {packagesError}
-                        </p>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
+                      <Notice
+                        level="error"
+                        role="alert"
+                        className="m-3 w-auto"
+                        description={packagesError}
+                        primaryButton={{
+                          label: t('Retry'),
+                          onClick: () => {
                             setPackages(null)
                             setPackagesError(null)
                             setPackagesRetryNonce((nonce) => nonce + 1)
-                          }}
-                        >
-                          {t('Retry')}
-                        </Button>
-                      </div>
+                          }
+                        }}
+                      />
                     ) : packages === null ? (
                       <p className="px-3 py-6 text-center text-sm text-muted-foreground">
                         {t('Listing packages…')}

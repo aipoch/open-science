@@ -19,6 +19,8 @@ import {
 
 import { describe, expect, it } from 'vitest'
 
+import { loadModuleImpactManifest } from '../../../../../scripts/ci/load-module-impact.mjs'
+
 const workspaceDirectory = __dirname
 const repositoryRoot = resolve(workspaceDirectory, '../../../../..')
 const rendererRoot = resolve(workspaceDirectory, '../..')
@@ -204,13 +206,14 @@ describe('workspace page architecture', () => {
       'pages/workspace/WorkspacePage.tsx'
     ])
     expect(importersOf(ownerPaths.sideChat)).toEqual([
-      'App.tsx',
-      'hooks/useApplicationEventBindings.ts',
+      'ApplicationPresentationHost.tsx',
       'pages/workspace/ConversationPanel.tsx',
       'pages/workspace/SideChatPanel.tsx',
+      'pages/workspace/SideChatWorkbench.tsx',
       'pages/workspace/WorkspacePage.tsx',
-      'pages/workspace/previews/PreviewToolContent.tsx',
-      'pages/workspace/workspace-conversation-controller.ts',
+      'pages/workspace/annotations/AnnotationTransferSource.tsx',
+      'pages/workspace/annotations/SideChatAnnotationDrop.tsx',
+      'pages/workspace/side-chat-summary.ts',
       'pages/workspace/workspace-message-queue-controller.ts'
     ])
   })
@@ -308,9 +311,7 @@ describe('workspace page architecture', () => {
   })
 
   it('registers the complete owner boundary and this certification test', () => {
-    const manifest = JSON.parse(readSource(manifestPath)) as {
-      modules: { workspace_page: { ownerPaths: string[]; testFiles: { owner: string[] } } }
-    }
+    const manifest = loadModuleImpactManifest(manifestPath)
     const workspacePage = manifest.modules.workspace_page
 
     for (const ownerPath of Object.values(ownerPaths)) {

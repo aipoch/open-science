@@ -31,7 +31,43 @@ const createPort = (): MockPort => ({
   getPathForFile: vi.fn<(file: unknown) => string>()
 })
 
+it('carries the inspected target and intent across the Electron storage boundary', async () => {
+  const port = createPort()
+  port.invoke.mockResolvedValue({ ok: true, result: { ok: true } })
+  const selection = {
+    pickedPath: '/picked',
+    dataRoot: '/picked/Open-Science',
+    kind: 'move',
+    identity: 'inspection'
+  }
+  const adapter = createElectronRendererContractAdapter(port)
+  await adapter.invoke('storage.migrate', selection.dataRoot, selection)
+  await adapter.invoke('storage.setDataRootAndRelaunch', selection.dataRoot, false, selection)
+  expect(port.invoke.mock.calls).toEqual([
+    ['storage:migrate', { parent: selection.dataRoot, selection }],
+    [
+      'storage:set-data-root-and-relaunch',
+      { parent: selection.dataRoot, markOnboarding: false, selection }
+    ]
+  ])
+})
+
 describe('electron renderer contract adapter', () => {
+  it('delivers a committed private bookmark without leaking the command envelope', async () => {
+    const port = createPort()
+    const result = { id: 'bookmark-1', note: 'Keep this result' }
+    port.invoke.mockResolvedValue({ ok: true, result })
+    const request = {
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      id: 'bookmark-1',
+      note: 'Keep this result'
+    }
+    await expect(
+      createElectronRendererContractAdapter(port).invoke('bookmarks.updateNote', request)
+    ).resolves.toEqual(result)
+    expect(port.invoke).toHaveBeenCalledWith('bookmarks:update-note', request)
+  })
   it('resolves dropped packages through the native File boundary', async () => {
     const port = createPort()
     port.invoke.mockResolvedValue({ ok: true, result: null })

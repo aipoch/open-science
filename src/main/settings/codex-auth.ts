@@ -273,16 +273,16 @@ export const projectSafeCodexProviderRoute = (configToml: string): string | unde
   return route ? serializeLegacyCodexProviderRoute(route) : undefined
 }
 
-const IMPORTED_ROUTE_SELECTION_BEGIN = '# Open Science: begin imported Codex route selection'
-const IMPORTED_ROUTE_SELECTION_END = '# Open Science: end imported Codex route selection'
-const IMPORTED_ROUTE_PROVIDER_BEGIN = '# Open Science: begin imported Codex provider'
-const IMPORTED_ROUTE_PROVIDER_END = '# Open Science: end imported Codex provider'
-const IMPORTED_ROUTE_PRESERVED_LINE = '# Open Science: preserved Codex config '
+const IMPORTED_ROUTE_SELECTION_BEGIN = '# Open-Science: begin imported Codex route selection'
+const IMPORTED_ROUTE_SELECTION_END = '# Open-Science: end imported Codex route selection'
+const IMPORTED_ROUTE_PROVIDER_BEGIN = '# Open-Science: begin imported Codex provider'
+const IMPORTED_ROUTE_PROVIDER_END = '# Open-Science: end imported Codex provider'
+const IMPORTED_ROUTE_PRESERVED_LINE = '# Open-Science: preserved Codex config '
 const CODEX_FILE_CREDENTIAL_STORE = 'cli_auth_credentials_store = "file"'
-const TRANSPORT_ROUTE_SELECTION_BEGIN = '# Open Science: begin Codex transport route selection'
-const TRANSPORT_ROUTE_SELECTION_END = '# Open Science: end Codex transport route selection'
-const TRANSPORT_ROUTE_PROVIDER_BEGIN = '# Open Science: begin Codex transport provider'
-const TRANSPORT_ROUTE_PROVIDER_END = '# Open Science: end Codex transport provider'
+const TRANSPORT_ROUTE_SELECTION_BEGIN = '# Open-Science: begin Codex transport route selection'
+const TRANSPORT_ROUTE_SELECTION_END = '# Open-Science: end Codex transport route selection'
+const TRANSPORT_ROUTE_PROVIDER_BEGIN = '# Open-Science: begin Codex transport provider'
+const TRANSPORT_ROUTE_PROVIDER_END = '# Open-Science: end Codex transport provider'
 const CODEX_TRANSPORT_PROVIDER_IDS = [
   'open-science-chatgpt-https',
   'open-science-chatgpt-websocket'
@@ -345,36 +345,47 @@ const serializeCodexCredentialStore = (
 const serializeCodexFileCredentialStore = (existingConfigToml: string): string =>
   serializeCodexCredentialStore(existingConfigToml, 'file')
 
+// Persisted pre-brand markers remain technical compatibility identities. Match only complete
+// known marker lines; ordinary comments and user TOML values keep their original spelling.
+const legacyMarker = (marker: string): string =>
+  marker.replace('# Open-Science:', '# Open Science:')
+const matchesMarker = (line: string, marker: string): boolean =>
+  line === marker || line === legacyMarker(marker)
+
 const restoreCompleteMarkedBlock = (lines: string[], begin: string, end: string): string[] => {
   const result = [...lines]
-  let beginIndex = result.indexOf(begin)
+  let beginIndex = result.findIndex((line) => matchesMarker(line, begin))
 
   while (beginIndex >= 0) {
-    const relativeEndIndex = result.slice(beginIndex + 1).indexOf(end)
+    const relativeEndIndex = result
+      .slice(beginIndex + 1)
+      .findIndex((line) => matchesMarker(line, end))
     if (relativeEndIndex < 0) break
 
     const endIndex = beginIndex + relativeEndIndex + 1
     const preservedLines = result.slice(beginIndex + 1, endIndex).flatMap((line) => {
-      if (!line.startsWith(IMPORTED_ROUTE_PRESERVED_LINE)) return []
+      const prefix = [
+        IMPORTED_ROUTE_PRESERVED_LINE,
+        legacyMarker(IMPORTED_ROUTE_PRESERVED_LINE)
+      ].find((candidate) => line.startsWith(candidate))
+      if (!prefix) return []
       try {
-        const preservedLine = JSON.parse(
-          line.slice(IMPORTED_ROUTE_PRESERVED_LINE.length)
-        ) as unknown
+        const preservedLine = JSON.parse(line.slice(prefix.length)) as unknown
         return typeof preservedLine === 'string' ? [preservedLine] : []
       } catch {
         return []
       }
     })
     result.splice(beginIndex, relativeEndIndex + 2, ...preservedLines)
-    beginIndex = result.indexOf(begin)
+    beginIndex = result.findIndex((line) => matchesMarker(line, begin))
   }
 
   return result
 }
 
 const hasCompleteMarkedBlock = (lines: string[], begin: string, end: string): boolean => {
-  const beginIndex = lines.indexOf(begin)
-  return beginIndex >= 0 && lines.slice(beginIndex + 1).includes(end)
+  const beginIndex = lines.findIndex((line) => matchesMarker(line, begin))
+  return beginIndex >= 0 && lines.slice(beginIndex + 1).some((line) => matchesMarker(line, end))
 }
 
 const isOwnedTransportProviderId = (value: unknown): boolean =>
@@ -727,7 +738,15 @@ const readCodexAuthenticationSnapshot = async (
     const parsed = JSON.parse(content) as unknown
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error()
   } catch (error) {
-    if (!required && (error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      if (!required) return undefined
+      // A missing auth.json most often means Codex keeps its credential in the OS credential store
+      // (macOS Keychain / Windows Credential Manager / Linux keyring). Name that boundary instead of
+      // surfacing a generic import failure that reads like a required second sign-in.
+      throw new Error(
+        'Open-Science could not find a file-backed Codex credential to import. Your existing Codex sign-in may be stored in the system credential store, which Open-Science cannot import from. Continue with the Open-Science Codex sign-in instead.'
+      )
+    }
     throw new Error('The selected Codex profile does not contain importable authentication.')
   }
 
@@ -780,7 +799,7 @@ const writeCodexAuthenticationSnapshot = async (
 
 // Provider setup imports an existing login plus the safe, non-secret subset of its active provider
 // route. Global model defaults, MCP servers, Skills, sessions, memories, hooks, and tokens embedded in
-// provider config remain outside Open Science.
+// provider config remain outside Open-Science.
 export const importCodexAuthentication = async (
   sourceHome: string,
   destinationHome: string

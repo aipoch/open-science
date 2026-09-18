@@ -1,3 +1,4 @@
+import { validatePackageLiterature } from './literature'
 import { installPackageReproducibility, validatePackageReproducibility } from './reproducibility'
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -23,7 +24,14 @@ import {
 export const assertPortablePackageStorageKey = (key: string): void => {
   const segments = key.split('/')
   if (
-    !['artifacts', 'uploads', 'notebooks', 'execution-file-evidence'].includes(segments[0]) ||
+    ![
+      'artifacts',
+      'uploads',
+      'notebooks',
+      'execution-file-evidence',
+      'notebook-file-evidence',
+      'file-evidence'
+    ].includes(segments[0]) ||
     segments.length < 4 ||
     segments.some(
       (segment) =>
@@ -51,6 +59,9 @@ export const validatePackageRecords = async (
   sourceIdentity = manifest.source,
   temporaryRoot = tmpdir()
 ): Promise<void> => {
+  if (Boolean(records.literature) !== Boolean(manifest.requiredFeatures?.includes('literature')))
+    throw new Error('Literature package capability declaration is invalid.')
+  validatePackageLiterature(records)
   for (const file of manifest.excludedFiles) assertPortablePackageStorageKey(file.storageKey)
   const excluded = validateExcludedFiles(records, manifest.excludedFiles)
   assertNoExcludedContentCopies(records, manifest.excludedFiles, manifest.inventory)

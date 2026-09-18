@@ -28,36 +28,66 @@ afterEach(async () => {
 })
 
 describe('ArtifactRepository pending-file rollback', () => {
-  it('preserves the original backup when restoring it fails', async () => {
-    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-rollback-'))
-    const repository = new ArtifactRepository(storageRoot)
-    const request = {
-      projectId: 'project-1',
-      sessionId: 'session-1',
-      runId: 'run-1',
-      filename: 'result.txt',
-      source: { kind: 'inline' as const, content: 'original', encoding: 'utf8' as const }
-    }
-    const original = await repository.writePendingFile(request)
+  it.each([false, true])(
+    'preserves the original backup and bounds diagnostics (long: %s)',
+    async (long) => {
+      renameFailure.message =
+        'simulated Windows sharing violation' +
+        (long ? ' password="CLEANUP_SECRET"\n' + 'y'.repeat(20_000) + '\ncleanup tail' : '')
+      storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-rollback-'))
+      const repository = new ArtifactRepository(storageRoot)
+      const request = {
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        runId: 'run-1',
+        filename: 'result.txt',
+        source: { kind: 'inline' as const, content: 'original', encoding: 'utf8' as const }
+      }
+      const original = await repository.writePendingFile(request)
 
-    await expect(
-      repository.withPendingFileTransaction(
-        {
-          ...request,
-          source: { kind: 'inline', content: 'replacement', encoding: 'utf8' }
-        },
-        {},
-        async () => {
-          throw new Error('durable Version write failed')
-        }
+      const failure = await repository
+        .withPendingFileTransaction(
+          {
+            ...request,
+            source: { kind: 'inline', content: 'replacement', encoding: 'utf8' }
+          },
+          {},
+          async () => {
+            throw new Error(
+              'durable Version write failed' +
+                (long ? ' password="PRIMARY_SECRET"\n' + 'x'.repeat(20_000) + '\nprimary tail' : '')
+            )
+          }
+        )
+        .then(
+          () => {
+            throw new Error('Expected rollback failure')
+          },
+          (error: Error) => error
+        )
+      for (const fact of [
+        'durable Version write failed',
+        'simulated Windows sharing violation',
+        'publication was not confirmed',
+        'backup retained'
+      ]) {
+        expect(failure.message).toContain(fact)
+      }
+
+      const directory = dirname(original.path)
+      const backup = (await readdir(directory)).find(
+        (entry) => entry.startsWith('result.txt.') && entry.endsWith('.backup')
       )
-    ).rejects.toThrow(renameFailure.message)
-
-    const directory = dirname(original.path)
-    const backup = (await readdir(directory)).find(
-      (entry) => entry.startsWith('result.txt.') && entry.endsWith('.backup')
-    )
-    expect(backup).toBeDefined()
-    await expect(readFile(join(directory, backup!), 'utf8')).resolves.toBe('original')
-  })
+      expect(backup).toBeDefined()
+      expect(failure.message).toContain(join(directory, backup!))
+      if (long) {
+        expect(failure.message).not.toMatch(/PRIMARY_SECRET|CLEANUP_SECRET/)
+        expect(failure.message).toContain('primary tail')
+        expect(failure.message).toContain('cleanup tail')
+        expect(failure.message).toContain('[diagnostic truncated]')
+        expect(failure.message.length).toBeLessThan(4_000)
+      }
+      await expect(readFile(join(directory, backup!), 'utf8')).resolves.toBe('original')
+    }
+  )
 })

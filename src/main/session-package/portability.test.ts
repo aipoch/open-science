@@ -1,3 +1,4 @@
+import { initDataRoot } from '../storage-root'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -27,6 +28,7 @@ const archiveWithFiles = async (
   notebook?: Record<string, unknown>
 ): Promise<string> => {
   const root = await mkdtemp(join(tmpdir(), 'science-package-portability-'))
+  initDataRoot(root)
   directories.push(root)
   const source = join(root, 'source')
   await mkdir(join(source, 'objects'), { recursive: true })

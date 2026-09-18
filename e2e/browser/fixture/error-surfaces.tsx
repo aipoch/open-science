@@ -70,13 +70,13 @@ export function Fixture(): React.JSX.Element {
         <SettingsLoadNotice
           state="error"
           loadingLabel=""
-          errorMessage={t('Open Science could not load Specialists. Retry to continue.')}
+          errorMessage={t('Open-Science could not load Specialists. Retry to continue.')}
           onRetry={() => setRetry(retry + 1)}
         />
         <output data-testid="retry-count">{retry}</output>
         <EnvironmentSetupCard
           environment={undefined}
-          error={t('Reload Open Science to try loading this panel again.')}
+          error={t('Reload Open-Science to try loading this panel again.')}
         />
       </section>
       <section className="space-y-2">
@@ -144,7 +144,7 @@ export function Fixture(): React.JSX.Element {
           <ActionToast
             title={t('Old data location needs cleanup')}
             detail={t(
-              'Your data is using the new location, but some files remain in the old one. Open Science will try again the next time it starts.'
+              'Your data is using the new location, but some files remain in the old one. Open-Science will try again the next time it starts.'
             )}
             actionLabel={t('Open Storage')}
             dismissLabel={t('Close')}

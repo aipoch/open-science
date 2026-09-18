@@ -35,12 +35,19 @@ describe('verifyExecutable', () => {
       chmodSync(bin, 0o755)
       const controller = new AbortController()
       const reason = new Error('verification cancelled')
-      const pending = verifyExecutable(bin, { signal: controller.signal })
-      await vi.waitFor(() => expect(existsSync(pidFile)).toBe(true))
-      const pid = Number(readFileSync(pidFile, 'utf8'))
-      controller.abort(reason)
-      await expect(pending).rejects.toBe(reason)
-      expect(() => process.kill(pid, 0)).toThrow()
+      const outcome = verifyExecutable(bin, { signal: controller.signal }).catch(
+        (error: unknown) => error
+      )
+      try {
+        await vi.waitFor(() => expect(existsSync(pidFile)).toBe(true), { timeout: 5_000 })
+        const pid = Number(readFileSync(pidFile, 'utf8'))
+        controller.abort(reason)
+        expect(await outcome).toBe(reason)
+        expect(() => process.kill(pid, 0)).toThrow()
+      } finally {
+        controller.abort(reason)
+        await outcome
+      }
     }
   )
   it('resolves for a real interpreter that answers --version', async () => {
@@ -104,10 +111,11 @@ describe('verifyExecutable', () => {
     async () => {
       const dir = mkdtempSync(join(tmpdir(), 'os-r-path-'))
       const bin = join(dir, 'R.exe')
+      const rscript = join(dir, 'Rscript.exe')
       const prefix = 'C:\\runtime\\envs\\default-r'
       const expectedPath = condaActivatedPath(prefix, 'C:\\Windows', 'win32')
       writeFileSync(
-        bin,
+        rscript,
         `#!${process.execPath}\n` +
           `if (process.env.PATH !== process.env.EXPECTED_PATH) process.exit(19)\n` +
           `process.stdout.write([` +
@@ -116,7 +124,7 @@ describe('verifyExecutable', () => {
           `'OPEN_SCIENCE_R_LIBRARY=C:\\\\runtime\\\\envs\\\\default-r\\\\lib\\\\R\\\\library'` +
           `].join('\\n') + '\\n')\n`
       )
-      chmodSync(bin, 0o755)
+      chmodSync(rscript, 0o755)
 
       await expect(
         verifyExecutable(bin, {

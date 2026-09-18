@@ -2,7 +2,7 @@
 
 # Set up WSL2 Bash
 
-This guide is bundled with this Open Science release and is loaded only for an explicit WSL setup or repair conversation. It governs setup of the WSL2 Bash shell runtime. It does not configure a Jupyter kernel, replace the distro's package manager, or install a custom Linux kernel.
+This guide is bundled with this Open-Science release and is loaded only for an explicit WSL setup or repair conversation. It governs setup of the WSL2 Bash shell runtime. It does not configure a Jupyter kernel, replace the distro's package manager, or install a custom Linux kernel.
 
 ## Safety and scope
 
@@ -16,7 +16,7 @@ This guide is bundled with this Open Science release and is loaded only for an e
 
 ## Available setup tools
 
-The following tools are available only to a local conversation that Open Science has explicitly bound as a WSL setup session:
+The following tools are available only to a local conversation that Open-Science has explicitly bound as a WSL setup session:
 
 - `wsl_setup_diagnostics({})` refreshes diagnostics and returns the version-matched guide, a new revision, and the current bounded support snapshot.
 - `wsl_setup_install_platform({})` starts the journaled Windows WSL platform installation. Windows owns the UAC prompt. Handle cancellation, restart-required, failed, and unknown outcomes as distinct results.
@@ -36,6 +36,6 @@ There is no activation tool in the setup session. Once diagnostics report the sa
 4. When several distros are available, ask the user which WSL2 distro to use. Diagnostics report each initialized distro's default user from the bounded `id -un; id -u` probe. Use that value when it is non-root. If it is root, help the user create or choose a non-root account in the visible distro terminal. Then call `wsl_setup_select_profile` with the latest revision. Treat the returned snapshot, not the successful write alone, as the verification result.
 5. When Bash, Python 3, or bubblewrap is missing and Settings offers **Install missing dependencies**, direct the user to that action. It requires explicit confirmation, runs only the fixed missing-package installation as WSL root, and then verifies the original non-root profile. It never adds the runtime user to sudoers and never activates WSL2 Bash automatically. If the action is unavailable because `/usr/bin/apt-get` was not detected, explain that the distro's own package-management instructions are required; do not guess a command from the distro display name.
 6. Mirrored networking, namespaces, the user home, and the local NTFS workspace must all pass. If `wslinfo --networking-mode` does not report `mirrored`, explain that the current preview requires mirrored mode. In the visible PowerShell terminal, help the user preserve their existing `%UserProfile%\.wslconfig` content while setting `networkingMode=mirrored` in its `[wsl2]` section. Before editing, save a recoverable backup of any existing file and record its contents or hash. Immediately before writing, check that it has not changed; if it has, read the new contents and reconcile the change instead of overwriting it. Preserve unrelated sections, comments, and settings. A later `wsl --shutdown` affects all distros and Docker, so obtain permission for that exact shutdown before it runs. Refresh diagnostics afterward; do not infer success from the file edit alone.
-7. `wsl_setup_select_profile` persists the candidate distro and user through the app's settings owner. Do not edit an Open Science settings file directly. When every readiness check passes for that saved target at the current revision, direct the user to the explicit Settings activation action.
+7. `wsl_setup_select_profile` persists the candidate distro and user through the app's settings owner. Do not edit an Open-Science settings file directly. When every readiness check passes for that saved target at the current revision, direct the user to the explicit Settings activation action.
 
 WSL software version and a distro's WSL generation are separate fields. A distro with `version: 2` does not imply that the installed WSL software version is `2`.

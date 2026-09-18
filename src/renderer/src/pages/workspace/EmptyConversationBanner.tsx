@@ -18,7 +18,7 @@ const EmptyConversationBanner = (): React.JSX.Element => {
       <FlaskLogo className="size-28 text-text-300 opacity-40 md:size-32 dark:opacity-80" />
       <div className="flex flex-col gap-2">
         <h2 className="text-balance text-lg font-normal text-text-000 md:text-xl">
-          {t('What will you research in Open Science?')}
+          {t('What will you research in Open-Science?')}
         </h2>
         <p className="text-xs text-text-100">
           {t('Discover, share, and collaborate on research that matters')}

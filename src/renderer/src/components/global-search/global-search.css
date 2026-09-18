@@ -37,9 +37,6 @@
   gap: 12px;
   padding: 0 20px 6px;
 }
-.search-filter-toggle {
-  flex-shrink: 0;
-}
 .search-filter-count {
   min-width: 17px;
   padding: 0 4px;
@@ -84,7 +81,8 @@
 .search-category-chip:hover {
   background: var(--bg-200);
 }
-.search-category-chip[aria-pressed='true'] {
+.search-category-chip[aria-pressed='true'],
+.search-advanced-toggle[aria-expanded='true'] {
   color: var(--primary-foreground);
   background: var(--primary);
   border-color: var(--primary);
@@ -254,11 +252,26 @@
 .global-search-body {
   container-type: inline-size;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 0fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0fr) auto;
   transition: grid-template-columns 240ms ease;
 }
 .global-search-body[data-expanded='true'] {
-  grid-template-columns: minmax(0, 0.45fr) minmax(0, 0.55fr);
+  grid-template-columns: minmax(0, 0.45fr) minmax(0, 0.55fr) auto;
+}
+/* The advanced aside is the body's first DOM child so keyboard tabbing reaches it right after the
+   toolbar toggle; explicit row and columns keep its visual position at the right edge regardless
+   (sparse auto-flow would otherwise push later items into a second implicit row). */
+.global-search-list-pane {
+  grid-row: 1;
+  grid-column: 1;
+}
+.global-search-detail {
+  grid-row: 1;
+  grid-column: 2;
+}
+.global-search-advanced {
+  grid-row: 1;
+  grid-column: 3;
 }
 .global-search-detail {
   min-width: 0;
@@ -268,6 +281,60 @@
 }
 .global-search-detail[data-open='true'] {
   opacity: 1;
+}
+.global-search-advanced {
+  display: flex;
+  width: 0;
+  min-width: 0;
+  overflow: hidden;
+  opacity: 0;
+  border-radius: var(--radius-xl) 0 0 var(--radius-xl);
+  background: var(--bg-200);
+  transition:
+    width 240ms ease,
+    opacity 200ms ease;
+}
+.global-search-advanced[data-open='true'] {
+  width: 244px;
+  opacity: 1;
+}
+.search-advanced-island {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 10px;
+  margin: 12px;
+  padding: 12px;
+  overflow-y: auto;
+  border-radius: var(--radius-xl);
+  background: var(--bg-000);
+  box-shadow: var(--shadow-menu);
+}
+.search-advanced-title {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--muted-foreground);
+}
+.search-subfilters-stacked {
+  flex-direction: column;
+  align-items: stretch;
+  flex-wrap: nowrap;
+  min-height: 0;
+  padding: 0;
+}
+.search-subfilters-stacked [data-slot='select-trigger'] {
+  width: 100%;
+  max-width: none;
+}
+/* The detail surface freezes at 55cqw so it does not reflow during the grid transition; when the
+   advanced island occupies its fixed 244px track, the detail track is 55% of the remaining width,
+   so the surface must subtract the island track or its right edge is clipped. */
+@media (min-width: 741px) {
+  .global-search-body:has(> .global-search-advanced[data-open='true'])
+    .global-search-detail-surface {
+    width: calc(0.55 * (100cqw - 244px));
+  }
 }
 .search-detail-header {
   flex-shrink: 0;
@@ -772,6 +839,25 @@
   .global-search-detail[data-open='true'] {
     pointer-events: auto;
   }
+  /* Both panes overlay the full body on mobile; the detail aside comes later in DOM order, so an
+     open detail intentionally covers the island until it is closed — the full-screen detail wins,
+     and the toolbar toggle remains reachable above the body to close the island. */
+  .global-search-advanced,
+  .global-search-advanced[data-open='true'] {
+    position: absolute;
+    inset: 0;
+    width: auto;
+    pointer-events: none;
+    background: transparent;
+  }
+  .global-search-advanced[data-open='true'] .search-advanced-island {
+    pointer-events: auto;
+  }
+  .global-search-advanced .search-advanced-island {
+    flex: none;
+    width: min(240px, calc(100% - 48px));
+    margin: 12px 12px 12px auto;
+  }
   .global-search-body[data-expanded='true'] > .global-search-list-pane {
     visibility: hidden;
   }
@@ -779,6 +865,7 @@
 @media (prefers-reduced-motion: reduce) {
   .global-search-body,
   .global-search-detail,
+  .global-search-advanced,
   .search-recent-session,
   .search-recent-literature,
   .search-recent-file,

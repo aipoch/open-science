@@ -39,7 +39,10 @@ import {
   localModelDownloadProgress,
   type LocalModelSnapshot
 } from '../../../../../../shared/local-models'
-import type { PdfStructureResult } from '../../../../../../shared/pdf-structure'
+import {
+  PDF_CLEANUP_PENDING,
+  type PdfStructureResult
+} from '../../../../../../shared/pdf-structure'
 import { copyPdfTable, pdfTableLayout } from '../../../../../../shared/pdf-table-copy'
 
 const formatBytes = (bytes: number): string => `${(bytes / 1024 ** 2).toFixed(1)} MiB`
@@ -235,32 +238,38 @@ const TableDetails = ({
                 variant="outline"
                 disabled={!reviewed || action !== null}
                 onClick={() => void exportTable('copy')}
+                aria-busy={Boolean(action === 'copy')}
               >
-                {action === 'copy' ? (
-                  <LoaderCircle
-                    className="size-4 animate-spin motion-reduce:animate-none"
-                    aria-hidden="true"
-                  />
-                ) : (
-                  <Copy className="size-4" aria-hidden="true" />
-                )}
-                {t('Copy')}
+                <span key={String(action === 'copy')} className="button-feedback">
+                  {action === 'copy' ? (
+                    <LoaderCircle
+                      className="size-4 animate-spin motion-reduce:animate-none"
+                      aria-hidden="true"
+                    />
+                  ) : (
+                    <Copy className="size-4" aria-hidden="true" />
+                  )}
+                  {t('Copy')}
+                </span>
               </Button>
               <Button
                 size="sm"
                 variant="outline"
                 disabled={!reviewed || action !== null}
                 onClick={() => void exportTable('download')}
+                aria-busy={Boolean(action === 'download')}
               >
-                {action === 'download' ? (
-                  <LoaderCircle
-                    className="size-4 animate-spin motion-reduce:animate-none"
-                    aria-hidden="true"
-                  />
-                ) : (
-                  <Download className="size-4" aria-hidden="true" />
-                )}
-                {t('Download')}
+                <span key={String(action === 'download')} className="button-feedback">
+                  {action === 'download' ? (
+                    <LoaderCircle
+                      className="size-4 animate-spin motion-reduce:animate-none"
+                      aria-hidden="true"
+                    />
+                  ) : (
+                    <Download className="size-4" aria-hidden="true" />
+                  )}
+                  {t('Download')}
+                </span>
               </Button>
             </div>
           </div>
@@ -508,16 +517,19 @@ const CandidateDetails = ({
                       title={t('Download image')}
                       disabled={imageAction !== null}
                       onClick={() => void exportImage('download')}
+                      aria-busy={Boolean(imageAction === 'download')}
                     >
-                      {imageAction === 'download' ? (
-                        <LoaderCircle
-                          className="size-4 animate-spin motion-reduce:animate-none"
-                          aria-hidden="true"
-                        />
-                      ) : (
-                        <Download className="size-4" aria-hidden="true" />
-                      )}
-                      <span className="hidden sm:inline">{t('Download image')}</span>
+                      <span key={String(imageAction === 'download')} className="button-feedback">
+                        {imageAction === 'download' ? (
+                          <LoaderCircle
+                            className="size-4 animate-spin motion-reduce:animate-none"
+                            aria-hidden="true"
+                          />
+                        ) : (
+                          <Download className="size-4" aria-hidden="true" />
+                        )}
+                        <span className="hidden sm:inline">{t('Download image')}</span>
+                      </span>
                     </Button>
                     <Button
                       variant="ghost"
@@ -527,16 +539,19 @@ const CandidateDetails = ({
                       title={t('Copy image')}
                       disabled={imageAction !== null}
                       onClick={() => void exportImage('copy')}
+                      aria-busy={Boolean(imageAction === 'copy')}
                     >
-                      {imageAction === 'copy' ? (
-                        <LoaderCircle
-                          className="size-4 animate-spin motion-reduce:animate-none"
-                          aria-hidden="true"
-                        />
-                      ) : (
-                        <Copy className="size-4" aria-hidden="true" />
-                      )}
-                      <span className="hidden sm:inline">{t('Copy image')}</span>
+                      <span key={String(imageAction === 'copy')} className="button-feedback">
+                        {imageAction === 'copy' ? (
+                          <LoaderCircle
+                            className="size-4 animate-spin motion-reduce:animate-none"
+                            aria-hidden="true"
+                          />
+                        ) : (
+                          <Copy className="size-4" aria-hidden="true" />
+                        )}
+                        <span className="hidden sm:inline">{t('Copy image')}</span>
+                      </span>
                     </Button>
                     <Dialog.Close asChild>
                       <Button variant="ghost" size="icon-sm" aria-label={t('Close')}>
@@ -667,7 +682,7 @@ export const PdfFiguresView = ({
   const [remainingSeconds, setRemainingSeconds] = useState<number>()
   const [results, setResults] = useState<PdfStructureResult[]>([])
   const [failed, setFailed] = useState<number[]>([])
-  const [error, setError] = useState(false)
+  const [error, setError] = useState<string>()
   const [selected, setSelected] = useState<Selection>()
   const [limited, setLimited] = useState(false)
   const [imageCache] = useState(() => new PdfPreviewImageCache())
@@ -712,8 +727,9 @@ export const PdfFiguresView = ({
             break
           }
         }
-      } catch {
-        if (live && own === generation.current) setError(true)
+      } catch (cause) {
+        if (live && own === generation.current)
+          setError(cause instanceof Error ? cause.message : 'unavailable')
       } finally {
         if (live && own === generation.current) {
           setRestoring(false)
@@ -758,7 +774,7 @@ export const PdfFiguresView = ({
             )
         })
         .catch(() => {
-          if (live) setError(true)
+          if (live) setError('unavailable')
         })
         .finally(() => {
           if (live) timer = setTimeout(poll, 1000)
@@ -774,7 +790,7 @@ export const PdfFiguresView = ({
     const own = ++generation.current
     imageCache.clear()
     setBusy(true)
-    setError(false)
+    setError(undefined)
     setResults([])
     setFailed([])
     setCompleted(0)
@@ -848,8 +864,18 @@ export const PdfFiguresView = ({
             break
           }
           setResults((current) => [...current, result])
-        } catch {
+        } catch (cause) {
           if (own !== generation.current) return
+          const message = cause instanceof Error ? cause.message : ''
+          if (
+            [PDF_CLEANUP_PENDING, LOCAL_MODEL_NOT_INSTALLED, PDF_MODEL_CHANGED].some((code) =>
+              message.endsWith(code)
+            )
+          ) {
+            setError(message)
+            setCompleted(page)
+            break
+          }
           setFailed((current) => [...current, page])
         }
         if (own === generation.current) {
@@ -859,7 +885,7 @@ export const PdfFiguresView = ({
         }
       }
     } catch {
-      if (own === generation.current) setError(true)
+      if (own === generation.current) setError('unavailable')
     } finally {
       if (own === generation.current) {
         requestId.current = undefined
@@ -871,6 +897,7 @@ export const PdfFiguresView = ({
   const analysisComplete =
     !restoring && !busy && !error && !limited && failed.length === 0 && results.length === pageCount
   const analysisIncomplete = !busy && (completed > 0 || error || limited)
+  const cleanupBlocked = error?.endsWith(PDF_CLEANUP_PENDING)
   const needsDownload = model && (!model.installedRevision || model.updateAvailable)
   const active = entries.find((entry) => entry.element === selected?.element) ?? entries[0]
   const activeIndex = entries.findIndex((entry) => entry.element === active?.element)
@@ -931,7 +958,7 @@ export const PdfFiguresView = ({
       <div className="flex items-start justify-between gap-4 text-xs text-text-200 tabular-nums">
         <span className="flex min-w-0 flex-1 flex-wrap gap-x-3 gap-y-1">
           <span>
-            {t('Processed {{completed}} / {{total}} pages', { completed, total: pageCount })}
+            {t('Attempted {{completed}} / {{total}} pages', { completed, total: pageCount })}
           </span>
           <span>{remainingLabel}</span>
         </span>
@@ -956,8 +983,8 @@ export const PdfFiguresView = ({
               role="status"
               aria-atomic="true"
               className="min-w-0 text-xs text-text-200 @min-[640px]:text-sm"
-              title={t('Processed {{completed}} / {{total}} pages', {
-                completed,
+              title={t('Extracted {{completed}} / {{total}} pages', {
+                completed: results.length,
                 total: pageCount
               })}
             >
@@ -976,8 +1003,8 @@ export const PdfFiguresView = ({
                     ? busyLabel
                     : analysisComplete
                       ? t('Analysis complete')
-                      : t('Processed {{completed}} / {{total}} pages', {
-                          completed,
+                      : t('Extracted {{completed}} / {{total}} pages', {
+                          completed: results.length,
                           total: pageCount
                         })}
               </span>
@@ -986,7 +1013,7 @@ export const PdfFiguresView = ({
               <Button size="sm" variant="outline" onClick={cancel}>
                 {model?.availability === 'installing' ? t('Cancel download') : t('Cancel')}
               </Button>
-            ) : completed > 0 ? (
+            ) : completed > 0 && !error ? (
               <Button
                 size="sm"
                 variant="ghost"
@@ -1004,10 +1031,34 @@ export const PdfFiguresView = ({
           {busy && !restoring ? progress : null}
         </header>
       ) : null}
-      {error ? (
+      {error && !busy ? (
         <ErrorNotice
-          title={t('PDF extraction is unavailable')}
-          description={t('Check local model installation and try again.')}
+          role="alert"
+          className="m-4 w-auto shrink-0"
+          title={cleanupBlocked ? t('PDF analysis is blocked') : t('PDF extraction is unavailable')}
+          description={
+            cleanupBlocked
+              ? t(
+                  'A previous PDF task could not finish cleanup. Analyze again to retry cleanup safely. If cleanup still fails, report the issue.'
+                )
+              : t(
+                  'PDF analysis could not continue. Check the local model installation and try again.'
+                )
+          }
+          help={{
+            whyLabel: t('Extraction progress'),
+            why: t('Extracted {{completed}} / {{total}} pages', {
+              completed: results.length,
+              total: pageCount
+            }),
+            howLabel: t('Remaining pages'),
+            how: t('Pages not yet attempted: {{remaining}}', { remaining: pageCount - completed })
+          }}
+          primaryButton={{
+            label: t('Analyze again'),
+            onClick: () => void extract(),
+            disabled: !model || restoring
+          }}
           tone="amber"
         />
       ) : null}
@@ -1189,7 +1240,7 @@ export const PdfFiguresView = ({
               : null}
           </div>
         </div>
-      ) : busy ? (
+      ) : error && !busy ? null : busy ? (
         <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-6">
           <div className="w-full max-w-sm space-y-5 text-center">
             {downloading ? (
@@ -1256,7 +1307,10 @@ export const PdfFiguresView = ({
             </h3>
             <p className="text-sm leading-6 text-text-200">
               {analysisIncomplete
-                ? t('Processed {{completed}} / {{total}} pages', { completed, total: pageCount })
+                ? t('Extracted {{completed}} / {{total}} pages', {
+                    completed: results.length,
+                    total: pageCount
+                  })
                 : t('Browse figures, captions and copyable tables.')}
             </p>
             {!busy ? (
@@ -1274,7 +1328,7 @@ export const PdfFiguresView = ({
               </p>
             ) : null}
             <p className="text-xs leading-5 text-text-300">
-              {t('Scanned and rotated pages are not supported yet.')}
+              {!analysisIncomplete ? t('Scanned and rotated pages are not supported yet.') : null}
             </p>
           </div>
         </div>

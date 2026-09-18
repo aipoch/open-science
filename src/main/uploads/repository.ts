@@ -1,5 +1,3 @@
-import { createReadStream } from 'node:fs'
-
 import type { PrismaClient } from '@prisma/client'
 
 import {
@@ -33,10 +31,9 @@ type UploadRepositoryOptions = {
   getClient?: () => Promise<PrismaClient>
   getLegacyFileChecksum?: (path: string) => Promise<string>
   renameLegacyForCleanup?: (source: string, destination: string) => Promise<void>
-  createLocalReadStream?: (
-    sourcePath: string,
-    options: { highWaterMark: number; signal: AbortSignal }
-  ) => ReturnType<typeof createReadStream>
+  createLocalReadStream?: NonNullable<
+    ConstructorParameters<typeof ActiveTransferOwner>[1]
+  >['createLocalReadStream']
 }
 
 // Public upload seam. Owners are composed once here; all behavior lives behind the existing 15

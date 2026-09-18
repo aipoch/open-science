@@ -374,9 +374,20 @@ const mergePubmedMetadata = (
       page: summary.pages,
       ISSN: summary.issn ? [summary.issn] : undefined,
       language: summary.lang?.[0],
-      author: summary.authors?.map(({ name, authtype }) =>
-        authtype === 'CollectiveAuthor' ? { name } : { family: name }
-      ),
+      author: summary.authors?.map(({ name, authtype }) => {
+        if (authtype === 'CollectiveAuthor') return { name }
+        // Without a dedicated suffix field, splitting these names would turn Jr/III
+        // into given-name initials in citations. Retain the original representation.
+        if (/\s+(?:Jr|Sr|II|III|IV)\.?$/iu.test(name.trim())) return { family: name }
+        // ESummary personal names use "surname initials", not Crossref's separate
+        // family/given fields. Keep compound surnames and surname particles intact.
+        const match = /^(.*?)\s+([A-Z]+)$/u.exec(name.trim())
+        if (!match) return { family: name }
+        return {
+          family: match[1],
+          given: [...match[2]].map((initial) => `${initial}.`).join(' ')
+        }
+      }),
       issued: parts ? { 'date-parts': [[...parts]] } : undefined
     },
     overwriteFields,
@@ -439,7 +450,7 @@ class LiteratureMetadataEnricher {
     const response = await this.fetchFn(sourceUrl, {
       headers: {
         Accept: 'application/json',
-        'User-Agent': 'OpenScience/1.0 (+https://github.com/aipoch/open-science)'
+        'User-Agent': 'Open-Science/1.0 (+https://github.com/aipoch/open-science)'
       },
       signal: AbortSignal.timeout(15_000)
     })

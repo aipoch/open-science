@@ -17,6 +17,7 @@ import type { AcpRuntimeSessionOwners } from './runtime-session-composition'
 import type { NotebookWorkingFile } from './artifact-publication-continuation'
 
 type AcpRuntimePromptReloadHost = Readonly<{
+  prepareContinuationReplay: AcpPromptTurnWorkflowOptions['prepareContinuationReplay']
   disconnect: AcpPromptTurnWorkflowOptions['disconnectForReload']
   resume: AcpPromptTurnWorkflowOptions['resumeAfterReload']
 }>
@@ -345,6 +346,7 @@ const composeAcpRuntimePromptOwners = (
     },
     currentCwd: () => base.snapshotOwner.cwd,
     resolveProjectId: projectId,
+    prepareContinuationReplay: host.reload.prepareContinuationReplay,
     disconnectForReload: host.reload.disconnect,
     resumeAfterReload: host.reload.resume,
     recordAdmittedPrompt: (request) => base.handoffContinuity.recordAdmittedPrompt(request),

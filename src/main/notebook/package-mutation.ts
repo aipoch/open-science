@@ -163,6 +163,7 @@ class NotebookPackageMutationOwner {
       request.usePip !== true &&
       request.installer === undefined
     let releaseWorkingCache: Awaited<ReturnType<MicromambaWorkingCacheRetainer>> | undefined
+    let childJournalUpdate: Promise<void> | undefined
     let result: InstallResult | undefined
     let retainForRecovery = false
     let begun = false
@@ -251,7 +252,7 @@ class NotebookPackageMutationOwner {
                     childStartedAt,
                     childStartToken
                   })
-                  void journal
+                  childJournalUpdate = journal
                     .update(operationId, { childPid, childStartedAt, childStartToken })
                     .catch(() => undefined)
                 },
@@ -490,6 +491,9 @@ class NotebookPackageMutationOwner {
       }
       throw error
     } finally {
+      // Recovery paths can skip later journal writes. Drain the last serialized PID update
+      // before releasing resources or letting the caller tear down this runtime root.
+      await childJournalUpdate
       const publications = result?.ok ? [...archivePublications.values()] : []
       if (begun && !publicationIntentPersisted) {
         retainForRecovery = true

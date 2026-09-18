@@ -214,9 +214,15 @@ const extractZipLenient = (buffer: Buffer, limits: LenientExtractLimits): Lenien
         method === 0
           ? Buffer.from(data)
           : inflateRawSync(data, { maxOutputLength: limits.maxFileBytes })
-    } catch {
-      // A DEFLATE entry that would expand past maxFileBytes throws here (a bomb): skip it.
-      skipped.push({ path: name, reason: `too large (limit ${mb(limits.maxFileBytes)})` })
+    } catch (error) {
+      const exceedsLimit =
+        error instanceof Error && 'code' in error && error.code === 'ERR_BUFFER_TOO_LARGE'
+      skipped.push({
+        path: name,
+        reason: exceedsLimit
+          ? `too large (limit ${mb(limits.maxFileBytes)})`
+          : 'invalid DEFLATE data'
+      })
       continue
     }
 

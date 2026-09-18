@@ -20,6 +20,10 @@ type ResolvedLiteratureAttachmentVersion = Readonly<{
 type LiteratureAttachmentAuthorityOptions = Readonly<{
   getClient: () => Promise<PrismaClient>
   content: Pick<ContentRepository, 'verify' | 'openLease'>
+  packages?: {
+    resolveVersion: (versionId: string) => Promise<ResolvedLiteratureAttachmentVersion | undefined>
+    openContent: (versionId: string) => Promise<ContentReadLease>
+  }
 }>
 
 class LiteratureAttachmentUnavailableError extends Error {}
@@ -39,6 +43,7 @@ class LiteratureAttachmentAuthority {
       throw new LiteratureAttachmentUnavailableError('Literature attachment is unavailable.')
     const client = await this.options.getClient()
     const row = await client.literatureAttachmentVersion.findUnique({ where: { id: versionId } })
+    if (!row && this.options.packages) return this.options.packages.openContent(versionId)
     if (!row)
       throw new LiteratureAttachmentUnavailableError('Literature attachment is unavailable.')
     const lease = await this.options.content.openLease(row.contentBlobId)
@@ -62,7 +67,8 @@ class LiteratureAttachmentAuthority {
         contentBlob: { select: { storageKey: true } }
       }
     })
-    if (!version || version.attachment.item.deletedAt) return undefined
+    if (!version) return this.options.packages?.resolveVersion(versionId)
+    if (version.attachment.item.deletedAt) return undefined
 
     const verification = await this.options.content.verify(version.contentBlobId)
     if (verification.state !== 'available') {

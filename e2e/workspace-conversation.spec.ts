@@ -1,7 +1,9 @@
 import { expect } from '@playwright/test'
 import type { AxeResults } from 'axe-core'
 import { readFile, writeFile } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import type { Page } from 'playwright'
 import { test } from './fixtures/electron-app'
 
@@ -149,6 +151,59 @@ const createProject = async (page: Page): Promise<void> => {
   await dialog.getByRole('button', { name: 'Create project' }).click()
   await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
 }
+
+test('returns from Library to the originating conversation and New Conversation draft', async ({
+  app
+}, testInfo) => {
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
+  await page.setViewportSize({ width: 1280, height: 900 })
+  await createProject(page)
+  const composer = page.getByRole('textbox', { name: 'Ask anything' })
+  const earlierPrompt = 'Review the evidence for our literature study.'
+  const laterPrompt = 'Outline a separate research question.'
+  for (const prompt of [earlierPrompt, laterPrompt]) {
+    await composer.fill(prompt)
+    await page.getByRole('button', { name: 'Send message' }).click()
+    await expect(page.getByText(AGENT_REPLY, { exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Send message' })).toBeVisible()
+    if (prompt === earlierPrompt)
+      await page.getByRole('button', { name: 'New', exact: true }).click()
+  }
+  const earlier = page
+    .locator('[data-slot="session-open-button"]')
+    .filter({ hasText: earlierPrompt })
+  await earlier.click()
+  const draft = 'Compare these findings with the references in our library.'
+  await composer.fill(draft)
+  await page.getByRole('button', { name: 'Library', exact: true }).click()
+  const back = page.getByRole('button', { name: 'Back to Project', exact: true })
+  await expect(back).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Back to Home', exact: true })).toHaveCount(0)
+  await page.screenshot({ path: testInfo.outputPath('library-return-project.png') })
+  await back.focus()
+  await page.keyboard.press('Enter')
+  await expect(earlier).toHaveAttribute('aria-current', 'page')
+  await expect(
+    page.getByRole('region', { name: 'Conversation' }).getByText(earlierPrompt, { exact: true })
+  ).toBeVisible()
+  await expect(composer).toHaveText(draft)
+  await composer.focus()
+  await expect(composer).toBeFocused()
+  await page.screenshot({ path: testInfo.outputPath('library-return-conversation.png') })
+
+  await page.getByRole('button', { name: 'New', exact: true }).click()
+  await composer.fill('Unsent new conversation draft')
+  await page.getByRole('button', { name: 'Library', exact: true }).click()
+  await back.click()
+  await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
+  await expect(composer).toHaveText('Unsent new conversation draft')
+
+  await page.getByRole('button', { name: 'All projects', exact: true }).click()
+  await page.getByRole('button', { name: 'Library', exact: true }).click()
+  await page.getByRole('button', { name: 'Back to Home', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'New project', exact: true })).toBeVisible()
+})
 
 const allowCitationPreviewDomain = async (page: Page): Promise<void> => {
   await page.evaluate(async () => {
@@ -920,4 +975,81 @@ test('identifies the Project before deleting a workspace Session', async ({ app 
   })
   await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click()
   await expect(confirmation).toBeHidden()
+})
+
+test('exports a CLI conversation first opened after completion', async ({ app }, testInfo) => {
+  test.setTimeout(300_000)
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
+  await createProject(page)
+  await page.getByRole('textbox', { name: 'Ask anything' }).fill(USER_MESSAGE)
+  await page.getByRole('button', { name: 'Send message' }).click()
+  await expect(page.getByText(AGENT_REPLY, { exact: true })).toBeVisible()
+  const projectId = await page.evaluate(
+    async () =>
+      (await window.api.projects.list()).find((p) => p.name === 'Agent journey project')!.id
+  )
+  // Slow projection delivery so the renderer's reply save overlaps Main's Task completion.
+  const runtimeProjection = await page.context().newCDPSession(page)
+  await runtimeProjection.send('Emulation.setCPUThrottlingRate', { rate: 4 })
+  await app.authenticatedWebUrl()
+  const directory = await app.createTestDirectory('cli-export')
+  const output = await promisify(execFile)(
+    process.execPath,
+    [
+      'cli/index.mjs',
+      'run',
+      '--config-root',
+      join(dirname(directory), 'storage'),
+      '--project',
+      projectId,
+      '--prompt',
+      'CLI export completed before opening.',
+      '--no-memory',
+      '--no-auto-review',
+      '--wait',
+      '--json'
+    ],
+    { cwd: process.cwd(), timeout: 60_000 }
+  )
+  const run = JSON.parse(output.stdout)
+  expect(run.status).toBe('completed')
+  // Match the report's settled-before-export interval without forcing a persistence flush.
+  await new Promise((resolve) => setTimeout(resolve, 30_000))
+  const saved = await page.evaluate(
+    async ({ projectId, sessionId }) => window.api.sessions.loadOne({ projectId, sessionId }),
+    { projectId, sessionId: run.sessionId }
+  )
+  expect(saved).toBeTruthy()
+  expect(saved!.status).toBe('idle')
+  expect(saved!.activeRun).toBeUndefined()
+  expect(saved!.messages.filter((message) => message.role === 'agent')).toHaveLength(1)
+  const destination = await app.configureSessionPackageDialogs()
+  await page
+    .getByRole('navigation', { name: 'Sessions' })
+    .locator('button[data-slot="session-open-button"]')
+    .filter({ hasText: saved!.title })
+    .click()
+  await page.getByRole('button', { name: `Open actions for ${saved!.title}` }).click()
+  await page.getByRole('menuitem', { name: 'Export', exact: true }).hover()
+  await page.getByRole('menuitem', { name: 'Export conversation…' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Export conversation', exact: true })
+  await dialog.getByRole('radio', { name: 'Markdown' }).click()
+  await dialog.getByTestId('conversation-export-confirm').click()
+  await expect(dialog).toBeHidden()
+  // The report retries a freshly reviewed snapshot after two idle minutes.
+  await new Promise((resolve) => setTimeout(resolve, 120_000))
+  await page.getByRole('button', { name: `Open actions for ${saved!.title}` }).click()
+  await page.getByRole('menuitem', { name: 'Export', exact: true }).hover()
+  await page.getByRole('menuitem', { name: 'Export conversation…' }).click()
+  await dialog.getByRole('radio', { name: 'Markdown' }).click()
+  await dialog.getByTestId('conversation-export-confirm').click()
+  await expect(dialog).toBeHidden()
+  const markdown = await readFile(destination, 'utf8')
+  expect(markdown).toContain('CLI export completed before opening.')
+  expect(markdown).toContain(AGENT_REPLY)
+  await page.screenshot({ path: testInfo.outputPath('cli-export-completed.png') })
+  await page.getByRole('textbox', { name: 'Ask anything' }).fill('Continue after export.')
+  await page.getByRole('button', { name: 'Send message' }).click()
+  await expect(page.getByText(AGENT_REPLY, { exact: true })).toHaveCount(2)
 })

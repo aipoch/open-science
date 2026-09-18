@@ -517,7 +517,7 @@ export const copyAndVerify = async (opts: MigrateOpts): Promise<MigrationResult>
         await rm(destDir, { recursive: true, force: true }).catch(() => undefined)
       }
     }
-    // Also drop the now-empty `to` shell (e.g. `<parent>/OpenScience`) so a cancelled move leaves no
+    // Also drop the now-empty `to` shell (e.g. `<parent>/Open-Science`) so a cancelled move leaves no
     // trace. rmdir only removes it if empty, so any unrelated pre-existing content is left intact.
     await rmdir(to).catch(() => undefined)
     const cancelled = err instanceof AbortedError || signal.aborted

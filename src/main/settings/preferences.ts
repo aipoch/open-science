@@ -1,3 +1,5 @@
+import { mkdir } from 'node:fs/promises'
+import { resolveDataRoot, samePath } from '../storage-root'
 import {
   DEFAULT_APP_ICON_VARIANT,
   DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
@@ -51,7 +53,8 @@ const toSettingsPreferencesSnapshot = (settings: StoredSettings): SettingsPrefer
 class SettingsPreferencesModule implements SettingsPreferences {
   constructor(
     private readonly repository: SettingsRepository,
-    private readonly now: () => number = Date.now
+    private readonly now: () => number = Date.now,
+    private readonly currentDataRoot: () => string = resolveDataRoot
   ) {}
 
   async getSnapshot(): Promise<SettingsPreferencesSnapshot> {
@@ -59,7 +62,17 @@ class SettingsPreferencesModule implements SettingsPreferences {
   }
 
   async markOnboardingComplete(): Promise<SettingsPreferencesSnapshot> {
-    return toSettingsPreferencesSnapshot(await this.repository.markOnboardingComplete(this.now()))
+    const settings = await this.repository.getSettings()
+    if (settings.onboardingCompletedAt !== undefined) return toSettingsPreferencesSnapshot(settings)
+    // This is the running root shown in onboarding, also used by its runtime setup. Custom
+    // selections have already been saved through the guarded select-and-relaunch command.
+    const dataRoot = this.currentDataRoot()
+    if (settings.dataRoot && !samePath(settings.dataRoot, dataRoot))
+      throw new Error('The data location changed. Restart to use the saved location.')
+    if (!settings.dataRoot) await mkdir(dataRoot, { recursive: true })
+    return toSettingsPreferencesSnapshot(
+      await this.repository.markOnboardingComplete(this.now(), dataRoot)
+    )
   }
 
   async markPathsNormalized(): Promise<SettingsPreferencesSnapshot> {
@@ -71,11 +84,14 @@ class SettingsPreferencesModule implements SettingsPreferences {
     options: SetDataRootOptions = {}
   ): Promise<SettingsPreferencesSnapshot> {
     return toSettingsPreferencesSnapshot(
-      await this.repository.setDataRoot({
-        dataRoot: path,
-        ...(options.previousDataRoot ? { previousDataRoot: options.previousDataRoot } : {}),
-        ...(options.completeOnboarding ? { onboardingCompletedAt: this.now() } : {})
-      })
+      await this.repository.setDataRoot(
+        {
+          dataRoot: path,
+          ...(options.previousDataRoot ? { previousDataRoot: options.previousDataRoot } : {}),
+          ...(options.completeOnboarding ? { onboardingCompletedAt: this.now() } : {})
+        },
+        options.validateTarget
+      )
     )
   }
 

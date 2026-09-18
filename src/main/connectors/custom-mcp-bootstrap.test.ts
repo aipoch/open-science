@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest'
-import { selectEnabledCustomServers, toCustomMcpConfig } from './custom-mcp-bootstrap'
+import {
+  classifyCustomMcpFailure,
+  selectEnabledCustomServers,
+  toCustomMcpConfig
+} from './custom-mcp-bootstrap'
 import type { StoredConnectors, StoredCustomMcpServer } from '../settings/types'
 
 describe('toCustomMcpConfig', () => {
@@ -388,4 +392,12 @@ describe('selectEnabledCustomServers', () => {
       })
     ).toEqual([])
   })
+})
+
+it('does not infer authentication from authorization failures or unrelated prose', () => {
+  expect(classifyCustomMcpFailure(new Error('403 Forbidden'))).toBe('unavailable')
+  expect(classifyCustomMcpFailure(new Error('Query contains 401 records'))).toBe('unavailable')
+  expect(
+    classifyCustomMcpFailure(Object.assign(new Error('HTTP request failed'), { status: 401 }))
+  ).toBe('unauthenticated')
 })

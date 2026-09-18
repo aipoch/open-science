@@ -1,4 +1,4 @@
-import { isAbsolute, normalize, parse } from 'node:path'
+import { isAbsolute } from 'node:path'
 
 import {
   CODEX_SUBSCRIPTION_PROVIDER_ID,
@@ -334,14 +334,11 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
     settings.legacyDataMovePromptDismissedAt = legacyDataMovePromptDismissedAt
   }
 
-  // Keep absolute paths canonical without stripping a filesystem root on any supported platform.
-  const dataRoot = asString(value.dataRoot)?.trim()
-  if (dataRoot && isAbsolute(dataRoot)) {
-    const normalized = normalize(dataRoot)
-    const { root } = parse(normalized)
-    settings.dataRoot =
-      normalized.length > root.length ? normalized.replace(/[\\/]+$/, '') : normalized
-  }
+  // Whitespace-only means unset. Keep a valid saved path verbatim: trimming directory names or
+  // lexically collapsing parent segments across symlinks can select a different directory.
+  const dataRoot = asString(value.dataRoot)
+  if (value.dataRootIsInitialDefault === true) settings.dataRootIsInitialDefault = true
+  if (dataRoot && isAbsolute(dataRoot)) settings.dataRoot = dataRoot
 
   const agentFrameworkId = asString(value.agentFrameworkId)
   if (

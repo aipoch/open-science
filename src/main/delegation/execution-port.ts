@@ -2,6 +2,7 @@ import type {
   AcpAgentRuntimeUpdate,
   AcpModelCallUsage,
   AcpPermissionScope,
+  AcpPermissionRequest,
   AcpTurnTokenUsage
 } from '../../shared/acp'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
@@ -48,6 +49,9 @@ type DelegateExecutionEvent =
       awaiting: true
       requestId: string
       title: string
+      providerToolName?: AcpPermissionRequest['providerToolName']
+      isMcp?: AcpPermissionRequest['isMcp']
+      toolKind?: AcpPermissionRequest['toolKind']
       options: readonly Readonly<{
         optionId: string
         name: string

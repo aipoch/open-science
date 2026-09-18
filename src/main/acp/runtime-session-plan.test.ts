@@ -117,6 +117,7 @@ const createRuntimeHarness = (options: {
     sessionId: 'session-1',
     sequence: 7,
     turnToken: 'turn-token-7',
+    signal: new AbortController().signal,
     promptMessageId: 'interaction-1'
   }
   const sessionInteractions = {

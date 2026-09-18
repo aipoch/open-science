@@ -1,0 +1,22 @@
+{
+  "ownerPaths": ["src/main/session-details/owner.test.ts", "src/main/session-details/owner.ts"],
+  "interfacePaths": ["src/main/session-details/owner.ts"],
+  "consumerModules": [],
+  "testFiles": {
+    "owner": ["src/main/session-details/owner.test.ts"],
+    "contract": [
+      "src/preload/index.test.ts",
+      "src/renderer/web/api-installer.test.ts",
+      "src/shared/renderer-contract-catalog.test.ts",
+      "src/shared/renderer-surface-matrix.test.ts"
+    ],
+    "consumer": [
+      "src/main/index-fatal-errors.test.ts",
+      "src/main/index-startup-failure.test.ts",
+      "src/main/ipc-surfaces/session-persistence.test.ts",
+      "src/main/runtime-electron-wiring.test.ts"
+    ]
+  },
+  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
+  "fallbackCapability": "main_runtime"
+}

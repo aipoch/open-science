@@ -496,7 +496,7 @@ test('exports a Session package and imports its conversation as read-only histor
     .click()
   await app.page.getByRole('menuitem', { name: 'Delete', exact: true }).click()
   const deleting = app.page.getByRole('alertdialog', { name: 'Delete Session?' })
-  await expect(deleting.getByText(/the next time Open Science starts/)).toBeVisible()
+  await expect(deleting.getByText(/the next time Open-Science starts/)).toBeVisible()
   await app.page.screenshot({ path: testInfo.outputPath('session-package-delete.png') })
   await deleting.getByRole('button', { name: 'Delete', exact: true }).click()
   await expect(deleting).toHaveCount(0)

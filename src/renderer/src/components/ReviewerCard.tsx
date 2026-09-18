@@ -365,9 +365,15 @@ export const ReviewerCard = ({
   // the point is "this verdict may not reflect the turn anymore", not the original outcome.
   const statusIcon = ((): React.JSX.Element => {
     if (isError) return <AlertTriangle className="h-3 w-3 text-yellow-500" />
-    if (isUnverified) return <AlertTriangle className="h-3 w-3 text-amber-500" />
+    if (isUnverified)
+      return (
+        <AlertTriangle className="h-3 w-3 text-status-warning-foreground dark:text-status-warning-dark-foreground" />
+      )
     if (isEmptyAssessment) return <CircleMinus className="h-3 w-3 text-text-400" />
-    if (isStale) return <AlertTriangle className="h-3 w-3 text-amber-500" />
+    if (isStale)
+      return (
+        <AlertTriangle className="h-3 w-3 text-status-warning-foreground dark:text-status-warning-dark-foreground" />
+      )
     if (isFlagged) return <AlertTriangle className="h-3 w-3 text-red-500" />
     if (isComplete) return <ShieldCheck className="h-3 w-3 text-green-600 dark:text-green-400" />
     return <Loader className="h-3 w-3 text-text-400" />
@@ -484,7 +490,7 @@ export const ReviewerCard = ({
           className="mt-2 flex items-center justify-between gap-2 rounded-md bg-bg-300 px-2 py-1"
           data-testid={isStale ? 'reviewer-stale-notice' : 'reviewer-unresolved-notice'}
         >
-          <span className="text-[11px] text-amber-800 dark:text-amber-300">
+          <span className="text-[11px] text-status-warning-foreground dark:text-status-warning-dark-foreground">
             {rerunFailed
               ? t('Review did not start. Please try again.')
               : isError
@@ -499,7 +505,7 @@ export const ReviewerCard = ({
               // Disable immediately on click so a double-click (or an impatient second click before the
               // review flips to 'running') can't launch two reviews; main also dedups concurrent runs.
               disabled={rerunRequested}
-              className="shrink-0 rounded bg-bg-000 px-2 py-0.5 text-[11px] text-amber-800 transition-colors hover:bg-bg-300 disabled:cursor-default disabled:opacity-50 dark:text-amber-300"
+              className="shrink-0 rounded bg-bg-000 px-2 py-0.5 text-[11px] text-status-warning-foreground dark:text-status-warning-dark-foreground transition-colors hover:bg-bg-300 disabled:cursor-default disabled:opacity-50"
               onClick={() => {
                 setRerunRequested(true)
                 setRerunFailed(false)

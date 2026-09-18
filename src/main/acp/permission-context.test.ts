@@ -14,6 +14,7 @@ import {
 } from './permission-context'
 import type { AcpPermissionContextOptions } from './permission-context'
 import { permissionRequestFingerprint } from './permission-broker'
+import { isNativeWebFetchPermission, isNativeWebSearchPermission } from './permission-policy'
 
 const NOTEBOOK_SERVERS = ['open-science-notebook']
 
@@ -70,6 +71,167 @@ const observe = (
 }
 
 describe('ACP permission context', () => {
+  it.each([
+    ['opencode', 'WebFetch'],
+    ['claude-code', 'WebFetch'],
+    ['claude-code', 'WebSearch']
+  ] as const)('binds native web permission to one live %s %s call', async (framework, tool) => {
+    const isNativeWebPermission =
+      tool === 'WebSearch' ? isNativeWebSearchPermission : isNativeWebFetchPermission
+    const context = new AcpPermissionContext({
+      emitPermissionRequest: vi.fn(),
+      routing: permissionRouting()
+    })
+    const request = permissionRequest('web-session', 'web-call', {
+      title: 'https://example.org/',
+      kind: 'fetch',
+      rawInput: tool === 'WebSearch' ? { query: 'p63 carcinoma' } : { url: 'https://example.org/' }
+    })
+    const restore = (): Promise<RequestPermissionRequest | undefined> =>
+      context.restoreToolCall(request, {
+        sessionId: 'web-session',
+        framework,
+        mcpServerNames: [],
+        isCancelled: () => false
+      })
+    const start = (): void =>
+      observe(
+        context,
+        {
+          sessionId: 'web-session',
+          update: {
+            toolCallId: request.toolCall.toolCallId,
+            kind: 'fetch',
+            title: 'WebFetch',
+            sessionUpdate: 'tool_call',
+            status: 'pending',
+            rawInput: {},
+            ...(framework === 'claude-code' ? { _meta: { claudeCode: { toolName: tool } } } : {})
+          }
+        },
+        framework
+      )
+    try {
+      const policy = { profile: 'ask' as const, frameworkId: framework }
+      expect(isNativeWebPermission((await restore())!, policy)).toBe(false)
+      start()
+      expect(isNativeWebPermission((await restore())!, policy)).toBe(true)
+      expect(isNativeWebPermission((await restore())!, policy)).toBe(false)
+      start()
+      const foreign = await context.restoreToolCall(
+        { ...request, sessionId: 'foreign' },
+        {
+          sessionId: 'foreign',
+          framework,
+          mcpServerNames: [],
+          isCancelled: () => false
+        }
+      )
+      expect(isNativeWebPermission(foreign!, policy)).toBe(false)
+      context.clearSession('web-session')
+      expect(isNativeWebPermission((await restore())!, policy)).toBe(false)
+      start()
+      observe(
+        context,
+        {
+          sessionId: 'web-session',
+          update: {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'web-call',
+            status: 'completed'
+          }
+        },
+        framework
+      )
+      expect(isNativeWebPermission((await restore()) ?? request, policy)).toBe(false)
+      start()
+      context.dispose()
+      expect(isNativeWebPermission((await restore())!, policy)).toBe(false)
+    } finally {
+      context.dispose()
+    }
+  })
+  it('does not rearm a consumed search correlation on a duplicate tool_call', async () => {
+    const context = new AcpPermissionContext({
+      emitPermissionRequest: vi.fn(),
+      routing: permissionRouting()
+    })
+    const request = permissionRequest('session', 'search', {
+      kind: 'fetch',
+      rawInput: { query: 'p63' }
+    })
+    const notification: SessionNotification = {
+      sessionId: 'session',
+      update: {
+        toolCallId: 'search',
+        kind: 'fetch',
+        rawInput: { query: 'p63' },
+        title: 'Search',
+        sessionUpdate: 'tool_call',
+        _meta: { claudeCode: { toolName: 'WebSearch' } }
+      }
+    }
+    const restore = (): Promise<RequestPermissionRequest | undefined> =>
+      context.restoreToolCall(request, {
+        sessionId: 'session',
+        framework: 'claude-code',
+        mcpServerNames: [],
+        isCancelled: () => false
+      })
+    const policy = { profile: 'ask' as const, frameworkId: 'claude-code' as const }
+    try {
+      observe(context, notification, 'claude-code')
+      expect(isNativeWebSearchPermission((await restore())!, policy)).toBe(true)
+      observe(context, notification, 'claude-code')
+      expect(isNativeWebSearchPermission((await restore())!, policy)).toBe(false)
+    } finally {
+      context.dispose()
+    }
+  })
+  it('keeps a webfetch permission from an unrelated OpenCode tool Once-only', async () => {
+    const context = new AcpPermissionContext({
+      emitPermissionRequest: vi.fn(),
+      routing: permissionRouting({
+        capturePrompt: () => ({ sequence: 1, isCancellationAccepted: () => false }),
+        currentInteractionSequence: () => 1
+      })
+    })
+    try {
+      observe(
+        context,
+        {
+          sessionId: 'session-web',
+          update: {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'custom-1',
+            title: 'custom_tool',
+            kind: 'other',
+            status: 'pending',
+            rawInput: { url: 'https://example.org/' }
+          }
+        },
+        'opencode'
+      )
+      const response = context.handleProviderRequest(
+        permissionRequest('session-web', 'custom-1', {
+          title: 'https://example.org/',
+          kind: 'fetch',
+          rawInput: { url: 'https://example.org/' }
+        })
+      )
+      await vi.waitFor(() => expect(context.getPendingRequests()).toHaveLength(1))
+      expect(
+        context
+          .getPendingRequests()[0]
+          .options.map((option) => option.scope)
+          .filter(Boolean)
+      ).toEqual(['once'])
+      context.cancelAllPending()
+      await response
+    } finally {
+      context.dispose()
+    }
+  })
   it.each([
     {
       name: 'Claude Code',

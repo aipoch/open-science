@@ -562,6 +562,7 @@ class AcpRuntimeCoordinator {
     try {
       response = await runtime.createSession(request)
     } catch (error) {
+      this.pendingSessionCreations.delete(pending)
       await this.retireUnusedTargetedRuntime(runtime)
       throw error
     } finally {
@@ -590,9 +591,40 @@ class AcpRuntimeCoordinator {
       return pendingReconciliation.response
     }
     if (pendingReconciliation) this.pendingResumeReconciliations.delete(request.sessionId)
-    const targetedRuntime = request.agentTarget
-      ? this.runtimeForTarget(request.agentTarget)
-      : undefined
+    const target = request.agentTarget
+    const ownerTarget = owner && this.runtimeTargets.get(owner)
+    const reuseCodexSession = Boolean(
+      owner &&
+      !this.retiredRuntimes.has(owner) &&
+      target?.frameworkId === 'codex' &&
+      ownerTarget?.frameworkId === 'codex' &&
+      target.providerId === ownerTarget.providerId &&
+      target.model === ownerTarget.model &&
+      owner.isSessionUsingFramework(request.sessionId, 'codex')
+    )
+    if (reuseCodexSession && owner && target) {
+      await this.waitForSessionDrain(owner, request.sessionId)
+      if (
+        this.findRuntimeForSession(request.sessionId) !== owner ||
+        this.retiredRuntimes.has(owner)
+      ) {
+        throw new Error('ACP session configuration was superseded.')
+      }
+      if (
+        (owner.getSessionReasoningEffort(request.sessionId) ?? ownerTarget?.reasoningEffort) !==
+          target.reasoningEffort &&
+        !(await owner.applySessionReasoningEffortChange(request.sessionId, target.reasoningEffort))
+      ) {
+        throw new Error(
+          'The selected reasoning effort could not be applied to this Codex Session. Retry the change.'
+        )
+      }
+    }
+    const targetedRuntime = reuseCodexSession
+      ? owner
+      : target
+        ? this.runtimeForTarget(target)
+        : undefined
     const runtime =
       targetedRuntime ??
       (owner && !this.retiredRuntimes.has(owner) ? owner : this.getActiveRuntime())
@@ -859,7 +891,7 @@ class AcpRuntimeCoordinator {
   sendApplicationPrompt(
     request: AcpPromptRequest,
     attribution: MessageAttribution,
-    _promptAttemptId?: string,
+    options?: Parameters<AcpRuntime['sendApplicationPrompt']>[2],
     onApplicationPromptAdmitted?: (prompt: ReturnType<AcpRuntime['sendPrompt']>) => void
   ): ReturnType<AcpRuntime['sendApplicationPrompt']> {
     return this.linearizeRootAdmission(request.sessionId, () =>
@@ -870,7 +902,8 @@ class AcpRuntimeCoordinator {
         undefined,
         false,
         attribution,
-        onApplicationPromptAdmitted
+        onApplicationPromptAdmitted,
+        options?.onPromptAdmitted
       )
     )
   }
@@ -1169,7 +1202,10 @@ class AcpRuntimeCoordinator {
         )
       }
       if (operation === 'sendApplicationPrompt') {
-        return runtime.sendApplicationPrompt(taskRequest, attribution!, attempt.id)
+        return runtime.sendApplicationPrompt(taskRequest, attribution!, {
+          promptAttemptId: attempt.id,
+          onPromptAdmitted: admitPrompt
+        })
       }
       if (operation === 'sendPrompt') {
         return admitPrompt
@@ -1223,7 +1259,8 @@ class AcpRuntimeCoordinator {
           actual.frameworkId === expected.frameworkId &&
           actual.providerId === expected.providerId &&
           actual.model === expected.model &&
-          actual.reasoningEffort === expected.reasoningEffort
+          (runtime.getSessionReasoningEffort(request.sessionId) ?? actual.reasoningEffort) ===
+            expected.reasoningEffort
         )
       }
       if (!isCurrent()) return Promise.resolve({ injected: false, reason: 'prompt-required' })
@@ -1232,6 +1269,10 @@ class AcpRuntimeCoordinator {
     return this.promptDispatchAdmissionGuard
       ? this.promptDispatchAdmissionGuard(request.sessionId, dispatch, true)
       : dispatch()
+  }
+
+  hasPendingSideChatInteraction(sessionId: string): boolean {
+    return this.runtimeForSession(sessionId).hasPendingSideChatInteraction(sessionId)
   }
 
   async steerSideChatAdvisory(
@@ -1587,7 +1628,7 @@ class AcpRuntimeCoordinator {
           false
         )
       },
-      sendApplicationPrompt: (request, attribution) =>
+      sendApplicationPrompt: (request, attribution, admission) =>
         this.linearizeRootAdmission(request.sessionId, async () => {
           this.assertPromptAdmissionOpen()
           const contextReset = await ensureActivitySession(request.sessionId)
@@ -1605,7 +1646,9 @@ class AcpRuntimeCoordinator {
             'sendApplicationPrompt',
             runtime,
             false,
-            attribution
+            attribution,
+            undefined,
+            admission?.onPromptAdmitted
           )
         })
     }
@@ -1828,7 +1871,11 @@ class AcpRuntimeCoordinator {
       !runtime ||
       !this.runtimeTargets.has(runtime) ||
       this.retiredRuntimes.has(runtime) ||
-      Array.from(this.sessionRuntimes.values()).includes(runtime)
+      Array.from(this.sessionRuntimes.values()).includes(runtime) ||
+      Array.from(this.pendingSessionCreations).some((pending) => pending.runtime === runtime) ||
+      Array.from(this.pendingSessionAdoptions.values()).some(
+        (pending) => pending.runtime === runtime
+      )
     ) {
       return
     }

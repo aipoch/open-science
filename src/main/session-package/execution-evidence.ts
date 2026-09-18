@@ -33,6 +33,25 @@ export const executionEvidenceSchema = z
   })
   .passthrough()
 
+// Legacy Notebook sidecars identify their owner with runId. Normalize only that known
+// format; current sidecars still pass through the same schema without inferred ownership.
+const legacyNotebookEvidenceSchema = executionEvidenceSchema
+  .omit({ activityId: true, activityKind: true })
+  .extend({
+    runId: z.string(),
+    activityId: z.undefined().optional(),
+    activityKind: z.undefined().optional()
+  })
+  .refine((value) => value.evidenceId === `notebook-file-evidence-${value.runId}`)
+  .transform((value) => ({
+    ...value,
+    activityId: value.runId,
+    activityKind: 'notebook-run' as const
+  }))
+
+export const readExecutionEvidence = (value: unknown): z.infer<typeof executionEvidenceSchema> =>
+  z.union([executionEvidenceSchema, legacyNotebookEvidenceSchema]).parse(value)
+
 // Follow immutable references, not the whole Project blob pool or its machine-local ownership
 // receipts. Notebook and Compute summaries share this evidence format.
 export const executionEvidenceKeys = async (
@@ -55,7 +74,7 @@ export const executionEvidenceKeys = async (
     const key = row.storageKey ?? row.storage_key
     if (
       typeof key === 'string' &&
-      key.startsWith('execution-file-evidence/') &&
+      /^(?:execution-file-evidence|notebook-file-evidence|file-evidence)\//.test(key) &&
       typeof row.checksum === 'string'
     ) {
       const previous = references.get(key)
@@ -83,7 +102,7 @@ export const executionEvidenceKeys = async (
   for (const [key, reference] of references) {
     signal?.throwIfAborted()
     if (
-      !/^execution-file-evidence\/[^/]+\/[^/]+\/(?:frames\/[^/]+\/)?activity-[^/]+\/evidence\.json$/.test(
+      !/^(?:execution-file-evidence\/[^/]+\/[^/]+\/(?:frames\/[^/]+\/)?activity-[^/]+|(?:notebook-file-evidence|file-evidence)\/[^/]+\/[^/]+\/(?:frames\/[^/]+\/)?run-[^/]+)\/evidence\.json$/.test(
         key
       )
     )
@@ -92,7 +111,7 @@ export const executionEvidenceKeys = async (
     const path = resolveStorageKey(storageRoot, key)
     if ((await fileChecksum(path, signal)) !== reference.checksum)
       throw new Error('Execution file evidence checksum mismatch.')
-    const evidence = executionEvidenceSchema.parse(await readPackageJson(path))
+    const evidence = readExecutionEvidence(await readPackageJson(path))
     if (
       (reference.evidenceId && evidence.evidenceId !== reference.evidenceId) ||
       (reference.activityId && evidence.activityId !== reference.activityId)
@@ -103,7 +122,7 @@ export const executionEvidenceKeys = async (
       if (!relation.generation) continue
       const generation = relation.generation
       const project = key.split('/')[1]
-      if (!generation.contentStorageKey.startsWith(`execution-file-evidence/${project}/`))
+      if (!generation.contentStorageKey.startsWith(`${key.split('/')[0]}/${project}/`))
         throw new Error('Execution file generation escapes its Project.')
       await assertPackageSourcePath(storageRoot, generation.contentStorageKey)
       const digest = await digestFileWithinBudget(

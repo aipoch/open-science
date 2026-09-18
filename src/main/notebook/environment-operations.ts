@@ -212,6 +212,17 @@ export class NotebookEnvironmentOperations {
     return this.withLease(kind, environment, 'shared', operation)
   }
 
+  async acquireBindingLease(environment: string): Promise<EnvironmentLease> {
+    // Binding already owns a session write slot. Never wait for a mutation that may need that
+    // slot to publish repair/revocation: refuse the selection before stopping its old kernel.
+    if (this.leases.hasExclusive(environment)) {
+      throw new Error(
+        `ENVIRONMENT_MUTATION_ALREADY_PENDING: an environment mutation is running or queued for "${environment}". Retry selecting this runtime after it finishes.`
+      )
+    }
+    return this.leases.acquire(environment, 'shared').granted
+  }
+
   runMutation<T>(
     environment: string,
     operation: () => Promise<T>,

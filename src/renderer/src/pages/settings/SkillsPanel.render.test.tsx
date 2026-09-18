@@ -1,3 +1,7 @@
+import {
+  marketplaceCatalog,
+  marketplaceDetail
+} from '../../../../shared/__fixtures__/skill-marketplace'
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -216,6 +220,51 @@ const pasteValue = (label: string, value: string): void => {
   act(() => field?.dispatchEvent(event))
 }
 
+it('navigates to the conflicting Skill detail even when the retained search hides it', async () => {
+  const onNavigate = vi.fn()
+  await act(async () =>
+    root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={onNavigate} />)
+  )
+  const input = container.querySelector<HTMLInputElement>('input')!
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(
+      input,
+      'no-matching-skill'
+    )
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  Object.assign(window.api.settings, {
+    listSkillMarketplace: vi.fn().mockResolvedValue({ ok: true, value: marketplaceCatalog }),
+    getSkillMarketplaceBatch: vi.fn().mockResolvedValue(null),
+    getSkillMarketplaceDetail: vi.fn().mockResolvedValue({
+      ok: true,
+      value: {
+        ...marketplaceDetail,
+        installation: { kind: 'conflict', reason: 'name-taken', localSkillId: 'personal-mine' }
+      }
+    })
+  })
+  await act(async () =>
+    root.render(
+      <SkillsPanel
+        view={{
+          kind: 'marketplace-detail',
+          id: marketplaceDetail.entry.id,
+          displayName: marketplaceDetail.entry.displayName,
+          snapshotId: marketplaceCatalog.snapshotId
+        }}
+        onNavigate={onNavigate}
+      />
+    )
+  )
+  const target = [...container.querySelectorAll('button')].find(
+    (button) => button.textContent === 'View installed Skill'
+  )!
+  expect(target).toBeDefined()
+  await act(async () => target.click())
+  expect(onNavigate).toHaveBeenCalledWith({ kind: 'detail', id: 'personal-mine' })
+})
+
 describe('SkillsPanel (list view)', () => {
   it('renders skills grouped by source with one toggle each and an Add skill control', () => {
     act(() => {
@@ -232,8 +281,9 @@ describe('SkillsPanel (list view)', () => {
     const betaSwitch = document.body.querySelector<HTMLElement>('[aria-label="Toggle Beta"]')
     expect(alphaSwitch?.getAttribute('data-state')).toBe('checked')
     expect(alphaSwitch?.className).toContain('data-[state=checked]:bg-primary')
-    expect(alphaSwitch?.className).toContain('ml-1')
-    expect(alphaSwitch?.className).toContain('mr-3')
+    // No per-toggle hit-area margins: the row's control column owns right alignment.
+    expect(alphaSwitch?.className).not.toContain('ml-1')
+    expect(alphaSwitch?.className).not.toContain('mr-3')
     expect(betaSwitch?.getAttribute('data-state')).toBe('unchecked')
     expect(
       alphaSwitch?.querySelector<HTMLElement>('[data-slot="switch-thumb"]')?.className
@@ -326,7 +376,7 @@ describe('SkillsPanel (list view)', () => {
     const importedGroup = document.body.querySelector<HTMLElement>(
       '[data-slot="skills-source-group"][data-source="imported"]'
     )
-    expect(importedGroup?.textContent).toContain('Skills you imported into Open Science.')
+    expect(importedGroup?.textContent).toContain('Skills you imported into Open-Science.')
     expect(importedGroup?.textContent).toContain('No imported skills yet.')
 
     const importButton = Array.from(
@@ -381,7 +431,7 @@ describe('SkillsPanel (list view)', () => {
 
     expect(document.body.textContent).toContain('Conversation imports')
     expect(document.body.textContent).toContain(
-      'Choose what conversations can import into Open Science.'
+      'Choose what conversations can import into Open-Science.'
     )
     expect(document.body.textContent).toContain('Skill packages')
     expect(document.body.textContent).toContain('ask before importing them')
@@ -492,7 +542,7 @@ describe('SkillsPanel (list view)', () => {
     })
 
     expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
-      'Open Science could not load Skills.'
+      'Open-Science could not load Skills.'
     )
     const retry = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
       (button) => button.textContent?.trim() === 'Retry'

@@ -66,6 +66,7 @@ const opencodeBackend: AcpBackendGenerationView = {
 
 type HarnessOptions = {
   attached?: boolean
+  isWslSetupSession?: () => Promise<boolean>
   attachError?: Error
   backendAfterFirstConfigure?: AcpBackendGenerationView
   capabilityPolicy?: SessionCapabilityPolicy
@@ -312,7 +313,7 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
         mayRenewAfterConnectionSetup: true,
         blockStartup: false
       }),
-    capabilities: { provision },
+    capabilities: { provision, isWslSetupSession: options.isWslSetupSession },
     capabilityPolicy: options.capabilityPolicy ?? CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
     configurator: { configure, configurePermissionProfile },
     adopter: { adopt },
@@ -631,6 +632,7 @@ describe('AcpProviderSessionResumer', () => {
       backend: harness.backend,
       connection: harness.connection,
       session: harness.providerSession,
+      cancellationSignal: expect.any(AbortSignal),
       permissionProfile: 'full'
     })
     expect(harness.registry.lookup('stable-app-session')?.aggregate.snapshot()).toMatchObject({
@@ -644,8 +646,58 @@ describe('AcpProviderSessionResumer', () => {
     expect(harness.order).toEqual(['configure permission', 'cwd callback', 'state callback'])
     expect(harness.request).not.toHaveBeenCalled()
     expect(harness.adopt).not.toHaveBeenCalled()
-    expect(harness.setTimer).not.toHaveBeenCalled()
+    expect(harness.setTimer).toHaveBeenCalledOnce()
     expect(harness.assertCurrentConnection).toHaveBeenCalledWith(harness.connection)
+  })
+
+  it('bounds an attached refresh without disconnecting its live provider or committing late metadata', async () => {
+    const harness = createHarness({ attached: true })
+    const attachment = harness.registry.lookup('stable-app-session')?.attachment
+    const before = harness.registry.lookup('stable-app-session')?.aggregate.snapshot()
+    let complete!: (value: SessionPermissionProfileState) => void
+    harness.configurePermissionProfile.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          complete = resolve
+        })
+    )
+    const pending = harness.resume({
+      cwd: '/late-workspace',
+      specialistId: 'late-specialist',
+      permissionProfile: 'full'
+    })
+    await vi.waitFor(() => expect(harness.configurePermissionProfile).toHaveBeenCalledOnce())
+    const rejected = expect(pending).rejects.toThrow(/timed out.*permission.*unknown/i)
+    harness.fireTimeout()
+    await rejected
+    expect(harness.disconnectTimedOutConnection).not.toHaveBeenCalled()
+    expect(harness.registry.lookup('stable-app-session')?.attachment).toBe(attachment)
+    complete({ ...permissionProfile, selectedProfile: 'full' })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(harness.registry.lookup('stable-app-session')?.aggregate.snapshot()).toEqual(before)
+    expect(harness.clearLivePermissionProfile).not.toHaveBeenCalled()
+  })
+
+  it('does not start permission configuration after an attached capability lookup times out', async () => {
+    let complete!: (value: boolean) => void
+    const lookup = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          complete = resolve
+        })
+    )
+    const harness = createHarness({ attached: true, isWslSetupSession: lookup })
+    const pending = harness.resume({ permissionProfile: 'full' })
+    await vi.waitFor(() => expect(lookup).toHaveBeenCalledOnce())
+    const rejected = expect(pending).rejects.toThrow(/No permission update was attempted/)
+    harness.fireTimeout()
+    await rejected
+    complete(false)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(harness.configurePermissionProfile).not.toHaveBeenCalled()
+    expect(harness.disconnectTimedOutConnection).not.toHaveBeenCalled()
   })
 
   it('does not change an attached Codex Skill scope through a presentation-only resume', async () => {
@@ -724,7 +776,7 @@ describe('AcpProviderSessionResumer', () => {
     expect(harness.registry.lookup('stable-app-session')?.aggregate.snapshot()).toMatchObject({
       cwd: '/successor-workspace',
       projectId: 'successor-project',
-      specialistId: 'stale-specialist',
+      specialistId: undefined,
       permissionProfile
     })
     expect(harness.registry.currentSessionId).toBe('stable-app-session')

@@ -1,3 +1,4 @@
+import { storageErrorMessage } from '@/lib/storage-error'
 import { X } from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
 import { ErrorNotice } from '@/components/error-notice'
@@ -17,7 +18,7 @@ import {
   dialogTitleClassName
 } from '@/components/ui/dialog-chrome'
 import { Separator } from '@/components/ui/separator'
-import type { StorageInfo } from '../../../../shared/storage'
+import type { StorageInfo, DataRootSelection } from '../../../../shared/storage'
 import { DataRootWarning } from '@/components/DataRootWarning'
 import { onboardingErrorMessage } from './onboarding-error'
 
@@ -40,9 +41,9 @@ type LocationStepProps = {
 }
 
 type LocationDraft = {
-  chosenParent: string
   chosenDataRoot: string
   chosenKind: 'move' | 'adopt' | null
+  selection?: DataRootSelection
 }
 // Early storage step: pick where large data lives, then either continue with the current default or
 // confirm a restart that activates a custom root before runtime installation. Only `dataRoot` is
@@ -62,7 +63,7 @@ const LocationStep = ({
   setIsRelaunching
 }: LocationStepProps): React.JSX.Element => {
   const { t } = useTranslation()
-  const { chosenParent, chosenDataRoot, chosenKind } = locationDraft
+  const { chosenDataRoot, chosenKind } = locationDraft
   const isLoadingDefaultLocation = isResolvingDefaultLocation && dataRootInfo === null
   const [locationError, setLocationError] = useState<string | undefined>(undefined)
   const [confirmRestart, setConfirmRestart] = useState(false)
@@ -92,14 +93,16 @@ const LocationStep = ({
 
         const result = await window.api.storage.inspectDataRoot(picked)
         if (result.kind !== 'move' && result.kind !== 'adopt') {
-          setLocationError(result.error ?? t('The selected folder is not usable.'))
+          setLocationError(
+            storageErrorMessage(result.error, t) ?? t('The selected folder is not usable.')
+          )
           return
         }
 
         onLocationDraftChange({
-          chosenParent: picked,
           chosenDataRoot: result.dataRoot,
-          chosenKind: result.kind
+          chosenKind: result.kind,
+          selection: result.selection
         })
         onRelaunchErrorChange(undefined)
       } catch (error) {
@@ -113,7 +116,7 @@ const LocationStep = ({
   const handleResetLocation = (): void => {
     if (requestInFlightRef.current) return
 
-    onLocationDraftChange({ chosenParent: '', chosenDataRoot: '', chosenKind: null })
+    onLocationDraftChange({ chosenDataRoot: '', chosenKind: null })
     onRelaunchErrorChange(undefined)
     setLocationError(undefined)
   }
@@ -121,7 +124,7 @@ const LocationStep = ({
   const handleContinueLocation = (): void => {
     if (requestInFlightRef.current) return
 
-    if (chosenParent) {
+    if (chosenDataRoot) {
       setConfirmRestart(true)
     } else {
       onRelaunchErrorChange(undefined)
@@ -131,7 +134,7 @@ const LocationStep = ({
 
   const handleKeepDefault = (): void => {
     setConfirmRestart(false)
-    onLocationDraftChange({ chosenParent: '', chosenDataRoot: '', chosenKind: null })
+    onLocationDraftChange({ chosenDataRoot: '', chosenKind: null })
     onRelaunchErrorChange(undefined)
     setLocationError(undefined)
     onContinue()
@@ -146,13 +149,19 @@ const LocationStep = ({
       // Onboarding is intentionally still incomplete. The persisted custom dataRoot is the resume
       // signal after relaunch, and the wizard continues at Agent before finishing at Notebook.
       try {
-        const result = await window.api.storage.setDataRootAndRelaunch(chosenParent, false)
+        const result = await window.api.storage.setDataRootAndRelaunch(
+          chosenDataRoot,
+          false,
+          locationDraft.selection
+        )
         if (result.ok) return
 
         // The app is not relaunching; the gate was never flipped, so we're still on the wizard -
         // surface the error here and let the user retry or fall back to Keep default.
         setIsRelaunching(false)
-        onRelaunchErrorChange(result.error ?? 'Could not restart to apply the new location.')
+        onRelaunchErrorChange(
+          storageErrorMessage(result.error, t) ?? 'Could not restart to apply the new location.'
+        )
       } catch (error) {
         setIsRelaunching(false)
         onRelaunchErrorChange(
@@ -166,7 +175,7 @@ const LocationStep = ({
     <>
       <CardHeader className="gap-1 rounded-t-lg px-4 py-5 sm:px-6">
         <h2 tabIndex={-1} className="text-[15px] font-semibold">
-          {t('Where should Open Science store your data?')}
+          {t('Where should Open-Science store your data?')}
         </h2>
         <CardDescription className="text-xs leading-5">
           {t(
@@ -229,7 +238,7 @@ const LocationStep = ({
                 {/* Trans keeps the path's mono styling and the reset button inline while letting each
                     locale place them where its own word order needs them. */}
                 <Trans
-                  i18nKey="Your data will be stored in <path>{{path}}</path>. Open Science will restart to set this up. <reset>Use default location instead</reset>"
+                  i18nKey="Your data will be stored in <path>{{path}}</path>. Open-Science will restart to set this up. <reset>Use default location instead</reset>"
                   values={{ path: chosenDataRoot }}
                   components={{
                     path: <span className="font-mono" />,
@@ -249,7 +258,7 @@ const LocationStep = ({
             {chosenKind === 'adopt' ? (
               <p className="mt-2 text-xs text-text-100">
                 {t(
-                  'This folder already contains Open Science data — it will be used as-is (nothing is moved).'
+                  'This folder already contains Open-Science data — it will be used as-is (nothing is moved).'
                 )}
               </p>
             ) : null}
@@ -307,7 +316,7 @@ const LocationStep = ({
             <div className={dialogBodyClassName}>
               <AlertDialog.Description className={dialogDescriptionClassName}>
                 <Trans
-                  i18nKey="Open Science will restart to set up your data at <path>{{path}}</path>."
+                  i18nKey="Open-Science will restart to set up your data at <path>{{path}}</path>."
                   values={{ path: chosenDataRoot }}
                   components={{ path: <span className="font-mono" /> }}
                 />

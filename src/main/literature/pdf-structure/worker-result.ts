@@ -28,6 +28,7 @@ const candidate = z.object({
   caption,
   issue: z.string().optional()
 })
+const rawNote = z.object({ text: z.string(), rect, page: z.number().int().positive().optional() })
 const rawTableData = z.object({
   sourceViewport: z.object({ width: z.number().positive(), height: z.number().positive() }),
   grid: z.array(z.array(z.string()).max(128)).max(256),
@@ -45,7 +46,7 @@ const rawTableData = z.object({
     )
     .max(2048),
   unassigned: z.array(z.string()),
-  notes: z.array(z.object({ text: z.string(), rect })).optional(),
+  notes: z.array(rawNote).optional(),
   issues: z.array(z.string())
 })
 const rawSchema = z.object({
@@ -73,7 +74,7 @@ const rawSchema = z.object({
             .array(rawTableData.extend({ title: z.string().min(1) }))
             .min(2)
             .max(8),
-          notes: z.array(z.object({ text: z.string(), rect })).optional()
+          notes: z.array(rawNote).optional()
         })
       ])
     )
@@ -211,6 +212,16 @@ export const readWorkerResult = async (
           : {}),
         issues: []
       }
+      const convertNote = (
+        note: z.infer<typeof rawNote>
+      ): NonNullable<NonNullable<typeof element.table>['notes']>[number] => {
+        const source = raw.pages.find((p) => p.page === (note.page ?? item.page))
+        if (!source) throw new Error('PDF worker note page is missing.')
+        return {
+          text: note.text,
+          regions: [region(source.page, note.rect, source.width, source.height)]
+        }
+      }
       const convertTable = (
         data: z.infer<typeof rawTableData>
       ): NonNullable<typeof element.table> => {
@@ -231,10 +242,7 @@ export const readWorkerResult = async (
           unassignedText: data.unassigned.map((text) => ({ text, regions: [] })),
           ...(data.notes?.length
             ? {
-                notes: data.notes.map((note) => ({
-                  text: note.text,
-                  regions: [region(item.page, note.rect, page.width, page.height)]
-                }))
+                notes: data.notes.map(convertNote)
               }
             : {}),
           issues: data.issues.map((code) => ({ code, detail: code }))
@@ -245,10 +253,7 @@ export const readWorkerResult = async (
           title: part.title,
           table: convertTable(part)
         }))
-        element.tableNotes = item.notes?.map((note) => ({
-          text: note.text,
-          regions: [region(item.page, note.rect, page.width, page.height)]
-        }))
+        element.tableNotes = item.notes?.map(convertNote)
         element.issues = element.tableParts.flatMap((part) =>
           part.table.issues.map((issue) => ({ ...issue }))
         )

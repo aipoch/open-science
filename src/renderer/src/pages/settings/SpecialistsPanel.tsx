@@ -1,3 +1,5 @@
+import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
+import { InlineNotice } from '@/components/ui/inline-notice'
 import { ErrorNotice } from '@/components/error-notice'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { canImportSpecialistPackage } from '@/lib/specialist-package-upload'
@@ -150,7 +152,8 @@ const SEVERITY_ICON = {
 
 const SEVERITY_CLASSES = {
   error: 'border-red-200 bg-red-50 text-red-800',
-  warning: 'border-amber-200 bg-amber-50 text-amber-800',
+  warning:
+    'border-status-warning-foreground/30 dark:border-status-warning-dark-foreground/30 bg-status-warning-surface dark:bg-status-warning-dark-surface text-status-warning-foreground dark:text-status-warning-dark-foreground',
   info: 'border-blue-200 bg-blue-50 text-blue-800'
 } as const
 
@@ -219,6 +222,7 @@ const InstalledSpecialistsPanel = ({
     preview: SpecialistDeletePreview
     action: 'delete' | 'uninstall'
   } | null>(null)
+  const dialogDeletingItem = useRetainedDialogValue(deletingItem)
   const [deleteSkillIds, setDeleteSkillIds] = useState<Set<string>>(new Set())
   const [deleteSkillsExpanded, setDeleteSkillsExpanded] = useState(false)
   const [deleteBusy, setDeleteBusy] = useState(false)
@@ -488,7 +492,7 @@ const InstalledSpecialistsPanel = ({
 
   // Built-in Skills are app-managed and never participate in Specialist deletion. Keep this
   // renderer-side filter as a defensive boundary even though the main-side preview omits them.
-  const visibleDeleteSkills = deletingItem?.preview.skills.filter(
+  const visibleDeleteSkills = dialogDeletingItem?.preview.skills.filter(
     (skill) => skill.source !== 'featured'
   )
   const deletableDeleteSkills = visibleDeleteSkills?.filter((skill) => skill.deletable) ?? []
@@ -554,7 +558,7 @@ const InstalledSpecialistsPanel = ({
           </div>
           <h3 className="mt-4 text-lg font-semibold">{t('Template saved')}</h3>
           <p className="mt-2 text-sm text-muted-foreground">
-            {t('openscience-specialist-template.zip is ready for contributor editing.')}
+            {t('open-science-specialist-template.zip is ready for contributor editing.')}
           </p>
           <Button type="button" className="mt-5" onClick={() => setTemplateSaved(false)}>
             {t('Done')}
@@ -645,7 +649,7 @@ const InstalledSpecialistsPanel = ({
           </span>
         </div>
         {exportError ? (
-          <ErrorNotice role="alert" tone="amber" description={t(exportError)} />
+          <ErrorNotice inline role="alert" tone="amber" description={t(exportError)} />
         ) : null}
         {exportPreview ? (
           <div className="flex flex-col gap-4">
@@ -706,7 +710,7 @@ const InstalledSpecialistsPanel = ({
                 )
               })}
             </div>
-            <div className="rounded-lg border border-border p-3 text-sm" role="status">
+            <InlineNotice role="status" level="info">
               <strong>{t('What the package carries')}</strong>
               <p className="text-muted-foreground">
                 {t(
@@ -719,7 +723,7 @@ const InstalledSpecialistsPanel = ({
                   ? exportPreview.connectorIds.join(', ')
                   : t('None selected')}
               </p>
-            </div>
+            </InlineNotice>
             <div className="flex justify-between gap-3">
               <Button
                 type="button"
@@ -905,7 +909,7 @@ const InstalledSpecialistsPanel = ({
                       ? 'bg-success-000/10 text-success-000'
                       : blocking
                         ? 'bg-danger-000/10 text-danger-000'
-                        : 'bg-warning-100/10 text-warning-100'
+                        : 'bg-status-warning-surface/10 dark:bg-status-warning-dark-surface/10 text-status-warning-foreground dark:text-status-warning-dark-foreground'
                   }`}
                 >
                   {canInstallPackage
@@ -981,6 +985,7 @@ const InstalledSpecialistsPanel = ({
             </div>
             {templateSaveError ? (
               <ErrorNotice
+                inline
                 role="alert"
                 tone="amber"
                 className="mt-4"
@@ -1216,6 +1221,7 @@ const InstalledSpecialistsPanel = ({
 
             {packagePreview.overwrite?.modifiedSinceImport ? (
               <ErrorNotice
+                inline
                 role="alert"
                 tone="amber"
                 description={t('Local edits will be replaced by this import.')}
@@ -1622,7 +1628,7 @@ const InstalledSpecialistsPanel = ({
         <ErrorNotice
           role="alert"
           className="mb-4"
-          description={t('Open Science could not load Specialists. Retry to continue.')}
+          description={t('Open-Science could not load Specialists. Retry to continue.')}
           primaryButton={{ label: t('Retry'), onClick: () => void load({ force: true }) }}
         />
       ) : null}
@@ -1757,7 +1763,7 @@ const InstalledSpecialistsPanel = ({
                               </Badge>
                             ) : null}
                             {sourceMissing ? (
-                              <Badge className="h-5 border-warning-100/40 bg-warning-100/10 px-1.5 text-[11px] font-normal text-warning-900">
+                              <Badge className="h-5 border-status-warning-foreground/30 dark:border-status-warning-dark-foreground/30 bg-status-warning-surface/10 dark:bg-status-warning-dark-surface/10 px-1.5 text-[11px] font-normal text-status-warning-foreground dark:text-status-warning-dark-foreground">
                                 {t('Source removed')}
                               </Badge>
                             ) : null}
@@ -1983,7 +1989,7 @@ const InstalledSpecialistsPanel = ({
                                   variant="outline"
                                   className={
                                     item.modifiedSinceImport
-                                      ? 'h-5 border-warning-100 bg-warning-100/60 px-1.5 text-[11px] font-normal text-warning-900'
+                                      ? 'h-5 border-status-warning-foreground/30 dark:border-status-warning-dark-foreground/30 bg-status-warning-surface/60 dark:bg-status-warning-dark-surface/60 px-1.5 text-[11px] font-normal text-status-warning-foreground dark:text-status-warning-dark-foreground'
                                       : 'h-5 px-1.5 text-[11px] font-normal text-muted-foreground'
                                   }
                                   data-specialist-metadata="local-status"
@@ -2027,14 +2033,23 @@ const InstalledSpecialistsPanel = ({
                                   aria-label={t('Actions for {{name}}', {
                                     name: item.displayName ?? item.name
                                   })}
+                                  aria-busy={Boolean(exportingId === item.id)}
                                 >
-                                  {exportingId === item.id ? (
-                                    <span role="status" aria-label={t('Preparing export')}>
-                                      <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-                                    </span>
-                                  ) : (
-                                    <ChevronDown aria-hidden="true" />
-                                  )}
+                                  <span
+                                    key={String(exportingId === item.id)}
+                                    className="button-feedback"
+                                  >
+                                    {exportingId === item.id ? (
+                                      <span role="status" aria-label={t('Preparing export')}>
+                                        <Loader2
+                                          className="size-4 animate-spin"
+                                          aria-hidden="true"
+                                        />
+                                      </span>
+                                    ) : (
+                                      <ChevronDown aria-hidden="true" />
+                                    )}
+                                  </span>
                                 </Button>
                               </DropdownMenuTrigger>
                             </TooltipTrigger>
@@ -2250,9 +2265,6 @@ const InstalledSpecialistsPanel = ({
         onOpenChange={(open) => {
           if (!open && !deleteBusy) {
             setDeletingItem(null)
-            setDeleteSkillIds(new Set())
-            setDeleteSkillsExpanded(false)
-            setDeleteError(undefined)
           }
         }}
       >
@@ -2264,9 +2276,9 @@ const InstalledSpecialistsPanel = ({
             <div className={dialogHeaderClassName}>
               <div className="min-w-0">
                 <AlertDialog.Title className={dialogTitleClassName}>
-                  {deletingItem?.action === 'uninstall'
-                    ? t('Uninstall “{{name}}”?', { name: deletingItem.name })
-                    : t('Delete “{{name}}”?', { name: deletingItem?.name ?? '' })}
+                  {dialogDeletingItem?.action === 'uninstall'
+                    ? t('Uninstall “{{name}}”?', { name: dialogDeletingItem.name })
+                    : t('Delete “{{name}}”?', { name: dialogDeletingItem?.name ?? '' })}
                 </AlertDialog.Title>
               </div>
               <AlertDialog.Cancel asChild>
@@ -2285,7 +2297,7 @@ const InstalledSpecialistsPanel = ({
 
             <div className={`${dialogBodyClassName} overflow-y-auto`}>
               <AlertDialog.Description className={dialogDescriptionClassName}>
-                {deletingItem?.action === 'uninstall'
+                {dialogDeletingItem?.action === 'uninstall'
                   ? t(
                       'This removes the Marketplace Specialist from this device. Conversations using it will no longer be able to use it.'
                     )
@@ -2440,6 +2452,7 @@ const InstalledSpecialistsPanel = ({
               )}
               {deleteError ? (
                 <ErrorNotice
+                  inline
                   role="alert"
                   tone="amber"
                   className="mt-3"
@@ -2479,9 +2492,6 @@ const InstalledSpecialistsPanel = ({
                         await useSettingsStore.getState().loadSkills()
                         setDeleteBusy(false)
                         setDeletingItem(null)
-                        setDeleteSkillIds(new Set())
-                        setDeleteSkillsExpanded(false)
-                        setDeleteError(undefined)
                       } else {
                         const messages: Record<typeof result.code, string> = {
                           'stale-preview':
@@ -2511,13 +2521,16 @@ const InstalledSpecialistsPanel = ({
                     }
                   })()
                 }}
+                aria-busy={Boolean(deleteBusy)}
               >
-                {deleteBusy ? (
-                  <Loader2 data-icon="inline-start" className="animate-spin" aria-hidden="true" />
-                ) : null}
-                {deletingItem?.action === 'uninstall'
-                  ? t(deleteBusy ? 'Uninstalling…' : 'Uninstall')
-                  : t(deleteBusy ? 'Deleting…' : 'Delete Specialist')}
+                <span key={String(deleteBusy)} className="button-feedback">
+                  {deleteBusy ? (
+                    <Loader2 data-icon="inline-start" className="animate-spin" aria-hidden="true" />
+                  ) : null}
+                  {dialogDeletingItem?.action === 'uninstall'
+                    ? t(deleteBusy ? 'Uninstalling…' : 'Uninstall')
+                    : t(deleteBusy ? 'Deleting…' : 'Delete Specialist')}
+                </span>
               </Button>
             </div>
           </AlertDialog.Content>

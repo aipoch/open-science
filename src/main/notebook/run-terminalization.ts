@@ -32,6 +32,7 @@ type NotebookRunTerminalResult = {
   stdout: string
   stderr: string
   traceback: string
+  cwdBefore?: string
   cwdAfter?: string
   outputs: NotebookOutput[]
   truncated?: boolean
@@ -458,6 +459,7 @@ class NotebookRunTerminalizationOwner {
       ...runningRun,
       status: limitedResult.status,
       endedAt: this.now(),
+      cwdBefore: limitedResult.cwdBefore ?? runningRun.cwdBefore,
       cwdAfter: limitedResult.cwdAfter,
       text: {
         stdout: limitedResult.stdout,

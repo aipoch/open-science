@@ -8,7 +8,9 @@ import type { LiteratureFullTextProgress } from '../../shared/literature'
 
 export class FullTextRateLimitError extends Error {
   constructor(readonly retryAt: number) {
-    super('Full-text source is rate limited. Try again later.')
+    super(
+      `Full-text source is rate limited. Retry no earlier than ${new Date(retryAt).toISOString()}.`
+    )
   }
 }
 const retryAfterByOrigin = new Map<string, number>()
@@ -110,7 +112,7 @@ export const downloadFullText = async (
         {
           signal,
           ...(agent ? { agent } : {}),
-          headers: { Accept: 'application/pdf', 'User-Agent': 'OpenScience/1.0' },
+          headers: { Accept: 'application/pdf', 'User-Agent': 'Open-Science/1.0' },
           lookup: (hostname, options, callback) => {
             void lookup(hostname, { all: true }).then(
               (addresses) => {

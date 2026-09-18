@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { once } from 'node:events'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -88,7 +88,7 @@ describe('Windows AppContainer elevation', () => {
 
   it('recognizes a wrapped Windows UAC cancellation without matching localized text', () => {
     const script = windowsElevationScript(
-      "C:\\Program Files\\Open Science\\host's.exe",
+      "C:\\Program Files\\Open-Science\\host's.exe",
       '0123456789abcdef01234567',
       'C:\\Users\\Researcher\\AppData\\Local\\sandbox',
       'setup'
@@ -98,11 +98,44 @@ describe('Windows AppContainer elevation', () => {
     expect(script).toContain('$failure = $failure.InnerException')
     expect(script).toContain('[Console]::Error.WriteLine($_.Exception.Message)')
     expect(script).toContain('exit 1')
-    expect(script).toContain("'C:\\Program Files\\Open Science\\host''s.exe'")
+    expect(script).toContain("'C:\\Program Files\\Open-Science\\host''s.exe'")
   })
 })
 
 describe('Windows AppContainer launch', () => {
+  it('keeps nested optional PATH candidates until their individual permissions are checked', () => {
+    const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'optional-path-')))
+    const parent = join(root, 'tools')
+    const child = join(parent, 'bin')
+    try {
+      const launch = windowsLaunch({
+        command: 'node script.js',
+        executable: process.execPath,
+        args: ['script.js'],
+        cwd: root,
+        gatewayPort: 49700,
+        gatewayCredentials: { username: 'command', password: 'secret' },
+        env: {},
+        filesystem: {
+          readOnlyRoots: [],
+          optionalReadOnlyRoots: [parent, child, child],
+          readWriteRoots: [root],
+          deniedReadRoots: [],
+          deniedWriteRoots: []
+        },
+        hostPath: join(root, 'host.exe'),
+        installationId: '0123456789abcdef01234567',
+        ownershipRoot: root
+      })
+      const specification = JSON.parse(
+        Buffer.from(launch.argv.at(-1)!, 'base64url').toString('utf8')
+      )
+      expect(specification.optionalReadOnlyRoots).toEqual([parent, child])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it('supervises standard-mode commands without requiring AppContainer setup', () => {
     const request = {
       command: 'Write-Output ready',
@@ -138,9 +171,9 @@ describe('Windows AppContainer launch', () => {
   it('launches a structured standard-mode executable directly to preserve persistent stdio', () => {
     const request = {
       command:
-        "& 'D:\\Open Science\\open-science.exe' 'D:\\Open Science\\resources\\notebook\\repl_loop.js'",
-      executable: 'D:\\Open Science\\open-science.exe',
-      args: ['D:\\Open Science\\resources\\notebook\\repl_loop.js'],
+        "& 'D:\\Open-Science\\open-science.exe' 'D:\\Open-Science\\resources\\notebook\\repl_loop.js'",
+      executable: 'D:\\Open-Science\\open-science.exe',
+      args: ['D:\\Open-Science\\resources\\notebook\\repl_loop.js'],
       gatewayPort: 49700,
       gatewayCredentials: { username: 'command', password: 'secret' },
       env: { ELECTRON_RUN_AS_NODE: '1' }

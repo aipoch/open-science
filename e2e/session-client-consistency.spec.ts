@@ -210,7 +210,9 @@ test('preserves a Web message edit while another client changes the selected Bra
       )
       .toEqual({ prompts: [original, revised, draft].sort() })
     await web.reload()
-    await expect(web.getByRole('heading', { name: title, exact: true })).toBeVisible()
+    await expect(
+      web.getByRole('heading', { name: `#${saved.number} ${title}`, exact: true })
+    ).toBeVisible()
     await expect(webConversation.getByText(draft, { exact: true })).toBeVisible()
     await expect(webConversation.getByLabel('Message revision', { exact: true })).toHaveText('3/3')
     await expect(web.getByRole('alertdialog')).toHaveCount(0)
@@ -218,6 +220,67 @@ test('preserves a Web message edit while another client changes the selected Bra
       path: testInfo.outputPath('restored-latest-branch.png'),
       animations: 'disabled'
     })
+  } finally {
+    await web.close()
+  }
+})
+
+test('keeps one unsent prompt and its draft when retrying a Session revision conflict', async ({
+  app,
+  browser
+}, testInfo) => {
+  test.setTimeout(180_000)
+  await app.completeOnboarding()
+  const desktop = await app.configureFakeAgent()
+  await desktop.evaluate(() =>
+    window.api.settings.setSessionDetailsModel({ configuration: { mode: 'disabled' } })
+  )
+  const projectName = 'Persistence retry'
+  await createProject(desktop, projectName)
+  await sendPrompt(
+    desktop,
+    'Summarize the deterministic fixture.',
+    'Deterministic reply: Summarize the deterministic fixture.'
+  )
+  await expect.poll(() => desktop.evaluate(() => window.api.storage.detectActive())).toEqual([])
+  const saved = await desktop.evaluate(
+    async () => (await window.api.sessions.loadAll()).sessions[0]
+  )
+  const dispatchedBefore = (await app.readFakeAgentPrompts()).length
+  const web = await browser.newPage()
+  const conflict =
+    'Session revision conflict: expected 117, actual 119. Reload the latest conversation before retrying.'
+  try {
+    await web.goto(await app.authenticatedWebUrl())
+    await openProjectSession(web, projectName, saved.title)
+    // Existing RPC boundary: fail persistence, while the real composer/store/runtime remain mounted.
+    await web.route('**/rpc/sessions%3Asave-session', async (route) => {
+      await route.fulfill({
+        status: 409,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          protocolVersion: 1,
+          ok: false,
+          error: { code: 'handler_error', message: conflict }
+        })
+      })
+    })
+    const draft = 'Reproduce the selected paper'
+    const composer = web.getByRole('textbox', { name: 'Ask anything' })
+    const send = web.getByRole('button', { name: 'Send message', exact: true })
+    const conversation = web.getByRole('region', { name: 'Conversation' })
+    await composer.fill(draft)
+    await send.click()
+    await expect(web.getByText(conflict, { exact: true })).toBeVisible()
+    await expect(conversation.getByText(draft, { exact: true })).toHaveCount(1)
+    await expect(composer).toHaveText(draft)
+    await expect(send).toBeEnabled()
+    await send.click()
+    await expect(send).toBeEnabled()
+    await expect(conversation.getByText(draft, { exact: true })).toHaveCount(1)
+    await expect(composer).toHaveText(draft)
+    expect((await app.readFakeAgentPrompts()).length).toBe(dispatchedBefore)
+    await web.screenshot({ path: testInfo.outputPath('revision-conflict-retry.png') })
   } finally {
     await web.close()
   }

@@ -196,3 +196,111 @@ describe('useNotebookRunsById', () => {
     expect(vi.mocked(window.api.notebook.state).mock.calls[2]?.[0].runIds).toEqual(['old-run-20'])
   })
 })
+
+it('AUDIT: historical in-flight run refreshes after its completion event', async () => {
+  let listener!: (event: NotebookChangedEvent) => void
+  let completed = false
+  const historical = (): NotebookRunRecord => ({
+    ...makeRun('old-running', 'figure'),
+    status: completed ? 'completed' : 'running'
+  })
+  const state = vi.fn(async (request) =>
+    makeState(
+      request.runIds ? [historical()] : [makeRun(completed ? 'new-recent' : 'recent', 'recent')]
+    )
+  )
+  window.api = {
+    notebook: {
+      state,
+      onChanged: (callback: (event: NotebookChangedEvent) => void) => {
+        listener = callback
+        return () => undefined
+      }
+    }
+  } as unknown as Window['api']
+  const { result, unmount } = renderHook(() => useNotebookRunsById(reference, ['old-running']))
+  try {
+    await waitFor(() => expect(result.current.get('old-running')?.status).toBe('running'))
+    completed = true
+    await act(async () => {
+      listener(reference)
+    })
+    await waitFor(() => expect(result.current.has('new-recent')).toBe(true))
+    await waitFor(() => expect(result.current.get('old-running')?.status).toBe('completed'))
+  } finally {
+    unmount()
+  }
+})
+
+it('AUDIT: refreshes a running record evicted from the recent window by the completion event', async () => {
+  let listener!: (event: NotebookChangedEvent) => void
+  let completed = false
+  const initial = { ...makeRun('long-run', ''), status: 'running' as const }
+  window.api = {
+    notebook: {
+      state: vi.fn(async (request) =>
+        makeState(
+          request.runIds
+            ? [completed ? makeRun('long-run', 'final-figure') : initial]
+            : completed
+              ? [makeRun('recent', '')]
+              : [initial]
+        )
+      ),
+      onChanged: (callback: typeof listener) => {
+        listener = callback
+        return () => undefined
+      }
+    }
+  } as unknown as Window['api']
+  const { result, unmount } = renderHook(() => useNotebookRunsById(reference, ['long-run']))
+  try {
+    await waitFor(() => expect(result.current.get('long-run')?.status).toBe('running'))
+    completed = true
+    await act(async () => listener(reference))
+    await waitFor(() => expect(result.current.get('long-run')?.status).toBe('completed'))
+    expect(result.current.get('long-run')?.outputs).toEqual(
+      makeRun('long-run', 'final-figure').outputs
+    )
+  } finally {
+    unmount()
+  }
+})
+
+it('AUDIT: discards an older historical response after a completion notification', async () => {
+  let listener!: (event: NotebookChangedEvent) => void
+  let resolveOld!: (state: NotebookSessionState) => void
+  const old = new Promise<NotebookSessionState>((resolve) => {
+    resolveOld = resolve
+  })
+  let completed = false
+  const state = vi.fn(async (request) =>
+    request.runIds
+      ? completed
+        ? makeState([makeRun('long-run', 'final-figure')])
+        : old
+      : makeState([makeRun(completed ? 'new-recent' : 'recent', '')])
+  )
+  window.api = {
+    notebook: {
+      state,
+      onChanged: (callback: typeof listener) => {
+        listener = callback
+        return () => undefined
+      }
+    }
+  } as unknown as Window['api']
+  const { result, unmount } = renderHook(() => useNotebookRunsById(reference, ['long-run']))
+  try {
+    await waitFor(() => expect(state.mock.calls.some(([request]) => request.runIds)).toBe(true))
+    completed = true
+    await act(async () => listener(reference))
+    await waitFor(() => expect(result.current.get('long-run')?.status).toBe('completed'))
+    await act(async () =>
+      resolveOld(makeState([{ ...makeRun('long-run', ''), status: 'running' }]))
+    )
+    expect(result.current.get('long-run')?.status).toBe('completed')
+  } finally {
+    unmount()
+  }
+})

@@ -2,7 +2,7 @@ import { PrismaClient } from '@prisma/client'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import { createProvenanceTestFixture } from '../artifacts/provenance-test-fixtures'
-import { captureNativeRecords } from './native-snapshot'
+import { captureNativeRecords, projectIncludedHeads, type PackageRecords } from './native-snapshot'
 
 vi.mock('electron', () => ({ app: { getPath: () => '/home/user', isPackaged: true } }))
 let measuredClient: PrismaClient | undefined
@@ -235,3 +235,59 @@ it('still rejects missing and staging versions after dependency discovery', asyn
     'file writes to finish'
   )
 })
+
+it.each([
+  ['ArtifactLineage', 'ArtifactVersion', 'artifactId', 'finalized'],
+  ['UploadFile', 'UploadVersion', 'uploadFileId', 'ready']
+] as const)(
+  'projects only completed %s heads without publishing unfinished evidence',
+  (files, versions, ownerKey, state) => {
+    const source: PackageRecords = {
+      schemaVersion: 1,
+      tables: {
+        FileOriginSession: [],
+        Review: [],
+        Finding: [],
+        ReviewFindingDisposition: [],
+        ReviewScopeSnapshot: [],
+        UploadFile: [],
+        UploadVersion: [],
+        ArtifactVersionInput: [],
+        ArtifactMessageSnapshot: [],
+        ArtifactLineage: [],
+        ArtifactVersion: []
+      }
+    }
+    source.tables[files] = [
+      { id: 'absent', currentVersionId: null },
+      { id: 'missing', currentVersionId: 'not-in-package' },
+      { id: 'unfinished', currentVersionId: 'unfinished-pending' },
+      { id: 'existing', currentVersionId: 'existing-complete' }
+    ]
+    for (const id of ['absent', 'missing', 'unfinished', 'existing']) {
+      source.tables[versions].push(
+        { id: `${id}-pending`, [ownerKey]: id, versionNumber: 3, state: 'pending' },
+        { id: `${id}-staging`, [ownerKey]: id, versionNumber: 4, state: 'staging' }
+      )
+      if (id !== 'unfinished')
+        source.tables[versions].push(
+          { id: `${id}-complete`, [ownerKey]: id, versionNumber: 1, state },
+          { id: `${id}-newer`, [ownerKey]: id, versionNumber: 2, state }
+        )
+    }
+    const projected = projectIncludedHeads(source)
+    expect(projected.tables[files].map((file) => file.currentVersionId)).toEqual([
+      null,
+      'missing-newer',
+      null,
+      'existing-complete'
+    ])
+    expect(source.tables[files].map((file) => file.currentVersionId)).toEqual([
+      null,
+      'not-in-package',
+      'unfinished-pending',
+      'existing-complete'
+    ])
+    expect(projected.tables[versions]).toEqual(source.tables[versions])
+  }
+)

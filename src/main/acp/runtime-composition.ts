@@ -184,9 +184,13 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
   delegatedWork?: RootDelegatedWorkControl
   fixedBackend?: ResolvedAgentBackend
   runtimeCallbacks?: AcpRuntimeCallbacks
+  preparedSkills?: Awaited<
+    ReturnType<NonNullable<AcpSettingsCapabilities['prepareDelegatedSkills']>>
+  >
   delegatedNotebookConnection?: NotebookRpcConnection
   delegatedArtifactCurrentRunFile?: string
   spawnAgent?: () => ChildProcessWithoutNullStreams
+  hasPendingCredentialRequest?: AcpRuntimeOptions['hasPendingCredentialRequest']
   sideChatRelays?: AcpRuntimeOptions['sideChatRelays']
   imageInputCompatibility?: AcpRuntimeOptions['imageInputCompatibility']
   resolveComputeExecutionTargetIds?: AcpRuntimeOptions['resolveComputeExecutionTargetIds']
@@ -258,10 +262,12 @@ const createAcpRuntime = ({
   delegatedWork,
   fixedBackend,
   runtimeCallbacks,
+  preparedSkills,
   delegatedNotebookConnection,
   delegatedArtifactCurrentRunFile,
   spawnAgent,
   sideChatRelays,
+  hasPendingCredentialRequest,
   imageInputCompatibility,
   resolveComputeExecutionTargetIds,
   memory,
@@ -372,6 +378,17 @@ const createAcpRuntime = ({
         auxiliaryUsage,
         // Packaged macOS apps often start with cwd at "/" or the app bundle; use home instead.
         defaultCwd,
+        ...(delegatedNotebookConnection && fixedBackend?.framework.id === 'opencode'
+          ? {
+              additionalProtectedReadRoots: [
+                fixedBackend.env.XDG_CONFIG_HOME,
+                fixedBackend.env.XDG_DATA_HOME,
+                fixedBackend.env.XDG_CACHE_HOME,
+                fixedBackend.env.XDG_STATE_HOME,
+                fixedBackend.env.OPENCODE_TEST_HOME
+              ].filter((path): path is string => Boolean(path))
+            }
+          : {}),
         resolveBackend: async (context) =>
           fixedBackend ??
           (target
@@ -447,7 +464,8 @@ const createAcpRuntime = ({
                   const sourcePath = await resolveAllowedImportFilePath(
                     filename,
                     [notebookRoot, workspaceCwd],
-                    [notebookDataDir, workspaceCwd, notebookRoot]
+                    [notebookDataDir, workspaceCwd, notebookRoot],
+                    'literature'
                   )
                   if ((await stat(sourcePath)).size > MAX_LITERATURE_CANDIDATE_FILE_BYTES) {
                     throw Object.assign(
@@ -486,7 +504,8 @@ const createAcpRuntime = ({
                   const sourcePath = await resolveAllowedImportFilePath(
                     filename,
                     [notebookRoot, workspaceCwd],
-                    [notebookDataDir, workspaceCwd, notebookRoot]
+                    [notebookDataDir, workspaceCwd, notebookRoot],
+                    'literature'
                   )
                   if (extname(sourcePath).toLowerCase() !== '.docx') {
                     throw new Error('Citation document must be a DOCX file.')
@@ -515,7 +534,8 @@ const createAcpRuntime = ({
                   const sourcePath = await resolveAllowedImportFilePath(
                     filename,
                     [notebookRoot, workspaceCwd],
-                    [notebookDataDir, workspaceCwd, notebookRoot]
+                    [notebookDataDir, workspaceCwd, notebookRoot],
+                    'literature'
                   )
                   if (extname(sourcePath).toLowerCase() !== '.tex') {
                     throw new Error('LaTeX source must be a .tex file.')
@@ -643,12 +663,18 @@ const createAcpRuntime = ({
             }
           : {}),
         skills: {
+          preparedSkillIds: preparedSkills?.skillIds,
           needForceLoad: (ids) => settingsService.skillsNeedingForceLoad(ids),
           namesForIds: (ids) => settingsService.skillNudgeNamesForIds(ids),
-          descriptorsForIds: (ids, codexHome) =>
-            settingsService.codexSkillDescriptorsForIds(ids, codexHome),
-          catalogForCodexHome: (codexHome) => settingsService.codexSkillCatalog(codexHome),
-          catalogForCodeBuddyRoot: (root) => settingsService.codeBuddySkillCatalog(root)
+          descriptorsForIds: async (ids, codexHome) => {
+            if (!preparedSkills) return settingsService.codexSkillDescriptorsForIds(ids, codexHome)
+            const names = new Set(await settingsService.skillNudgeNamesForIds(ids))
+            return preparedSkills.catalog.filter((entry) => names.has(entry.name))
+          },
+          catalogForCodexHome: async (codexHome) =>
+            preparedSkills?.catalog ?? settingsService.codexSkillCatalog(codexHome),
+          catalogForCodeBuddyRoot: async (root) =>
+            preparedSkills?.catalog ?? settingsService.codeBuddySkillCatalog(root)
         },
         ...(!delegatedNotebookConnection || delegatedArtifactCurrentRunFile
           ? {
@@ -700,8 +726,8 @@ const createAcpRuntime = ({
             : {
                 registerSessionAlias: (aliasSessionId, sessionId) =>
                   notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId),
-                releaseSessionCapabilities: (sessionId) =>
-                  notebookRpcServer.releaseSessionCapabilities(sessionId),
+                releaseSessionCapabilities: (sessionId, capabilityTokens) =>
+                  notebookRpcServer.releaseSessionCapabilitiesIfOwned(sessionId, capabilityTokens),
                 registerSessionSpecialist: (sessionId, specialistId) =>
                   notebookRpcServer.registerSessionSpecialist(sessionId, specialistId),
                 authorizeExecution: (authorization) =>
@@ -710,6 +736,8 @@ const createAcpRuntime = ({
                   notebookRpcServer.setArtifactTurnBinding(sessionId, binding),
                 clearArtifactTurnBinding: (sessionId, ownerExecutionId) =>
                   notebookRpcServer.clearArtifactTurnBinding(sessionId, ownerExecutionId),
+                prepareTurnInputs: (request) =>
+                  notebookRpcServer.prepareNotebookTurnInputs(request),
                 registerTurnInputs: (request) =>
                   notebookRpcServer.registerNotebookTurnInputs(request),
                 peekHandoffContext: peekNotebookHandoffContext
@@ -725,8 +753,11 @@ const createAcpRuntime = ({
                   notebookRpcServer.issueSkillImportConnection(sessionId),
                 registerSessionAlias: (aliasSessionId: string, sessionId: string) =>
                   notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId),
-                releaseSessionCapabilities: (sessionId: string) =>
-                  notebookRpcServer.releaseSessionCapabilities(sessionId),
+                releaseSessionCapabilities: (
+                  sessionId: string,
+                  capabilityTokens: readonly string[]
+                ) =>
+                  notebookRpcServer.releaseSessionCapabilitiesIfOwned(sessionId, capabilityTokens),
                 authorizeReferencedUploads: authorizeSkillImportReferencedUploads
               }
             }),
@@ -765,8 +796,8 @@ const createAcpRuntime = ({
           ? {
               plan: {
                 mcpEntryPath,
-                getRpcConnection: ({ sessionId, projectId }) =>
-                  notebookRpcServer.issuePlanConnection(sessionId, projectId),
+                getRpcConnection: ({ sessionId, projectId, replaceExisting }) =>
+                  notebookRpcServer.issuePlanConnection(sessionId, projectId, { replaceExisting }),
                 registerSessionAlias: (aliasSessionId, sessionId) =>
                   notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId),
                 sessions: sessionPersistenceCoordinator,
@@ -816,6 +847,7 @@ const createAcpRuntime = ({
           : {}),
         callbacks: runtimeCallbacks,
         sideChatRelays,
+        hasPendingCredentialRequest,
         ...(!delegatedNotebookConnection && memory ? { memory } : {}),
         permissionGrantStore,
         permissionGrantRegistry,

@@ -1,10 +1,10 @@
 name: Nightly
 
-# Batch main into one build per hour. A newer scheduled build may supersede an older build, while
+# Batch main into one build per day. A newer scheduled build may supersede an older build, while
 # publication is delegated to nightly-publish.yml and is never cancelled once it starts.
 on:
   schedule:
-    - cron: '17 * * * *'
+    - cron: '17 17 * * *' # UTC; overnight in Asia/Singapore
   workflow_dispatch:
     inputs:
       dry_run:
@@ -25,7 +25,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: nightly-build${{ inputs.dry_run == 'linux-cli' && '-linux-cli' || '' }}
+  group: nightly-build-${{ github.event_name }}${{ inputs.dry_run == 'linux-cli' && '-linux-cli' || '' }}
   cancel-in-progress: true
 
 jobs:

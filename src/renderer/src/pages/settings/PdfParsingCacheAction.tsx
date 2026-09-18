@@ -80,7 +80,9 @@ export const PdfParsingCacheAction = (): React.JSX.Element => {
       <p role="status" className="text-xs text-muted-foreground">
         {clearStatus}
       </p>
-      {error ? <ErrorNotice title={t('PDF extraction is unavailable')} tone="amber" /> : null}
+      {error ? (
+        <ErrorNotice inline title={t('PDF extraction is unavailable')} tone="amber" />
+      ) : null}
     </div>
   )
 }

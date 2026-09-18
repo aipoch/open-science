@@ -96,17 +96,17 @@ export const CloseConfirmModal = ({
         hasDelegatedWork
           ? 'Subagents are still running'
           : isQuitVariant
-            ? 'Quit Open Science?'
+            ? 'Quit Open-Science?'
             : 'Minimize or quit?'
       )
   const description = isPersistenceFailure
     ? t(
-        'Open Science could not confirm that all recent changes were saved. Retry saving, or force quit and risk losing recent changes.',
+        'Open-Science could not confirm that all recent changes were saved. Retry saving, or force quit and risk losing recent changes.',
         { ns: 'common' }
       )
     : t(
         hasDelegatedWork
-          ? 'Return to the listed tasks and stop their subagents before quitting Open Science.'
+          ? 'Return to the listed tasks and stop their subagents before quitting Open-Science.'
           : isQuitVariant
             ? 'Work is still running and will be interrupted if you quit.'
             : 'This app can keep running in the tray, or you can quit.'

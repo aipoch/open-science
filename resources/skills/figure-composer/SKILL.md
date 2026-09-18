@@ -11,7 +11,7 @@ license: Apache-2.0
 rules independently. Run `paper-narrative` first when the paper-level figure
 sequence is still undecided.
 
-## Open Science Notebook call
+## Open-Science Notebook call
 
 Every `notebook_execute` request whose `code` uses a function named in this skill
 includes this skill ID:

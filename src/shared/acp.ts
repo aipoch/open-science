@@ -725,7 +725,7 @@ export type AcpPermissionRequest = {
   }>
 }
 
-// An Open Science-owned tool grant. `categoryKey` is the broker's opaque matcher key;
+// An Open-Science-owned tool grant. `categoryKey` is the broker's opaque matcher key;
 // `label`/`kind` are the display projection and `scope` reserves future project/global ownership.
 export type AcpPermissionGrant = {
   categoryKey: string
@@ -760,7 +760,7 @@ export type AcpRuntimeState = {
   // Optional for rolling renderer/main reload compatibility; current runtimes always publish it.
   pendingElicitations?: PendingElicitationRequest[]
   permissionProfiles: Record<string, SessionPermissionProfileState>
-  // Open Science-owned grants by app conversation, so the UI can show and revoke them.
+  // Open-Science-owned grants by app conversation, so the UI can show and revoke them.
   permissionGrants: Record<string, AcpPermissionGrant[]>
   // Latest context-window usage for each logical app session's current agent-context generation.
   // Missing means unknown or invalidated; framework switches and reconnects clear the old generation.

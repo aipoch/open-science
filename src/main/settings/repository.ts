@@ -1,3 +1,6 @@
+import { statSync } from 'node:fs'
+import { isAbsolute } from 'node:path'
+import { samePath } from '../storage-root'
 import { isDeepStrictEqual } from 'node:util'
 import { BootstrapError } from '../../shared/bootstrap'
 import type {
@@ -46,6 +49,7 @@ import {
   type StoredSettings
 } from './types'
 import { buildProviderValidationPatch } from './provider-validation-state'
+import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
 import { sanitizePackageMirror } from './record-codec'
 import { sanitizeSettings } from './document-codec'
 import { SettingsDocumentStore } from './document-store'
@@ -78,9 +82,23 @@ type LocalShellRuntimeWrite = Readonly<{
   mutation: LocalShellRuntimeMutation
 }>
 
+type ProviderValidationHistory = {
+  configRevision: number
+  keyRef?: string
+  latestAt: number
+  unscopedAt: number
+  scopes: Map<string, number>
+}
+
+const validationScopeKey = (target: ProviderValidationTarget): string =>
+  JSON.stringify([target.model, target.endpoint])
+
 // Stable mutation facade; the document store owns atomic IO, and secrets stay above this layer.
 class SettingsRepository {
   private readonly store: SettingsDocumentStore
+  // In-flight requests cannot survive this repository's process. Retain recovery scopes only in
+  // memory so validating B does not erase A's recovery watermark or suppress an unrelated C failure.
+  private readonly providerValidationHistory = new Map<string, ProviderValidationHistory>()
   private localShellRuntimeRevision = 0
   private currentLocalShellRuntimeRevision: number | undefined
 
@@ -166,7 +184,13 @@ class SettingsRepository {
   async upsertProvider(
     provider: StoredProvider,
     existingId?: string,
-    configEdit?: { expectedConfigRevision?: number }
+    configEdit?: {
+      expectedConfigRevision?: number
+      expectedValidationState?: Pick<
+        StoredProvider,
+        'lastValidatedAt' | 'lastValidatedTarget' | 'lastValidationFailure'
+      >
+    }
   ): Promise<StoredSettings> {
     return this.mutate((settings) => {
       const index = settings.providers.findIndex((existing) => existing.id === provider.id)
@@ -178,6 +202,21 @@ class SettingsRepository {
         (!source || (source.configRevision ?? 0) !== configEdit.expectedConfigRevision)
       )
         throw new Error('Provider configuration changed. Your draft has not been saved.')
+      if (
+        configEdit?.expectedValidationState &&
+        !isDeepStrictEqual(
+          {
+            lastValidatedAt: source?.lastValidatedAt,
+            lastValidatedTarget: source?.lastValidatedTarget,
+            lastValidationFailure: source?.lastValidationFailure
+          },
+          configEdit.expectedValidationState
+        )
+      ) {
+        throw new Error(
+          'Provider connection status changed. Your changes have not been saved. Test the connection again.'
+        )
+      }
       const revision = Math.max(
         source?.configRevision ?? 0,
         settings.providers[index]?.configRevision ?? 0
@@ -218,6 +257,11 @@ class SettingsRepository {
       return {
         ...settings,
         providers,
+        // A custom provider has one model. Keep its active selection in the same save so
+        // validation and runtime resolution cannot keep using the model from before the edit.
+        ...(configEdit && provider.type === 'custom' && settings.activeProviderId === provider.id
+          ? { activeModel: provider.model }
+          : {}),
         ...(isClaudeSubscriptionProvider(provider.type) &&
         isClaudeSubscriptionProviderId(provider.id)
           ? { claudeSubscriptionProviderId: provider.id }
@@ -263,19 +307,71 @@ class SettingsRepository {
     id: string,
     matches: (provider: StoredProvider, settings: StoredSettings) => boolean,
     result: ValidateProviderResult,
-    target: ProviderValidationTarget | undefined
+    target: ProviderValidationTarget | undefined,
+    observationStartedAt?: number
   ): Promise<boolean> {
     let applied = false
     await this.mutate((settings) => {
       const index = settings.providers.findIndex((provider) => provider.id === id)
       const current = settings.providers[index]
       if (!current || !matches(current, settings)) return settings
+      const history = this.rememberProviderRecovery(current, settings)
+      if (observationStartedAt !== undefined) {
+        const recoveredAt = target
+          ? Math.max(history.unscopedAt, history.scopes.get(validationScopeKey(target)) ?? 0)
+          : history.latestAt
+        if (recoveredAt >= observationStartedAt) return settings
+      }
       const providers = [...settings.providers]
       providers[index] = { ...current, ...buildProviderValidationPatch(current, result, target) }
       applied = true
       return { ...settings, providers }
     })
     return applied
+  }
+
+  private rememberProviderRecovery(
+    provider: StoredProvider,
+    settings: StoredSettings
+  ): ProviderValidationHistory {
+    for (const id of this.providerValidationHistory.keys()) {
+      if (!settings.providers.some((current) => current.id === id))
+        this.providerValidationHistory.delete(id)
+    }
+    let history = this.providerValidationHistory.get(provider.id)
+    if (
+      !history ||
+      history.configRevision !== (provider.configRevision ?? 0) ||
+      history.keyRef !== provider.keyRef
+    ) {
+      history = {
+        configRevision: provider.configRevision ?? 0,
+        keyRef: provider.keyRef,
+        latestAt: 0,
+        unscopedAt: 0,
+        scopes: new Map()
+      }
+      this.providerValidationHistory.set(provider.id, history)
+    }
+    // Remember only the already-committed state read by the serialized mutation. A failed write
+    // must never create a recovery watermark. The next mutation observes this one's committed result.
+    const at = provider.lastValidatedAt
+    if (at !== undefined) {
+      history.latestAt = Math.max(history.latestAt, at)
+      if (provider.lastValidatedTarget) {
+        const key = validationScopeKey(provider.lastValidatedTarget)
+        if (
+          !history.scopes.has(key) &&
+          history.scopes.size >= PROVIDER_RESOURCE_LIMITS.fetchedModels
+        ) {
+          // Bound process-local history; retire older observations if their recovery history is dropped.
+          history.unscopedAt = history.latestAt
+          history.scopes.clear()
+        }
+        history.scopes.set(key, Math.max(history.scopes.get(key) ?? 0, at))
+      } else history.unscopedAt = Math.max(history.unscopedAt, at)
+    }
+    return history
   }
 
   async updateXaiCredentialsIfKeyMatches(
@@ -805,13 +901,23 @@ class SettingsRepository {
     })
   }
 
-  // Stamps the onboarding-completed time exactly once; later calls leave the first value intact.
-  async markOnboardingComplete(timestamp: number): Promise<StoredSettings> {
-    return this.mutate((settings) =>
-      settings.onboardingCompletedAt === undefined
-        ? { ...settings, onboardingCompletedAt: timestamp }
-        : settings
-    )
+  // Commit the confirmed running root and completion in one settings transaction. Never replace
+  // a concurrently saved selection or mark onboarding complete with an unavailable root.
+  async markOnboardingComplete(timestamp: number, dataRoot: string): Promise<StoredSettings> {
+    return this.mutate((settings) => {
+      if (settings.onboardingCompletedAt !== undefined) return settings
+      if (settings.dataRoot && !samePath(settings.dataRoot, dataRoot))
+        throw new Error('The data location changed. Restart to use the saved location.')
+      if (!isAbsolute(dataRoot) || !statSync(dataRoot, { throwIfNoEntry: false })?.isDirectory())
+        throw new Error(
+          `The saved data location is missing or is not a directory: ${dataRoot}. Reconnect it before restarting.`
+        )
+      return {
+        ...settings,
+        dataRoot: settings.dataRoot ?? dataRoot,
+        onboardingCompletedAt: timestamp
+      }
+    })
   }
 
   // Stamps the legacy-path-normalization completion time exactly once; later calls leave the first
@@ -837,8 +943,8 @@ class SettingsRepository {
   // Persists the relocatable data root, optional onboarding marker, and fail-closed managed-runtime
   // disable overrides in one atomic document mutation. Old keys remain for safe retry/rollback;
   // matching new-root keys are additive and idempotent.
-  async setDataRoot(update: DataRootUpdate): Promise<StoredSettings> {
-    return this.mutate((settings) => {
+  async setDataRoot(update: DataRootUpdate, validateTarget?: () => void): Promise<StoredSettings> {
+    return this.store.mutate((settings) => {
       let notebookRuntimeEnablement = settings.notebookRuntimeEnablement
       if (update.previousDataRoot) {
         notebookRuntimeEnablement = relocateManagedRuntimeEnablement({
@@ -854,9 +960,10 @@ class SettingsRepository {
           : { onboardingCompletedAt: update.onboardingCompletedAt }),
         ...settings,
         ...(notebookRuntimeEnablement ? { notebookRuntimeEnablement } : {}),
-        dataRoot: update.dataRoot
+        dataRoot: update.dataRoot,
+        dataRootIsInitialDefault: undefined
       }
-    })
+    }, validateTarget)
   }
 
   // Applies one RuntimeEnablement change to the latest persisted value inside the write queue.

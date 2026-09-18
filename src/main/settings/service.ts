@@ -1,3 +1,6 @@
+import { ProviderRuntimeHealthOwner } from './provider-runtime-health-owner'
+import { ClaudeCodeSkillMaterializer } from '../skills/materializer'
+import type { SpecialistListItem } from '../../shared/specialist'
 import { homedir } from 'node:os'
 import { z } from 'zod'
 import { MarketplaceInstallConflict } from '../skills/user-skill-repository'
@@ -96,6 +99,7 @@ import type {
   UpdateSkillRequest,
   UpsertProviderRequest,
   ValidateProviderRequest,
+  SaveValidatedProviderResult,
   ValidateProviderResult
 } from '../../shared/settings'
 import { createLogger, type Logger } from '../logger'
@@ -219,7 +223,10 @@ export type SettingsServiceOptions = {
   userSkills?: UserSkillRepository
   withUserSkillRecoveryBarrier?: <T>(operation: () => Promise<T>) => Promise<T>
   githubFetch?: FetchLike
+  readMarketplaceSpecialists?: () => Promise<SpecialistListItem[]>
+  withMarketplaceImpactLock?: <T>(operation: () => Promise<T>) => Promise<T>
   // OpenAlex validation transport. Production injects Electron net.fetch so proxy settings apply.
+  onProviderHealthChanged?: () => Promise<void>
   openAlexFetch?: typeof fetch
   // One-shot Claude command runner, injectable so validation tests can inspect the exact auth env.
   executeClaudeProbe?: ExecuteClaudeProbe
@@ -316,12 +323,47 @@ class SettingsService {
   async getSkillMarketplaceDetail(
     request: SkillMarketplaceDetailRequest
   ): Promise<SkillMarketplaceResult<SkillMarketplaceDetail>> {
-    const result = await this.skillMarketplace.detail(request)
+    const parsed = z
+      .strictObject({
+        snapshotId: z.string().regex(/^[a-f0-9]{64}$/),
+        id: z
+          .string()
+          .max(128)
+          .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
+        previewUpdate: z.boolean().optional()
+      })
+      .safeParse(request)
+    if (!parsed.success) return { ok: false, error: 'snapshot-unavailable' }
+    const identity = { snapshotId: parsed.data.snapshotId, id: parsed.data.id }
+    const result = await this.skillMarketplace.detail(identity)
     if (!result.ok) return result
+    let updatePreview: SkillMarketplaceDetail['updatePreview']
+    if (parsed.data.previewUpdate) {
+      const downloaded = await this.skillMarketplace.download(identity)
+      if (!downloaded.ok) return downloaded
+      try {
+        updatePreview = await this.skills.previewMarketplaceUpdate(downloaded.value)
+      } catch (error) {
+        return {
+          ok: true,
+          value: {
+            ...result.value,
+            installation: {
+              kind: 'conflict',
+              reason:
+                error instanceof MarketplaceInstallConflict
+                  ? error.reason
+                  : 'installation-unverifiable'
+            }
+          }
+        }
+      }
+    }
     return {
       ok: true,
       value: {
         ...result.value,
+        ...(updatePreview ? { updatePreview } : {}),
         installation: await this.skills.marketplaceInstallation(
           result.value.entry.id,
           result.value.entry.version
@@ -348,11 +390,12 @@ class SettingsService {
           .string()
           .max(128)
           .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
-        expectedVersion: z.string().max(128).nullable()
+        expectedVersion: z.string().max(128).nullable(),
+        updateToken: z.string().uuid().optional()
       })
       .safeParse(request)
     if (!parsed.success) return { ok: false, error: 'conflict' }
-    const { expectedVersion, ...identity } = parsed.data
+    const { expectedVersion, updateToken, ...identity } = parsed.data
     const downloaded = await this.skillMarketplace.download(identity, signal)
     if (!downloaded.ok) return downloaded
     try {
@@ -362,8 +405,12 @@ class SettingsService {
         status: 'imported' | 'unchanged' | 'updated'
         refreshFailed?: boolean
       } = refresh
-        ? await this.skills.installMarketplace(downloaded.value, expectedVersion)
-        : await this.skills.installMarketplacePackage(downloaded.value, expectedVersion)
+        ? await this.skills.installMarketplace(downloaded.value, expectedVersion, updateToken)
+        : await this.skills.installMarketplacePackage(
+            downloaded.value,
+            expectedVersion,
+            updateToken
+          )
       return {
         ok: true,
         value: {
@@ -376,7 +423,8 @@ class SettingsService {
     } catch (error) {
       return {
         ok: false,
-        error: error instanceof MarketplaceInstallConflict ? 'conflict' : 'installation-failed'
+        error: error instanceof MarketplaceInstallConflict ? 'conflict' : 'installation-failed',
+        ...(error instanceof MarketplaceInstallConflict ? { reason: error.reason } : {})
       }
     }
   }
@@ -489,6 +537,8 @@ class SettingsService {
       skillRegistry: options.skillRegistry ?? new SkillRegistry(),
       userSkills: options.userSkills,
       withUserSkillRecoveryBarrier: options.withUserSkillRecoveryBarrier,
+      readMarketplaceSpecialists: options.readMarketplaceSpecialists,
+      withMarketplaceImpactLock: options.withMarketplaceImpactLock,
       githubFetch: options.githubFetch
     })
     const allocateSettingsIdSequence = createSettingsIdSequence()
@@ -526,7 +576,12 @@ class SettingsService {
       claudeIsolatedAuth: options.claudeIsolatedAuth,
       claudeSharedAuth: options.claudeSharedAuth
     })
+    const providerHealth = new ProviderRuntimeHealthOwner(
+      this.repository,
+      options.onProviderHealthChanged
+    )
     this.backendResolver = new AgentBackendResolver({
+      onProviderFailure: (target, failure) => providerHealth.observe(target, failure),
       readSettings: () => this.repository.getSettings(),
       providers: this.providers,
       runtime: this.runtimeManager,
@@ -593,7 +648,7 @@ class SettingsService {
   }
 
   // Sets one env's high-risk package-install authorization (keyed by envId) for a language, returning
-  // the refreshed enablement. This is the separate opt-in that lets Open Science write packages into an
+  // the refreshed enablement. This is the separate opt-in that lets Open-Science write packages into an
   // external env; it does not affect whether the env is enabled for execution.
   async setInstallAuthorized(
     language: NotebookLanguage,
@@ -1060,6 +1115,43 @@ class SettingsService {
     )
   }
 
+  // Attempt-owned projection: never changes Main toggles or the admitted provider/model.
+  async prepareDelegatedSkills(
+    configRoot: string,
+    skillIds: readonly string[]
+  ): Promise<{
+    skillIds: string[]
+    catalog: SkillCatalogEntry[]
+    dispose(): Promise<void>
+  }> {
+    const forced = new Set(skillIds)
+    const dispose = (): Promise<void> =>
+      new ClaudeCodeSkillMaterializer().sync(configRoot, [], { directoryLayout: 'agent-facing' })
+    try {
+      await this.runtimeManager.materializeAgentSkills(
+        await this.repository.getSettings(),
+        configRoot,
+        forced,
+        { directoryLayout: 'agent-facing' }
+      )
+      const catalog = await this.skills.delegatedSkillCatalog(
+        join(configRoot, 'skills'),
+        forced,
+        (settings) => this.connectors.connectorSkillCatalogEntries(settings.connectors)
+      )
+      const names = new Set(catalog.map((entry) => entry.name))
+      const prepared = (await this.skills.listSpecialistSkillCatalog())
+        .filter((entry) => names.has(entry.frameworkName))
+        .map((entry) => entry.id)
+      if (skillIds.some((id) => !prepared.includes(id)))
+        throw new Error('A bound Specialist Skill could not be prepared for the delegated Attempt.')
+      return { skillIds: prepared, catalog, dispose }
+    } catch (error) {
+      await dispose()
+      throw error
+    }
+  }
+
   async getSkillDetail(id: string): Promise<SkillDetailView> {
     return this.skills.getSkillDetail(id)
   }
@@ -1305,7 +1397,7 @@ class SettingsService {
   }
 
   // Re-runs the complete host inspection on every app launch, for the SELECTED framework's runtime, so
-  // a runtime installed outside Open Science between launches is picked up and onboarding can be
+  // a runtime installed outside Open-Science between launches is picked up and onboarding can be
   // completed with Claude or OpenCode alone.
   async checkEnvironment(): Promise<EnvironmentCheckResult> {
     return this.runtimeManager.checkEnvironment()
@@ -1411,6 +1503,19 @@ class SettingsService {
   async upsertProvider(request: UpsertProviderRequest): Promise<SettingsSnapshot> {
     await this.providers.upsertProvider(request)
     return this.getSettingsView()
+  }
+
+  async saveValidatedProvider(
+    request: UpsertProviderRequest
+  ): Promise<SaveValidatedProviderResult> {
+    const result = await this.providers.saveValidatedProvider(request)
+    if (!result.providerId && result.validation.applied !== true) return result
+    try {
+      return { ...result, snapshot: await this.getSettingsView() }
+    } catch {
+      // The operation completed; preserve configuration/health outcomes if projection is unavailable.
+      return result
+    }
   }
 
   async rememberCodexAutoHttpsFallback(): Promise<boolean> {

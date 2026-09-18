@@ -177,6 +177,8 @@ const createDependencies = () => {
     loadOne: vi.fn(),
     loadUsage: vi.fn(),
     saveSession: vi.fn(async () => ({ created: true, session })),
+    bindTaskSession: vi.fn(async () => session),
+    admitTaskTurn: vi.fn(async () => session),
     stageTaskCompletion: vi.fn(async () => session),
     settleTaskCompletion: vi.fn(async () => session),
     failTaskRun: vi.fn(async () => session),
@@ -211,6 +213,7 @@ const createDependencies = () => {
     readPreview: vi.fn()
   }
   const electron = {
+    forkSession: vi.fn(async () => null),
     exportSessionPackage: vi.fn(async () => ({ saved: false })),
     sessionPackageOperation: vi.fn(async () => null),
     importSessionPackage: vi.fn(async () => null),
@@ -260,6 +263,7 @@ const WRAPPED_COMMAND_KEYS = [
   'sessionDelete',
   'sessionEditDetails',
   'sessionExportConversation',
+  'sessionFork',
   'sessionExportPackage',
   'sessionImportPackage',
   'sessionPackageOperation',
@@ -272,6 +276,8 @@ const WRAPPED_COMMAND_KEYS = [
   'sessionLoadUsage',
   'sessionSaveManifest',
   'sessionSave',
+  'sessionBindTask',
+  'sessionAdmitTaskTurn',
   'sessionStageTaskCompletion',
   'sessionSettleTaskCompletion',
   'sessionFailTaskRun',
@@ -346,6 +352,7 @@ describe('Data and content application commands', () => {
         'sessions:delete-session',
         'sessions:edit-details',
         'sessions:export-conversation',
+        'sessions:fork',
         'sessions:export-package',
         'sessions:import-package',
         'sessions:package-operation',
@@ -360,6 +367,8 @@ describe('Data and content application commands', () => {
         'sessions:update-archive',
         'sessions:unlink-pdf-context',
         'sessions:save-session',
+        'sessions:bind-task-session',
+        'sessions:admit-task-turn',
         'sessions:stage-task-completion',
         'sessions:settle-task-completion',
         'sessions:fail-task-run',
@@ -922,7 +931,7 @@ describe('Data and content application commands', () => {
       for (const operation of operations) {
         await expect(
           dispatchCommand(router, operation.command, operation.args).result
-        ).rejects.toThrow('Open Science is moving your data.')
+        ).rejects.toThrow('Open-Science is moving your data.')
       }
     } finally {
       clearMigrationPending()
@@ -997,6 +1006,8 @@ describe('Data and content application commands', () => {
       | 'unlinkPdfContext'
       | 'updateArchive'
       | 'saveSession'
+      | 'bindTaskSession'
+      | 'admitTaskTurn'
       | 'stageTaskCompletion'
       | 'settleTaskCompletion'
       | 'failTaskRun'
@@ -1106,6 +1117,20 @@ describe('Data and content application commands', () => {
             updatedAt: 2
           }
         ],
+        caller: taskCaller
+      },
+      {
+        label: 'task provider binding',
+        command: 'sessionBindTask',
+        owner: 'bindTaskSession',
+        args: (deps) => [{ session: deps.session, contextReset: false }],
+        caller: taskCaller
+      },
+      {
+        label: 'task turn admission',
+        command: 'sessionAdmitTaskTurn',
+        owner: 'admitTaskTurn',
+        args: (deps) => [{ session: deps.session, contextReset: false }],
         caller: taskCaller
       },
       {
@@ -1913,6 +1938,14 @@ describe('Data and content application commands', () => {
       format: 'markdown' as const,
       selectedPromptMessageIds: ['prompt-1']
     }
+    const forkInvocation = invocation(
+      [{ projectId: 'project-1', sessionId: 'session-1' }] as const,
+      electronCaller
+    )
+    await expect(
+      router.dispatcher.invoke(dataContentApplicationCommands.sessionFork, forkInvocation)
+    ).resolves.toBeNull()
+    expect(deps.electron.forkSession).toHaveBeenCalledWith(forkInvocation)
     const exportInvocation = invocation([exportRequest] as const, electronCaller)
     await expect(
       router.dispatcher.invoke(
