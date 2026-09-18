@@ -3,7 +3,7 @@ name: Source Regression
 # Run complete Mac source coverage twice daily, independently of package publication.
 on:
   schedule:
-    - cron: '37 7,19 * * *' # UTC; 03:37 and 15:37 Asia/Singapore
+    - cron: '37 5,17 * * *' # UTC; 01:37 and 13:37 Asia/Singapore
   workflow_dispatch:
 
 permissions:

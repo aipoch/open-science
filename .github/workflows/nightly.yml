@@ -4,7 +4,7 @@ name: Nightly
 # publication is delegated to nightly-publish.yml and is never cancelled once it starts.
 on:
   schedule:
-    - cron: '17 17 * * *' # UTC; overnight in Asia/Singapore
+    - cron: '17 15 * * *' # UTC; overnight in Asia/Singapore
   workflow_dispatch:
     inputs:
       dry_run:

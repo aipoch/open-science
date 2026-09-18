@@ -99,7 +99,7 @@ describe('post-merge Windows validation', () => {
 
     expect(build.jobs.windows_full_test).toBeUndefined()
     expect(workflow.on?.push).toBeUndefined()
-    expect(workflow.on?.schedule).toEqual([{ cron: '47 18 * * *' }])
+    expect(workflow.on?.schedule).toEqual([{ cron: '47 16 * * *' }])
     expect(dispatch?.inputs?.mode).toMatchObject({
       default: 'full',
       options: ['full', 'notebook-sandbox', 'notebook-mutation', 'regressions']
@@ -394,20 +394,26 @@ describe('post-merge Windows validation', () => {
     expect(uploadEvidence.with?.name).toBe('certification-${{ matrix.name }}')
     expect(uploadEvidence.with?.['retention-days']).toBe(7)
     expect(p0Regression).toMatchObject({ needs: 'source', 'runs-on': 'macos-26' })
-    expect(p0Regression.if).toBe("needs.source.outputs.available == 'true'")
+    expect(p0Regression.if).toBe(
+      "needs.source.outputs.available == 'true' && inputs.suite != 'visual'"
+    )
     expect(p0Regression['continue-on-error']).toBe('${{ inputs.allow_failure }}')
     expect(findStep(p0Regression, 'Download macOS ARM64 package').with?.name).toBe('macos-arm64')
     expect(findStep(p0Regression, 'Download macOS ARM64 package').with?.['run-id']).toBe(
       '${{ needs.source.outputs.run_id }}'
     )
     expect(findStep(p0Regression, 'Extract packaged application').run).toContain('ditto -x -k')
-    expect(findStep(p0Regression, 'Run packaged P0 regression').run).toBe('npm run test:e2e:p0')
+    expect(findStep(p0Regression, 'Run packaged P0 regression').run).toBe(
+      'bash scripts/ci/run-macos-packaged-e2e.sh npm run test:e2e:p0'
+    )
     expect(
       findStep(p0Regression, 'Run packaged P0 regression').env?.OPEN_SCIENCE_E2E_EXECUTABLE
     ).toBe('${{ steps.packaged_app.outputs.executable }}')
     expect(findStep(p0Regression, 'Upload P0 diagnostics').if).toBe('always()')
     expect(visualRegression).toMatchObject({ needs: 'source', 'runs-on': 'macos-14' })
-    expect(visualRegression.if).toBe("needs.source.outputs.available == 'true'")
+    expect(visualRegression.if).toBe(
+      "needs.source.outputs.available == 'true' && inputs.suite != 'p0'"
+    )
     expect(visualRegression['continue-on-error']).toBe('${{ inputs.allow_failure }}')
     expect(findStep(visualRegression, 'Build Electron application').run).toBe('npm run build:e2e')
     expect(findStep(visualRegression, 'Run visual stability regression')).toMatchObject({
@@ -459,6 +465,14 @@ describe('post-merge Windows validation', () => {
     expect(nightly.jobs.prepare.needs).toEqual(['plan', 'build', 'package-smoke'])
     expect(regression.on).not.toHaveProperty('workflow_run')
     expect(regression.on).toHaveProperty('workflow_dispatch')
+    expect(regression.on.workflow_dispatch).toMatchObject({
+      inputs: { suite: { default: 'all', options: ['all', 'p0', 'visual'] } }
+    })
+    for (const job of [regression.jobs.p0, regression.jobs.visual]) {
+      expect(findStep(job, 'Checkout source revision').with?.ref).toBe(
+        "${{ github.event_name == 'workflow_dispatch' && github.sha || needs.source.outputs.sha }}"
+      )
+    }
     expect(regression.on).toHaveProperty('workflow_call')
     expect(regression.jobs.source['continue-on-error']).toBe('${{ inputs.allow_failure }}')
     expect(findStep(regression.jobs.source, 'Resolve source run').run).toContain(

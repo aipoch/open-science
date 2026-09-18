@@ -216,7 +216,10 @@ test('keeps core desktop surfaces visually stable', async ({ app }) => {
   await appVersion.getByRole('button').evaluateAll((elements) => {
     for (const element of elements) element.style.visibility = 'hidden'
   })
-  await appVersion.locator(':scope > p').evaluateAll((elements) => {
+  await appVersion.getByText(/^v\d+\.\d+\.\d+/).evaluate((element) => {
+    element.textContent = 'v0.0.0'
+  })
+  await appVersion.getByRole('status').evaluateAll((elements) => {
     for (const element of elements) element.style.visibility = 'hidden'
   })
   // The text-dense settings surface has slightly different font antialiasing on macos-14 runners.

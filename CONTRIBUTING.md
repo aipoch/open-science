@@ -341,11 +341,11 @@ ci(review): unify automated AI reviews
   queue plan selects the short core lane plus native checks on one runner. Manual `macos-smoke`,
   `source-regressions` and `e2e` runs retain their explicitly selected suites for early platform
   diagnosis. Classification and gate validation continue to use trusted base code.
-- Complete Mac Source Regression runs twice daily on `main`, at **03:37 and 15:37 Singapore time**
+- Complete Mac Source Regression runs twice daily on `main`, at **01:37 and 13:37 Singapore time**
   (Asia/Singapore, UTC+8), including when main is unchanged. Each round uses one build and one Mac
   runner for functional/workspace journeys, browser/visual/accessibility and supplemental suites.
-  Nightly packaging, Windows Full Test and Runtime Resource Soak retain their daily 01:17, 02:47
-  and 05:23 Singapore schedules and skip unchanged successful revisions. Manual runs always execute.
+  Nightly packaging, Windows Full Test and Runtime Resource Soak retain their daily 23:17, 00:47
+  and 03:23 Singapore schedules and skip unchanged successful revisions. Manual runs always execute.
   Formal release certification and post-release Windows Upgrade Smoke retain their existing gates.
   Scheduled failures cannot retroactively block an already merged PR; Mac-only failures may first
   be discovered in queue or scheduled validation.
@@ -371,7 +371,7 @@ By contributing, you agree that your contributions will be licensed under the
 
 ### Supplemental desktop coverage
 
-Complete Mac regression and Delegation suites run in Source Regression at 03:37 and 15:37
+Complete Mac regression and Delegation suites run in Source Regression at 01:37 and 13:37
 Asia/Singapore, as well as focused manual validation. Automatic PRs use Windows business coverage;
 queue uses short Mac core plus focused native checks for sensitive changes. Full Mac presentation,
 regression and Delegation matrices are not repeated in the queue. Capacity profiling remains in

@@ -263,7 +263,7 @@ describe('independent source regression', () => {
   )
 
   it('batches main on a read-only schedule with one native runner and no package prerequisite', () => {
-    expect(scheduled.on.schedule).toEqual([{ cron: '37 7,19 * * *' }])
+    expect(scheduled.on.schedule).toEqual([{ cron: '37 5,17 * * *' }])
     expect(scheduled.on).toHaveProperty('workflow_dispatch')
     expect(scheduled.on).not.toHaveProperty('push')
     expect(scheduled.permissions).toEqual({ actions: 'read', contents: 'read' })

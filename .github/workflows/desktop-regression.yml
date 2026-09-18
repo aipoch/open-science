@@ -23,6 +23,11 @@ on:
         description: 'Release or Nightly workflow run ID whose macos-arm64 artifact should be tested'
         required: true
         type: string
+      suite:
+        description: 'Focused regression to run without building or publishing a release'
+        type: choice
+        default: all
+        options: [all, p0, visual]
 
 permissions:
   actions: read
@@ -70,7 +75,7 @@ jobs:
   p0:
     name: p0 (macos-arm64 artifact)
     needs: source
-    if: needs.source.outputs.available == 'true'
+    if: needs.source.outputs.available == 'true' && inputs.suite != 'visual'
     continue-on-error: ${{ inputs.allow_failure }}
     runs-on: macos-26
     timeout-minutes: 15
@@ -78,7 +83,8 @@ jobs:
       - name: Checkout source revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ needs.source.outputs.sha }}
+          # Manual diagnosis tests the selected branch; callers retain the package's source revision.
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.sha || needs.source.outputs.sha }}
 
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
@@ -116,7 +122,7 @@ jobs:
       - name: Run packaged P0 regression
         env:
           OPEN_SCIENCE_E2E_EXECUTABLE: ${{ steps.packaged_app.outputs.executable }}
-        run: npm run test:e2e:p0
+        run: bash scripts/ci/run-macos-packaged-e2e.sh npm run test:e2e:p0
 
       - name: Upload P0 diagnostics
         if: always()
@@ -132,7 +138,7 @@ jobs:
   visual:
     name: visual (canonical macos-14 source build)
     needs: source
-    if: needs.source.outputs.available == 'true'
+    if: needs.source.outputs.available == 'true' && inputs.suite != 'p0'
     continue-on-error: ${{ inputs.allow_failure }}
     runs-on: macos-14
     timeout-minutes: 15
@@ -140,7 +146,8 @@ jobs:
       - name: Checkout source revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ needs.source.outputs.sha }}
+          # Manual diagnosis tests the selected branch; callers retain the package's source revision.
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.sha || needs.source.outputs.sha }}
 
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7

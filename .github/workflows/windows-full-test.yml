@@ -5,7 +5,7 @@ name: Windows Full Test
 # sharded suite, and remains available as a focused workflow dry-run.
 on:
   schedule:
-    - cron: '47 18 * * *' # UTC; overnight in Asia/Singapore
+    - cron: '47 16 * * *' # UTC; overnight in Asia/Singapore
   workflow_dispatch:
     inputs:
       mode:
