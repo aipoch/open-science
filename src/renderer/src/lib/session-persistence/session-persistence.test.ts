@@ -5250,6 +5250,88 @@ describe('renderer session persistence bridge', () => {
     }
   )
 
+  it.each([false, true])(
+    'flushes a queued streaming projection after Main completes the CLI Task (rename=%s)',
+    async (rename) => {
+      const fixture = createCompletedTaskReplyConflict()
+      const base = { ...fixture.base, revision: 3, runtimeTranscriptOwner: 'main' as const }
+      let durable: PersistedChatSession = {
+        ...fixture.latest,
+        revision: 5,
+        runtimeTranscriptOwner: 'main',
+        runtimeTranscriptLastRun: base.activeRun
+      }
+      const completed = structuredClone(durable)
+      const repositorySave = vi.fn(async (candidate: PersistedChatSession) => {
+        durable = structuredClone({ ...candidate, revision: (durable.revision ?? 0) + 1 })
+        return durable
+      })
+      const main = new SessionPersistenceStateOwner({
+        repository: {
+          loadSessionWithDiagnostics: async () => ({ status: 'found', session: durable }),
+          saveSession: repositorySave
+        },
+        fileIndex: { syncSession: async () => [] },
+        assertMutable: () => undefined,
+        notifyFilesChanged: () => undefined,
+        notifyRuntimeContextSessionUpdated: () => undefined,
+        log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+      })
+      const manifest = createDeferred<void>()
+      const api = createApi({
+        saveManifest: vi.fn(() => manifest.promise),
+        loadOne: vi.fn(async () => structuredClone(durable)),
+        saveSession: vi.fn((submitted, options) =>
+          main.saveSession(submitted, sanitizeRendererSaveSessionOptions(options, submitted))
+        )
+      })
+      const persistence = createOrderedSessionPersistence(api)
+      useSessionStore.getState().hydrateSessions([base])
+      const save = createStoreSaver(api, useSessionStore.getState(), {}, persistence)
+      const blocking = persistence.saveManifest({ lastSessionId: base.id })
+
+      // A delayed renderer has only part of the reply when Main's completion overtakes its save.
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: base.id,
+        streamId: 'provider-stream',
+        eventId: 'runtime-event',
+        promptMessageId: base.messages[0].id,
+        content: 'Same runtime'
+      })
+      if (rename) useSessionStore.getState().renameSession(base.id, 'Local title')
+      const queued = save(useSessionStore.getState())
+      useSessionStore.getState().applyDurableSessionProjection({
+        source: useSessionStore.getState().sessions[0],
+        session: completed,
+        mode: 'runtime-transcript-authority'
+      })
+      await save(useSessionStore.getState())
+      const flushed = persistence.flush()
+      // Attach the expectations before releasing the queue so rejections are always observed.
+      const assertions = Promise.all([
+        expect(queued).resolves.toBeUndefined(),
+        expect(flushed).resolves.toBeUndefined()
+      ])
+      manifest.resolve()
+      await blocking
+      await assertions
+
+      expect(api.saveSession).toHaveBeenCalledOnce()
+      expect(repositorySave).toHaveBeenCalledTimes(rename ? 1 : 0)
+      expect(durable).toMatchObject({
+        status: 'idle',
+        revision: rename ? 6 : 5,
+        title: rename ? 'Local title' : completed.title,
+        conversationGraph: completed.conversationGraph,
+        messages: completed.messages
+      })
+      expect(durable.activeRun).toBeUndefined()
+      expect(toPersistedSession(useSessionStore.getState().sessions[0]).messages).toEqual(
+        completed.messages
+      )
+    }
+  )
+
   it('rebases an explicit Session save over a disjoint concurrent main-process update', async () => {
     const base = createPersistedSession({ revision: 8, computeConcurrencyLimit: 1 })
     const submitted = createPersistedSession({

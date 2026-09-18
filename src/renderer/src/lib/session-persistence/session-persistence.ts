@@ -1979,6 +1979,9 @@ const createStoreSaver = (
             !selectionIntent &&
             sourceAuthority &&
             submittedAuthority &&
+            // Main applies captured user commands and preferences to its current transcript;
+            // a stale streaming projection must reach that owner rather than fail a legacy merge.
+            submittedAuthority.runtimeTranscriptOwner !== 'main' &&
             (selectedRootBranchId(sourceAuthority) !== selectedRootBranchId(submittedAuthority) ||
               (submittedAuthority.taskRunCommitId &&
                 submittedAuthority.taskRunCommitId !== sourceAuthority.taskRunCommitId &&
