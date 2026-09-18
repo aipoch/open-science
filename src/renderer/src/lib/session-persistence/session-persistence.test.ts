@@ -5250,6 +5250,71 @@ describe('renderer session persistence bridge', () => {
     }
   )
 
+  it.each([false, true])(
+    'routes a queued partial Main-owned Task projection through authority (stale command=%s)',
+    async (staleCommand) => {
+      resetSessionConversationIntentsForTests()
+      const { base, submitted, latest } = createCompletedTaskReplyConflict()
+      base.runtimeTranscriptOwner = 'main'
+      submitted.runtimeTranscriptOwner = 'main'
+      latest.runtimeTranscriptOwner = 'main'
+      submitted.conversationGraph!.messages.at(-1)!.content = 'Same runtime'
+      let durable = structuredClone(latest)
+      const main = new SessionPersistenceStateOwner({
+        repository: {
+          loadSessionWithDiagnostics: async () => ({ status: 'found', session: durable }),
+          saveSession: async (candidate) => {
+            durable = structuredClone({ ...candidate, revision: (durable.revision ?? 0) + 1 })
+            return durable
+          }
+        },
+        fileIndex: { syncSession: async () => [] },
+        assertMutable: () => undefined,
+        notifyFilesChanged: () => undefined,
+        notifyRuntimeContextSessionUpdated: () => undefined,
+        log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+      })
+      const saveSession = vi.fn<SessionPersistenceApi['saveSession']>((candidate, options) =>
+        main.saveSession(candidate, sanitizeRendererSaveSessionOptions(options, candidate))
+      )
+      const api = createApi({ saveSession })
+      const persistence = createOrderedSessionPersistence(api)
+      useSessionStore.getState().hydrateSessions([base])
+      const save = createStoreSaver(api, useSessionStore.getState(), {}, persistence)
+      useSessionStore.setState({ sessions: [hydrateSession(submitted)] })
+      if (staleCommand) {
+        useSessionStore
+          .getState()
+          .appendUserMessage({ sessionId: submitted.id, content: 'Follow up on a stale reply' })
+      }
+      const queued = save(useSessionStore.getState())
+      useSessionStore.getState().upsertPersistedSession(latest)
+      await save(useSessionStore.getState())
+      if (staleCommand) {
+        await expect(queued).rejects.toThrow(
+          'Conversation Branch changed before the user Message was admitted.'
+        )
+        await expect(persistence.flush()).rejects.toThrow(
+          'Conversation Branch changed before the user Message was admitted.'
+        )
+        expect(saveSession).toHaveBeenCalledOnce()
+        expect(saveSession.mock.calls[0][1]?.conversationCommands?.length).toBeGreaterThan(0)
+        expect(durable).toEqual(latest)
+        resetSessionConversationIntentsForTests()
+        return
+      }
+      await queued
+      await expect(persistence.flush()).resolves.toBeUndefined()
+      expect(saveSession).toHaveBeenCalledOnce()
+      expect(saveSession.mock.calls[0][1]?.conflictRebaseFields).toContain('title')
+      expect(durable.title).toBe('Local title')
+      expect(durable.status).toBe('idle')
+      expect(durable.activeRun).toBeUndefined()
+      expect(durable.conversationGraph).toEqual(latest.conversationGraph)
+      expect(durable.messages.map(({ id }) => id)).toEqual(['cli-prompt', 'durable-task-reply'])
+    }
+  )
+
   it('rebases an explicit Session save over a disjoint concurrent main-process update', async () => {
     const base = createPersistedSession({ revision: 8, computeConcurrencyLimit: 1 })
     const submitted = createPersistedSession({

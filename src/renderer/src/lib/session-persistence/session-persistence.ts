@@ -1966,7 +1966,11 @@ const createStoreSaver = (
           // A queued snapshot can predate newer content on the same Branch too. Rebase
           // against its original authority before borrowing the newer revision number.
           submittedAuthority = acknowledgedSessions.get(session.id)
-          if (sourceAuthority && submittedAuthority) {
+          // Main-owned snapshots are observations, not graph writes. Main applies only named
+          // preferences and conversation commands; legacy graph reconciliation must not reject
+          // a queued partial observation before that authority boundary can process its intents.
+          const mainOwnsTranscript = submittedAuthority?.runtimeTranscriptOwner === 'main'
+          if (!mainOwnsTranscript && sourceAuthority && submittedAuthority) {
             const reconciled = reconcileCompletedTaskReply(
               sourceAuthority,
               persisted,
@@ -1976,6 +1980,7 @@ const createStoreSaver = (
             persisted = reconciled
           }
           if (
+            !mainOwnsTranscript &&
             !selectionIntent &&
             sourceAuthority &&
             submittedAuthority &&
