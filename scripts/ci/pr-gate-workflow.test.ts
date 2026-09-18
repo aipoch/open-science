@@ -253,9 +253,20 @@ describe('PR Gate workflow', () => {
     }
   })
 
-  it.each(['pull_request', 'merge_group', 'deleted', 'renamed', 'ci-edit', 'unrelated', 'sharded'])(
+  it.each([
+    'pull_request',
+    'merge_group',
+    'merge_group_stacked',
+    'deleted',
+    'renamed',
+    'ci-edit',
+    'unrelated',
+    'sharded'
+  ])(
     'resolves actual Git history without mixing trusted policy and PR differences: %s',
     (scenario) => {
+      const queued = scenario.startsWith('merge_group')
+      const event = queued ? 'merge_group' : 'pull_request'
       const root = realpathSync(mkdtempSync(join(tmpdir(), 'pr-gate-revisions-')))
       const git = (...args: string[]): string =>
         execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim()
@@ -323,7 +334,19 @@ describe('PR Gate workflow', () => {
         }
         git('add', '.')
         git('commit', '--quiet', '-m', 'PR contribution')
-        const head = git('rev-parse', 'HEAD')
+        let head = git('rev-parse', 'HEAD')
+        if (queued) {
+          // GitHub builds the queue head on the target tip plus every entry ahead in the queue.
+          git('checkout', '--quiet', '-b', 'gh-readonly-queue/main/pr-1', base)
+          if (scenario === 'merge_group_stacked') {
+            put('.github/workflows/pr-gate.yml', '# CI update from the entry ahead\n')
+            git('add', '.')
+            git('commit', '--quiet', '-m', 'entry ahead in queue')
+          }
+          git('merge', '--quiet', '--no-ff', '-m', 'queue merge', 'topic')
+          head = git('rev-parse', 'HEAD')
+          git('remote', 'add', 'origin', root)
+        }
         const revisionStep = workflow.jobs.preflight.steps!.find(({ id }) => id === 'revisions')!
         const output = join(root, 'outputs')
         const result = spawnSync('bash', ['-c', revisionStep.run!], {
@@ -331,10 +354,10 @@ describe('PR Gate workflow', () => {
           encoding: 'utf8',
           env: {
             ...process.env,
-            EVENT_NAME: scenario === 'merge_group' ? 'merge_group' : 'pull_request',
+            EVENT_NAME: event,
             PULL_BASE_SHA: base,
             PULL_HEAD_SHA: head,
-            MERGE_BASE_SHA: base,
+            MERGE_BASE_REF: 'refs/heads/main',
             MERGE_HEAD_SHA: head,
             GITHUB_OUTPUT: output
           }
@@ -351,8 +374,9 @@ describe('PR Gate workflow', () => {
             .split('\n')
             .map((line) => line.split('='))
         )
+        // Queue runs classify the whole group against the target tip, never against the entry ahead.
         expect(revisions).toEqual({
-          base: scenario === 'merge_group' ? base : ancestor,
+          base: queued ? base : ancestor,
           head,
           'trusted-base': base
         })
@@ -392,7 +416,7 @@ describe('PR Gate workflow', () => {
             encoding: 'utf8',
             env: {
               ...process.env,
-              EVENT_NAME: scenario === 'merge_group' ? 'merge_group' : 'pull_request',
+              EVENT_NAME: event,
               PR_GATE_PLATFORM_POLICY: 'risk-v1',
               GITHUB_OUTPUT: '',
               GITHUB_STEP_SUMMARY: ''
@@ -401,7 +425,7 @@ describe('PR Gate workflow', () => {
         )
         expect(classified.status, classified.stderr).toBe(0)
         const plan = JSON.parse(classified.stdout)
-        if (scenario === 'pull_request' || scenario === 'sharded') {
+        if (['pull_request', 'merge_group', 'sharded'].includes(scenario)) {
           expect(git('diff', '--name-only', revisions.base, head).split('\n')).toEqual([
             test,
             source
@@ -411,7 +435,9 @@ describe('PR Gate workflow', () => {
         } else {
           expect(plan.mode).toBe('full')
           expect(plan.roots).toContain(
-            scenario === 'ci-edit' ? 'global_gate_input' : 'destructive_change'
+            ['ci-edit', 'merge_group_stacked'].includes(scenario)
+              ? 'global_gate_input'
+              : 'destructive_change'
           )
         }
       } finally {
@@ -809,7 +835,7 @@ describe('PR Gate workflow', () => {
       with: {
         'fetch-depth': 1,
         'persist-credentials': false,
-        ref: "${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.pull_request.base.sha || github.event.merge_group.base_sha || needs.preflight.outputs.base }}"
+        ref: "${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.pull_request.base.sha || needs.preflight.outputs.base }}"
       }
     })
     expect(gate.steps?.at(0)?.env).toBeUndefined()

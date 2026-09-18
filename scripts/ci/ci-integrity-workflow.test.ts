@@ -1,4 +1,6 @@
-import { readFileSync } from 'node:fs'
+import { execFileSync, spawnSync } from 'node:child_process'
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { load } from 'js-yaml'
@@ -67,7 +69,7 @@ describe('CI Integrity workflow', () => {
       with: {
         'fetch-depth': 0,
         'persist-credentials': false,
-        ref: '${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}'
+        ref: '${{ github.event.pull_request.base.sha || github.event.merge_group.base_ref }}'
       }
     })
     expect(step('Setup Node')).toMatchObject({
@@ -88,6 +90,57 @@ describe('CI Integrity workflow', () => {
     expect(step('Inspect CI-sensitive changes').run).toBe(
       'node scripts/ci/check-ci-integrity.mjs --base "$BASE_SHA" --head "$HEAD_SHA"'
     )
+  })
+
+  it('inspects a stacked merge group against the target branch tip, not the entry ahead', () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'ci-integrity-revisions-')))
+    const git = (...args: string[]): string =>
+      execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim()
+    try {
+      git('init', '--quiet', '-b', 'main')
+      git('config', 'user.email', 'ci@example.com')
+      git('config', 'user.name', 'CI Test')
+      writeFileSync(join(root, 'README.md'), 'base\n')
+      git('add', '.')
+      git('commit', '--quiet', '-m', 'main tip')
+      const mainTip = git('rev-parse', 'HEAD')
+      const queueRef = `gh-readonly-queue/main/pr-2-${'b'.repeat(40)}`
+      git('checkout', '--quiet', '-b', queueRef)
+      writeFileSync(join(root, 'ahead.txt'), 'entry ahead\n')
+      git('add', '.')
+      git('commit', '--quiet', '-m', 'entry ahead')
+      const entryAhead = git('rev-parse', 'HEAD')
+      writeFileSync(join(root, 'trailing.txt'), 'trailing entry\n')
+      git('add', '.')
+      git('commit', '--quiet', '-m', 'trailing entry')
+      const head = git('rev-parse', 'HEAD')
+      // actions/checkout leaves the trusted target branch tip at HEAD.
+      git('checkout', '--quiet', 'main')
+      git('remote', 'add', 'origin', root)
+      const output = join(root, 'outputs')
+      const result = spawnSync('bash', ['-c', step('Resolve inspected revisions').run!], {
+        cwd: root,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          EVENT_NAME: 'merge_group',
+          MERGE_HEAD_REF: queueRef,
+          MERGE_HEAD_SHA: head,
+          GITHUB_OUTPUT: output
+        }
+      })
+      expect(result.status, result.stderr).toBe(0)
+      const revisions = Object.fromEntries(
+        readFileSync(output, 'utf8')
+          .trim()
+          .split('\n')
+          .map((line) => line.split('='))
+      )
+      expect(revisions).toEqual({ base: mainTip, head })
+      expect(revisions.base).not.toBe(entryAhead)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 
   it('revalidates PR metadata with the trusted base policy instead of restarting PR Gate', () => {
