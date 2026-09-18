@@ -1,3 +1,4 @@
+import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { fieldErrorClassName } from '@/components/ui/notice-chrome'
 import { useFileCredentialNotice } from './use-file-credential-notice'
@@ -136,9 +137,17 @@ export function ConnectorCredentialControls({
       </div>
 
       <div className={cn(dialogBodyClassName, 'space-y-2')}>
-        <label htmlFor={inputId} className="text-sm font-medium">
-          {t('API key')}
-        </label>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <label htmlFor={inputId} className="text-sm font-medium">
+            {t('API key')}
+          </label>
+          <ExternalTextLink
+            href="https://openalex.org/settings/api"
+            className="whitespace-nowrap text-xs"
+          >
+            {t('Get an API key')}
+          </ExternalTextLink>
+        </div>
         <MaskedPasswordField
           id={inputId}
           value={apiKey}
