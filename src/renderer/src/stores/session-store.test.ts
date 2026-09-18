@@ -7270,6 +7270,7 @@ describe('session store public contract', () => {
       'src/renderer/src/lib/session-package-export.ts',
       'src/renderer/src/lib/session-persistence/session-persistence.ts',
       'src/renderer/src/pages/home/HomePage.tsx',
+      'src/renderer/src/pages/home/use-recent-sessions.ts',
       'src/renderer/src/pages/settings/ArchivedPanel.tsx',
       'src/renderer/src/pages/settings/SettingsPage.tsx',
       'src/renderer/src/pages/workspace/ArtifactProvenancePanel.tsx',
