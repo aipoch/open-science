@@ -1,21 +1,9 @@
-/* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
-/* Hallmark · component: Notebook network protection banner · genre: modern-minimal
- * theme: existing Open Science Settings tokens
- * states: default · hover · focus · active · disabled · loading · error · success
- * contrast: semantic status tokens · responsive: 320 / 375 / 414 / 768
- */
-import {
-  LoaderCircle,
-  ShieldAlert,
-  ShieldCheck,
-  ShieldQuestion,
-  type LucideIcon
-} from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { Notice, type NoticeLevel } from '@/components/notice'
+import { LoaderCircle } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { useNotebookNetworkStatus } from './use-notebook-network-status'
 
 import type { NotebookNetworkStatus } from '../../../../shared/notebook-network'
-import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
 type NotebookNetworkProtectionBannerPreviewState =
@@ -24,13 +12,13 @@ type NotebookNetworkProtectionBannerPreviewState =
 type NotebookNetworkProtectionBannerProps = {
   onOpen: () => void
   previewState?: NotebookNetworkProtectionBannerPreviewState
+  status?: NotebookNetworkStatus
 }
 
 type BannerPresentation = Readonly<{
-  Icon: LucideIcon
   title: string
   description: string
-  tone: 'warning' | 'failure' | 'neutral'
+  level: NoticeLevel
 }>
 
 const previewStatus = (
@@ -50,54 +38,25 @@ const previewStatus = (
 
 const NotebookNetworkProtectionBanner = ({
   onOpen,
-  previewState
+  previewState,
+  status: suppliedStatus
 }: NotebookNetworkProtectionBannerProps): React.JSX.Element => {
   const { t } = useTranslation()
-  const [runtimeStatus, setRuntimeStatus] = useState<NotebookNetworkStatus>({ kind: 'checking' })
-  const status = previewState ? previewStatus(previewState) : runtimeStatus
-
-  useEffect(() => {
-    if (previewState) return
-    let cancelled = false
-    let retry: number | undefined
-    const refresh = (): void => {
-      const getStatus = window.api.settings?.getNotebookNetworkStatus
-      if (typeof getStatus !== 'function') {
-        setRuntimeStatus({ kind: 'error', reason: 'runtimeFailure' })
-        return
-      }
-      void getStatus().then(
-        (next) => {
-          if (cancelled) return
-          setRuntimeStatus(next)
-          if (next.kind === 'checking') retry = window.setTimeout(refresh, 1_000)
-        },
-        () => {
-          if (!cancelled) setRuntimeStatus({ kind: 'error', reason: 'runtimeFailure' })
-        }
-      )
-    }
-    refresh()
-    return () => {
-      cancelled = true
-      if (retry !== undefined) window.clearTimeout(retry)
-    }
-  }, [previewState])
+  const runtimeStatus = useNotebookNetworkStatus(!previewState && suppliedStatus === undefined)
+  const status = previewState ? previewStatus(previewState) : (suppliedStatus ?? runtimeStatus)
 
   const presentation: BannerPresentation = (() => {
     switch (status.kind) {
       case 'ready':
         return {
-          Icon: ShieldCheck,
           title: t('Network protection on'),
           description: t(
-            'Notebook sessions and package downloads can access only approved domains.'
+            'Notebook allows approved domains and restricted public HTTPS reads. GET and HEAD still send URLs; approved domains allow sending data.'
           ),
-          tone: 'neutral'
+          level: 'info'
         }
       case 'setupRequired':
         return {
-          Icon: ShieldAlert,
           title:
             status.platform === 'win32'
               ? t('Notebook network protection is not set up.')
@@ -106,47 +65,28 @@ const NotebookNetworkProtectionBanner = ({
             status.platform === 'win32'
               ? t('Notebook continues using standard execution. No protected mode is active.')
               : t('Open Network settings to review the required setup.'),
-          tone: 'warning'
+          level: 'warning'
         }
       case 'unsupported':
         return {
-          Icon: ShieldQuestion,
           title: t('Notebook network protection is not supported on this platform.'),
           description: t('Open Network settings to review availability and allowed domains.'),
-          tone: 'neutral'
+          level: 'info'
         }
       case 'error':
         return {
-          Icon: ShieldAlert,
           title: t('Could not check Notebook network protection.'),
           description: t('Open Network settings to check again and review the setup.'),
-          tone: 'failure'
+          level: 'error'
         }
       case 'checking':
         return {
-          Icon: LoaderCircle,
           title: t('Notebook network protection'),
           description: t('Checking…'),
-          tone: 'neutral'
+          level: 'info'
         }
     }
   })()
-
-  const toneClassName: Record<BannerPresentation['tone'], string> = {
-    warning:
-      'border-status-warning-foreground/30 bg-status-warning-surface/45 dark:border-status-warning-dark-foreground/30 dark:bg-status-warning-dark-surface/25',
-    failure:
-      'border-status-failure-border bg-status-failure-subtle/60 dark:border-status-failure-dark-border/50 dark:bg-status-failure-dark-surface/20',
-    neutral: 'border-border bg-bg-10'
-  }
-
-  const iconClassName: Record<BannerPresentation['tone'], string> = {
-    warning:
-      'bg-status-warning-surface text-status-warning-foreground dark:bg-status-warning-dark-surface dark:text-status-warning-dark-foreground',
-    failure:
-      'bg-status-failure-surface text-status-failure-foreground dark:bg-status-failure-dark-surface dark:text-status-failure-dark-foreground',
-    neutral: 'bg-muted text-muted-foreground'
-  }
 
   const previewButtonClassName =
     previewState === 'hover'
@@ -158,55 +98,27 @@ const NotebookNetworkProtectionBanner = ({
           : ''
 
   return (
-    <section
+    <Notice
+      inline
       aria-label={t('Notebook network protection')}
       aria-live="polite"
       role={status.kind === 'error' ? 'alert' : 'status'}
       data-testid="notebook-network-protection-banner"
-      className={cn(
-        'rounded-lg border p-3',
-        toneClassName[presentation.tone],
-        previewState === 'disabled' && 'opacity-50'
-      )}
-    >
-      <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center">
-        <div className="flex min-w-0 flex-1 items-start gap-3">
-          <span
-            className={cn(
-              'flex size-8 shrink-0 items-center justify-center rounded-md',
-              iconClassName[presentation.tone]
-            )}
-            aria-hidden="true"
-          >
-            <presentation.Icon
-              className={cn(
-                'size-4.5',
-                status.kind === 'checking' && 'animate-spin motion-reduce:animate-none'
-              )}
-            />
-          </span>
-          <div className="min-w-0">
-            <p className="break-words text-sm font-medium text-foreground">{presentation.title}</p>
-            <p className="mt-0.5 max-w-2xl break-words text-[13px] leading-5 text-muted-foreground">
-              {presentation.description}
-            </p>
-          </div>
-        </div>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={previewState === 'disabled'}
-          className={cn(
-            'min-h-11 w-full shrink-0 whitespace-nowrap sm:min-h-8 sm:w-auto',
-            previewButtonClassName
-          )}
-          onClick={onOpen}
-        >
-          {t('Network settings')}
-        </Button>
-      </div>
-    </section>
+      level={presentation.level}
+      icon={status.kind === 'checking' ? LoaderCircle : undefined}
+      iconClassName={
+        status.kind === 'checking' ? 'animate-spin motion-reduce:animate-none' : undefined
+      }
+      title={presentation.title}
+      description={presentation.description}
+      className={cn(previewState === 'disabled' && 'opacity-50')}
+      primaryButton={{
+        label: t('Network settings'),
+        onClick: onOpen,
+        disabled: previewState === 'disabled',
+        className: cn('min-h-11 w-full sm:min-h-8 sm:w-auto', previewButtonClassName)
+      }}
+    />
   )
 }
 

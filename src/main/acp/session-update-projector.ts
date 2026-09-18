@@ -59,6 +59,14 @@ type AcpSessionUpdateRouteInput = Readonly<{
   emitState?: () => void
 }>
 
+type AcpToolFailureDiagnostic = Readonly<{
+  kind: 'tool-failure-diagnostic'
+  tool?: string
+  toolCallId?: string
+  sessionId: string
+  reason?: string
+}>
+
 type AcpSessionUpdateProjectorOptions = Readonly<{
   registry: Pick<AcpSessionRegistry, 'lookup'>
   contextUsage: Pick<
@@ -91,9 +99,7 @@ type AcpSessionUpdateProjectorOptions = Readonly<{
   ) => boolean
   emitState: () => void
   pushEvent: (event: Readonly<AcpRuntimeEvent>) => void
-  reportToolFailure: (
-    effect: Extract<AcpSessionUpdateEffect, { kind: 'tool-failure-diagnostic' }>
-  ) => void
+  reportToolFailure: (effect: AcpToolFailureDiagnostic) => void
 }>
 
 type AcpSessionUpdateEffect =
@@ -122,13 +128,7 @@ type AcpSessionUpdateEffect =
       currentModeId: string
       framework: AgentFrameworkId
     }>
-  | Readonly<{
-      kind: 'tool-failure-diagnostic'
-      tool?: string
-      toolCallId?: string
-      sessionId: string
-      reason?: string
-    }>
+  | AcpToolFailureDiagnostic
   | Readonly<{
       kind: 'visible-event'
       event: Readonly<AcpRuntimeEvent>
@@ -459,3 +459,4 @@ class AcpSessionUpdateProjector {
 }
 
 export { AcpSessionUpdateProjector }
+export type { AcpToolFailureDiagnostic }

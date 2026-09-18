@@ -44,6 +44,19 @@ const docx = (text: string | string[]): Uint8Array =>
   })
 
 describe('LiteratureCitationDocument', () => {
+  it('distinguishes an extraction budget from corrupt DOCX input', async () => {
+    const formatter = new LiteratureCitationDocument({ getMany: vi.fn() })
+    const entries = Object.fromEntries(
+      Array.from({ length: 5001 }, (_, i) => [`entry-${i}`, new Uint8Array()])
+    )
+    await expect(
+      formatter.format({ content: zipSync(entries), styleId: 'apa', locale: 'en-US' })
+    ).rejects.toThrow('extraction budget')
+    await expect(
+      formatter.format({ content: new Uint8Array([1, 2, 3]), styleId: 'apa', locale: 'en-US' })
+    ).rejects.toThrow('valid DOCX')
+  })
+
   it('turns semantic markers into Zotero-compatible Word fields and a bound sidecar', async () => {
     const first = item('item-1', 'First paper')
     const second = item('item-2', 'Second paper')

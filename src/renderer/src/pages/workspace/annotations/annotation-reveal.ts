@@ -8,6 +8,7 @@ import { parseLiteratureAttachmentVersionReference } from '../../../../../shared
 import { parseUploadVersionReference } from '../../../../../shared/uploads'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
+import type { Bookmark, BookmarkTarget } from '../../../../../shared/bookmarks'
 
 import { createPreviewFileItem, LITERATURE_PREVIEW_SESSION_ID } from '../preview-file-item'
 
@@ -20,14 +21,31 @@ const REVEAL_HIGHLIGHT_NAME = 'agent-annotation-reveal'
 const REVEAL_DURATION_MS = 1_600
 const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)'
 
+let revealFrame: number | undefined
+let restoreRevealLayout: (() => void) | undefined
 let revealedRange: Range | undefined
 let revealTimer: ReturnType<typeof setTimeout> | undefined
 let pendingRevealId: string | undefined
+type BookmarkRevealTarget = Readonly<{ id: string }> & BookmarkTarget
+type BookmarkRevealOutcome = 'revealed' | 'source-unavailable' | 'locator-unsupported'
+
 let pendingRevealAnnotation: Annotation | undefined
+let pendingBookmarkReveal:
+  | {
+      target: BookmarkRevealTarget
+      finish: (outcome: BookmarkRevealOutcome) => void
+      timeout: ReturnType<typeof setTimeout>
+    }
+  | undefined
+const bookmarkPreparationListeners = new Set<(target: BookmarkRevealTarget) => void>()
+const bookmarkRevealListeners = new Set<
+  (target: BookmarkRevealTarget) => boolean | BookmarkRevealOutcome | void
+>()
 
 const fileAnnotationSource = (
-  annotation: Annotation
+  annotation: Annotation | BookmarkRevealTarget
 ):
+  | Extract<BookmarkRevealTarget, { kind: 'pdf' }>['source']
   | Extract<Annotation, { kind: 'image-point' | 'pdf' }>['source']
   | Extract<Extract<Annotation, { kind: 'text' }>['source'], { kind: 'project-file' }>
   | undefined => {
@@ -114,7 +132,10 @@ const managedAnnotationIdentity = (
     : undefined
 }
 
-const fileSourceMatchesItem = (annotation: Annotation, item: PreviewFileItem): boolean => {
+const fileSourceMatchesItem = (
+  annotation: Annotation | BookmarkRevealTarget,
+  item: PreviewFileItem
+): boolean => {
   const source = fileAnnotationSource(annotation)
   if (!source) return false
   if (item.projectId !== source.projectId) return false
@@ -220,16 +241,185 @@ const requestAnnotationReveal = (annotation: Annotation): void => {
   publishAnnotationReveal(annotation)
 }
 
+type BookmarkFileSource =
+  | Extract<BookmarkRevealTarget, { kind: 'pdf' }>['source']
+  | Extract<Extract<BookmarkRevealTarget, { kind: 'text' }>['source'], { kind: 'project-file' }>
+
+const bookmarkFileSource = (target: BookmarkRevealTarget): BookmarkFileSource | undefined =>
+  target.kind === 'pdf'
+    ? target.source
+    : target.source.kind === 'project-file'
+      ? target.source
+      : undefined
+
+const createBookmarkPreviewItem = (target: BookmarkRevealTarget): PreviewFileItem | undefined => {
+  const source = bookmarkFileSource(target)
+  if (!source) return undefined
+  const artifact = parseArtifactVersionLocator(source.path)
+  const upload = parseUploadVersionReference(source.path)
+  const literatureVersionId = parseLiteratureAttachmentVersionReference(source.path)
+  const sourceFileId = 'sourceFileId' in source ? source.sourceFileId : undefined
+  const versionId =
+    source.versionId ?? artifact?.versionId ?? upload?.versionId ?? literatureVersionId
+  const sessionId =
+    source.sessionId ??
+    artifact?.appSessionId ??
+    upload?.sessionId ??
+    (literatureVersionId ? LITERATURE_PREVIEW_SESSION_ID : undefined)
+  const requiresVersion = target.kind === 'pdf' || sourceFileId !== undefined
+  if (!sessionId || (requiresVersion && !versionId)) return undefined
+  const fileSource =
+    source.kind === 'upload-version' ||
+    (source.kind === 'project-file' && source.fileSource === 'upload')
+      ? 'upload'
+      : source.kind === 'literature-attachment-version'
+        ? 'literature'
+        : undefined
+  return createPreviewFileItem({
+    id: sourceFileId
+      ? fileSource === 'upload'
+        ? `upload:${sourceFileId}`
+        : sourceFileId
+      : literatureVersionId
+        ? `literature-version:${literatureVersionId}`
+        : `file:${source.projectId}:${source.path}`,
+    projectId: source.projectId,
+    sessionId,
+    path: source.path,
+    name: sourceName(source.path, source.name),
+    mimeType: target.kind === 'pdf' ? 'application/pdf' : undefined,
+    source: fileSource,
+    artifactId:
+      source.kind === 'artifact-version' ||
+      (source.kind === 'project-file' && source.fileSource === 'artifact')
+        ? sourceFileId
+        : undefined,
+    managedFileId: sourceFileId,
+    selectedVersionId: sourceFileId ? versionId : undefined
+  })
+}
+
+const deliverBookmarkReveal = (): void => {
+  const pending = pendingBookmarkReveal
+  if (!pending) return
+  for (const listener of bookmarkPreparationListeners) listener(pending.target)
+  for (const listener of bookmarkRevealListeners) {
+    const result = listener(pending.target)
+    if (!result) continue
+    const outcome = result === true ? 'revealed' : result
+    clearTimeout(pending.timeout)
+    pendingBookmarkReveal = undefined
+    pending.finish(outcome)
+    return
+  }
+}
+
+const subscribeBookmarkRevealPreparation = (
+  listener: (target: BookmarkRevealTarget) => void
+): (() => void) => {
+  bookmarkPreparationListeners.add(listener)
+  if (pendingBookmarkReveal) listener(pendingBookmarkReveal.target)
+  return () => bookmarkPreparationListeners.delete(listener)
+}
+
+const subscribeBookmarkReveal = (
+  listener: (target: BookmarkRevealTarget) => boolean | BookmarkRevealOutcome | void
+): (() => void) => {
+  bookmarkRevealListeners.add(listener)
+  deliverBookmarkReveal()
+  return () => bookmarkRevealListeners.delete(listener)
+}
+
+const requestBookmarkReveal = async (bookmark: Bookmark): Promise<BookmarkRevealOutcome> => {
+  const target: BookmarkRevealTarget = { id: bookmark.id, ...bookmark.target }
+  const source = bookmarkFileSource(target)
+  if (source) {
+    const workbench = usePreviewWorkbenchStore.getState()
+    // Reuse the exact-Version tab: replacing it with a minimal item discards metadata and
+    // remounts its renderer after the old renderer has already acknowledged this reveal.
+    const existing = workbench.items.find(
+      (item): item is Extract<typeof item, { type: 'file' }> =>
+        item.type === 'file' && fileSourceMatchesItem(target, item)
+    )
+    const item = existing ?? createBookmarkPreviewItem(target)
+    if (!item) return 'source-unavailable'
+    workbench.upsertAndActivateItem(item)
+  }
+  if (pendingBookmarkReveal) {
+    clearTimeout(pendingBookmarkReveal.timeout)
+    pendingBookmarkReveal.finish('locator-unsupported')
+  }
+  return new Promise((finish) => {
+    const timeout = setTimeout(() => {
+      if (pendingBookmarkReveal?.target.id !== target.id) return
+      pendingBookmarkReveal = undefined
+      finish('locator-unsupported')
+    }, 5_000)
+    pendingBookmarkReveal = { target, finish, timeout }
+    deliverBookmarkReveal()
+  })
+}
+
 const annotationRevealScrollBehavior = (): ScrollBehavior =>
   typeof globalThis.matchMedia === 'function' && globalThis.matchMedia(REDUCED_MOTION_QUERY).matches
     ? 'auto'
     : 'smooth'
 
 const revealTextAnnotationRange = (range: Range): void => {
-  range.startContainer.parentElement?.scrollIntoView({
-    block: 'center',
-    behavior: annotationRevealScrollBehavior()
-  })
+  restoreRevealLayout?.()
+  if (revealFrame !== undefined) cancelAnimationFrame(revealFrame)
+  const parent = range.startContainer.parentElement
+  const row = parent?.closest<HTMLElement>('[data-message-id]')
+  if (row) {
+    const previous = row.style.contentVisibility
+    row.style.contentVisibility = 'visible'
+    restoreRevealLayout = () => {
+      row.style.contentVisibility = previous
+    }
+  } else restoreRevealLayout = undefined
+
+  const scrollToRange = (): void => {
+    if (!parent?.isConnected) return
+    const rect = range.getBoundingClientRect?.()
+    let viewport: HTMLElement | null = parent
+    while (viewport) {
+      if (
+        viewport.scrollHeight > viewport.clientHeight &&
+        /auto|scroll/.test(getComputedStyle(viewport).overflowY) &&
+        rect &&
+        rect.height > 0
+      ) {
+        viewport.scrollTo({
+          top:
+            viewport.scrollTop +
+            rect.top -
+            viewport.getBoundingClientRect().top -
+            viewport.clientTop -
+            (viewport.clientHeight - rect.height) / 2,
+          behavior: annotationRevealScrollBehavior()
+        })
+        return
+      }
+      viewport = viewport.parentElement
+    }
+    parent?.scrollIntoView({ block: 'center', behavior: annotationRevealScrollBehavior() })
+  }
+  scrollToRange()
+  // Transcript mounting restores its reading anchor during the commit. Correct the exact
+  // selection after that layout pass, using the now measured content instead of placeholders.
+  if (typeof requestAnimationFrame === 'function') {
+    revealFrame = requestAnimationFrame(() => {
+      revealFrame = undefined
+      scrollToRange()
+    })
+  }
+  clearTimeout(revealTimer)
+  revealTimer = setTimeout(() => {
+    restoreRevealLayout?.()
+    restoreRevealLayout = undefined
+    if (revealedRange) globalThis.CSS?.highlights?.get(REVEAL_HIGHLIGHT_NAME)?.delete(revealedRange)
+    revealedRange = undefined
+  }, REVEAL_DURATION_MS)
   if (typeof Highlight === 'undefined' || !globalThis.CSS?.highlights) return
 
   const highlight = globalThis.CSS.highlights.get(REVEAL_HIGHLIGHT_NAME) ?? new Highlight()
@@ -237,19 +427,17 @@ const revealTextAnnotationRange = (range: Range): void => {
   highlight.add(range)
   globalThis.CSS.highlights.set(REVEAL_HIGHLIGHT_NAME, highlight)
   revealedRange = range
-
-  clearTimeout(revealTimer)
-  revealTimer = setTimeout(() => {
-    if (revealedRange) highlight.delete(revealedRange)
-    revealedRange = undefined
-  }, REVEAL_DURATION_MS)
 }
 
 export {
   annotationRevealScrollBehavior,
   requestAnnotationReveal,
+  requestBookmarkReveal,
   retryPendingAnnotationReveal,
   revealTextAnnotationRange,
   subscribeAnnotationReveal,
-  subscribeAnnotationRevealPreparation
+  subscribeAnnotationRevealPreparation,
+  subscribeBookmarkReveal,
+  subscribeBookmarkRevealPreparation
 }
+export type { BookmarkRevealOutcome, BookmarkRevealTarget }

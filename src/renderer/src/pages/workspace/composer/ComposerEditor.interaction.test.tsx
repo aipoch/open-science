@@ -699,6 +699,66 @@ describe('ComposerEditor', () => {
     expect(onDocChange).toHaveBeenCalledWith({ nodes: [{ type: 'text', text: 'hello' }] })
   })
 
+  it('emits browser-created multiline blocks with their logical caret position', () => {
+    const onDocChange = vi.fn()
+    renderEditor({ onDocChange })
+    const secondLine = document.createElement('div')
+    secondLine.textContent = 'second line'
+
+    act(() => {
+      editor().append('first line', secondLine)
+      setCaret(secondLine.firstChild!, 'second'.length)
+    })
+    dispatchKey(editor(), 'x')
+    act(() => editor().dispatchEvent(new Event('input', { bubbles: true })))
+
+    expect(onDocChange).toHaveBeenCalledWith(
+      { nodes: [{ type: 'text', text: 'first line\nsecond line' }] },
+      { nodeIndex: 0, offset: 'first line\nsecond'.length }
+    )
+  })
+
+  it('maps a multiline caret after an owned chip to the logical Composer node', () => {
+    const onDocChange = vi.fn()
+    renderEditor({
+      doc: {
+        nodes: [
+          { type: 'text', text: 'first ' },
+          { type: 'skill', id: 'analysis', name: 'analysis' },
+          { type: 'text', text: 'second line' }
+        ]
+      },
+      onDocChange
+    })
+    const root = editor()
+    const firstLine = document.createElement('div')
+    firstLine.append('first ')
+    const skill = document.createElement('span')
+    skill.setAttribute('contenteditable', 'false')
+    skill.setAttribute('data-mention-type', 'skill')
+    skill.setAttribute('data-skill-id', 'analysis')
+    skill.textContent = '/analysis'
+    firstLine.append(skill)
+    const secondLine = document.createElement('div')
+    secondLine.textContent = 'second line'
+    root.replaceChildren(firstLine, secondLine)
+
+    act(() => setCaret(secondLine.firstChild!, 'second'.length))
+    dispatchKey(root, 'x')
+    act(() => root.dispatchEvent(new Event('input', { bubbles: true })))
+
+    expect(onDocChange).toHaveBeenCalledWith(
+      {
+        nodes: [
+          { type: 'text', text: 'first ' },
+          { type: 'skill', id: 'analysis', name: 'analysis' },
+          { type: 'text', text: '\nsecond line' }
+        ]
+      },
+      { nodeIndex: 2, offset: '\nsecond'.length }
+    )
+  })
+
   it('captures the selection start before replacing selected Composer text', () => {
     const onDocChange = vi.fn()
     renderEditor({ doc: { nodes: [{ type: 'text', text: 'hello' }] }, onDocChange })

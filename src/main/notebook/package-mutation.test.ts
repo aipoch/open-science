@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -12,6 +12,7 @@ import {
   readOperationChild,
   RuntimeOperationJournal
 } from './operation-journal'
+import { importedEnvironmentLockMarkerPath } from './runtime-paths'
 
 type MutationOptions = ConstructorParameters<typeof NotebookPackageMutationOwner>[0]
 
@@ -73,6 +74,10 @@ const ownerHarness = (
       logPackageResult: vi.fn()
     },
     environmentStateTracker: {
+      inspectPackages: vi.fn().mockResolvedValue({
+        inventory: { source: 'unavailable', validation: 'unavailable' },
+        packages: []
+      }),
       markPackageMutationDirty: vi.fn().mockResolvedValue(undefined),
       refreshAfterPackageMutation: vi.fn().mockResolvedValue({ result: 'success' })
     },
@@ -83,6 +88,8 @@ const ownerHarness = (
       method: 'conda'
     }),
     recheckRepair: vi.fn(() => undefined),
+    recheckAuthorization: vi.fn(async () => undefined),
+    canSkipInstall: vi.fn(() => true),
     runtimeRepair: {
       quarantineProtectedIdentity: vi.fn().mockResolvedValue(undefined),
       completeInterruptedInstall: vi.fn().mockResolvedValue(undefined)
@@ -97,6 +104,169 @@ const pending = (runtimeRoot: string): ReturnType<RuntimeOperationJournal['pendi
   RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot)).pending()
 
 describe('NotebookPackageMutationOwner', () => {
+  it('retains the install recovery path when repair is required', async () => {
+    const { owner, options, target } = ownerHarness({ canSkipInstall: () => false })
+    await owner.mutate({ target, mirror: {} })
+    expect(options.environmentStateTracker.inspectPackages).not.toHaveBeenCalled()
+    expect(options.installPackages).toHaveBeenCalled()
+    expect(options.runtimeRepair.completeInterruptedInstall).toHaveBeenCalled()
+  })
+  it.each([
+    ['python', 'numpy==2.0', 'numpy'],
+    ['python', 'numpy', 'numpy'],
+    ['r', 'ggplot2', 'ggplot2']
+  ] as const)('skips all mutation resources for satisfied %s %s', async (language, spec, name) => {
+    const retainWorkingCache = vi.fn()
+    const { owner, options, target, runtimeRoot } = ownerHarness({ retainWorkingCache })
+    const mirror = vi.fn().mockResolvedValue({})
+    const request = { ...target.request, language, packages: [spec] }
+    const environmentCaptureTarget = { ...target.environmentCaptureTarget, language }
+    if (!target.journalTarget) throw new Error('Expected managed prefix')
+    mkdirSync(target.journalTarget, { recursive: true })
+    const marker = importedEnvironmentLockMarkerPath(target.journalTarget)
+    writeFileSync(marker, 'a'.repeat(64))
+    let locked = false
+    options.environmentOperations.runMutation = async (_name, operation) => {
+      locked = true
+      try {
+        return await operation()
+      } finally {
+        locked = false
+      }
+    }
+    vi.mocked(options.environmentStateTracker.inspectPackages).mockImplementation(
+      async (capture, packages, freshness) => {
+        expect(locked).toBe(true)
+        expect(capture).toEqual(environmentCaptureTarget)
+        expect(packages).toEqual([spec])
+        expect(freshness).toEqual({ fresh: true })
+        return {
+          inventory: { source: 'full-scan', validation: 'full-scan' },
+          packages: [
+            {
+              requested: spec,
+              name,
+              status: 'installed',
+              version: '2.0',
+              versionStatus: 'known',
+              libraryScope: 'environment'
+            }
+          ]
+        }
+      }
+    )
+    await expect(
+      owner.mutate({ target: { ...target, request, environmentCaptureTarget }, mirror })
+    ).resolves.toMatchObject({
+      ok: true,
+      needsRestart: false,
+      packageChanges: [{ name, change: 'unchanged', afterVersion: '2.0' }]
+    })
+    expect(mirror).not.toHaveBeenCalled()
+    expect(retainWorkingCache).not.toHaveBeenCalled()
+    expect(options.installPackages).not.toHaveBeenCalled()
+    expect(options.environmentStateTracker.markPackageMutationDirty).not.toHaveBeenCalled()
+    expect(options.runtimeRepair.completeInterruptedInstall).not.toHaveBeenCalled()
+    expect(existsSync(marker)).toBe(true)
+    expect(existsSync(operationJournalPath(runtimeRoot))).toBe(false)
+  })
+
+  it.each(['mismatch', 'missing', 'unknown', 'failed-probe', 'mixed'])(
+    'keeps the original installer request for %s evidence',
+    async (scenario) => {
+      const { owner, options, target } = ownerHarness()
+      const request = {
+        ...target.request,
+        packages: scenario === 'mixed' ? ['numpy==2.0', 'pandas'] : ['numpy==2.0']
+      }
+      const inspect = vi.mocked(options.environmentStateTracker.inspectPackages)
+      inspect.mockResolvedValue({
+        inventory: { source: 'full-scan', validation: 'full-scan' },
+        packages: [
+          {
+            requested: 'numpy==2.0',
+            name: 'numpy',
+            status:
+              scenario === 'missing' ? 'missing' : scenario === 'unknown' ? 'unknown' : 'installed',
+            version: scenario === 'mismatch' ? '1.0' : '2.0',
+            versionStatus: 'known'
+          }
+        ]
+      })
+      if (scenario === 'failed-probe') inspect.mockRejectedValue(new Error('metadata unavailable'))
+      await owner.mutate({ target: { ...target, request }, mirror: {} })
+      expect(options.installPackages).toHaveBeenCalledWith(request, expect.anything())
+    }
+  )
+
+  it.each(['user', 'system', 'unknown', undefined] as const)(
+    'does not satisfy an R install from library scope %s',
+    async (libraryScope) => {
+      const { owner, options, target } = ownerHarness()
+      const request = { ...target.request, language: 'r' as const, packages: ['ggplot2'] }
+      vi.mocked(options.environmentStateTracker.inspectPackages).mockResolvedValue({
+        inventory: { source: 'full-scan', validation: 'full-scan' },
+        packages: [
+          {
+            requested: 'ggplot2',
+            name: 'ggplot2',
+            status: 'installed',
+            version: '4.0.3',
+            versionStatus: 'known',
+            libraryScope
+          }
+        ]
+      })
+      await owner.mutate({
+        target: {
+          ...target,
+          request,
+          environmentCaptureTarget: { ...target.environmentCaptureTarget, language: 'r' }
+        },
+        mirror: {}
+      })
+      expect(options.installPackages).toHaveBeenCalledWith(request, expect.anything())
+      expect(options.environmentStateTracker.markPackageMutationDirty).toHaveBeenCalled()
+    }
+  )
+
+  it.each([
+    { packages: ['numpy>=2'] },
+    { packages: ['numpy[extra]'] },
+    { packages: ['--force-reinstall'] },
+    { packages: [] },
+    { channels: ['bioconda'] },
+    { language: 'python' as const, usePip: true },
+    { operation: 'uninstall' as const },
+    { language: 'r' as const, packages: ['r-ggplot2'] },
+    { language: 'r' as const, packages: ['bioconductor-deseq2'] },
+    { language: 'r' as const, installer: 'github' as const, packages: ['owner/repo'] }
+  ])('does not preflight unsupported request %j', async (overrides) => {
+    const { owner, options, target } = ownerHarness()
+    await owner.mutate({
+      target: { ...target, request: { ...target.request, ...overrides } },
+      mirror: {}
+    })
+    expect(options.environmentStateTracker.inspectPackages).not.toHaveBeenCalled()
+    expect(options.installPackages).toHaveBeenCalled()
+  })
+
+  it('honors cancellation after the metadata probe without starting an installer', async () => {
+    const { owner, options, target } = ownerHarness()
+    const controller = new AbortController()
+    vi.mocked(options.environmentStateTracker.inspectPackages).mockImplementation(
+      async (_target, _packages, probeOptions) => {
+        expect(probeOptions?.signal).toBe(controller.signal)
+        controller.abort(new Error('cancelled during probe'))
+        throw new Error('probe failed')
+      }
+    )
+    await expect(owner.mutate({ target, mirror: {} }, controller.signal)).rejects.toThrow(
+      'cancelled during probe'
+    )
+    expect(options.installPackages).not.toHaveBeenCalled()
+  })
+
   it('passes caller cancellation to the package installer', async () => {
     const installPackages = vi.fn().mockResolvedValue({
       ok: true,
@@ -113,6 +283,69 @@ describe('NotebookPackageMutationOwner', () => {
       target.request,
       expect.objectContaining({ signal: cancellation.signal })
     )
+  })
+
+  it('invalidates an imported-lock reuse marker before mutating its environment', async () => {
+    const { owner, options, target, runtimeRoot } = ownerHarness()
+    if (!target.journalTarget) throw new Error('Expected a managed environment target.')
+    mkdirSync(target.journalTarget, { recursive: true })
+    const markerPath = importedEnvironmentLockMarkerPath(target.journalTarget)
+    const checksum = 'a'.repeat(64)
+    const lockDirectory = join(runtimeRoot, 'imported-locks')
+    const nativeLocksRoot = join(lockDirectory, checksum)
+    mkdirSync(nativeLocksRoot, { recursive: true })
+    writeFileSync(join(lockDirectory, `${checksum}.txt`), '@EXPLICIT\n')
+    writeFileSync(join(nativeLocksRoot, 'requirements.lock'), 'numpy==2.0\n')
+    writeFileSync(markerPath, `${checksum}\n`)
+    vi.mocked(options.installPackages).mockImplementation(async () => {
+      expect(existsSync(markerPath)).toBe(false)
+      expect(existsSync(join(lockDirectory, `${checksum}.txt`))).toBe(false)
+      expect(existsSync(nativeLocksRoot)).toBe(false)
+      return { ok: true, needsRestart: false, log: 'installed', method: 'conda' }
+    })
+
+    await expect(owner.mutate({ target, mirror: {} })).resolves.toMatchObject({ ok: true })
+    expect(existsSync(markerPath)).toBe(false)
+  })
+
+  it('rechecks installation consent after the mutation lock and mirror resolution', async () => {
+    const order: string[] = []
+    const refusal = {
+      status: 'refused' as const,
+      result: {
+        ok: false,
+        needsRestart: false,
+        log: '',
+        error: 'authorization changed'
+      }
+    }
+    const { owner, options, target, runtimeRoot } = ownerHarness({
+      recheckAuthorization: vi.fn(async () => {
+        order.push('authorization')
+        return refusal
+      }),
+      environmentOperations: {
+        runMutation: async <T>(_env: string, operation: () => Promise<T>): Promise<T> => {
+          order.push('lock')
+          return operation()
+        },
+        logPackageFailure: vi.fn(),
+        logPackageResult: vi.fn()
+      }
+    })
+    await expect(
+      owner.mutate({
+        target,
+        mirror: async () => {
+          order.push('mirror')
+          return {}
+        }
+      })
+    ).resolves.toEqual(refusal.result)
+    expect(order).toEqual(['lock', 'mirror', 'authorization'])
+    expect(options.installPackages).not.toHaveBeenCalled()
+    expect(options.environmentStateTracker.markPackageMutationDirty).not.toHaveBeenCalled()
+    expect(await pending(runtimeRoot)).toEqual([])
   })
 
   it('rechecks repair policy after acquiring the mutation lock', async () => {
@@ -166,6 +399,10 @@ describe('NotebookPackageMutationOwner', () => {
         logPackageResult: vi.fn(() => order.push('diagnostic'))
       },
       environmentStateTracker: {
+        inspectPackages: vi.fn().mockResolvedValue({
+          inventory: { source: 'unavailable', validation: 'unavailable' },
+          packages: []
+        }),
         markPackageMutationDirty: vi.fn(async (_target, mutation) => {
           operationId = mutation.operationId
           expect((await pending(runtimeRoot))[0]).toMatchObject({
@@ -515,6 +752,10 @@ describe('NotebookPackageMutationOwner', () => {
     let operationId = ''
     const { owner, target, runtimeRoot } = ownerHarness({
       environmentStateTracker: {
+        inspectPackages: vi.fn().mockResolvedValue({
+          inventory: { source: 'unavailable', validation: 'unavailable' },
+          packages: []
+        }),
         markPackageMutationDirty: vi.fn(async (_target, mutation) => {
           operationId = mutation.operationId
         }),
@@ -563,6 +804,10 @@ describe('NotebookPackageMutationOwner', () => {
     const dirtyFailure = new Error('dirty marker denied')
     const { owner, options, target, runtimeRoot } = ownerHarness({
       environmentStateTracker: {
+        inspectPackages: vi.fn().mockResolvedValue({
+          inventory: { source: 'unavailable', validation: 'unavailable' },
+          packages: []
+        }),
         markPackageMutationDirty: vi.fn().mockRejectedValue(dirtyFailure),
         refreshAfterPackageMutation: vi.fn()
       }
@@ -597,6 +842,10 @@ describe('NotebookPackageMutationOwner', () => {
   it('turns an unverifiable successful installer result into the existing structured failure', async () => {
     const { owner, options, target } = ownerHarness({
       environmentStateTracker: {
+        inspectPackages: vi.fn().mockResolvedValue({
+          inventory: { source: 'unavailable', validation: 'unavailable' },
+          packages: []
+        }),
         markPackageMutationDirty: vi.fn().mockResolvedValue(undefined),
         refreshAfterPackageMutation: vi.fn().mockRejectedValue(new Error('scan failed'))
       }
@@ -686,6 +935,71 @@ describe('NotebookPackageMutationOwner', () => {
     ])
   })
 
+  it.each([false, true])(
+    'settles child journal writes before releasing a failed mutation (journal update rejects: %s)',
+    async (updateRejects) => {
+      const childFailure = new Error(`install failed: ${CHILD_UNCONFIRMED}`)
+      const release = vi.fn().mockResolvedValue(false)
+      let allowWrite!: () => void
+      const writeGate = new Promise<void>((resolve) => {
+        allowWrite = resolve
+      })
+      let reportRead!: () => void
+      const readStarted = new Promise<void>((resolve) => {
+        reportRead = resolve
+      })
+      const { owner, options, target, runtimeRoot } = ownerHarness({
+        retainWorkingCache: vi.fn(() => release),
+        installPackages: vi.fn(async (_request, deps) => {
+          // Delay the real queued update after its read, before its mkdir/write/rename.
+          // This makes a slow filesystem deterministic without fabricating ENOTEMPTY.
+          vi.spyOn(journal, 'readState').mockImplementationOnce(async () => {
+            const state = await readState()
+            reportRead()
+            await writeGate
+            if (updateRejects) throw new Error('child journal update failed')
+            return state
+          })
+          deps?.onBeforeSpawn?.()
+          deps?.onChild?.(process.pid)
+          await readStarted
+          throw childFailure
+        })
+      })
+      const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
+      const readState = journal.readState.bind(journal)
+      const update = vi.spyOn(journal, 'update')
+      let settled = false
+      const mutation = owner
+        .mutate({ target, mirror: {} })
+        .catch((error: unknown) => error)
+        .finally(() => {
+          settled = true
+          // Reproduce the suite's teardown boundary with real files, not a mocked rm error.
+          rmSync(options.storageRoot, { recursive: true, force: true })
+        })
+      let settledBeforeWrite = false
+      let releasedBeforeWrite = false
+      try {
+        await readStarted
+        await new Promise<void>((resolve) => setImmediate(resolve))
+        expect(options.blockUnconfirmedChild).toHaveBeenCalledWith(target)
+        settledBeforeWrite = settled
+        releasedBeforeWrite = release.mock.calls.length > 0
+      } finally {
+        allowWrite()
+        await mutation
+        // Drain on the broken implementation too, so a failing assertion cannot race teardown.
+        await Promise.allSettled(update.mock.results.map((result) => result.value))
+      }
+      expect(existsSync(options.storageRoot)).toBe(false)
+      expect(settledBeforeWrite).toBe(false)
+      expect(releasedBeforeWrite).toBe(false)
+      expect(await mutation).toBe(childFailure)
+      expect(release).toHaveBeenCalledWith(expect.objectContaining({ retainForRecovery: true }))
+    }
+  )
+
   it('retains sidecar and journal and blocks the target for an unconfirmed child', async () => {
     let operationId = ''
     const childFailure = new Error(`install failed: ${CHILD_UNCONFIRMED}`)
@@ -693,6 +1007,10 @@ describe('NotebookPackageMutationOwner', () => {
     const { owner, options, target, runtimeRoot } = ownerHarness({
       retainWorkingCache: vi.fn(() => release),
       environmentStateTracker: {
+        inspectPackages: vi.fn().mockResolvedValue({
+          inventory: { source: 'unavailable', validation: 'unavailable' },
+          packages: []
+        }),
         markPackageMutationDirty: vi.fn(async (_target, mutation) => {
           operationId = mutation.operationId
         }),

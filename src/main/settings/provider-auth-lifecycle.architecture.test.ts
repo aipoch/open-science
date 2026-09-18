@@ -19,6 +19,8 @@ import {
 } from 'typescript'
 import { describe, expect, it } from 'vitest'
 
+import { loadModuleImpactManifest } from '../../../scripts/ci/load-module-impact.mjs'
+
 import {
   listProductionSources,
   readProductionSource
@@ -41,6 +43,8 @@ const portablePath = (path: string): string => relative(projectRoot, path).repla
 const productionSources = (): readonly string[] => listProductionSources(projectRoot)
 
 const importsOwner = (path: string): boolean => {
+  // The AST predicate below requires this literal module name; skip unrelated files before parsing.
+  if (!readSource(path).includes('provider-auth-lifecycle')) return false
   let imports = false
   const sourceFile = sourceFileFor(path)
   const visit = (node: Node): void => {
@@ -127,9 +131,7 @@ describe('Provider authentication lifecycle ownership', () => {
     expect(productionSources().filter(importsOwner).map(portablePath)).toEqual([
       'src/main/settings/provider-accounts.ts'
     ])
-    const manifest = JSON.parse(readSource(manifestPath)) as {
-      modules: Record<string, { ownerPaths: string[]; testFiles: { owner: string[] } }>
-    }
+    const manifest = loadModuleImpactManifest(manifestPath)
     expect(manifest.modules.settings_provider_accounts.ownerPaths).toContain(
       'src/main/settings/provider-auth-lifecycle.ts'
     )

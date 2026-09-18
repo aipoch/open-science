@@ -38,6 +38,72 @@ beforeEach(() => {
 })
 
 describe('notebook-env-store', () => {
+  it('reported recovery failure does not submit another provision through Retry while blocked', async () => {
+    const diagnostic =
+      "Error invoking remote method 'notebook-env:provision': Error: The python runtime is " +
+      'recovering from an interrupted operation whose process could not be confirmed stopped. ' +
+      'Use Recheck in Settings → Runtimes. Restarting the app does not prove that the worker stopped.'
+    const blocked: ProvisionStatus = {
+      ...READY,
+      pythonReady: false,
+      pythonRecoveryBlocked: true,
+      recovery: {
+        corruptJournal: false,
+        operations: [
+          {
+            operationId: 'reported-missing-archive',
+            runtimeId: 'default-python',
+            reason: 'recovery-failed'
+          }
+        ]
+      }
+    }
+    const { api, emit } = installApi({
+      getStatus: vi.fn(async () => blocked),
+      // This is the recorded IPC response, not an implementation of the recovery policy.
+      provision: vi.fn().mockRejectedValue(new Error(diagnostic))
+    })
+    await useNotebookEnvStore.getState().init()
+    emit({ phase: 'error', diagnostic, progress: 0 })
+    await vi.waitFor(() => expect(useNotebookEnvStore.getState().ui.kind).toBe('error'))
+    api.getStatus.mockClear()
+
+    await useNotebookEnvStore.getState().retry()
+    await useNotebookEnvStore.getState().retry()
+
+    expect(useNotebookEnvStore.getState().ui).toMatchObject({ kind: 'error' })
+    expect(api.repair).not.toHaveBeenCalled()
+    expect(api.provision).not.toHaveBeenCalled()
+    expect(api.getStatus).toHaveBeenCalledTimes(2)
+  })
+
+  it('rechecks the Python recovery banner when the latest failed setup belongs to R', async () => {
+    const { api, emit } = installApi({
+      getStatus: vi.fn(async () => ({
+        ...READY,
+        pythonReady: false,
+        pythonRecoveryBlocked: true,
+        rRecoveryBlocked: false
+      }))
+    })
+    await useNotebookEnvStore.getState().init()
+    emit({ phase: 'error', diagnostic: 'R setup failed', progress: 0, language: 'r', scope: 'r' })
+    await vi.waitFor(() =>
+      expect(useNotebookEnvStore.getState().ui).toMatchObject({
+        kind: 'error',
+        recoveryBlocked: true,
+        scope: 'r'
+      })
+    )
+    api.getStatus.mockClear()
+
+    await useNotebookEnvStore.getState().retry()
+
+    expect(api.provision).not.toHaveBeenCalled()
+    expect(api.repair).not.toHaveBeenCalled()
+    expect(api.getStatus).toHaveBeenCalledOnce()
+  })
+
   it('starts from a not-ready, not-provisioning baseline', () => {
     expect(useNotebookEnvStore.getState().status).toEqual({
       pythonReady: false,

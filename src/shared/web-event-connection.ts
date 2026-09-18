@@ -8,7 +8,8 @@ const WEB_EVENT_CONNECTION_PHASES = [
   'reconnecting',
   'replaying',
   'live',
-  'reload-required'
+  'reload-required',
+  'authorization-required'
 ] as const
 
 type WebEventConnectionPhase = (typeof WEB_EVENT_CONNECTION_PHASES)[number]

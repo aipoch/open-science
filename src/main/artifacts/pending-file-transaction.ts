@@ -17,6 +17,15 @@ import {
 import type { FileDigest } from '../bounded-file-io'
 import { LOCAL_RESOURCE_BUDGETS, assertWithinResourceBudget } from '../resource-budget'
 import { availableBytes } from '../storage/usage'
+import { redactSensitiveText } from '../diagnostic-redaction'
+
+// Bound dependency diagnostics before adding execution state and recovery identities.
+export const artifactFailureDiagnostic = (error: unknown): string => {
+  const text = redactSensitiveText(error instanceof Error ? error.message : String(error))
+  return text.length <= 1_600
+    ? text
+    : `${text.slice(0, 800)}\n…[diagnostic truncated]…\n${text.slice(-800)}`
+}
 
 type PendingFileTransactionOptions = {
   allowedImportRoots?: string[]
@@ -24,6 +33,7 @@ type PendingFileTransactionOptions = {
   maxFileBytes?: number
   maxInlineBytes?: number
   diskReserveBytes?: number
+  preserveRecoveryState?: () => Promise<boolean>
   signal?: AbortSignal
   reserveFile?: (fileBytes: number) => Promise<{ id: string; fileBytes: number }>
   releaseFileReservation?: (reservationId: string) => Promise<void>
@@ -208,6 +218,23 @@ const runPendingFileTransaction = async <Result, Routing>(options: {
     return result
   } catch (error) {
     const recoveryErrors: unknown[] = []
+    let preserveReplacement = versionRoutingPublished
+    // Durable staging owns these pending bytes even if publishing its routing was interrupted.
+    // A failed ownership lookup must also preserve the evidence for later recovery.
+    try {
+      if (
+        !versionRoutingPublished &&
+        replacementPublished &&
+        (await options.writeOptions.preserveRecoveryState?.())
+      ) {
+        preserveReplacement = true
+      }
+    } catch (ownershipError) {
+      preserveReplacement = true
+      preserveFileBackup = true
+      preserveMetadataBackup = true
+      recoveryErrors.push(ownershipError)
+    }
     if (reservation && options.writeOptions.releaseFileReservation) {
       try {
         await options.writeOptions.releaseFileReservation(reservation.id)
@@ -216,13 +243,13 @@ const runPendingFileTransaction = async <Result, Routing>(options: {
       }
     }
     await rm(temporaryPath, { force: true }).catch(() => undefined)
-    if (replacementPublished && !versionRoutingPublished) {
+    if (replacementPublished && !preserveReplacement) {
       await Promise.all([
         rm(filePath, { force: true }).catch(() => undefined),
         rm(metadataPath, { force: true }).catch(() => undefined)
       ])
     }
-    if (fileBackedUp && !versionRoutingPublished) {
+    if (fileBackedUp && !preserveReplacement) {
       try {
         await rename(backupPath, filePath)
       } catch (recoveryError) {
@@ -230,7 +257,7 @@ const runPendingFileTransaction = async <Result, Routing>(options: {
         recoveryErrors.push(recoveryError)
       }
     }
-    if (metadataBackedUp && !versionRoutingPublished) {
+    if (metadataBackedUp && !preserveReplacement) {
       try {
         await mkdir(dirname(metadataPath), { recursive: true })
         await rename(metadataBackupPath, metadataPath)
@@ -242,11 +269,18 @@ const runPendingFileTransaction = async <Result, Routing>(options: {
     if (recoveryErrors.length > 0) {
       throw new AggregateError(
         [error, ...recoveryErrors],
-        `Artifact pending-file rollback or reservation release failed: ${recoveryErrors
-          .map((recoveryError) =>
-            recoveryError instanceof Error ? recoveryError.message : String(recoveryError)
-          )
-          .join('; ')}`
+        `Artifact write failed: ${artifactFailureDiagnostic(error)}. ` +
+          `Artifact pending-file rollback or reservation release failed: ${[
+            ...new Set(recoveryErrors.map(artifactFailureDiagnostic))
+          ].join('; ')}. ` +
+          (versionRoutingPublished
+            ? 'Version routing was already published; this failure does not establish that the Artifact Version was rolled back. '
+            : 'Version routing publication was not confirmed; rollback or reservation cleanup is incomplete. ') +
+          (preserveFileBackup ? `Original file backup retained at ${backupPath}. ` : '') +
+          (preserveMetadataBackup
+            ? `Original metadata backup retained at ${metadataBackupPath}. `
+            : '') +
+          'Do not edit provenance metadata to recover this write.'
       )
     }
     throw error

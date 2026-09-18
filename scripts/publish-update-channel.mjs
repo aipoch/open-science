@@ -5,6 +5,7 @@
 import { execFileSync } from 'node:child_process'
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { createHash } from 'node:crypto'
 import { load } from 'js-yaml'
 
 const {
@@ -73,18 +74,12 @@ if (promote) {
   }
 }
 
-aws(
-  's3',
-  'sync',
-  'dist-assets/',
-  `${root}/releases/${version}/`,
-  '--exclude',
-  'version.json',
-  '--cache-control',
-  'public, max-age=31536000, immutable',
-  '--only-show-errors'
+// The immutable uploader preflights the entire version, including its manifest, before any writes.
+execFileSync(
+  process.execPath,
+  ['scripts/publish-release-assets.mjs', 'release', 'dist-assets', 'version.json'],
+  { stdio: 'pipe' }
 )
-upload('version.json', `releases/${version}/version.json`, true, 'application/json')
 if (!promote) {
   console.log(`Backfilled ${version}; channel entries unchanged.`)
 } else {
@@ -92,5 +87,15 @@ if (!promote) {
   // retry repairs a partial write, and the preflight prevents an older run overwriting any newer feed.
   for (const name of feeds) upload(join('dist-assets', name), name, false, 'text/yaml')
   upload('version.json', 'version.json', false, 'application/json')
+  // Metadata is small; compare actual readback bytes before reporting a completed promotion.
+  for (const [file, name] of [
+    ...feeds.map((name) => [join('dist-assets', name), name]),
+    ['version.json', 'version.json']
+  ]) {
+    const digest = (bytes) => createHash('sha256').update(bytes).digest('hex')
+    if (digest(readRemote(name)) !== digest(readFileSync(file))) {
+      throw new Error(`Publication readback failed: ${name}`)
+    }
+  }
   console.log(`Promoted stable channel to ${version}.`)
 }

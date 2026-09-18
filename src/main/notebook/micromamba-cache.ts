@@ -13,6 +13,7 @@ import {
 import { basename, dirname, join, posix, resolve, win32 } from 'node:path'
 
 import { resolveWindowsPowerShellExecutable } from '../windows-powershell'
+import { createLogger } from '../logger'
 import { DEFAULT_MAX_CACHE_RELATIVE_PATH as MANIFEST_DEFAULT_MAX_CACHE_RELATIVE_PATH } from './bundle-manifest'
 
 export const WINDOWS_MAX_USABLE_PATH = 259
@@ -52,7 +53,8 @@ type CacheMarker = { schema?: number; canonicalRoot?: string; userIdentity?: str
 
 type TempParentMarker = { schema?: number; kind?: string; userIdentity?: string }
 
-const WINDOWS_TEMP_PARENT = 'OpenScienceTmp'
+const WINDOWS_TEMP_PARENT = 'Open-ScienceTmp'
+const LEGACY_WINDOWS_TEMP_PARENT = 'OpenScienceTmp'
 const TEMP_PARENT_MARKER_FILE = '.open-science-temp.json'
 const TEMP_PARENT_MARKER_KIND = 'micromamba-working-cache-parent'
 
@@ -493,7 +495,8 @@ const candidatePaths = (
   canonicalRoot: string,
   leaf: string,
   env: NodeJS.ProcessEnv,
-  canonicalize: (path: string) => string
+  canonicalize: (path: string) => string,
+  tempParent = WINDOWS_TEMP_PARENT
 ): CachePathCandidate[] => {
   const runtimeVolume = win32.parse(canonicalRoot).root
   const seenTemporaryRoots = new Set([windowsKey(runtimeVolume)])
@@ -508,13 +511,13 @@ const candidatePaths = (
     })
   const profile = env.USERPROFILE ? win32.normalize(canonicalize(env.USERPROFILE)) : undefined
   const primary = {
-    path: win32.join(runtimeVolume, WINDOWS_TEMP_PARENT, leaf),
+    path: win32.join(runtimeVolume, tempParent, leaf),
     managedParent: true
   }
   return [
     primary,
     ...perUserTemps.map((perUserTemp) => ({
-      path: win32.join(perUserTemp, WINDOWS_TEMP_PARENT, leaf),
+      path: win32.join(perUserTemp, tempParent, leaf),
       profileBoundary: perUserTemp,
       managedParent: true
     })),
@@ -563,9 +566,20 @@ export const micromambaWorkingCachePaths = (
   const env = deps.env ?? process.env
   const canonicalize = deps.canonicalize ?? canonicalizeExisting
   const identity = cacheIdentity(root, env, canonicalize)
-  return candidatePaths(identity.canonicalRoot, identity.leaf, env, canonicalize).map(
-    (candidate) => candidate.path
-  )
+  return [
+    ...new Set(
+      [
+        ...candidatePaths(identity.canonicalRoot, identity.leaf, env, canonicalize),
+        ...candidatePaths(
+          identity.canonicalRoot,
+          identity.leaf,
+          env,
+          canonicalize,
+          LEGACY_WINDOWS_TEMP_PARENT
+        )
+      ].map((candidate) => candidate.path)
+    )
+  ]
 }
 
 export const micromambaWorkingCachePath = (
@@ -596,7 +610,23 @@ export const selectMicromambaCache = (
     deps.prepare ??
     ((path: string, ownership: CacheOwnership) =>
       defaultPrepare(path, ownership, hardenOwnership, verifyOwnership))
-  const candidates = candidatePaths(canonicalRoot, leaf, env, canonicalize)
+  const exists =
+    deps.exists ??
+    ((path: string) => {
+      try {
+        return lstatSync(path).isDirectory()
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
+        throw error
+      }
+    })
+  // Reuse an existing, ownership-verified cache without creating any old-brand path on new installs.
+  const candidates = [
+    ...candidatePaths(canonicalRoot, leaf, env, canonicalize, LEGACY_WINDOWS_TEMP_PARENT).filter(
+      (candidate) => candidate.path.includes(LEGACY_WINDOWS_TEMP_PARENT) && exists(candidate.path)
+    ),
+    ...candidatePaths(canonicalRoot, leaf, env, canonicalize)
+  ]
   const rejections: string[] = []
 
   for (const candidate of candidates) {
@@ -663,17 +693,33 @@ export const isTrustedMicromambaWorkingCacheForRoot = (
 ): boolean => {
   const platform = deps.platform ?? process.platform
   const canonicalize = deps.canonicalize ?? canonicalizeExisting
+  // Diagnose only checks already performed by recovery. Never inspect rejected paths further or
+  // log marker contents, usernames, or raw exception messages from filesystem/ACL probes.
+  const reject = (stage: string, error?: unknown): false => {
+    try {
+      createLogger('notebook:cache').warn('working cache recovery trust rejected', {
+        stage,
+        platform,
+        cacheReference: createHash('sha256').update(path).digest('hex').slice(0, 12),
+        pathLength: path.length,
+        errorCode: (error as NodeJS.ErrnoException | undefined)?.code
+      })
+    } catch {
+      // A diagnostic sink failure must never change the trust decision.
+    }
+    return false
+  }
   if (platform !== 'win32') {
     try {
       const expected = posix.join(root, 'pkgs')
       const state = lstatSync(path)
-      return (
+      const trusted =
         state.isDirectory() &&
         !state.isSymbolicLink() &&
         canonicalize(path) === canonicalize(expected)
-      )
-    } catch {
-      return false
+      return trusted || reject('cache-identity')
+    } catch (error) {
+      return reject('cache-inspection', error)
     }
   }
 
@@ -681,18 +727,25 @@ export const isTrustedMicromambaWorkingCacheForRoot = (
   let identity: ReturnType<typeof cacheIdentity>
   try {
     identity = cacheIdentity(root, env, canonicalize)
-  } catch {
-    return false
+  } catch (error) {
+    return reject('root-identity', error)
   }
   const normalized = win32.normalize(path)
-  if (!win32.isAbsolute(normalized) || !isAsciiPath(normalized)) return false
-  if (windowsKey(win32.basename(normalized)) !== windowsKey(identity.leaf)) return false
+  if (!win32.isAbsolute(normalized) || !isAsciiPath(normalized)) return reject('path-format')
+  if (windowsKey(win32.basename(normalized)) !== windowsKey(identity.leaf))
+    return reject('cache-name')
 
   const parent = win32.dirname(normalized)
   const parentLeaf = win32.basename(parent).toLowerCase()
-  if (parentLeaf !== WINDOWS_TEMP_PARENT.toLowerCase() && parentLeaf !== 'os-tmp') return false
+  if (
+    parentLeaf !== WINDOWS_TEMP_PARENT.toLowerCase() &&
+    parentLeaf !== LEGACY_WINDOWS_TEMP_PARENT.toLowerCase() &&
+    parentLeaf !== 'os-tmp'
+  )
+    return reject('parent-location')
   const profile = env.USERPROFILE ? win32.normalize(canonicalize(env.USERPROFILE)) : undefined
-  if (parentLeaf === 'os-tmp' && (!profile || !isInside(profile, parent))) return false
+  if (parentLeaf === 'os-tmp' && (!profile || !isInside(profile, parent)))
+    return reject('profile-boundary')
 
   const verifyOwnership = deps.verifyOwnership ?? defaultVerifyOwnership
   const inspectParent =
@@ -721,6 +774,7 @@ export const isTrustedMicromambaWorkingCacheForRoot = (
       }
     })
 
+  let stage = 'parent-inspection'
   try {
     const parentState = inspectParent(parent)
     if (
@@ -729,23 +783,27 @@ export const isTrustedMicromambaWorkingCacheForRoot = (
       windowsKey(parentState.physical) !== windowsKey(parent) ||
       parentState.marker?.schema !== 1 ||
       parentState.marker.kind !== TEMP_PARENT_MARKER_KIND ||
-      parentState.marker.userIdentity !== identity.userIdentity ||
-      !verifyOwnership(parentState.physical, identity.userIdentity)
+      parentState.marker.userIdentity !== identity.userIdentity
     ) {
-      return false
+      return reject('parent-identity')
     }
+    stage = 'parent-ownership'
+    if (!verifyOwnership(parentState.physical, identity.userIdentity)) return reject(stage)
+    stage = 'cache-inspection'
     const state = inspect(normalized)
-    return (
+    stage = 'cache-identity'
+    const trusted =
       state.directory &&
       !state.symbolicLink &&
       windowsKey(canonicalize(normalized)) === windowsKey(normalized) &&
       state.marker.schema === 1 &&
       state.marker.canonicalRoot === windowsKey(identity.canonicalRoot) &&
-      state.marker.userIdentity === identity.userIdentity &&
-      verifyOwnership(normalized, identity.userIdentity)
-    )
-  } catch {
-    return false
+      state.marker.userIdentity === identity.userIdentity
+    if (!trusted) return reject(stage)
+    stage = 'cache-ownership'
+    return verifyOwnership(normalized, identity.userIdentity) || reject(stage)
+  } catch (error) {
+    return reject(stage, error)
   }
 }
 
@@ -878,6 +936,13 @@ export const removeMicromambaCacheForRoot = (
     deps.remove ?? ((path: string): void => rmSync(path, { recursive: true, force: true }))
   const cleanupCandidates = [
     ...candidatePaths(identity.canonicalRoot, identity.leaf, env, canonicalize),
+    ...candidatePaths(
+      identity.canonicalRoot,
+      identity.leaf,
+      env,
+      canonicalize,
+      LEGACY_WINDOWS_TEMP_PARENT
+    ).filter((candidate) => candidate.path.includes(LEGACY_WINDOWS_TEMP_PARENT)),
     ...legacyCleanupCandidatePaths(
       identity.canonicalRoot,
       identity.legacyLeaf,

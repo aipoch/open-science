@@ -1,8 +1,17 @@
+import { annotationTransfers, ANNOTATION_DRAG_TYPE } from './annotations/annotation-transfer'
+import { parseSideChatAnnotationText, type Annotation } from '../../../../shared/annotations'
+import { SideChatPanel } from './SideChatPanel'
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { PropsWithChildren } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+const { forkSessionMock } = vi.hoisted(() => ({ forkSessionMock: vi.fn(async () => undefined) }))
+vi.mock('@/lib/session-fork', () => ({
+  forkSession: forkSessionMock,
+  sessionForkAvailable: () => true
+}))
 
 import { ConversationPanel } from './ConversationPanel'
 import { FOCUS_COMPOSER_EVENT } from './composer-focus-events'
@@ -186,17 +195,20 @@ vi.mock('./use-session-background-tasks', async (importOriginal) => ({
 
 vi.mock('./WorkspaceMessageScroller', () => ({
   WorkspaceMessageScroller: ({
+    forkSourceContent,
     credentialPending,
     isResumingSession,
     visiblePermissionPending,
     pendingElicitations = []
   }: {
+    forkSourceContent?: React.ReactNode
     credentialPending?: boolean
     isResumingSession?: boolean
     visiblePermissionPending?: boolean
     pendingElicitations?: unknown[]
   }): React.JSX.Element => (
     <>
+      {forkSourceContent}
       {isResumingSession ? (
         <span data-testid="resume-progress-indicator">Resuming session</span>
       ) : null}
@@ -434,6 +446,62 @@ describe('ConversationPanel annotation composer integration', () => {
     expect(cancelQueuedEdit).toHaveBeenCalledOnce()
   })
 
+  it.each([true, false])(
+    'accepts a Side chat annotation into the main composer only after validation (accepted=%s)',
+    (accepted) => {
+      const annotation: Annotation = {
+        id: 'return-annotation',
+        kind: 'text',
+        target: 'agent',
+        quote: 'Return this evidence',
+        source: { kind: 'agent-message', sessionId: 'session-return', messageId: 'message-1' }
+      }
+      const addAnnotation = vi.fn(() => (accepted ? undefined : ('too-many' as const)))
+      const removeSource = vi.fn()
+      const changeDoc = vi.fn()
+      renderPanel({
+        view: {
+          activeSession: {
+            id: 'session-return',
+            projectId: 'project-a',
+            title: 'Main',
+            cwd: '/workspace',
+            status: 'idle',
+            messages: planOriginMessages(),
+            createdAt: 1,
+            updatedAt: 1
+          }
+        },
+        composer: {
+          view: { doc: { nodes: [{ type: 'text', text: 'Keep main draft' }] } },
+          actions: { addAnnotation, changeDoc }
+        }
+      })
+      const unregister = annotationTransfers.register('side-return', {
+        read: () => ({
+          originId: 'side-chat:return',
+          parentSessionId: 'session-return',
+          projectId: 'project-a',
+          annotation
+        }),
+        remove: removeSource
+      })
+      const token = annotationTransfers.begin('side-return')!
+      const event = new Event('drop', { bubbles: true, cancelable: true })
+      Object.defineProperty(event, 'dataTransfer', {
+        value: { types: [ANNOTATION_DRAG_TYPE], getData: () => token }
+      })
+      act(() => {
+        container.querySelector('[data-testid="ordinary-composer-form"]')!.dispatchEvent(event)
+      })
+      expect(addAnnotation).toHaveBeenCalledExactlyOnceWith(annotation)
+      expect(removeSource).toHaveBeenCalledTimes(accepted ? 1 : 0)
+      expect(changeDoc).not.toHaveBeenCalled()
+      unregister()
+      annotationTransfers.cancel()
+    }
+  )
+
   it('renders a compact annotation chip, reveals its source, returns focus on Esc, and removes it', async () => {
     const removeAnnotation = vi.fn()
     renderPanel({
@@ -548,6 +616,7 @@ const createPanelDefaults = (): PanelProps => ({
       historyStatus: '',
       isHistoryBrowsing: false,
       isUploading: false,
+      isWslSetupDraft: false,
       caretRequest: undefined,
       readingContext: {
         bindings: [],
@@ -557,6 +626,7 @@ const createPanelDefaults = (): PanelProps => ({
       }
     },
     actions: {
+      discardWslSetupDraft: vi.fn(() => false),
       changeDoc: vi.fn(),
       addAnnotation: vi.fn(),
       updateAnnotationNote: vi.fn(),
@@ -565,6 +635,7 @@ const createPanelDefaults = (): PanelProps => ({
       stageFiles: onStageAttachmentFiles,
       stagePastedText: vi.fn(),
       cancelTransfer: vi.fn(),
+      retryTransfer: vi.fn(),
       removeAttachment: vi.fn(),
       restorePastedText: vi.fn(),
       undo: vi.fn(() => false),
@@ -615,9 +686,11 @@ const createPanelDefaults = (): PanelProps => ({
     admitApplicationMessage: vi.fn().mockResolvedValue(undefined)
   },
   sideChat: {
+    createDraft: vi.fn(() => 'side-draft'),
     view: undefined,
     start: vi.fn().mockResolvedValue(false),
     send: vi.fn().mockResolvedValue(false),
+    setModelSelection: vi.fn(),
     setDraft: vi.fn(),
     cancel: vi.fn(),
     close: vi.fn()
@@ -694,6 +767,9 @@ const createPanelDefaults = (): PanelProps => ({
       disabled: false,
       running: false,
       request: vi.fn()
+    },
+    wslSetup: {
+      start: vi.fn().mockResolvedValue(true)
     }
   },
   sessionTools: {
@@ -731,6 +807,25 @@ const renderPanel = (props: DeepPartial<PanelProps> = {}): void => {
   act(() => {
     root.render(<ConversationPanel {...panelProps} />)
   })
+}
+
+// Transcript presentation tests mount the independent panel directly.
+const renderSidePanel = (props: DeepPartial<PanelProps> = {}): void => {
+  const { sideChat } = mergePanelProps(createPanelDefaults(), props)
+  act(() =>
+    root.render(
+      sideChat.view ? (
+        <SideChatPanel
+          view={sideChat.view}
+          onSend={sideChat.send}
+          onDraftChange={sideChat.setDraft}
+          onAnnotationsChange={sideChat.setAnnotations}
+          onCancel={sideChat.cancel}
+          onClose={sideChat.close}
+        />
+      ) : null
+    )
+  )
 }
 
 const getComposerForm = (): HTMLElement => {
@@ -2420,6 +2515,39 @@ describe('ConversationPanel composer intake', () => {
     expect(container.querySelector('[data-testid="menu-view-plan"]')).not.toBeNull()
   })
 
+  it('offers retry only for a failed attachment whose source is still available', () => {
+    const retryTransfer = vi.fn()
+    const failed = {
+      transferId: 'failed',
+      name: 'failed.csv',
+      receivedBytes: 0,
+      totalBytes: 12,
+      status: 'error' as const,
+      canRetry: true,
+      error: 'Upload failed',
+      errorDetail: 'disk full'
+    }
+    renderPanel({
+      composer: {
+        view: {
+          transfers: [
+            failed,
+            { ...failed, transferId: 'restored', name: 'restored.csv', canRetry: false }
+          ]
+        },
+        actions: { retryTransfer }
+      }
+    })
+    const retry = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Retry attachment failed.csv"]'
+    )
+    expect(retry).not.toBeNull()
+    expect(container.querySelector('[aria-label="Retry attachment restored.csv"]')).toBeNull()
+    expect(container.querySelector('[title="disk full"]')).not.toBeNull()
+    act(() => retry?.click())
+    expect(retryTransfer).toHaveBeenCalledExactlyOnceWith(failed)
+  })
+
   it('shows per-file progress and cancels only the selected transfer', () => {
     const onCancelAttachmentTransfer = vi.fn()
     const transfer = {
@@ -2611,6 +2739,90 @@ describe('ConversationPanel composer intake', () => {
     expect(onSendMessage).toHaveBeenCalledWith([])
   })
 
+  it('handles exact /setup-wsl as a product command instead of sending ordinary text', async () => {
+    const start = vi.fn().mockResolvedValue(true)
+    const submit = vi.fn()
+    window.api.settings = {
+      getWsl2BashPreviewStatus: vi.fn().mockResolvedValue({
+        available: true,
+        reason: 'available'
+      })
+    } as unknown as typeof window.api.settings
+    renderPanel({
+      composer: { view: { doc: { nodes: [{ type: 'text', text: '/setup-wsl' }] } } },
+      conversation: {
+        availability: { submit: true },
+        actions: { submit: { draft: submit } }
+      },
+      workflows: { wslSetup: { start } }
+    })
+
+    await act(async () => {
+      getComposerEditor().dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+      )
+    })
+
+    expect(start).toHaveBeenCalledOnce()
+    expect(submit).not.toHaveBeenCalled()
+  })
+
+  it('shows the setup draft boundary and an explicit Settings activation action', () => {
+    renderPanel({
+      composer: { view: { isWslSetupDraft: true } }
+    })
+
+    expect(
+      container.querySelector('[data-testid="wsl-setup-conversation-actions"]')?.textContent
+    ).toContain('Review the diagnostics')
+    expect(container.textContent).toContain('Check and activate in Settings')
+  })
+
+  it('lets the user discard an unsent WSL2 setup draft from its inline card', () => {
+    const discardWslSetupDraft = vi.fn(() => true)
+    renderPanel({
+      composer: {
+        view: { isWslSetupDraft: true },
+        actions: { discardWslSetupDraft }
+      }
+    })
+
+    const discard = Array.from(
+      container.querySelectorAll<HTMLButtonElement>(
+        '[data-testid="wsl-setup-conversation-actions"] button'
+      )
+    ).find((button) => button.textContent === 'Discard setup draft')
+    expect(discard).toBeDefined()
+
+    act(() => discard?.click())
+    expect(discardWslSetupDraft).toHaveBeenCalledOnce()
+  })
+
+  it('keeps the Settings activation action visible for a Main-confirmed setup session', () => {
+    renderPanel({
+      view: {
+        activeSession: {
+          id: 'wsl-setup-session',
+          projectId: 'project-a',
+          title: 'WSL setup',
+          cwd: '/workspace',
+          status: 'idle',
+          messages: [],
+          createdAt: 1,
+          updatedAt: 1,
+          wslSetup: true
+        }
+      },
+      composer: { view: { isWslSetupDraft: false } }
+    })
+
+    expect(container.querySelector('[data-testid="wsl-setup-conversation-actions"]')).not.toBeNull()
+    expect(container.textContent).toContain('This is a guided WSL2 setup conversation.')
+    expect(container.textContent).not.toContain('This draft will open')
+    expect(container.textContent).toContain('Check and activate in Settings')
+    expect(container.textContent).not.toContain('Discard setup draft')
+  })
+
   it('offers Plan first for a text draft in a new conversation while Branch stays disabled', () => {
     const onPlanFirst = vi.fn()
     renderPanel({
@@ -2758,6 +2970,83 @@ describe('ConversationPanel composer intake', () => {
     expect(controls?.getAttribute('data-specialist-read-only')).toBe('false')
   })
 
+  it.each([undefined, { kind: 'all' }, { kind: 'before-message', messageId: 'user-1' }] as const)(
+    'opens an empty side chat directly with pending replay %j',
+    (pendingHistoryReplay) => {
+      const createDraft = vi.fn(() => 'empty-side-chat')
+      const start = vi.fn()
+      renderPanel({
+        view: {
+          activeSession: {
+            id: 'existing',
+            projectId: 'project-a',
+            title: 'Existing',
+            cwd: '/workspace',
+            status: 'idle',
+            pendingHistoryReplay,
+            messages: planOriginMessages(),
+            createdAt: 1,
+            updatedAt: 2
+          }
+        },
+        sideChat: { createDraft },
+        conversation: { availability: { submit: false }, actions: { sideChat: { start } } },
+        composer: { view: { doc: { nodes: [] } } }
+      })
+      const button = container.querySelector('[data-testid="menu-side-chat"]') as HTMLButtonElement
+      expect(button.disabled).toBe(false)
+      const menu = container.querySelector(
+        '[data-testid="branch-send-menu-trigger"]'
+      ) as HTMLButtonElement
+      const send = container.querySelector('[aria-label="Send message"]') as HTMLButtonElement
+      expect(menu.disabled).toBe(false)
+      expect(
+        menu.closest('[aria-label="Send message options"]')?.classList.contains('opacity-50')
+      ).toBe(false)
+      expect(send.disabled).toBe(true)
+      expect(send.classList.contains('disabled:opacity-50')).toBe(true)
+      act(() => button.click())
+      expect(createDraft).toHaveBeenCalledOnce()
+      expect(start).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each([
+    undefined,
+    {
+      id: 'empty',
+      projectId: 'project-a',
+      title: 'New session',
+      cwd: '/workspace',
+      status: 'idle' as const,
+      messages: [],
+      createdAt: 1,
+      updatedAt: 2
+    }
+  ])(
+    'disables side chat and its empty menu before the main conversation begins: %j',
+    (activeSession) => {
+      const createDraft = vi.fn()
+      renderPanel({
+        view: { activeSession },
+        sideChat: { createDraft },
+        conversation: { availability: { submit: false } },
+        composer: { view: { doc: { nodes: [] } } }
+      })
+      const menu = container.querySelector(
+        '[data-testid="branch-send-menu-trigger"]'
+      ) as HTMLButtonElement
+      const side = container.querySelector('[data-testid="menu-side-chat"]') as HTMLButtonElement
+      expect(menu.disabled).toBe(true)
+      expect(side.getAttribute('aria-disabled')).toBe('true')
+      expect(
+        menu.closest('[aria-label="Send message options"]')?.classList.contains('opacity-50')
+      ).toBe(true)
+      act(() => side.click())
+      expect(createDraft).not.toHaveBeenCalled()
+    }
+  )
+
   it('offers Side chat between Plan first and Branch for a text-only existing Session draft', () => {
     const onStartSideChat = vi.fn()
     const session: ChatSession = {
@@ -2804,10 +3093,59 @@ describe('ConversationPanel composer intake', () => {
     const side = container.querySelector('[data-testid="menu-side-chat"]') as HTMLButtonElement
 
     expect(items).toEqual(['menu-plan-first', 'menu-side-chat', 'menu-branch-in-new-session'])
-    expect(side.disabled).toBe(false)
+    expect(container.querySelectorAll('[data-testid="menu-side-chat"]')).toHaveLength(1)
+    expect(container.querySelector('[data-testid="menu-send-side-chat"]')).toBeNull()
+    expect(side.textContent).toBe('New side chat')
+    expect(container.textContent).toContain('Send draft to Side chat')
+    expect(side.getAttribute('aria-disabled')).toBe('false')
     act(() => side.click())
     expect(onStartSideChat).toHaveBeenCalledOnce()
   })
+
+  it.each([true, false])(
+    'sends annotation-only Side chat drafts and preserves rejected annotations (admitted=%s)',
+    async (admitted) => {
+      const annotation: Annotation = {
+        id: 'side-quote',
+        kind: 'text',
+        target: 'agent',
+        quote: 'Quoted evidence',
+        note: 'Discuss this',
+        source: { kind: 'agent-message', sessionId: 'session-existing', messageId: 'message-1' }
+      }
+      const send = vi.fn<(text: string) => Promise<boolean>>().mockResolvedValue(admitted)
+      const setAnnotations = vi.fn()
+      renderSidePanel({
+        sideChat: {
+          view: {
+            generation: 1,
+            parentSessionId: 'session-existing',
+            projectId: 'project-a',
+            sideSessionId: 'side-existing',
+            draft: '',
+            annotations: [annotation],
+            running: false,
+            entries: []
+          },
+          send,
+          setAnnotations
+        }
+      })
+      expect(container.textContent).toContain('Discuss this')
+      const button = container.querySelector<HTMLButtonElement>(
+        '[aria-label="Send Side chat follow up"]'
+      )!
+      expect(button.disabled).toBe(false)
+      await act(async () => button.click())
+      expect(parseSideChatAnnotationText(send.mock.calls[0][0])).toMatchObject({
+        text: '',
+        items: [{ content: 'Quoted evidence', instruction: 'Discuss this' }]
+      })
+      expect(setAnnotations).toHaveBeenNthCalledWith(1, [])
+      if (!admitted) expect(setAnnotations.mock.calls[1][0]([])).toEqual([annotation])
+      else expect(setAnnotations).toHaveBeenCalledOnce()
+    }
+  )
 
   it('offers Side chat for an annotation-only existing Session draft', () => {
     const onStartSideChat = vi.fn()
@@ -2849,7 +3187,7 @@ describe('ConversationPanel composer intake', () => {
     })
 
     const side = container.querySelector('[data-testid="menu-side-chat"]') as HTMLButtonElement
-    expect(side.disabled).toBe(false)
+    expect(side.getAttribute('aria-disabled')).toBe('false')
     act(() => side.click())
     expect(onStartSideChat).toHaveBeenCalledOnce()
   })
@@ -2892,7 +3230,7 @@ describe('ConversationPanel composer intake', () => {
     ) as HTMLButtonElement
     const item = container.querySelector('[data-testid="menu-side-chat"]') as HTMLButtonElement
     expect(trigger.disabled).toBe(false)
-    expect(item.disabled).toBe(false)
+    expect(item.getAttribute('aria-disabled')).toBe('false')
     const focusReturn = new FocusEvent('focusin', { bubbles: true, cancelable: true })
     act(() => trigger.dispatchEvent(focusReturn))
     expect(focusReturn.defaultPrevented).toBe(true)
@@ -2901,7 +3239,7 @@ describe('ConversationPanel composer intake', () => {
   })
 
   it.each(['waiting-for-user', 'waiting-permission'] as const)(
-    'keeps Side chat disabled while the main Session is %s',
+    'keeps Side chat independent while the main Session is %s',
     (status) => {
       const onStartSideChat = vi.fn()
       renderPanel({
@@ -2935,18 +3273,23 @@ describe('ConversationPanel composer intake', () => {
         }
       })
 
+      const availableOpen = container.querySelector(
+        '[data-testid="blocked-composer-side-chat"]'
+      ) as HTMLButtonElement
+      expect(availableOpen.disabled).toBe(false)
+      expect(availableOpen.closest('[inert], [aria-hidden="true"]')).toBeNull()
       const trigger = container.querySelector(
         '[data-testid="running-side-chat-menu-trigger"]'
       ) as HTMLButtonElement
       const item = container.querySelector('[data-testid="menu-side-chat"]') as HTMLButtonElement
-      expect(trigger.disabled).toBe(true)
-      expect(item.disabled).toBe(true)
+      expect(trigger.disabled).toBe(false)
+      expect(item.getAttribute('aria-disabled')).toBe('false')
       act(() => item.click())
-      expect(onStartSideChat).not.toHaveBeenCalled()
+      expect(onStartSideChat).toHaveBeenCalledOnce()
     }
   )
 
-  it('keeps Side chat disabled while the main Session is waiting-plan-approval', () => {
+  it('keeps Side chat independent while the main Session is waiting-plan-approval', () => {
     const onStartSideChat = vi.fn()
     renderPanel({
       view: {
@@ -2980,48 +3323,77 @@ describe('ConversationPanel composer intake', () => {
     })
 
     const item = container.querySelector('[data-testid="menu-side-chat"]') as HTMLButtonElement
-    expect(item.disabled).toBe(true)
+    expect(item.getAttribute('aria-disabled')).toBe('false')
     act(() => item.click())
-    expect(onStartSideChat).not.toHaveBeenCalled()
+    expect(onStartSideChat).toHaveBeenCalledOnce()
   })
 
-  it('explains why strict Side chat is unavailable for an unsupported backend', () => {
-    const reason = 'Strict tool isolation is unavailable.'
-    renderPanel({
-      view: {
-        activeSession: {
-          id: 'session-existing',
-          projectId: 'project-a',
-          title: 'Existing session',
-          cwd: '/workspace',
-          status: 'idle',
-          messages: planOriginMessages(),
-          createdAt: 1,
-          updatedAt: 2
-        },
-        sideChatDisabledReason: reason
-      },
-      conversation: {
-        availability: {
-          submit: true
-        },
-        actions: {
-          sideChat: {
-            start: vi.fn()
-          }
-        }
-      },
-      composer: {
+  it.each(['unavailable', 'attachment'])(
+    'opens an empty Side chat and preserves the main draft for %s',
+    (block) => {
+      const reason = block === 'unavailable' ? 'Strict tool isolation is unavailable.' : undefined
+      const createDraft = vi.fn(() => 'empty-side')
+      const start = vi.fn()
+      const changeDoc = vi.fn()
+      const removeAttachment = vi.fn()
+      renderPanel({
+        sideChat: { createDraft },
         view: {
-          doc: { nodes: [{ type: 'text', text: 'Ask on the side' }] }
+          activeSession: {
+            id: 'session-existing',
+            projectId: 'project-a',
+            title: 'Existing session',
+            cwd: '/workspace',
+            status: 'idle',
+            messages: planOriginMessages(),
+            createdAt: 1,
+            updatedAt: 2
+          },
+          sideChatDisabledReason: reason
+        },
+        conversation: {
+          availability: {
+            submit: true
+          },
+          actions: {
+            sideChat: {
+              start
+            }
+          }
+        },
+        composer: {
+          view: {
+            doc: { nodes: [{ type: 'text', text: 'Ask on the side' }] },
+            attachments:
+              block === 'attachment'
+                ? [
+                    {
+                      id: 'upload-side',
+                      sessionId: 'session-existing',
+                      name: 'evidence.txt',
+                      originalName: 'evidence.txt',
+                      path: '/uploads/evidence.txt',
+                      mimeType: 'text/plain',
+                      size: 10
+                    }
+                  ]
+                : []
+          },
+          actions: { changeDoc, removeAttachment }
         }
-      }
-    })
+      })
 
-    const item = container.querySelector('[data-testid="menu-side-chat"]') as HTMLButtonElement
-    expect(item.disabled).toBe(true)
-    expect(item.textContent).toContain(reason)
-  })
+      const item = container.querySelector('[data-testid="menu-side-chat"]') as HTMLButtonElement
+      expect(item.getAttribute('aria-disabled')).toBe('false')
+      expect(item.textContent).toBe('New side chat')
+      expect(container.textContent).toContain('Opens an empty Side chat; keeps your draft.')
+      act(() => item.click())
+      expect(createDraft).toHaveBeenCalledOnce()
+      expect(start).not.toHaveBeenCalled()
+      expect(changeDoc).not.toHaveBeenCalled()
+      expect(removeAttachment).not.toHaveBeenCalled()
+    }
+  )
 
   it('offers an explicit retry when Side chat hydration fails', () => {
     const retryHydration = vi.fn()
@@ -3053,10 +3425,12 @@ describe('ConversationPanel composer intake', () => {
       }
     })
 
-    const item = container.querySelector('[data-testid="menu-side-chat"]') as HTMLButtonElement
+    const item = container.querySelector(
+      '[data-testid="menu-retry-side-chat"]'
+    ) as HTMLButtonElement
     expect(item.disabled).toBe(false)
     expect(item.textContent).toContain('Retry Side chat restore')
-    expect(item.textContent).toContain(reason)
+    expect(container.textContent).toContain('Opens an empty Side chat; keeps your draft.')
 
     act(() => item.click())
 
@@ -3096,11 +3470,11 @@ describe('ConversationPanel composer intake', () => {
     })
 
     expect(
-      (container.querySelector('[data-testid="menu-side-chat"]') as HTMLButtonElement).disabled
-    ).toBe(true)
+      container.querySelector('[data-testid="menu-side-chat"]')?.getAttribute('aria-disabled')
+    ).toBe('true')
   })
 
-  it('covers the ordinary composer with an overlay Side chat panel', () => {
+  it('keeps the ordinary composer available while Side chat runs in its own panel', () => {
     const onCloseSideChat = vi.fn()
     renderPanel({
       sessionTools: {
@@ -3131,62 +3505,10 @@ describe('ConversationPanel composer intake', () => {
       }
     })
 
-    const panel = container.querySelector('[data-testid="side-chat-panel"]')
-    const surface = container.querySelector('[data-testid="side-chat-panel-scroll"]')
-    const resizeHandle = container.querySelector('[aria-label="Resize Side chat panel"]')
-
-    expect(panel).not.toBeNull()
-    expect(panel?.classList.contains('relative')).toBe(true)
-    expect(panel?.classList.contains('absolute')).toBe(false)
-    expect(panel?.classList.contains('pt-0')).toBe(true)
-    expect(resizeHandle?.classList.contains('-translate-y-1/2')).toBe(true)
-    expect(resizeHandle?.classList.contains('bg-gradient-to-b')).toBe(true)
-    expect(surface?.classList.contains('overflow-hidden')).toBe(true)
-    expect(surface?.classList.contains('shadow-none')).toBe(true)
-    expect(surface?.classList.contains('shadow-sm')).toBe(false)
-    expectComposerChromeCovered('[aria-label="Open notebook"]')
-    expectComposerCoveredByBlockingOverlay()
-    const sideChatPanel = panel as HTMLElement
-    const plus = sideChatPanel.querySelector('[data-testid="side-chat-plus-button"]')
-    const agentControls = sideChatPanel.querySelector('[data-testid="mock-agent-controls"]')
-    const modelPicker = sideChatPanel.querySelector('[data-testid="mock-model-picker"]')
-    expect(plus?.getAttribute('aria-disabled')).toBe('true')
-    expect((plus as HTMLButtonElement).disabled).toBe(false)
-    expect(agentControls?.getAttribute('data-read-only')).toBe('true')
-    expect(agentControls?.getAttribute('data-permission-read-only')).toBe('true')
-    expect(agentControls?.getAttribute('data-grants-read-only')).toBe('true')
-    expect(agentControls?.getAttribute('data-auto-review-disabled')).toBe('true')
-    expect(agentControls?.getAttribute('data-specialist-read-only')).toBe('true')
-    expect(modelPicker).toBeNull()
-    const followUp = container.querySelector('textarea[placeholder="Follow up…"]')
-    expect(followUp).not.toBeNull()
-    expect(document.activeElement).toBe(followUp)
-    act(() =>
-      (container.querySelector('[aria-label="Close Side chat"]') as HTMLButtonElement).click()
-    )
-    expect(onCloseSideChat).toHaveBeenCalledOnce()
-    renderPanel({
-      sideChat: {
-        close: onCloseSideChat
-      }
-    })
-    expect(document.activeElement).toBe(getComposerEditor())
-
-    const navigationButton = container.querySelector<HTMLButtonElement>(
-      '[aria-label="Open navigation"]'
-    )!
-    navigationButton.focus()
-    renderPanel({
-      view: {
-        composerFocusKey: 'session-blocked-after-side-chat'
-      },
-      permissions: {
-        requests: [{ requestId: 'permission-after-side-chat' } as never]
-      }
-    })
-
-    expectComposerCoveredByBlockingOverlay()
-    expect(document.activeElement).toBe(navigationButton)
+    expect(container.querySelector('[data-testid="side-chat-panel"]')).toBeNull()
+    expect(container.querySelector('[data-testid="blocking-composer-overlay"]')).toBeNull()
+    expect(getComposerForm().getAttribute('aria-hidden')).not.toBe('true')
+    expect(getComposerEditor()).not.toBeNull()
   })
 
   it('keeps the Side chat input fixed and pins streamed output to the bottom', () => {
@@ -3198,7 +3520,7 @@ describe('ConversationPanel composer intake', () => {
         close: vi.fn()
       }
     }
-    renderPanel({
+    renderSidePanel({
       ...sideChatProps,
       sideChat: {
         ...sideChatProps.sideChat,
@@ -3228,11 +3550,6 @@ describe('ConversationPanel composer intake', () => {
     const topFade = container.querySelector('[data-testid="side-chat-message-fade-top"]')
     const bottomFade = container.querySelector('[data-testid="side-chat-message-fade-bottom"]')
 
-    expect(
-      container
-        .querySelector('[data-testid="side-chat-panel"]')
-        ?.classList.contains('h-[min(70dvh,44rem)]')
-    ).toBe(true)
     expect(viewport.previousElementSibling).toBe(header)
     expect(viewport.nextElementSibling).toBe(composer)
     expect(messageScroll.parentElement).toBe(viewport)
@@ -3249,7 +3566,7 @@ describe('ConversationPanel composer intake', () => {
     })
     messageScrollViewport.scrollTop = 0
 
-    renderPanel({
+    renderSidePanel({
       ...sideChatProps,
       sideChat: {
         ...sideChatProps.sideChat,
@@ -3301,7 +3618,7 @@ describe('ConversationPanel composer intake', () => {
         ]
       }
     }
-    renderPanel({ sideChat })
+    renderSidePanel({ sideChat })
     const viewport = container.querySelector(
       '[data-testid="side-chat-message-scroll"] [data-slot="scroll-area-viewport"]'
     ) as HTMLDivElement
@@ -3313,7 +3630,7 @@ describe('ConversationPanel composer intake', () => {
     act(() => viewport.dispatchEvent(new Event('scroll', { bubbles: true })))
     viewport.scrollTop = 200
     act(() => viewport.dispatchEvent(new Event('scroll', { bubbles: true })))
-    renderPanel({
+    renderSidePanel({
       sideChat: {
         ...sideChat,
         view: {
@@ -3339,7 +3656,7 @@ describe('ConversationPanel composer intake', () => {
       await i18next.changeLanguage('zh-Hans')
     })
     try {
-      renderPanel({
+      renderSidePanel({
         sideChat: {
           send: vi.fn(async () => true),
           setDraft: vi.fn(),
@@ -3391,7 +3708,7 @@ describe('ConversationPanel composer intake', () => {
       entries
     })
 
-    renderPanel({
+    renderSidePanel({
       ...sideChatProps,
       sideChat: {
         ...sideChatProps.sideChat,
@@ -3411,7 +3728,7 @@ describe('ConversationPanel composer intake', () => {
     expect(container.textContent).not.toContain('"items"')
     expect(container.querySelectorAll('[data-side-chat-annotation-card]')).toHaveLength(2)
 
-    renderPanel({
+    renderSidePanel({
       ...sideChatProps,
       sideChat: {
         ...sideChatProps.sideChat,
@@ -3466,7 +3783,7 @@ describe('ConversationPanel composer intake', () => {
       }
     ]
 
-    renderPanel({
+    renderSidePanel({
       ...sideChatProps,
       sideChat: {
         ...sideChatProps.sideChat,
@@ -3481,7 +3798,7 @@ describe('ConversationPanel composer intake', () => {
         }
       }
     })
-    renderPanel({
+    renderSidePanel({
       ...sideChatProps,
       sideChat: {
         ...sideChatProps.sideChat,
@@ -3517,7 +3834,7 @@ describe('ConversationPanel composer intake', () => {
       text: 'Next'
     }
 
-    renderPanel({
+    renderSidePanel({
       ...sideChatProps,
       sideChat: {
         ...sideChatProps.sideChat,
@@ -3591,14 +3908,14 @@ describe('ConversationPanel composer intake', () => {
       entries: [userEntry, assistantEntry]
     }
 
-    renderPanel({
+    renderSidePanel({
       ...sideChatProps,
       sideChat: {
         ...sideChatProps.sideChat,
         view: { ...sideChat, entries: [userEntry] }
       }
     })
-    renderPanel({
+    renderSidePanel({
       ...sideChatProps,
       sideChat: {
         ...sideChatProps.sideChat,
@@ -3609,8 +3926,8 @@ describe('ConversationPanel composer intake', () => {
     expect(container.textContent).toContain('R')
     expect(container.textContent).not.toContain(assistantEntry.text)
 
-    renderPanel()
-    renderPanel({
+    renderSidePanel()
+    renderSidePanel({
       ...sideChatProps,
       sideChat: {
         ...sideChatProps.sideChat,
@@ -3621,7 +3938,7 @@ describe('ConversationPanel composer intake', () => {
     expect(container.textContent).toContain(assistantEntry.text)
 
     const continuedAnswer = `${assistantEntry.text}, then continue`
-    renderPanel({
+    renderSidePanel({
       ...sideChatProps,
       sideChat: {
         ...sideChatProps.sideChat,
@@ -3636,7 +3953,7 @@ describe('ConversationPanel composer intake', () => {
     expect(container.textContent).toContain(`${assistantEntry.text},`)
   })
 
-  it('keeps main approval and ask-user surfaces waiting while Side chat is open', () => {
+  it('keeps main approval and ask-user surfaces available while Side chat is open', () => {
     const activeSession: ChatSession = {
       id: 'session-existing',
       projectId: 'project-a',
@@ -3678,11 +3995,11 @@ describe('ConversationPanel composer intake', () => {
       }
     })
 
-    expect(container.querySelector('[data-testid="permission-approval-controls"]')).toBeNull()
-    expect(container.querySelector('[aria-label="Resume session"]')).toBeNull()
+    expect(container.querySelector('[data-testid="permission-approval-controls"]')).not.toBeNull()
+
     expect(
       container.querySelector('[data-testid="scroller-pending-elicitations"]')?.textContent
-    ).toBe('0')
+    ).toBe('1')
     expectComposerCoveredByBlockingOverlay()
 
     renderPanel({
@@ -3704,7 +4021,7 @@ describe('ConversationPanel composer intake', () => {
     ).toBe('1')
   })
 
-  it('reveals a waiting Plan immediately after Side chat closes', () => {
+  it('keeps a waiting Plan available while Side chat is open', () => {
     const activeSession: ChatSession = {
       id: 'session-plan-under-side-chat',
       projectId: 'project-a',
@@ -3742,7 +4059,7 @@ describe('ConversationPanel composer intake', () => {
       }
     })
 
-    expect(container.querySelector('[data-testid="plan-composer"]')).toBeNull()
+    expect(container.querySelector('[data-testid="plan-composer"]')).not.toBeNull()
 
     renderPanel({
       view: {
@@ -4965,8 +5282,7 @@ describe('ConversationPanel fix loop lock', () => {
 
     const controls = container.querySelector('[data-testid="mock-agent-controls"]')
     const chooseButton = notice?.querySelector<HTMLButtonElement>('button')
-    expect(chooseButton?.parentElement).toBe(notice)
-    expect(chooseButton?.classList.contains('ml-auto')).toBe(true)
+    expect(chooseButton?.closest('[data-testid="specialist-unavailable-notice"]')).toBe(notice)
     expect(controls?.getAttribute('data-open-request')).toBe('0')
     act(() => {
       chooseButton?.click()
@@ -5912,6 +6228,20 @@ describe('ConversationPanel error box + report affordance', () => {
     expect(reportButton()).toBeNull()
   })
 
+  it('shows a composer action error only once when both error surfaces receive it', () => {
+    const annotationError = 'This annotation could not be added.'
+    renderPanel({
+      view: {
+        activeSession: { ...errorSession, status: 'idle', error: undefined },
+        actionError: annotationError
+      },
+      composer: { view: { error: annotationError } }
+    })
+
+    expect(container.textContent?.match(/This annotation could not be added\./g)).toHaveLength(1)
+    expect(errorBoxText()).toContain(annotationError)
+  })
+
   it('opens Model settings from the image-support action error', () => {
     const openSettingsToPanel = vi.fn()
     useSettingsStore.setState({ openSettingsToPanel })
@@ -6177,4 +6507,68 @@ describe('ConversationPanel error box + report affordance', () => {
     expect(errorBoxText()).toContain('Unable to connect to API (ConnectionRefused)')
     expect(reportButton()).toBeNull()
   })
+})
+
+it('offers Fork to continue while leaving the imported conversation read-only', async () => {
+  forkSessionMock.mockClear()
+  const activeSession: ChatSession = {
+    id: 'imported-session',
+    projectId: 'project-a',
+    title: 'Imported research',
+    cwd: '',
+    status: 'idle',
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1,
+    packageOrigin: {
+      importId: 'import-operation',
+      sourceProjectId: 'source-project',
+      sourceSessionId: 'source-session',
+      importedAt: 1,
+      manifestChecksum: 'a'.repeat(64)
+    }
+  }
+  renderPanel({ view: { activeSession } })
+  const button = [...container.querySelectorAll('button')].find((button) =>
+    button.textContent?.includes('Fork to continue')
+  )
+  expect(button).toBeDefined()
+  expect(container.querySelector('[data-testid="ordinary-composer-form"]')).toBeNull()
+  await act(async () => {
+    button!.click()
+  })
+  expect(forkSessionMock).toHaveBeenCalledWith(activeSession)
+})
+
+it('shows the branch source chat number and opens that source session', () => {
+  const source: ChatSession = {
+    id: 'branch-source',
+    projectId: 'default',
+    number: 42,
+    title: 'Source',
+    cwd: '',
+    status: 'idle',
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  }
+  useSessionStore.setState({ sessions: [source] })
+  const openSession = vi.fn()
+  renderPanel({
+    view: {
+      activeSession: {
+        ...source,
+        id: 'branch-child',
+        number: 43,
+        branchSource: { sessionId: source.id, headMessageId: 'answer' }
+      }
+    },
+    sessionTools: { openSession }
+  })
+  const sourceLink = [...container.querySelectorAll('button')].find(
+    (button) => button.textContent === 'Continued from chat #42'
+  )
+  expect(sourceLink).toBeDefined()
+  act(() => sourceLink!.click())
+  expect(openSession).toHaveBeenCalledWith('branch-source')
 })

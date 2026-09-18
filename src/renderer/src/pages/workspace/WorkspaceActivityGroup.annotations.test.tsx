@@ -115,7 +115,7 @@ describe('WorkspaceActivityGroup text annotations', () => {
   it('annotates a Web Search query and result title without including or navigating its URL', async () => {
     const activity = createActivity({
       id: 'web-search-1',
-      title: 'open science repositories',
+      title: 'open-science repositories',
       toolKind: 'search',
       providerToolName: 'WebSearch',
       toolContent: [
@@ -124,7 +124,7 @@ describe('WorkspaceActivityGroup text annotations', () => {
           content: {
             type: 'text',
             text: JSON.stringify({
-              query: 'open science repositories',
+              query: 'open-science repositories',
               results: [
                 {
                   title: 'Open Science Framework',
@@ -149,7 +149,7 @@ describe('WorkspaceActivityGroup text annotations', () => {
     await renderActivity(activity, [], onAdd)
     const details = container.querySelector<HTMLElement>('[data-testid="tool-search-details"]')!
     const query = Array.from(details.querySelectorAll<HTMLElement>('span')).find(
-      (element) => element.textContent === 'open science repositories'
+      (element) => element.textContent === 'open-science repositories'
     )!
     const title = details.querySelector<HTMLAnchorElement>('a')!
     const url = Array.from(details.querySelectorAll<HTMLElement>('div')).find(
@@ -174,7 +174,7 @@ describe('WorkspaceActivityGroup text annotations', () => {
 
     expect(addedAnnotations.map(({ quote, source }) => ({ quote, source }))).toEqual([
       {
-        quote: 'open science repositories',
+        quote: 'open-science repositories',
         source: {
           kind: 'session-item',
           sessionId: 'session-1',
@@ -198,7 +198,7 @@ describe('WorkspaceActivityGroup text annotations', () => {
     await renderActivity(activity, addedAnnotations, onAdd)
     expect(
       Array.from(highlights.get('agent-annotation-draft') ?? []).map((range) => range.toString())
-    ).toEqual(expect.arrayContaining(['open science repositories', 'Open Science Framework']))
+    ).toEqual(expect.arrayContaining(['open-science repositories', 'Open Science Framework']))
 
     const reorderedActivity = createActivity({
       ...activity,
@@ -208,7 +208,7 @@ describe('WorkspaceActivityGroup text annotations', () => {
           content: {
             type: 'text',
             text: JSON.stringify({
-              query: 'open science repositories',
+              query: 'open-science repositories',
               results: [
                 { title: 'Zenodo', url: 'https://zenodo.org' },
                 { title: 'Open Science Framework', url: 'https://osf.io' }

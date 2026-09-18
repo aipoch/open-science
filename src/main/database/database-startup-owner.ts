@@ -71,7 +71,7 @@ const createDatabaseStartupOwner = (deps: DatabaseStartupOwnerDeps): DatabaseSta
             ? error
             : new DatabaseMigrationError(
                 'database_startup_unavailable',
-                'Open Science could not finish checking its database.',
+                'Open-Science could not finish checking its database.',
                 true,
                 undefined,
                 { cause: error }

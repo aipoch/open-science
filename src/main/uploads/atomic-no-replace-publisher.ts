@@ -37,7 +37,8 @@ export const removeAnchoredFile = (
   relativeParentPath: string,
   filename: string,
   parent: { dev: bigint; ino: bigint },
-  file: Pick<BigIntStats, 'dev' | 'ino' | 'size' | 'mtimeNs'>
+  file: Pick<BigIntStats, 'dev' | 'ino' | 'size' | 'mtimeNs'>,
+  recoveryName = `.publication-recovery-${randomUUID()}`
 ): void => {
   loadBinding().removeAnchoredFile(
     rootPath,
@@ -49,7 +50,7 @@ export const removeAnchoredFile = (
     file.ino,
     file.size,
     file.mtimeNs,
-    `.publication-recovery-${randomUUID()}`
+    recoveryName
   )
 }
 
@@ -57,13 +58,15 @@ export const recoverAnchoredRemoval = (
   rootPath: string,
   relativeParentPath: string,
   quarantineName: string,
-  parent: { dev: bigint; ino: bigint }
+  parent: { dev: bigint; ino: bigint },
+  contentFilename?: string
 ): void => {
   loadBinding().recoverAnchoredRemoval(
     rootPath,
     relativeParentPath,
     quarantineName,
     parent.dev,
-    parent.ino
+    parent.ino,
+    ...(contentFilename === undefined ? [] : [contentFilename])
   )
 }

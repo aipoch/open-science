@@ -499,6 +499,43 @@ describe('prepareVisibleStartupRuntime', () => {
     ])
   })
 
+  it.each(['module loading', 'runtime composition'] as const)(
+    'preserves the %s failure when asynchronous shell rollback also fails',
+    async (stage) => {
+      const failure = new Error(`${stage} failed`)
+      const rollbackFailure = new Error('shell rollback failed')
+      const rollbackStarted = deferred<void>()
+      const finishRollback = deferred<void>()
+      const rollbackShell = vi.fn(async () => {
+        rollbackStarted.resolve()
+        await finishRollback.promise
+        throw rollbackFailure
+      })
+      const preparation = prepareVisibleStartupRuntime({
+        prepareShell: async () => ({ tag: 'shell' }),
+        verifyDatabase: async () => undefined,
+        loadApplicationModules: async () => {
+          if (stage === 'module loading') throw failure
+          return 'modules'
+        },
+        composeRuntime: async () => {
+          throw failure
+        },
+        rollbackShell
+      })
+      const settled = vi.fn()
+      const result = preparation.catch((error: unknown) => {
+        settled()
+        return error
+      })
+      await rollbackStarted.promise
+      expect(settled).not.toHaveBeenCalled()
+      finishRollback.resolve()
+      expect(await result).toBe(failure)
+      expect(rollbackShell).toHaveBeenCalledExactlyOnceWith({ tag: 'shell' }, failure)
+    }
+  )
+
   it('rolls back the visible shell when a concurrent prerequisite fails', async () => {
     const failure = new Error('backend import failed')
     const rollbackShell = vi.fn()
@@ -531,16 +568,22 @@ describe('waitForStartupShell', () => {
   } => {
     const windowEvents = new EventEmitter()
     const webContentsEvents = new EventEmitter()
-    const destroy = vi.fn()
+    let destroyed = false
+    const destroy = vi.fn(() => {
+      destroyed = true
+      windowEvents.emit('closed')
+    })
     return {
       destroy,
       emitWindow: (event) => windowEvents.emit(event),
       emitWebContents: (event, ...args) => webContentsEvents.emit(event, ...args),
       windowListenerCount: (event) => windowEvents.listenerCount(event),
       webContentsListenerCount: (event) => webContentsEvents.listenerCount(event),
-      window: Object.assign(windowEvents, {
-        destroy,
-        webContents: webContentsEvents
+      window: Object.defineProperty(Object.assign(windowEvents, { destroy }), 'webContents', {
+        get: () => {
+          if (destroyed) throw new Error('Object has been destroyed')
+          return webContentsEvents
+        }
       }) as unknown as Pick<BrowserWindow, 'destroy' | 'once' | 'removeListener' | 'webContents'>
     }
   }

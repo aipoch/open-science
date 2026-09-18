@@ -10,6 +10,7 @@ type Step = {
   if?: string
   name?: string
   run?: string
+  shell?: string
   uses?: string
   with?: Record<string, unknown>
 }
@@ -45,29 +46,45 @@ const step = (job: Job, name: string): Step => {
 }
 
 describe('release and scheduled workflow topology', () => {
-  it('batches latest-main Windows coverage hourly across three serial shards', () => {
+  it('batches latest-main Windows coverage daily across five serial shards', () => {
     const windows = workflow('windows-full-test.yml')
     const schedule = windows.on?.schedule as Array<{ cron: string }>
     const dispatch = windows.on?.workflow_dispatch as {
       inputs?: { mode?: { default?: string; options?: string[] } }
     }
     const plan = windows.jobs.plan
+    const dependencies = windows.jobs.windows_dependencies
     const job = windows.jobs.windows_full_test
     const sandbox = windows.jobs.notebook_sandbox
     const test = step(job, 'Test complete suite shard')
     const sandboxSmoke = step(sandbox, 'Test AppContainer ownership and removal lifecycle')
 
     expect(job.strategy?.matrix?.shard).toBe(
-      "${{ fromJSON(inputs.mode == 'regressions' && '[1]' || '[1,2,3]') }}"
+      "${{ fromJSON(inputs.mode == 'regressions' && '[1]' || '[1,2,3,4,5]') }}"
     )
+    expect(dependencies).toMatchObject({
+      needs: 'plan',
+      'runs-on': 'windows-latest',
+      outputs: {
+        artifact_id: '${{ steps.upload.outputs.artifact-id }}',
+        node_version: '${{ steps.node.outputs.node-version }}'
+      }
+    })
+    expect(step(dependencies, 'Install dependencies').run).toBe('node scripts/ci/npm-ci.mjs')
+    expect(step(dependencies, 'Pack dependencies').run).toContain('pack-dependencies')
+    expect(step(dependencies, 'Pack dependencies').shell).toBe('bash')
+    expect(step(job, 'Restore dependencies').shell).toBe('bash')
+    expect(step(windows.jobs.notebook_mutation, 'Restore dependencies').shell).toBe('bash')
+    expect(step(dependencies, 'Upload dependencies').with?.['compression-level']).toBe(0)
     expect(job.env).toMatchObject({ VITEST_WINDOWS_FULL_TEST: '1' })
-    expect(test.run).toContain('--shard=${{ matrix.shard }}/3')
+    expect(test.run).toContain('--shard=${{ matrix.shard }}/5')
     expect(test.run).toContain('--maxWorkers=1')
+    expect(test.run).toContain('--reporter=github-actions')
     expect(windows.on).not.toHaveProperty('push')
-    expect(schedule).toEqual([{ cron: '47 * * * *' }])
+    expect(schedule).toEqual([{ cron: '47 18 * * *' }])
     expect(dispatch.inputs?.mode).toMatchObject({
       default: 'full',
-      options: ['full', 'notebook-sandbox', 'regressions']
+      options: ['full', 'notebook-sandbox', 'notebook-mutation', 'regressions']
     })
     expect(windows.permissions).toEqual({ actions: 'read', contents: 'read' })
     expect(plan).toMatchObject({
@@ -78,13 +95,13 @@ describe('release and scheduled workflow topology', () => {
       'actions/workflows/windows-full-test.yml/runs?branch=main&event=schedule&status=success&per_page=1'
     )
     expect(job).toMatchObject({
-      needs: 'plan',
-      if: "${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode != 'notebook-sandbox') }}",
-      'timeout-minutes': 35
+      needs: ['plan', 'windows_dependencies'],
+      if: "${{ needs.plan.outputs.should_test == 'true' && needs.windows_dependencies.result == 'success' && (github.event_name != 'workflow_dispatch' || (inputs.mode == 'full' || inputs.mode == 'regressions')) }}",
+      'timeout-minutes': 60
     })
     expect(sandbox).toMatchObject({
       needs: 'plan',
-      if: "${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode != 'regressions') }}",
+      if: "${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || (inputs.mode == 'full' || inputs.mode == 'notebook-sandbox')) }}",
       'runs-on': 'windows-latest',
       'timeout-minutes': 20
     })
@@ -97,17 +114,53 @@ describe('release and scheduled workflow topology', () => {
       "${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'regressions' }}"
     )
     expect(regressions.run).not.toContain('--shard')
+    expect(regressions.run).toContain('src/main/delegation/opencode-runtime-preparation.test.ts')
+    expect(regressions.shell).toBe('bash')
+    expect(regressions.env?.TEST_NAME_PATTERN).toBe("${{ inputs.test_name_pattern || '.*' }}")
+    expect(regressions.run).toContain('--testNamePattern="$TEST_NAME_PATTERN"')
     expect(regressions.run).toContain('--maxWorkers=1 --testTimeout=60000 --hookTimeout=60000')
     for (const file of [
+      'cli/locate-app.test.ts',
+      'scripts/credential-helper-signing.test.ts',
+      'src/main/credential-identity/sqlite-snapshot.test.ts',
+      'src/main/local-models/owner.test.ts',
+      'src/main/notebook/input-registry.test.ts',
+      'src/main/session-package/literature.test.ts',
+      'src/main/session-plan/plan-context-file.test.ts',
       'vitest.config.test.ts',
       'scripts/ci/release-workflows.test.ts',
       'scripts/windows-release-workflows.test.ts',
       'src/main/database/database-null-and-version-bounds.test.ts',
       'src/main/database/migration-service.test.ts',
       'src/main/notebook/runtime-service.test.ts',
+      'src/main/notebook/shell-process-ownership.test.ts',
+      'src/main/literature/batch-jobs.test.ts',
+      'src/main/notebook/source-file-access-analysis.test.ts',
+      'src/main/notebook/source-file-access-analysis.additional-omics.test.ts',
+      'src/main/notebook/source-file-access-analysis.clinical-formats.test.ts',
+      'src/main/notebook/source-file-access-analysis.workflow-orchestration.test.ts',
+      'src/main/session-package/archive.test.ts',
+      'src/main/session-package/service.test.ts',
+      'src/main/notebook/package-manager.test.ts',
+      'src/main/notebook/package-process-sandbox.test.ts',
+      'src/main/notebook/network-sandbox-owner.test.ts',
+      'src/main/notebook/dependency-analysis.test.ts',
+      'src/main/notebook/dependency-analysis.chord.test.ts',
+      'src/main/notebook/dependency-analysis.path-plot.test.ts',
+      'src/main/notebook/dependency-analysis.anndata.test.ts',
+      'src/main/artifacts/artifact-reproducibility-outputs.test.ts',
+      'src/main/acp/context-usage-static-context.test.ts',
+      'src/main/notebook/provisioner.test.ts',
+      'src/main/notebook/reproduction-runtime.test.ts',
+      'src/main/notebook/recovery-coordinator.test.ts',
       'src/main/artifacts/provenance-repository.test.ts',
       'src/main/artifacts/provenance-write-contract.test.ts',
-      'src/main/delegation/production-composition.test.ts'
+      'src/main/artifacts/artifact-reproducibility-export.test.ts',
+      'src/main/agent-framework/opencode.test.ts',
+      'src/main/logger.test.ts',
+      'src/main/delegation/production-composition.test.ts',
+      'packages/notebook-network-sandbox/src/gateway.test.ts',
+      'packages/notebook-network-sandbox/src/public-read-lifecycle.test.ts'
     ]) {
       expect(regressions.run).toContain(file)
     }
@@ -124,14 +177,14 @@ describe('release and scheduled workflow topology', () => {
     const profile = step(soak, 'Record runtime resource profile')
     const upload = step(soak, 'Upload runtime resource evidence')
 
-    expect(schedule).toEqual([{ cron: '23 3 * * *' }])
+    expect(schedule).toEqual([{ cron: '23 21 * * *' }])
     expect(dispatch.inputs?.mode).toMatchObject({
       default: 'smoke',
-      options: ['smoke', 'soak']
+      options: ['smoke', 'soak', 'package-macos-arm64']
     })
     expect(resource.permissions).toEqual({ actions: 'read', contents: 'read' })
     expect(resource.concurrency).toEqual({
-      group: 'runtime-resource-soak-${{ github.ref }}',
+      group: 'runtime-resource-soak-${{ github.event_name }}-${{ github.ref }}',
       'cancel-in-progress': true
     })
     expect(step(plan, 'Check for unprofiled main changes').run).toContain(
@@ -139,7 +192,7 @@ describe('release and scheduled workflow topology', () => {
     )
     expect(soak).toMatchObject({
       needs: 'plan',
-      if: "needs.plan.outputs.should_test == 'true'",
+      if: "needs.plan.outputs.should_test == 'true' && inputs.mode != 'package-macos-arm64'",
       'runs-on': 'windows-latest',
       'timeout-minutes': 70
     })
@@ -166,17 +219,18 @@ describe('release and scheduled workflow topology', () => {
     expect(release.jobs['notarize-mac'].needs).toEqual(['build', 'package-smoke'])
   })
 
-  it('batches Nightly hourly and prepares publication without write access', () => {
+  it('batches Nightly daily and prepares publication without write access', () => {
     const nightly = workflow('nightly.yml')
     const schedule = nightly.on?.schedule as Array<{ cron: string }>
     const prepare = nightly.jobs.prepare
 
     expect(nightly.on).not.toHaveProperty('push')
-    expect(schedule).toEqual([{ cron: '17 * * * *' }])
+    expect(schedule).toEqual([{ cron: '17 17 * * *' }])
     expect(nightly.on).toHaveProperty('workflow_dispatch')
     expect(nightly.permissions).toEqual({ actions: 'read', contents: 'read' })
     expect(nightly.concurrency).toEqual({
-      group: 'nightly-build',
+      group:
+        "nightly-build-${{ github.event_name }}${{ inputs.dry_run == 'linux-cli' && '-linux-cli' || '' }}",
       'cancel-in-progress': true
     })
     expect(nightly.jobs.build).toMatchObject({
@@ -185,8 +239,9 @@ describe('release and scheduled workflow topology', () => {
       uses: './.github/workflows/build.yml',
       with: {
         nightly: true,
-        skip_verify: "${{ inputs.dry_run == 'macos-x64' }}",
-        platform_name: "${{ inputs.dry_run == 'macos-x64' && 'macos-x64' || '' }}"
+        skip_verify: "${{ inputs.dry_run == 'macos-x64' || inputs.dry_run == 'linux-cli' }}",
+        platform_name:
+          "${{ inputs.dry_run == 'macos-x64' && 'macos-x64' || inputs.dry_run == 'linux-cli' && 'linux-x64' || '' }}"
       }
     })
     expect(step(nightly.jobs.plan, 'Compare main with the rolling nightly tag').run).toContain(
@@ -198,13 +253,17 @@ describe('release and scheduled workflow topology', () => {
     }
     expect(dispatch.inputs?.dry_run).toMatchObject({
       default: 'full',
-      options: ['full', 'runtime-source', 'macos-x64']
+      options: ['full', 'runtime-source', 'macos-x64', 'linux-cli']
     })
     expect(nightly.jobs['package-smoke'].if).toBe("inputs.dry_run != 'macos-x64'")
+    expect(nightly.jobs['package-smoke'].with).toEqual({
+      platform_name: "${{ inputs.dry_run == 'linux-cli' && 'linux-x64' || '' }}"
+    })
+    expect(nightly.jobs.regression.if).toBe("inputs.dry_run != 'linux-cli'")
     expect(nightly.jobs['runtime-certification'].if).toContain("inputs.dry_run != 'macos-x64'")
     expect(prepare).toMatchObject({
       needs: ['plan', 'build', 'package-smoke'],
-      if: "needs.build.result == 'success' && needs.package-smoke.result == 'success'",
+      if: "needs.build.result == 'success' && needs.package-smoke.result == 'success' && inputs.dry_run != 'linux-cli'",
       'runs-on': 'ubuntu-latest'
     })
     expect(step(prepare, 'Aggregate release certification evidence').run).toContain(
@@ -321,6 +380,14 @@ describe('release and scheduled workflow topology', () => {
   it('runs Windows upgrade smoke independently against published release assets', () => {
     const smokeWorkflow = workflow('windows-upgrade-smoke.yml')
     const smoke = smokeWorkflow.jobs['windows-upgrade-smoke']
+
+    const dryRun = smokeWorkflow.jobs['baseline-dry-run']
+    expect(dryRun.if).toBe('${{ inputs.dry_run }}')
+    expect(dryRun['runs-on']).toBe('windows-latest')
+    expect(step(dryRun, 'Generate test database client').run).toBe('npx prisma generate')
+    expect(
+      step(dryRun, 'Test actual Windows baseline selection and installer observation').run
+    ).toContain('scripts/windows-updater-certification.test.ts')
     const dispatch = smokeWorkflow.on?.repository_dispatch as { types: string[] }
 
     expect(dispatch.types).toEqual(['windows-upgrade-smoke'])
@@ -344,14 +411,22 @@ describe('release and scheduled workflow topology', () => {
     expect(released.run).toContain('Released migrations are not a continuous prefix')
     expect(released.run).toContain('"sha=$releasedSha"')
     expect(released.run).toContain('"migration_count=$($migrationFiles.Count)"')
+    expect(released.run).toContain('1a6faf134836d417b8bb1cdf89571f5d9dee2a0b')
     expect(released.run).toContain('f12fd1f871022c7a9b771d193202d9ecf98aca96')
     expect(released.run)
-      .toContain(`$artifactReservationBase = git merge-base $artifactReservationCommit $releasedSha
+      .toContain(`$artifactSaveBase = git merge-base $artifactSaveCommit $releasedSha
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($artifactSaveBase)) {
+  Write-Error "Could not resolve the released Artifact RPC contract at $releasedSha."
+  exit 1
+}
+$artifactReservationBase = git merge-base $artifactReservationCommit $releasedSha
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($artifactReservationBase)) {
   Write-Error "Could not resolve the released Artifact RPC contract at $releasedSha."
   exit 1
 }
-if ($artifactReservationBase -eq $artifactReservationCommit) {
+if ($artifactSaveBase -eq $artifactSaveCommit) {
+  $artifactRpcContract = 'save'
+} elseif ($artifactReservationBase -eq $artifactReservationCommit) {
   $artifactRpcContract = 'reservation'
 } else {
   $artifactRpcContract = 'legacy'
@@ -422,5 +497,89 @@ describe('website mirror publication intent', () => {
     expect(publication.env?.MODE).toBe('${{ inputs.mode }}')
     expect(publication.if).toBe('${{ !inputs.dry_run }}')
     expect(publication.run).toBe('node scripts/publish-update-channel.mjs')
+  })
+})
+
+describe('build verification throughput', () => {
+  it('runs Ubuntu static checks independently from three complete portable shards', () => {
+    const { verify, verify_tests: tests, verify_macos: macos } = workflow('build.yml').jobs
+    expect(verify['runs-on']).toBe('ubuntu-latest')
+    expect(verify.needs).toBeUndefined()
+    expect(tests.needs).toBeUndefined()
+    expect(tests['runs-on']).toBe('ubuntu-latest')
+    expect(tests.strategy?.matrix?.shard).toEqual([1, 2, 3])
+    expect(tests.env).toEqual({
+      VITEST_DEFER_COVERAGE_THRESHOLDS: '1',
+      VITEST_PORTABLE_CI: '1'
+    })
+    expect(step(tests, 'Test complete suite shard').run).toContain('--shard=${{ matrix.shard }}/3')
+    expect(step(tests, 'Test complete suite shard').run).toContain('--coverage')
+    expect(step(tests, 'Test complete suite shard').run).toContain('--reporter=blob')
+    expect(step(tests, 'Test complete suite shard').run).toContain('--reporter=github-actions')
+    expect(step(tests, 'Enforce full-suite shard').if).toBe('${{ always() }}')
+    expect(step(verify, 'Check translation catalogs').run).toBe(
+      'npx vitest run src/renderer/src/i18n/resources.test.ts'
+    )
+    for (const job of [verify, tests, macos]) {
+      expect(job.if).toBe('${{ !inputs.skip_verify }}')
+    }
+    expect(macos['runs-on']).toBe('macos-14')
+    const native = step(macos, 'Test macOS native behavior and release regressions').run
+    for (const path of [
+      'src/main/windows.test.ts',
+      'packages/notebook-network-sandbox/src/filesystem-policy.test.ts',
+      'packages/notebook-network-sandbox/src/filesystem-enforcement.integration.test.ts',
+      'packages/notebook-network-sandbox/src/network-enforcement.integration.test.ts',
+      'src/main/net/network-info.test.ts',
+      'src/main/notebook/managed-runtime-guard.test.ts',
+      'src/main/notebook/package-cache-sandbox.integration.test.ts',
+      'src/main/acp/prompt-attachment-notebook-sandbox.integration.test.ts',
+      'src/main/compute/compute-remote-operation-owner.test.ts',
+      'scripts/ci/mirror-channel-publication.test.ts',
+      'src/main/literature/catalog-capacity.test.ts'
+    ])
+      expect(native).toContain(path)
+    expect(step(macos, 'Test production macOS kernel sandbox').run).toContain(
+      'executes the repl loop through the production network sandbox'
+    )
+  })
+
+  it('requires successful shards and all blobs before enforcing aggregate coverage', () => {
+    const job = workflow('build.yml').jobs.verify_coverage
+    expect(job.needs).toBe('verify_tests')
+    expect(job.if).toBe('${{ !cancelled() && !inputs.skip_verify }}')
+    expect(job.env).toBeUndefined()
+    const guard = step(job, 'Require complete successful shards')
+    expect(guard.env).toEqual({ SHARDS_RESULT: '${{ needs.verify_tests.result }}' })
+    expect(guard.run).toContain('test "$SHARDS_RESULT" = success')
+    expect(guard.run).toContain('for shard in 1 2 3')
+    expect(guard.run).toContain('test -s "vitest-reports/blob-$shard.json"')
+    expect(step(job, 'Merge test reports and enforce coverage').run).toBe(
+      'npx vitest run --merge-reports=vitest-reports --coverage --passWithNoTests'
+    )
+    expect(step(job, 'Upload coverage report').with).toMatchObject({
+      overwrite: true,
+      'if-no-files-found': 'error'
+    })
+  })
+
+  it('reuses real verification for a manual release dry-run without packaging or publication', () => {
+    const release = workflow('release.yml')
+    const build = workflow('build.yml')
+    expect(release.on?.workflow_dispatch).toMatchObject({
+      inputs: { verify_only: { type: 'boolean', default: false } }
+    })
+    expect(release.jobs.build.with?.verify_only).toBe(
+      "${{ github.event_name == 'workflow_dispatch' && inputs.verify_only }}"
+    )
+    expect(build.jobs.setup.if).toBe('${{ !inputs.verify_only }}')
+    expect(build.jobs.build.needs).toBe('setup')
+    expect(build.jobs.build.if).toBe("${{ needs.setup.result == 'success' }}")
+    expect(release.jobs['package-smoke'].if).toBe('${{ !inputs.verify_only }}')
+    for (const name of ['publish', 'notarize-mac']) {
+      expect(release.jobs[name].if).toBe(
+        "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')"
+      )
+    }
   })
 })

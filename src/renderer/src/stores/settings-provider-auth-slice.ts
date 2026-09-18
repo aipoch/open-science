@@ -13,6 +13,7 @@ import type {
   ProviderView,
   RefreshProviderModelsResult,
   SettingsSnapshot,
+  SaveValidatedProviderResult,
   UpsertProviderRequest,
   ValidateProviderRequest,
   ValidateProviderResult,
@@ -26,6 +27,9 @@ export type SaveProviderResult = {
 }
 
 export type ProviderAuthActions = {
+  saveValidatedProvider: (
+    request: UpsertProviderRequest
+  ) => Promise<SaveValidatedProviderResult & { refreshFailed?: boolean }>
   persistProvider: (request: UpsertProviderRequest) => Promise<string>
   saveProvider: (request: UpsertProviderRequest) => Promise<SaveProviderResult>
   saveAndActivateProvider: (request: UpsertProviderRequest) => Promise<SaveProviderResult>
@@ -66,6 +70,7 @@ type ProviderAuthCommands = Pick<
   | 'setActiveProvider'
   | 'setAgentFramework'
   | 'validateProvider'
+  | 'saveValidatedProvider'
   | 'cancelCodexLogin'
   | 'cancelClaudeLogin'
   | 'loginIsolatedCodex'
@@ -120,6 +125,23 @@ export const createProviderAuthSlice = <Store extends ProviderAuthHost>({
   refreshFrameworkStatus,
   writeCoordinator
 }: ProviderAuthSliceOptions<Store>): ProviderAuthActions => ({
+  saveValidatedProvider: async (request) => {
+    const result = await getCommands().saveValidatedProvider(request)
+    if ((result.providerId || result.validation.applied === true) && !result.snapshot) {
+      try {
+        reconcileSnapshot(await getCommands().getSettings())
+      } catch {
+        return { ...result, refreshFailed: true }
+      }
+    }
+    if (result.snapshot) {
+      reconcileSnapshot(result.snapshot)
+      // A failed readiness refresh must not turn a committed save into a retryable write.
+      void refreshPreflight().catch(() => undefined)
+    }
+    return result
+  },
+
   persistProvider: async (request) => {
     const commands = getCommands()
     const before = get().providers
@@ -274,7 +296,7 @@ export const createProviderAuthSlice = <Store extends ProviderAuthHost>({
         model: model || undefined
       })
     } catch (error) {
-      write.fail('Could not switch active provider or model. Try again.')
+      write.fail('active-provider')
       console.error('Failed to set active provider', error)
       throw error
     }
@@ -291,7 +313,7 @@ export const createProviderAuthSlice = <Store extends ProviderAuthHost>({
     try {
       snapshot = await getCommands().setAgentFramework({ id })
     } catch (error) {
-      write.fail('Could not switch agent framework. Try again.')
+      write.fail('agent-framework')
       console.error('Failed to switch agent framework', error)
       throw error
     }

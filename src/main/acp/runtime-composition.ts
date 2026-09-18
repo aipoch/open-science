@@ -1,3 +1,4 @@
+import type { PdfElementTools } from '../literature/pdf-structure/agent-reader'
 import { homedir } from 'node:os'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
@@ -7,6 +8,7 @@ import { basename, extname, join } from 'node:path'
 import { app } from 'electron'
 
 import type { AcpPermissionRequest, AcpRuntimeEvent, AcpStateUpdate } from '../../shared/acp'
+import type { ShellRuntimeBinding } from '../../shared/notebook'
 import { DEFAULT_ARTIFACT_PROJECT_ID } from '../../shared/artifacts'
 import { resolveActiveConversationMessages } from '../../shared/conversation-graph'
 import { CODEX_SUBSCRIPTION_PROVIDER_ID } from '../../shared/settings'
@@ -129,6 +131,8 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
   mcpEntryPath: string
   uploadRepository: UploadRepository
   notebookRpcServer: NotebookLocalRpcServer
+  wslSetupSessions?: AcpRuntimeOptions['wslSetupSessions']
+  getShellRuntimeBinding?: () => ShellRuntimeBinding | Promise<ShellRuntimeBinding>
   peekNotebookHandoffContext?: (sessionId: string) => NotebookHandoffContext | undefined
   authorizeSkillImportReferencedUploads: (
     projectId: string,
@@ -170,6 +174,7 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
   specialistService?: SpecialistService
   sessionPersistenceCoordinator?: SessionRuntimeContextCommands & SessionMutation & SessionCatalog
   literatureReader?: Pick<LiteratureDocumentReader, 'readCurrent' | 'searchAttachment'>
+  pdfElementReader?: PdfElementTools
   literatureAttachments?: Pick<LiteratureAttachmentAuthority, 'resolveVersion'>
   literatureCatalog?: Pick<LiteratureCatalog, 'getMany' | 'searchForAgent' | 'transact'>
   literaturePdfAcquisition?: Pick<
@@ -179,9 +184,13 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
   delegatedWork?: RootDelegatedWorkControl
   fixedBackend?: ResolvedAgentBackend
   runtimeCallbacks?: AcpRuntimeCallbacks
+  preparedSkills?: Awaited<
+    ReturnType<NonNullable<AcpSettingsCapabilities['prepareDelegatedSkills']>>
+  >
   delegatedNotebookConnection?: NotebookRpcConnection
   delegatedArtifactCurrentRunFile?: string
   spawnAgent?: () => ChildProcessWithoutNullStreams
+  hasPendingCredentialRequest?: AcpRuntimeOptions['hasPendingCredentialRequest']
   sideChatRelays?: AcpRuntimeOptions['sideChatRelays']
   imageInputCompatibility?: AcpRuntimeOptions['imageInputCompatibility']
   resolveComputeExecutionTargetIds?: AcpRuntimeOptions['resolveComputeExecutionTargetIds']
@@ -221,6 +230,8 @@ const createAcpRuntime = ({
   managedFileVersions,
   uploadRepository,
   notebookRpcServer,
+  wslSetupSessions,
+  getShellRuntimeBinding,
   peekNotebookHandoffContext,
   authorizeSkillImportReferencedUploads,
   settingsService,
@@ -244,16 +255,19 @@ const createAcpRuntime = ({
   specialistService,
   sessionPersistenceCoordinator,
   literatureReader,
+  pdfElementReader,
   literatureAttachments,
   literatureCatalog,
   literaturePdfAcquisition,
   delegatedWork,
   fixedBackend,
   runtimeCallbacks,
+  preparedSkills,
   delegatedNotebookConnection,
   delegatedArtifactCurrentRunFile,
   spawnAgent,
   sideChatRelays,
+  hasPendingCredentialRequest,
   imageInputCompatibility,
   resolveComputeExecutionTargetIds,
   memory,
@@ -274,7 +288,10 @@ const createAcpRuntime = ({
   const defaultCwd = homedir()
   const runtimeCoordinatorRef: { current?: AcpRuntimeCoordinator } = {}
   // One lazily-shared repository for Agent Context lookups; getProjectDbClient caches the client.
-  const projectRepository = new ProjectRepository(() => getProjectDbClient(resolveConfigRoot()))
+  const projectRepository = new ProjectRepository(
+    () => getProjectDbClient(resolveConfigRoot()),
+    configRoot
+  )
   const eventBroadcast = createAcpRuntimeEventBroadcastCoalescer({
     publish: (events) => broadcastToRenderers('acp:event', events)
   })
@@ -361,6 +378,17 @@ const createAcpRuntime = ({
         auxiliaryUsage,
         // Packaged macOS apps often start with cwd at "/" or the app bundle; use home instead.
         defaultCwd,
+        ...(delegatedNotebookConnection && fixedBackend?.framework.id === 'opencode'
+          ? {
+              additionalProtectedReadRoots: [
+                fixedBackend.env.XDG_CONFIG_HOME,
+                fixedBackend.env.XDG_DATA_HOME,
+                fixedBackend.env.XDG_CACHE_HOME,
+                fixedBackend.env.XDG_STATE_HOME,
+                fixedBackend.env.OPENCODE_TEST_HOME
+              ].filter((path): path is string => Boolean(path))
+            }
+          : {}),
         resolveBackend: async (context) =>
           fixedBackend ??
           (target
@@ -378,6 +406,7 @@ const createAcpRuntime = ({
             : settingsService.resolveAgentBackend(await selection!, context)),
         ...(spawnAgent ? { spawnAgent } : {}),
         mcpHttpHost: new AgentMcpHttpHost(),
+        wslSetupSessions,
         ...(literatureReader && literatureAttachments && sessionPersistenceCoordinator
           ? {
               literature: {
@@ -397,7 +426,8 @@ const createAcpRuntime = ({
                 },
                 resolveAttachmentVersion: (versionId) =>
                   literatureAttachments.resolveVersion(versionId),
-                readDocument: (request) => literatureReader.readCurrent(request)
+                readDocument: (request) => literatureReader.readCurrent(request),
+                ...(pdfElementReader ? { elements: pdfElementReader } : {})
               }
             }
           : {}),
@@ -434,7 +464,8 @@ const createAcpRuntime = ({
                   const sourcePath = await resolveAllowedImportFilePath(
                     filename,
                     [notebookRoot, workspaceCwd],
-                    [notebookDataDir, workspaceCwd, notebookRoot]
+                    [notebookDataDir, workspaceCwd, notebookRoot],
+                    'literature'
                   )
                   if ((await stat(sourcePath)).size > MAX_LITERATURE_CANDIDATE_FILE_BYTES) {
                     throw Object.assign(
@@ -473,7 +504,8 @@ const createAcpRuntime = ({
                   const sourcePath = await resolveAllowedImportFilePath(
                     filename,
                     [notebookRoot, workspaceCwd],
-                    [notebookDataDir, workspaceCwd, notebookRoot]
+                    [notebookDataDir, workspaceCwd, notebookRoot],
+                    'literature'
                   )
                   if (extname(sourcePath).toLowerCase() !== '.docx') {
                     throw new Error('Citation document must be a DOCX file.')
@@ -502,7 +534,8 @@ const createAcpRuntime = ({
                   const sourcePath = await resolveAllowedImportFilePath(
                     filename,
                     [notebookRoot, workspaceCwd],
-                    [notebookDataDir, workspaceCwd, notebookRoot]
+                    [notebookDataDir, workspaceCwd, notebookRoot],
+                    'literature'
                   )
                   if (extname(sourcePath).toLowerCase() !== '.tex') {
                     throw new Error('LaTeX source must be a .tex file.')
@@ -630,12 +663,18 @@ const createAcpRuntime = ({
             }
           : {}),
         skills: {
+          preparedSkillIds: preparedSkills?.skillIds,
           needForceLoad: (ids) => settingsService.skillsNeedingForceLoad(ids),
           namesForIds: (ids) => settingsService.skillNudgeNamesForIds(ids),
-          descriptorsForIds: (ids, codexHome) =>
-            settingsService.codexSkillDescriptorsForIds(ids, codexHome),
-          catalogForCodexHome: (codexHome) => settingsService.codexSkillCatalog(codexHome),
-          catalogForCodeBuddyRoot: (root) => settingsService.codeBuddySkillCatalog(root)
+          descriptorsForIds: async (ids, codexHome) => {
+            if (!preparedSkills) return settingsService.codexSkillDescriptorsForIds(ids, codexHome)
+            const names = new Set(await settingsService.skillNudgeNamesForIds(ids))
+            return preparedSkills.catalog.filter((entry) => names.has(entry.name))
+          },
+          catalogForCodexHome: async (codexHome) =>
+            preparedSkills?.catalog ?? settingsService.codexSkillCatalog(codexHome),
+          catalogForCodeBuddyRoot: async (root) =>
+            preparedSkills?.catalog ?? settingsService.codeBuddySkillCatalog(root)
         },
         ...(!delegatedNotebookConnection || delegatedArtifactCurrentRunFile
           ? {
@@ -671,6 +710,8 @@ const createAcpRuntime = ({
           projectId: DEFAULT_ARTIFACT_PROJECT_ID,
           mcpEntryPath,
           memoryTools: !delegatedNotebookConnection,
+          isMemoryEnabled: () => memory?.isEnabled?.() ?? Promise.resolve(false),
+          getShellRuntimeBinding,
           getRpcConnection: ({ sessionId, projectId, memoryTools }) =>
             delegatedNotebookConnection
               ? Promise.resolve(delegatedNotebookConnection)
@@ -685,8 +726,8 @@ const createAcpRuntime = ({
             : {
                 registerSessionAlias: (aliasSessionId, sessionId) =>
                   notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId),
-                releaseSessionCapabilities: (sessionId) =>
-                  notebookRpcServer.releaseSessionCapabilities(sessionId),
+                releaseSessionCapabilities: (sessionId, capabilityTokens) =>
+                  notebookRpcServer.releaseSessionCapabilitiesIfOwned(sessionId, capabilityTokens),
                 registerSessionSpecialist: (sessionId, specialistId) =>
                   notebookRpcServer.registerSessionSpecialist(sessionId, specialistId),
                 authorizeExecution: (authorization) =>
@@ -695,6 +736,8 @@ const createAcpRuntime = ({
                   notebookRpcServer.setArtifactTurnBinding(sessionId, binding),
                 clearArtifactTurnBinding: (sessionId, ownerExecutionId) =>
                   notebookRpcServer.clearArtifactTurnBinding(sessionId, ownerExecutionId),
+                prepareTurnInputs: (request) =>
+                  notebookRpcServer.prepareNotebookTurnInputs(request),
                 registerTurnInputs: (request) =>
                   notebookRpcServer.registerNotebookTurnInputs(request),
                 peekHandoffContext: peekNotebookHandoffContext
@@ -710,8 +753,11 @@ const createAcpRuntime = ({
                   notebookRpcServer.issueSkillImportConnection(sessionId),
                 registerSessionAlias: (aliasSessionId: string, sessionId: string) =>
                   notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId),
-                releaseSessionCapabilities: (sessionId: string) =>
-                  notebookRpcServer.releaseSessionCapabilities(sessionId),
+                releaseSessionCapabilities: (
+                  sessionId: string,
+                  capabilityTokens: readonly string[]
+                ) =>
+                  notebookRpcServer.releaseSessionCapabilitiesIfOwned(sessionId, capabilityTokens),
                 authorizeReferencedUploads: authorizeSkillImportReferencedUploads
               }
             }),
@@ -750,8 +796,8 @@ const createAcpRuntime = ({
           ? {
               plan: {
                 mcpEntryPath,
-                getRpcConnection: ({ sessionId, projectId }) =>
-                  notebookRpcServer.issuePlanConnection(sessionId, projectId),
+                getRpcConnection: ({ sessionId, projectId, replaceExisting }) =>
+                  notebookRpcServer.issuePlanConnection(sessionId, projectId, { replaceExisting }),
                 registerSessionAlias: (aliasSessionId, sessionId) =>
                   notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId),
                 sessions: sessionPersistenceCoordinator,
@@ -801,6 +847,7 @@ const createAcpRuntime = ({
           : {}),
         callbacks: runtimeCallbacks,
         sideChatRelays,
+        hasPendingCredentialRequest,
         ...(!delegatedNotebookConnection && memory ? { memory } : {}),
         permissionGrantStore,
         permissionGrantRegistry,

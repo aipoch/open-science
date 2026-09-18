@@ -47,6 +47,7 @@ type ComputeCommandOwner = Pick<
   | 'approvalReplayPending'
   | 'jobsList'
   | 'jobsCancel'
+  | 'jobsRetryHarvest'
   | 'jobsSetRemoteCleanup'
   | 'jobsPendingNotification'
   | 'jobsMarkConsumed'
@@ -211,6 +212,11 @@ const computeApplicationCommands = Object.freeze({
     OwnerArgs<ComputeCommandOwner, 'jobsCancel'>,
     OwnerResult<ComputeCommandOwner, 'jobsCancel'>
   >('compute:jobs:cancel'),
+  jobsRetryHarvest: defineApplicationCommand<
+    'compute:jobs:retry-harvest',
+    OwnerArgs<ComputeCommandOwner, 'jobsRetryHarvest'>,
+    OwnerResult<ComputeCommandOwner, 'jobsRetryHarvest'>
+  >('compute:jobs:retry-harvest'),
   jobsSetRemoteCleanup: defineApplicationCommand<
     'compute:jobs:set-remote-cleanup',
     readonly [SetComputeJobRemoteCleanupRequest],
@@ -283,6 +289,7 @@ const computeApplicationCommandGroup = defineApplicationCommandGroup('compute', 
   computeApplicationCommands.get,
   computeApplicationCommands.jobsList,
   computeApplicationCommands.jobsCancel,
+  computeApplicationCommands.jobsRetryHarvest,
   computeApplicationCommands.jobsSetRemoteCleanup,
   computeApplicationCommands.jobsMarkConsumed,
   computeApplicationCommands.jobsPendingNotification,
@@ -420,6 +427,7 @@ const registerComputeApplicationCommands = (
       },
       'compute:jobs:list': ({ args }) => dependencies.compute.jobsList(args[0]),
       'compute:jobs:cancel': ({ args }) => dependencies.compute.jobsCancel(args[0]),
+      'compute:jobs:retry-harvest': ({ args }) => dependencies.compute.jobsRetryHarvest(args[0]),
       'compute:jobs:set-remote-cleanup': ({ args, callerContext }) => {
         assertLocalCommand(callerContext, 'compute:jobs:set-remote-cleanup')
         return dependencies.compute.jobsSetRemoteCleanup(args[0])

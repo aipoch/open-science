@@ -6,7 +6,8 @@ import {
   renderConversationHtml,
   renderConversationMarkdown,
   sanitizeExportFilename,
-  sanitizeExportMarkdown
+  sanitizeExportMarkdown,
+  serializeConversationExportContent
 } from './conversation-export'
 import type { PersistedChatSession } from './session-persistence'
 
@@ -65,6 +66,69 @@ const createSession = (): PersistedChatSession => ({
 })
 
 describe('conversation export projection', () => {
+  it('ignores only the Session update time when comparing reviewed export content', () => {
+    const session = createSession()
+    const updated = { ...session, updatedAt: session.updatedAt + 1 }
+    expect(serializeConversationExportContent(updated)).toBe(
+      serializeConversationExportContent(session)
+    )
+    expect(createConversationExportDocument(updated, 0).updatedAt).toBe(updated.updatedAt)
+  })
+
+  it.each([
+    [
+      'title',
+      (session: PersistedChatSession) => {
+        session.title = 'Changed title'
+      }
+    ],
+    [
+      'creation time',
+      (session: PersistedChatSession) => {
+        session.createdAt += 1
+      }
+    ],
+    [
+      'message text',
+      (session: PersistedChatSession) => {
+        session.messages[1].content = 'Changed answer'
+      }
+    ],
+    [
+      'message time',
+      (session: PersistedChatSession) => {
+        session.messages[1].createdAt += 1
+      }
+    ],
+    [
+      'message order',
+      (session: PersistedChatSession) => {
+        session.messages.reverse()
+      }
+    ],
+    [
+      'attachment',
+      (session: PersistedChatSession) => {
+        session.artifacts![0].name = 'changed.pdf'
+      }
+    ],
+    [
+      'image',
+      (session: PersistedChatSession) => {
+        session.messages[0].images = [
+          { id: 'image-1', mimeType: 'image/png', data: 'AAAA', byteLength: 3 }
+        ]
+      }
+    ]
+  ] as const)('still detects changes to %s in reviewed content', (_field, mutate) => {
+    const original = createSession()
+    const changed = createSession()
+    mutate(changed)
+    expect(serializeConversationExportContent(changed)).not.toBe(
+      serializeConversationExportContent(original)
+    )
+  })
+
   it('removes complete provider think blocks while preserving ordinary Markdown', () => {
     expect(
       sanitizeExportMarkdown(
@@ -412,4 +476,12 @@ describe('conversation export projection', () => {
     expect(sanitizeExportFilename('界'.repeat(80))).toBe('界'.repeat(80))
     expect(sanitizeExportFilename(`${'界'.repeat(81)}tail`)).toBe(`${'界'.repeat(79)}...`)
   })
+})
+
+it('reserves a filename byte budget for package dates and extensions without splitting Unicode', () => {
+  const title = sanitizeExportFilename('🧪研究'.repeat(100), 220)
+  const filename = `${title}-2026-09-11.science`
+  expect(new TextEncoder().encode(filename).length).toBeLessThanOrEqual(255)
+  expect(filename).toMatch(/-2026-09-11\.science$/)
+  expect(title).not.toContain('\uFFFD')
 })

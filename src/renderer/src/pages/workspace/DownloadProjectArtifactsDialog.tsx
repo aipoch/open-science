@@ -9,7 +9,8 @@ import {
   dialogCancelButtonClassName,
   dialogCloseButtonClassName,
   dialogOverlayClassName,
-  dialogPanelClassName
+  dialogPanelClassName,
+  dialogTitleClassName
 } from '@/components/ui/dialog-chrome'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import type { Project } from '../../../../shared/projects'
@@ -226,7 +227,7 @@ const DownloadProjectArtifactsDialog = ({
             <div className="flex min-w-0 items-center gap-2">
               <Archive className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
               <div className="min-w-0">
-                <Dialog.Title className="text-sm font-semibold text-foreground">
+                <Dialog.Title className={dialogTitleClassName}>
                   {t('Download project artifacts')}
                 </Dialog.Title>
                 <Dialog.Description className="truncate text-xs text-muted-foreground">
@@ -331,7 +332,10 @@ const DownloadProjectArtifactsDialog = ({
             </Button>
             <div className="flex min-w-0 items-center gap-3">
               {status === 'ready' && downloadError ? (
-                <p role="alert" className="truncate text-xs text-danger-000">
+                <p
+                  role="alert"
+                  className="whitespace-normal [overflow-wrap:anywhere] text-xs text-danger-000"
+                >
                   {downloadError.kind === 'partial'
                     ? t(
                         'Downloaded {{downloaded}} of {{total}} artifacts. {{failed}} failed.',
@@ -356,18 +360,21 @@ const DownloadProjectArtifactsDialog = ({
                 data-testid="download-project-artifacts-confirm"
                 disabled={status !== 'ready' || selectedFiles.length === 0 || isDownloading}
                 onClick={() => void downloadSelected()}
+                aria-busy={Boolean(isDownloading)}
               >
-                {isDownloading ? (
-                  <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
-                ) : (
-                  <Download className="size-4" aria-hidden="true" />
-                )}
-                {isDownloading
-                  ? t('Downloading…')
-                  : t('Download {{count}} artifacts', {
-                      defaultValue_one: 'Download {{count}} artifact',
-                      count: selectedFiles.length
-                    })}
+                <span key={String(isDownloading)} className="button-feedback">
+                  {isDownloading ? (
+                    <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <Download className="size-4" aria-hidden="true" />
+                  )}
+                  {isDownloading
+                    ? t('Downloading…')
+                    : t('Download {{count}} artifacts', {
+                        defaultValue_one: 'Download {{count}} artifact',
+                        count: selectedFiles.length
+                      })}
+                </span>
               </Button>
             </div>
           </div>

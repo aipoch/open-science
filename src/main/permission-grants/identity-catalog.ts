@@ -45,7 +45,9 @@ const PRE_REGISTERED_PERMISSION_IDENTITIES: Readonly<
     'mcp:open-science-library/prepare_latex_bundle',
     'mcp:open-science-library/save_to_inbox',
     'mcp:open-science-library/acquire_pdf',
-    'mcp:open-science-literature/read_document'
+    'mcp:open-science-literature/read_document',
+    'mcp:open-science-literature/list_pdf_elements',
+    'mcp:open-science-literature/read_pdf_element'
   ],
   execution: ['exec:local/python', 'exec:local/bash'],
   file_operation: [
@@ -57,7 +59,7 @@ const PRE_REGISTERED_PERMISSION_IDENTITIES: Readonly<
     'file:move'
   ],
   skill_operation: ['skill:invoke'],
-  builtin_tool: []
+  builtin_tool: ['builtin:web_fetch', 'builtin:web_search']
 }
 
 const PRE_REGISTERED_PERMISSION_IDENTITY_COUNT = Object.values(

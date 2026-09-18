@@ -27,7 +27,11 @@ export type SettingsPanelId =
   | 'runtimes'
   | 'remote-control'
 
-export type ModelView = { kind: 'list' } | { kind: 'create' } | { kind: 'edit'; providerId: string }
+export type ModelView =
+  | { kind: 'list' }
+  | { kind: 'local-models' }
+  | { kind: 'create' }
+  | { kind: 'edit'; providerId: string }
 
 export type NetworkView = { kind: 'list' | 'mirror' | 'proxy' | 'domains' }
 

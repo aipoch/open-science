@@ -1,4 +1,8 @@
 import {
+  bootstrapApplicationCommandGroup,
+  registerBootstrapApplicationCommands
+} from './settings/bootstrap-application-commands'
+import {
   specialistApplicationCommandGroup,
   registerSpecialistApplicationCommands,
   type SpecialistApplicationOwner
@@ -87,6 +91,11 @@ import {
   registerLiteratureApplicationCommands,
   type LiteratureCommandOwner
 } from './literature/application-commands'
+import {
+  bookmarkApplicationCommandGroup,
+  registerBookmarkApplicationCommands,
+  type BookmarkCommandOwner
+} from './bookmarks/application-commands'
 
 type AnyApplicationCommand = ApplicationCommand<string, readonly unknown[], unknown>
 type AnyApplicationCommandGroup = ApplicationCommandGroup<string, readonly AnyApplicationCommand[]>
@@ -126,6 +135,7 @@ type ApplicationCommandCompositionDependencies = Readonly<{
   memory: MemoryCommandOwner
   specialist: SpecialistApplicationOwner
   literature: LiteratureCommandOwner
+  bookmarks: BookmarkCommandOwner
   dataContent: DataContentApplicationCommandDependencies
   host: Omit<HostApplicationCommandDependencies, 'remoteAccess'>
 }>
@@ -144,21 +154,32 @@ const ELECTRON_NATIVE_COMMAND_NAMES = Object.freeze([
   'remote-access:disable',
   'remote-access:set-mode',
   'sessions:export-conversation',
+  'sessions:fork',
+  'sessions:export-package',
+  'sessions:import-package',
+  'sessions:package-operation',
   'uploads:stage-local-file'
 ])
 
 const TASK_NATIVE_COMMAND_NAMES = Object.freeze([
+  'settings:bootstrap',
   'settings:test-custom-server',
   'projects:update-session-defaults',
   'reviewer:abort',
   'settings:set-agent-routing',
   'sessions:fail-task-run',
   'sessions:settle-task-completion',
+  'sessions:bind-task-session',
+  'sessions:admit-task-turn',
   'sessions:stage-task-completion',
   'sessions:update-configuration'
 ])
 
 const TASK_COMMAND_NAMES = Object.freeze([
+  'settings:bootstrap',
+  'cli:install',
+  'settings:get-preflight',
+  'settings:list-skills',
   'settings:list-connectors',
   'settings:get-connector-detail',
   'settings:set-connector-enabled',
@@ -179,6 +200,8 @@ const TASK_COMMAND_NAMES = Object.freeze([
   'settings:set-agent-routing',
   'sessions:load-all',
   'sessions:save-session',
+  'sessions:bind-task-session',
+  'sessions:admit-task-turn',
   'sessions:stage-task-completion',
   'sessions:settle-task-completion',
   'sessions:fail-task-run',
@@ -190,6 +213,7 @@ const TASK_COMMAND_NAMES = Object.freeze([
   'reviewer:get-for-session',
   'reviewer:run',
   'artifacts:finalize-run',
+  'artifacts:resolve-version-descriptors',
   'preview-resources:acquire',
   'preview-resources:release'
 ])
@@ -220,6 +244,9 @@ const createApplicationCommandModules = (
   remoteAccess: RemoteAccessOwner
 ): readonly ApplicationCommandModuleDescriptor[] =>
   Object.freeze([
+    defineApplicationCommandModule([bootstrapApplicationCommandGroup], (registrar) =>
+      registerBootstrapApplicationCommands(registrar, dependencies.settingsCore)
+    ),
     defineApplicationCommandModule([acpApplicationCommands], (registrar) =>
       registerAcpCommands(registrar, dependencies.acp)
     ),
@@ -264,6 +291,9 @@ const createApplicationCommandModules = (
     ),
     defineApplicationCommandModule([literatureApplicationCommandGroup], (registrar) =>
       registerLiteratureApplicationCommands(registrar, dependencies.literature)
+    ),
+    defineApplicationCommandModule([bookmarkApplicationCommandGroup], (registrar) =>
+      registerBookmarkApplicationCommands(registrar, dependencies.bookmarks)
     ),
     defineApplicationCommandModule(dataContentApplicationCommandGroups, (registrar) =>
       registerDataContentApplicationCommands(registrar, dependencies.dataContent)

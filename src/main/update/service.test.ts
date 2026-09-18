@@ -1,3 +1,4 @@
+import { UPDATE_INSTALLATION_REQUIRED } from '../../shared/update'
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
@@ -179,10 +180,16 @@ describe('UpdateService.check', () => {
     expect(JSON.stringify(records)).not.toContain('release notes')
   })
 
-  it('reports available with the platform download when newer', async () => {
+  it('reports available with the known platform download when a future platform is added', async () => {
     const broadcast = vi.fn()
     const service = new UpdateService({
-      fetchImpl: (() => Promise.resolve(jsonResponse(manifest))) as unknown as typeof fetch,
+      fetchImpl: (() =>
+        Promise.resolve(
+          jsonResponse({
+            ...manifest,
+            downloads: { ...manifest.downloads, 'linux-arm64': { format: 2 } }
+          })
+        )) as unknown as typeof fetch,
       platform: 'darwin',
       arch: 'arm64',
       currentVersion: '0.2.0',
@@ -1585,4 +1592,38 @@ describe('UpdateService.apply', () => {
       ])
     )
   })
+})
+
+it('blocks manual installer actions from a read-only installation without native save/open side effects', async () => {
+  const promptSavePath = vi.fn()
+  const openPath = vi.fn()
+  const openExternal = vi.fn()
+  const installationGuard = vi.fn(() => true)
+  const broadcast = vi.fn()
+  const strategy = new UpdateService({
+    currentVersion: '0.2.0',
+    platform: 'darwin',
+    arch: 'arm64',
+    fetchImpl: vi.fn(async () => jsonResponse(manifest)) as typeof fetch,
+    installationGuard,
+    promptSavePath,
+    openPath,
+    openExternal,
+    broadcast
+  })
+  await strategy.check()
+  expect(await strategy.download({ nonInteractive: true })).toMatchObject({
+    error: UPDATE_INSTALLATION_REQUIRED
+  })
+  expect(installationGuard).toHaveBeenLastCalledWith(false)
+  expect(await strategy.apply({ relaunch: false })).toMatchObject({
+    error: UPDATE_INSTALLATION_REQUIRED
+  })
+  expect(promptSavePath).not.toHaveBeenCalled()
+  expect(openPath).not.toHaveBeenCalled()
+  expect(openExternal).not.toHaveBeenCalled()
+  expect(broadcast).toHaveBeenLastCalledWith(
+    'update:status',
+    expect.objectContaining({ error: UPDATE_INSTALLATION_REQUIRED })
+  )
 })

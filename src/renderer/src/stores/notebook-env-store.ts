@@ -74,8 +74,8 @@ const errorText = (e: unknown): string => (e instanceof Error ? e.message : Stri
 // main process WITHOUT touching the ready marker, so status may still report ready — this message,
 // derived from ProvisionStatus.*RecoveryBlocked, is what makes the Reset affordance reachable in the UI.
 const RECOVERY_BLOCKED_MESSAGE =
-  'RUNTIME_RECOVERY_BLOCKED: a previous setup was interrupted and its worker could not be confirmed ' +
-  'stopped. Reset this runtime to recover it.'
+  'RUNTIME_RECOVERY_BLOCKED: recovery of a previous operation has not completed. ' +
+  'Use Recheck in Settings → Runtimes to review the recovery requirements.'
 
 // Tracks which `window.api.notebookEnv` bridge instances already have a live `onProgress`
 // subscription, so a second `init()` call (App.tsx at launch + OnboardingWizard during onboarding,
@@ -327,11 +327,12 @@ export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
     },
 
     retry: async () => {
-      if (get().statusError) {
+      const { status, statusError, scope, ui } = get()
+      const recoveryBlocked = scope === 'r' ? status.rRecoveryBlocked : status.pythonRecoveryBlocked
+      if (statusError || recoveryBlocked || (ui.kind === 'error' && ui.recoveryBlocked)) {
         await get().init()
         return
       }
-      const scope = get().scope
       await get().provision(scope === 'r' ? 'r' : 'python')
     },
 

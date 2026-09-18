@@ -98,6 +98,20 @@ describe.each([false, true])('ErrorNotice (fullPage: %s)', (fullPage) => {
 describe('contextual notice content', () => {
   afterEach(cleanup)
 
+  it('places ordinary secondary recovery before primary in keyboard order', () => {
+    render(
+      <ErrorNotice
+        title="Installation blocked"
+        primaryButton={{ label: 'Manage local skills', onClick: vi.fn() }}
+        secondaryButton={{ label: 'Refresh', onClick: vi.fn() }}
+      />
+    )
+    expect(screen.getAllByRole('button').map((button) => button.textContent)).toEqual([
+      'Refresh',
+      'Manage local skills'
+    ])
+  })
+
   it('keeps diagnostics collapsed and outside the alert while recovery stays available', () => {
     render(
       <ErrorNotice

@@ -113,6 +113,35 @@ describe('ReasoningEffortSelect', () => {
     ).toEqual(['Default', 'Low', 'Medium', 'High'])
   })
 
+  it.each([
+    ['doubao-seed-2-1-pro-260915', ['Default', 'Minimal', 'Low', 'Medium', 'High']],
+    ['deepseek-v4-1-flash-260910', ['Default', 'None', 'Low', 'High', 'Max']],
+    ['glm-5-3-flash-260828', ['Default', 'Low', 'High', 'Max']]
+  ])('shows the Ark-specific effort choices for %s', async (model, labels) => {
+    useSettingsStore.setState({
+      activeProviderId: 'ark',
+      activeModel: model,
+      providers: [
+        {
+          id: 'ark',
+          type: 'official',
+          vendorId: 'volcengine',
+          name: 'Ark',
+          models: [model],
+          supportsImageInput: true,
+          hasKey: true,
+          needsKey: false
+        }
+      ]
+    })
+    await act(async () => {
+      root.render(<ReasoningEffortSelect />)
+    })
+    expect(
+      Array.from(container.querySelectorAll('[role="radio"]')).map((e) => e.textContent?.trim())
+    ).toEqual(labels)
+  })
+
   it('uses an official provider catalog default when no active model override is stored', async () => {
     useSettingsStore.setState({
       activeProviderId: 'openai',

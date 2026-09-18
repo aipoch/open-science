@@ -31,6 +31,7 @@ import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement } from '../../shared/notebook-runtime'
 import type { CloseActionPreference } from '../../shared/window-controls'
 import type { LanguagePreference } from '../../shared/locale'
+import type { LocalShellRuntimePreference, WslSelection } from '../../shared/wsl-setup'
 import type { AgentFrameworkId } from '../agent-framework'
 import type {
   OAuthClientInformationMixed,
@@ -45,6 +46,7 @@ import type { OAuthDiscoveryState } from '@modelcontextprotocol/sdk/client/auth.
 // is a non-secret display hint recomputed whenever the key changes. For official providers the base
 // URL and model catalog come from the registry (via vendorId/region), so `baseUrl` stays unset.
 export type StoredProvider = {
+  configRevision?: number
   id: string
   type: ProviderType
   // Records whether the app-owned Codex profile came from an import or an in-app sign-in. Runtime
@@ -94,7 +96,7 @@ export type StoredProvider = {
   // "unverified" warning survives a restart.
   lastValidationFailure?: ProviderValidationFailure
   // claude-shared credentials live in the user's global profile and cannot be removed safely by the
-  // app. This timestamp records an app-local disconnect so Open Science stops using that profile
+  // app. This timestamp records an app-local disconnect so Open-Science stops using that profile
   // until the user explicitly signs in again.
   disconnectedAt?: number
 }
@@ -274,14 +276,23 @@ export type StoredSettings = {
   networkProxy?: NetworkProxySettings
   // Application-wide egress policy for Notebook REPL and Notebook Bash processes.
   notebookNetwork?: NotebookNetworkSettings
-  // Absolute path of the relocatable data root (artifacts/notebooks/runtime/uploads). Absent means
-  // "use the config root" (default). Only written after a successful migration; a change needs a restart.
+  // A candidate profile only. Selection is not an execution enablement signal.
+  wslSelection?: WslSelection
+  // The profile explicitly admitted for execution. Historical documents omit it and therefore
+  // cannot run WSL2 Bash until the user activates a freshly verified candidate.
+  activatedWslSelection?: WslSelection
+  // Explicit local Shell backend preference. Absence preserves the platform default.
+  localShellRuntime?: LocalShellRuntimePreference
+  // Absolute data-root selection, loaded verbatim. Startup resolves a missing selection through
+  // bootstrap or recovery before application writers start; an explicit change needs a restart.
   dataRoot?: string
+  // Only a newly initialized, still-empty default may participate in onboarding drive selection.
+  dataRootIsInitialDefault?: boolean
   // Set once the one-time legacy-absolute-path-to-$DATA normalization pass has completed successfully.
   // Absent means it still needs to run (or a previous attempt failed and should retry).
   pathsNormalizedAt?: number
   // Set once the user has answered the one-time "move your legacy .open-science data into the
-  // visible OpenScience folder" prompt (by moving, choosing another folder, or declining). Absent
+  // visible Open-Science folder" prompt (by moving, choosing another folder, or declining). Absent
   // means it has never been answered, so an eligible legacy install may still be offered the prompt.
   legacyDataMovePromptDismissedAt?: number
   // Per-language v4 environment enablement: an explicit per-env enabled override map plus the separate

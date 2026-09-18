@@ -1,7 +1,6 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { createArtifactSaveFixture } from '../artifacts/save-test-fixtures'
+import { rm } from 'node:fs/promises'
 import { createServer, request as httpRequest, type Server } from 'node:http'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
@@ -12,12 +11,15 @@ import { literatureItemInputSchema } from '../../shared/literature'
 import { ArtifactRepository } from '../artifacts/repository'
 
 describe('AgentMcpHttpHost', () => {
+  let saveFixture: Awaited<ReturnType<typeof createArtifactSaveFixture>> | undefined
   let host: AgentMcpHttpHost | undefined
   let rpcServer: Server | undefined
   let root: string | undefined
 
   afterEach(async () => {
     await host?.close()
+    await saveFixture?.dispose()
+    saveFixture = undefined
     host = undefined
     if (rpcServer) {
       rpcServer.closeAllConnections()
@@ -34,25 +36,22 @@ describe('AgentMcpHttpHost', () => {
   })
 
   it('serves the artifact MCP tools over http and writes a file for the active run', async () => {
-    root = await mkdtemp(join(tmpdir(), 'mcp-http-host-'))
+    saveFixture = await createArtifactSaveFixture()
+    root = saveFixture.storageRoot
     const projectId = 'default-project'
     const artifactSessionId = 'artifact-session-1'
     const runId = 'artifact-run-1'
     // The artifact tool reads the active run id from this main-process-owned handoff file.
-    const currentRunFile = join(root, 'current-run.json')
-    await writeFile(currentRunFile, JSON.stringify({ runId }), 'utf8')
+    const environment = await saveFixture.environment(
+      { allowedImportRoots: [root], workspaceCwd: root },
+      { projectId }
+    )
 
     host = new AgentMcpHttpHost()
     const { endpoint, token } = await host.ensureStarted()
     expect(endpoint).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/)
 
-    host.registerArtifact(artifactSessionId, {
-      storageRoot: root,
-      projectId,
-      sessionId: artifactSessionId,
-      currentRunFile,
-      allowedImportRoots: [root]
-    })
+    host.registerArtifact(artifactSessionId, environment)
 
     const client = new Client({ name: 'test-client', version: '0.0.0' })
     const transport = new StreamableHTTPClientTransport(
@@ -85,22 +84,19 @@ describe('AgentMcpHttpHost', () => {
   })
 
   it('accepts a JSON-stringified artifact source from an MCP model call', async () => {
-    root = await mkdtemp(join(tmpdir(), 'mcp-http-host-'))
+    saveFixture = await createArtifactSaveFixture()
+    root = saveFixture.storageRoot
     const projectId = 'default-project'
     const artifactSessionId = 'artifact-session-1'
     const runId = 'artifact-run-1'
-    const currentRunFile = join(root, 'current-run.json')
-    await writeFile(currentRunFile, JSON.stringify({ runId }), 'utf8')
+    const environment = await saveFixture.environment(
+      { allowedImportRoots: [root], workspaceCwd: root },
+      { projectId }
+    )
 
     host = new AgentMcpHttpHost()
     const { token } = await host.ensureStarted()
-    host.registerArtifact(artifactSessionId, {
-      storageRoot: root,
-      projectId,
-      sessionId: artifactSessionId,
-      currentRunFile,
-      allowedImportRoots: [root]
-    })
+    host.registerArtifact(artifactSessionId, environment)
 
     const client = new Client({ name: 'test-client', version: '0.0.0' })
     const transport = new StreamableHTTPClientTransport(
@@ -127,6 +123,91 @@ describe('AgentMcpHttpHost', () => {
       runId
     })
     expect(files.map((file) => file.name)).toContain('report.md')
+  })
+
+  it('delivers PDF image blocks once and isolates cancellation by server kind as well as route', async () => {
+    host = new AgentMcpHttpHost()
+    const { token } = await host.ensureStarted()
+    let release!: () => void
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const signals = new Map<string, AbortSignal>()
+    host.registerLiterature('same-route', {
+      readDocument: vi.fn(),
+      elements: {
+        list: async () => ({ data: { elements: [], nextCursor: null } }),
+        read: async (_input, signal) => {
+          signals.set('literature', signal)
+          await blocked
+          signal.throwIfAborted()
+          return {
+            data: { caption: 'Figure 3. Survival.', imageIncluded: true },
+            image: { data: 'aW1hZ2U=', mimeType: 'image/png' }
+          }
+        }
+      }
+    })
+    host.registerLiteratureLibrary('same-route', {
+      searchLibrary: vi.fn(),
+      readAbstract: vi.fn(),
+      readPdf: vi.fn(),
+      saveToInbox: vi.fn(async () => ({ results: [] })),
+      resolveSaveReferences: async (_refs, signal) => {
+        signals.set('library', signal!)
+        await blocked
+        return []
+      }
+    })
+    const clients: Client[] = []
+    const connect = async (kind: 'library' | 'literature'): Promise<Client> => {
+      const client = new Client({ name: 'pdf-http', version: '1' })
+      clients.push(client)
+      await client.connect(
+        new StreamableHTTPClientTransport(new URL(host!.urlFor(kind, 'same-route')), {
+          requestInit: { headers: { authorization: `Bearer ${token}` } }
+        })
+      )
+      return client
+    }
+    try {
+      const pdf = await connect('literature'),
+        library = await connect('library')
+      const reading = pdf
+        .callTool({ name: 'read_pdf_element', arguments: { elementRef: 'ref' } })
+        .catch((error: unknown) => error)
+      const saving = library
+        .callTool({ name: 'save_to_inbox', arguments: { refs: ['doi:10.1234/paper'] } })
+        .catch((error: unknown) => error)
+      await vi.waitFor(() => expect(signals.size).toBe(2))
+      const duplicate = await connect('literature')
+      await expect(
+        duplicate.callTool({ name: 'read_pdf_element', arguments: { elementRef: 'ref' } })
+      ).rejects.toMatchObject({ code: 409 })
+      await library.notification({ method: 'notifications/cancelled', params: { requestId: 1 } })
+      expect(signals.get('library')!.aborted).toBe(true)
+      expect(signals.get('literature')!.aborted).toBe(false)
+      await pdf.notification({ method: 'notifications/cancelled', params: { requestId: 1 } })
+      expect(signals.get('literature')!.aborted).toBe(true)
+      release()
+      await pdf.close()
+      await library.close()
+      await Promise.all([reading, saving])
+      const reopened = await connect('literature')
+      const result = await reopened.callTool({
+        name: 'read_pdf_element',
+        arguments: { elementRef: 'ref' }
+      })
+      expect(result.structuredContent).toBeUndefined()
+      expect(result.content).toEqual([
+        { type: 'text', text: '{"caption":"Figure 3. Survival.","imageIncluded":true}' },
+        { type: 'image', data: 'aW1hZ2U=', mimeType: 'image/png' }
+      ])
+      expect(signals.get('literature')!.aborted).toBe(false)
+    } finally {
+      release()
+      await Promise.all(clients.map((client) => client.close()))
+    }
   })
 
   it('serves the conversation Skill import tool over http', async () => {
@@ -245,6 +326,17 @@ describe('AgentMcpHttpHost', () => {
       sessionId: routingId
     })
     const planUrl = host.urlFor('plan', routingId)
+    const missingRouteTokenUrl = new URL(planUrl)
+    missingRouteTokenUrl.search = ''
+    const missingRouteToken = await fetch(missingRouteTokenUrl, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json'
+      },
+      body: '{}'
+    })
+    expect(missingRouteToken.status).toBe(404)
     const client = new Client({ name: 'plan-http-test', version: '1.0.0' })
     await client.connect(
       new StreamableHTTPClientTransport(new URL(planUrl), {
@@ -293,6 +385,88 @@ describe('AgentMcpHttpHost', () => {
       body: '{}'
     })
     expect(removed.status).toBe(404)
+  })
+
+  it('does not route an old Plan capability URL to a replacement environment', async () => {
+    const routingId = 'stable-plan-session'
+    const seenTokens: string[] = []
+    rpcServer = createServer((request, response) => {
+      seenTokens.push(request.headers.authorization ?? '')
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(
+        JSON.stringify({
+          result: { projection: { artifactVersionId: 'version-1', lifecycle: 'approved' } }
+        })
+      )
+    })
+    await new Promise<void>((resolve, reject) => {
+      rpcServer?.once('error', reject)
+      rpcServer?.listen(0, '127.0.0.1', resolve)
+    })
+    const rpcAddress = rpcServer.address()
+    if (typeof rpcAddress !== 'object' || rpcAddress === null) {
+      throw new Error('Test Plan RPC server did not return a TCP address.')
+    }
+
+    host = new AgentMcpHttpHost()
+    const { token } = await host.ensureStarted()
+    host.registerPlan(routingId, {
+      endpoint: `http://127.0.0.1:${rpcAddress.port}/plan`,
+      token: 'old-plan-token',
+      projectId: 'project-1',
+      sessionId: routingId
+    })
+    const oldUrl = host.urlFor('plan', routingId)
+    const oldRouteToken = new URL(oldUrl).searchParams.get('token')
+    if (!oldRouteToken) throw new Error('Expected a Plan route token.')
+    const oldClient = new Client({ name: 'old-plan-http-test', version: '1.0.0' })
+    await oldClient.connect(
+      new StreamableHTTPClientTransport(new URL(oldUrl), {
+        requestInit: { headers: { authorization: `Bearer ${token}` } }
+      })
+    )
+
+    const prepareRollback = host.registerPlan(routingId, {
+      endpoint: `http://127.0.0.1:${rpcAddress.port}/plan`,
+      token: 'new-plan-token',
+      projectId: 'project-1',
+      sessionId: routingId
+    })
+    const replacementUrl = host.urlFor('plan', routingId)
+    const replacementClient = new Client({ name: 'replacement-plan-http-test', version: '1.0.0' })
+    await replacementClient.connect(
+      new StreamableHTTPClientTransport(new URL(replacementUrl), {
+        requestInit: { headers: { authorization: `Bearer ${token}` } }
+      })
+    )
+
+    const staleResponse = await fetch(oldUrl, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json'
+      },
+      body: '{}'
+    })
+    expect(staleResponse.status).toBe(404)
+    expect(await staleResponse.text()).not.toContain(oldRouteToken)
+
+    await expect(
+      oldClient.callTool({ name: 'generate_plan', arguments: { approve: true } })
+    ).rejects.toThrow()
+    await replacementClient.callTool({ name: 'generate_plan', arguments: { approve: true } })
+    expect(seenTokens).toEqual(['Bearer new-plan-token'])
+
+    const restorePreviousRoute = prepareRollback()
+    host.unregister(routingId)
+    restorePreviousRoute?.()
+    await oldClient.callTool({ name: 'generate_plan', arguments: { approve: true } })
+    await expect(
+      replacementClient.callTool({ name: 'generate_plan', arguments: { approve: true } })
+    ).rejects.toThrow()
+    expect(seenTokens).toEqual(['Bearer new-plan-token', 'Bearer old-plan-token'])
+    await replacementClient.close()
+    await oldClient.close()
   })
 
   it('serves the linked Literature reader over its bound route', async () => {

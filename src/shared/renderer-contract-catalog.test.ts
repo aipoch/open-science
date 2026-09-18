@@ -13,6 +13,39 @@ const paths = (
 ): string[] => RENDERER_CONTRACT_CATALOG.filter(predicate).map(({ publicPath }) => publicPath)
 
 describe('renderer contract catalog', () => {
+  it('registers all four local model methods across the intended surfaces', () => {
+    const group = RENDERER_CONTRACT_GROUPS.find(({ capability }) => capability === 'local-models')
+    expect(group?.contracts.map(({ publicPath }) => publicPath).sort()).toEqual([
+      'localModels.cancel',
+      'localModels.getSnapshot',
+      'localModels.install',
+      'localModels.remove'
+    ])
+    for (const contract of group!.contracts) {
+      expect(contract.surfaceInstallation).toMatchObject({
+        electron: 'preload',
+        localWeb: 'web-rpc',
+        remoteWeb: 'rejecting-stub'
+      })
+    }
+  })
+
+  it('exposes Skill Marketplace browsing and installation on Electron, local Web and remote Web', () => {
+    for (const publicPath of [
+      'settings.listSkillMarketplace',
+      'settings.getSkillMarketplaceDetail',
+      'settings.installSkillMarketplace',
+      'settings.startSkillMarketplaceBatch',
+      'settings.getSkillMarketplaceBatch',
+      'settings.stopSkillMarketplaceBatch'
+    ]) {
+      expect(
+        RENDERER_CONTRACT_CATALOG.find((contract) => contract.publicPath === publicPath)
+      ).toMatchObject({
+        surfaceInstallation: { electron: 'preload', localWeb: 'web-rpc', remoteWeb: 'web-rpc' }
+      })
+    }
+  })
   it('does not expose the retired Runtime Selection API', () => {
     expect(
       RENDERER_CONTRACT_CATALOG.filter(({ publicPath }) =>
@@ -160,6 +193,10 @@ describe('renderer contract catalog', () => {
 
   it('records every intentional and known-deviating argument codec without normalizing it', () => {
     expect(
+      RENDERER_CONTRACT_CATALOG.find(({ publicPath }) => publicPath === 'sessions.importPackage')
+        ?.parameterCodec
+    ).toEqual({ electron: 'session-package-import-file', web: 'positional' })
+    expect(
       RENDERER_CONTRACT_CATALOG.find(({ publicPath }) => publicPath === 'uploads.stageLocalFile')
         ?.parameterCodec
     ).toEqual({ electron: 'native-file-upload-request', web: 'native-file-upload-request' })
@@ -268,7 +305,7 @@ describe('renderer contract catalog', () => {
     const compute = RENDERER_CONTRACT_CATALOG.filter(({ publicPath }) =>
       publicPath.startsWith('compute.')
     )
-    expect(compute).toHaveLength(38)
+    expect(compute).toHaveLength(39)
     expect(
       compute
         .filter(({ surfaceInstallation }) => surfaceInstallation.remoteWeb === 'rejecting-stub')
@@ -440,6 +477,11 @@ describe('renderer contract catalog', () => {
       'acp.respondPlan',
       'acp.respondToElicitation',
       'acp.respondToPermission',
+      'bookmarks.create',
+      'bookmarks.delete',
+      'bookmarks.list',
+      'bookmarks.resolvePdfSource',
+      'bookmarks.updateNote',
       'literature.citationStyles',
       'literature.completeMetadata',
       'literature.exportRecord',
@@ -463,6 +505,11 @@ describe('renderer contract catalog', () => {
       'memory.snapshot',
       'memory.updateCategory',
       'memory.updateEntry',
+      'pdfStructure.cancel',
+      'pdfStructure.clearCache',
+      'pdfStructure.parse',
+      'pdfStructure.readCached',
+      'pdfStructure.readThumbnail',
       'projects.create',
       'projects.delete',
       'projects.get',
@@ -473,8 +520,12 @@ describe('renderer contract catalog', () => {
       'projects.updateArchive',
       'sessions.deleteSession',
       'sessions.editDetails',
+      'sessions.exportPackage',
       'sessions.filterPdfContextCandidates',
+      'sessions.fork',
+      'sessions.importPackage',
       'sessions.linkPdfContext',
+      'sessions.packageOperation',
       'sessions.setDelegationPolicy',
       'sessions.unlinkPdfContext',
       'sessions.updateArchive',
@@ -484,13 +535,19 @@ describe('renderer contract catalog', () => {
       'tags.setAssignment',
       'tags.snapshot',
       'tags.update',
-      'uploads.finalizeSession'
+      'uploads.finalizeSession',
+      'uploads.recoverDraft'
     ])
     expect(ELECTRON_APPLICATION_COMMAND_CHANNELS).toEqual([
       'acp:discard-unavailable-plan',
       'acp:respond-elicitation',
       'acp:respond-permission',
       'acp:respond-plan',
+      'bookmarks:create',
+      'bookmarks:delete',
+      'bookmarks:list',
+      'bookmarks:resolve-pdf-source',
+      'bookmarks:update-note',
       'literature:citation-styles',
       'literature:complete-metadata',
       'literature:export-record',
@@ -514,6 +571,11 @@ describe('renderer contract catalog', () => {
       'memory:snapshot',
       'memory:update-category',
       'memory:update-entry',
+      'pdf-structure:cancel',
+      'pdf-structure:clear-cache',
+      'pdf-structure:parse',
+      'pdf-structure:read-cached',
+      'pdf-structure:read-thumbnail',
       'projects:create',
       'projects:delete',
       'projects:get',
@@ -524,8 +586,12 @@ describe('renderer contract catalog', () => {
       'projects:update-archive',
       'sessions:delete-session',
       'sessions:edit-details',
+      'sessions:export-package',
       'sessions:filter-pdf-context-candidates',
+      'sessions:fork',
+      'sessions:import-package',
       'sessions:link-pdf-context',
+      'sessions:package-operation',
       'sessions:set-delegation-policy',
       'sessions:unlink-pdf-context',
       'sessions:update-archive',
@@ -535,7 +601,8 @@ describe('renderer contract catalog', () => {
       'tags:set-assignment',
       'tags:snapshot',
       'tags:update',
-      'uploads:finalize-session'
+      'uploads:finalize-session',
+      'uploads:recover-draft'
     ])
   })
 })

@@ -5,6 +5,7 @@ import type {
   BackgroundResultSourceRef
 } from '../../shared/background-result-delivery'
 import { BackgroundResultDeliveryOwner } from './owner'
+import { composeApplicationRuntime } from '../application-runtime'
 
 const delivery = (
   sourceId: string,
@@ -50,8 +51,10 @@ const harness = (resolved: 'terminal' | 'not-ready' | 'missing' = 'terminal') =>
       transitioned: true
     })),
     recoverExpiredClaims: vi.fn(async () => 0),
-    listPendingSessionIds: vi.fn(async () => []),
-    listOwnership: vi.fn(async () => []),
+    listPendingSessionIds: vi.fn(async (): Promise<string[]> => []),
+    listOwnership: vi.fn(
+      async (): Promise<Pick<BackgroundResultDelivery, 'id' | 'projectId' | 'sessionId'>[]> => []
+    ),
     deleteIds: vi.fn(async () => 0),
     listSessionIdsForProject: vi.fn(async () => []),
     deleteSession: vi.fn(async () => 0),
@@ -65,7 +68,12 @@ const harness = (resolved: 'terminal' | 'not-ready' | 'missing' = 'terminal') =>
     failClaim: vi.fn(async () => 'pending' as const)
   }
   const waitForAuthoritiesReady = vi.fn(async (): Promise<void> => undefined)
-  const loadSessionCatalog = vi.fn(async () => ({ complete: false, sessions: [] }))
+  const loadSessionCatalog = vi.fn(
+    async (): Promise<{
+      complete: boolean
+      sessions: { projectId: string; sessionId: string }[]
+    }> => ({ complete: false, sessions: [] })
+  )
   const resolveSources = vi.fn(async () =>
     rows.map((row) => ({
       delivery: row,
@@ -110,6 +118,189 @@ const harness = (resolved: 'terminal' | 'not-ready' | 'missing' = 'terminal') =>
 describe('BackgroundResultDeliveryOwner', () => {
   afterEach(() => vi.restoreAllMocks())
 
+  it.each(['authority', 'source', 'dispatch'] as const)(
+    'does not start a continuation when %s work finishes after disposal',
+    async (stage) => {
+      const { owner, repository, waitForAuthoritiesReady, resolveSources, sendContinuation } =
+        harness()
+      const entered = deferred()
+      const resume = deferred()
+      const pause = async (): Promise<void> => {
+        entered.resolve()
+        await resume.promise
+      }
+      if (stage === 'authority') waitForAuthoritiesReady.mockImplementationOnce(pause)
+      else if (stage === 'source') {
+        const resolve = resolveSources.getMockImplementation()!
+        resolveSources.mockImplementationOnce(async () => {
+          await pause()
+          return resolve()
+        })
+      } else
+        repository.beginDispatch.mockImplementationOnce(async () => {
+          await pause()
+          return 1
+        })
+      const drain = owner.drainSession('session-1')
+      await entered.promise
+      owner.dispose()
+      resume.resolve()
+      await drain
+
+      expect(sendContinuation).not.toHaveBeenCalled()
+      expect(repository.failClaim).not.toHaveBeenCalled()
+      if (stage === 'authority') expect(repository.claimPending).not.toHaveBeenCalled()
+      else expect(repository.releaseClaim).toHaveBeenCalledWith(['local-run:run-1'], 'claim-1')
+    }
+  )
+
+  it('does not recreate a delivery timer when an enqueue finishes after disposal', async () => {
+    vi.useFakeTimers()
+    const { owner, repository, sendContinuation } = harness()
+    const entered = deferred()
+    const resume = deferred()
+    repository.enqueue.mockImplementationOnce(async () => {
+      entered.resolve()
+      await resume.promise
+      return delivery('run-1', { state: 'pending' })
+    })
+    try {
+      const enqueue = owner.enqueue(delivery('run-1'))
+      await entered.promise
+      owner.dispose()
+      resume.resolve()
+      await enqueue
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(sendContinuation).not.toHaveBeenCalled()
+      expect(repository.claimPending).not.toHaveBeenCalled()
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      owner.dispose()
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not resume delivery after a later-owned module times out during runtime disposal', async () => {
+    vi.useFakeTimers()
+    const { owner, waitForAuthoritiesReady, sendContinuation } = harness()
+    const ready = deferred()
+    waitForAuthoritiesReady.mockReturnValueOnce(ready.promise)
+    try {
+      const runtime = await composeApplicationRuntime(async (modules) => {
+        await modules.add(undefined, () => ({ capability: owner, dispose: () => owner.dispose() }))
+        await modules.add(undefined, () => ({
+          name: 'stalled-backend',
+          capability: undefined,
+          disposeTimeoutMs: 10,
+          dispose: () => new Promise<void>(() => undefined)
+        }))
+        return {}
+      })
+      const drain = owner.drainSession('session-1')
+      const disposed = expect(runtime.dispose()).rejects.toThrow(
+        'Application runtime disposal failed'
+      )
+      await vi.advanceTimersByTimeAsync(10)
+      await disposed
+      ready.resolve()
+      await drain
+      expect(sendContinuation).not.toHaveBeenCalled()
+    } finally {
+      ready.resolve()
+      owner.dispose()
+      vi.useRealTimers()
+    }
+  })
+
+  it('stops recovery after disposal while waiting for authority', async () => {
+    const { owner, repository, waitForAuthoritiesReady } = harness()
+    const ready = deferred()
+    waitForAuthoritiesReady.mockReturnValueOnce(ready.promise)
+    const recovery = owner.recover()
+    owner.dispose()
+    ready.resolve()
+    await recovery
+    expect(repository.listOwnership).not.toHaveBeenCalled()
+    expect(repository.recoverExpiredClaims).not.toHaveBeenCalled()
+  })
+
+  it('settles a continuation sent before disposal without starting another turn', async () => {
+    const { owner, repository, sendContinuation } = harness()
+    const sent = deferred()
+    const result = deferred()
+    sendContinuation.mockImplementationOnce(() => {
+      sent.resolve()
+      return {
+        admitted: Promise.resolve(),
+        result: result.promise.then(() => ({
+          stopReason: 'end_turn',
+          continuationMessageId: 'claim-1'
+        }))
+      }
+    })
+    const drain = owner.drainSession('session-1')
+    await sent.promise
+    owner.dispose()
+    result.resolve()
+    await expect(drain).resolves.toBe('consumed')
+    expect(repository.markConsumed).toHaveBeenCalledOnce()
+    expect(sendContinuation).toHaveBeenCalledOnce()
+  })
+
+  it('retains failure accounting for a continuation sent before disposal', async () => {
+    const { owner, repository, sendContinuation } = harness()
+    const sent = deferred()
+    const finish = deferred()
+    sendContinuation.mockImplementationOnce(() => {
+      sent.resolve()
+      return {
+        admitted: Promise.resolve(),
+        result: finish.promise.then(() => {
+          throw new Error('Provider failed after admission.')
+        })
+      }
+    })
+    const drain = owner.drainSession('session-1')
+    await sent.promise
+    owner.dispose()
+    finish.resolve()
+    await expect(drain).resolves.toBe('queued')
+    expect(repository.failClaim).toHaveBeenCalledWith(['local-run:run-1'], 'claim-1', 3)
+    expect(repository.releaseClaim).not.toHaveBeenCalled()
+    expect(sendContinuation).toHaveBeenCalledOnce()
+  })
+
+  it('does not spend an unsent missing result attempt after a mixed batch release finishes during disposal', async () => {
+    const { owner, repository, resolveSources, sendContinuation } = harness()
+    const rows = [delivery('run-1'), delivery('run-2')]
+    repository.claimPending.mockResolvedValueOnce(rows)
+    resolveSources.mockResolvedValueOnce(
+      rows.map((row, index) => ({
+        delivery: row,
+        availability: index === 0 ? 'not-ready' : 'missing',
+        activity: { ...row, active: false, needsAttention: false }
+      }))
+    )
+    const releasing = deferred()
+    const resume = deferred()
+    repository.releaseClaim.mockImplementationOnce(async () => {
+      releasing.resolve()
+      await resume.promise
+      return 1
+    })
+    const drain = owner.drainSession('session-1')
+    await releasing.promise
+    owner.dispose()
+    resume.resolve()
+    await drain
+    expect(repository.failClaim).not.toHaveBeenCalled()
+    expect(repository.releaseClaim).toHaveBeenLastCalledWith(
+      ['local-run:run-1', 'local-run:run-2'],
+      'claim-1'
+    )
+    expect(sendContinuation).not.toHaveBeenCalled()
+  })
+
   it('waits for authority recovery before claiming pending rows', async () => {
     const { owner, repository, waitForAuthoritiesReady } = harness()
     let ready!: () => void
@@ -133,11 +324,11 @@ describe('BackgroundResultDeliveryOwner', () => {
     const order: string[] = []
     repository.listOwnership.mockImplementationOnce(async () => {
       order.push('ownership')
-      return []
+      return [delivery('run-1')]
     })
     loadSessionCatalog.mockImplementationOnce(async () => {
       order.push('catalog')
-      return { complete: true, sessions: [] }
+      return { complete: true, sessions: [{ projectId: 'project-1', sessionId: 'session-1' }] }
     })
 
     await owner.recover()
@@ -146,6 +337,44 @@ describe('BackgroundResultDeliveryOwner', () => {
     expect(repository.deleteIds).toHaveBeenCalledWith([])
     owner.dispose()
   })
+
+  it('skips empty ownership catalog scans while recovering and draining newly pending results', async () => {
+    vi.useFakeTimers()
+    const { owner, repository, loadSessionCatalog } = harness()
+    const drain = vi.spyOn(owner, 'drainSession').mockResolvedValue('idle')
+    repository.listPendingSessionIds.mockResolvedValue(['session-1'])
+    try {
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(repository.listOwnership).toHaveBeenCalledTimes(2)
+      expect(loadSessionCatalog).not.toHaveBeenCalled()
+      expect(repository.deleteIds).not.toHaveBeenCalled()
+      expect(repository.recoverExpiredClaims).toHaveBeenCalledTimes(2)
+      expect(drain).toHaveBeenCalledTimes(2)
+      expect(drain).toHaveBeenCalledWith('session-1')
+    } finally {
+      owner.dispose()
+      vi.useRealTimers()
+    }
+  })
+
+  it.each([false, true])(
+    'reconciles later ownership only against a complete catalog (%s)',
+    async (complete) => {
+      const { owner, repository, loadSessionCatalog } = harness()
+      try {
+        await owner.recover()
+        repository.listOwnership.mockResolvedValue([delivery('orphan')])
+        loadSessionCatalog.mockResolvedValue({ complete, sessions: [] })
+        await owner.recover()
+        expect(loadSessionCatalog).toHaveBeenCalledOnce()
+        if (complete) expect(repository.deleteIds).toHaveBeenCalledWith(['local-run:orphan'])
+        else expect(repository.deleteIds).not.toHaveBeenCalled()
+        expect(repository.recoverExpiredClaims).toHaveBeenCalledTimes(2)
+      } finally {
+        owner.dispose()
+      }
+    }
+  )
 
   it('settles a complete saved batch before direct observation can split its membership', async () => {
     const { owner, repository, isContinuationSaved } = harness()

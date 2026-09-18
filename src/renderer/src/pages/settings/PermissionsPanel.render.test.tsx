@@ -462,7 +462,7 @@ describe('PermissionsPanel', () => {
     expect(restoreDefaults).not.toHaveBeenCalled()
   })
 
-  it('uses the shared Settings danger banner for load failures', async () => {
+  it('uses the shared inline recovery notice for load failures', async () => {
     setPermissionApi({ list: vi.fn().mockRejectedValue(new Error('Permission load failed')) })
 
     await act(async () => root.render(<PermissionsPanel />))
@@ -470,9 +470,8 @@ describe('PermissionsPanel', () => {
     await vi.waitFor(() => {
       const alert = document.body.querySelector<HTMLElement>('[role="alert"]')
       expect(alert?.textContent).toContain('Permission load failed')
-      expect(alert?.className).toContain('border-danger-000/30')
-      expect(alert?.className).toContain('bg-danger-000/10')
-      expect(alert?.className).toContain('text-danger-000')
+      expect(alert?.closest('section')?.className).toContain('border-border')
+      expect(alert?.closest('section')?.className).toContain('bg-card')
     })
   })
 
@@ -507,7 +506,7 @@ describe('PermissionsPanel', () => {
     expect(
       document.body.querySelector('[aria-label="Revoke python · Project: Example project"]')
     ).not.toBeNull()
-    expect(document.body.querySelector('h3')?.className).toContain('text-base')
+    expect(document.body.querySelector('h3')?.className).toContain('text-[17px]')
     const permissionRow = document.body.querySelector<HTMLElement>('[data-slot="permission-row"]')
     expect(permissionRow?.className).toContain('min-h-11')
     expect(permissionRow?.className).toContain('py-1.5')
@@ -515,6 +514,22 @@ describe('PermissionsPanel', () => {
       '[aria-label="Filter permissions by scope"]'
     )
     expect(filterTrigger?.parentElement?.className).toContain('mb-2')
+  })
+
+  it('shows approval time for ordinary grants and leaves legacy time unknown', async () => {
+    setPermissionApi({
+      list: vi.fn().mockResolvedValue({
+        ...snapshot,
+        grants: [
+          { ...snapshot.grants[0], createdAt: Date.UTC(2026, 8, 10) },
+          { ...snapshot.grants[0], id: 'legacy' }
+        ]
+      })
+    })
+    await act(async () => root.render(<PermissionsPanel />))
+    const rows = container.querySelectorAll('[data-slot="permission-row"]')
+    expect(rows[0].textContent).toContain('Approved ')
+    expect(rows[1].textContent).toContain('Approval time unknown')
   })
 
   it('renders grouped grants with a scope filter and per-row revoke control', async () => {

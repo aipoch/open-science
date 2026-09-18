@@ -22,6 +22,11 @@ type FindTargetWebContents = {
     event: 'found-in-page',
     listener: (event: unknown, result: WindowFindResult & { requestId: number }) => void
   ) => void
+  once: (event: 'destroyed', listener: () => void) => void
+  removeListener: {
+    (event: 'found-in-page', listener: (event: unknown, result: WindowFindResult) => void): void
+    (event: 'destroyed', listener: () => void): void
+  }
 }
 type FindWindow = { webContents: FindTargetWebContents }
 
@@ -50,7 +55,7 @@ const isWindowFindRequest = (value: unknown): value is WindowFindRequest => {
 // searches its own webContents and forwards each result back to the overlay that asked. The active
 // request is tracked per searched webContents so an asynchronous result from an earlier query cannot
 // overwrite the overlay's current count.
-const registerWindowFindIpcHandlers = (deps: WindowFindIpcDeps = {}): void => {
+const registerWindowFindIpcHandlers = (deps: WindowFindIpcDeps = {}): (() => void) => {
   // Prefer the overlay->main registry (recorded when the overlay view was created); fall back to
   // fromWebContents for any non-overlay sender.
   const resolveMainWindow =
@@ -62,12 +67,11 @@ const registerWindowFindIpcHandlers = (deps: WindowFindIpcDeps = {}): void => {
     FindTargetWebContents,
     { nativeRequestId: number; rendererRequestId: number; replyTo: OverlayWebContents }
   >()
-  const listening = new WeakSet<FindTargetWebContents>()
+  const listening = new Map<FindTargetWebContents, () => void>()
 
   const installResultListener = (webContents: FindTargetWebContents): void => {
     if (listening.has(webContents)) return
-    listening.add(webContents)
-    webContents.on('found-in-page', (_event, result) => {
+    const onResult = (_event: unknown, result: WindowFindResult): void => {
       const activeRequest = activeRequests.get(webContents)
       if (!activeRequest || activeRequest.nativeRequestId !== result.requestId) return
       const update: WindowFindResult = {
@@ -77,10 +81,19 @@ const registerWindowFindIpcHandlers = (deps: WindowFindIpcDeps = {}): void => {
         finalUpdate: result.finalUpdate
       }
       activeRequest.replyTo.send(WINDOW_FIND_RESULT_CHANNEL, update)
-    })
+    }
+    const cleanup = (): void => {
+      activeRequests.delete(webContents)
+      listening.delete(webContents)
+      webContents.removeListener('found-in-page', onResult)
+      webContents.removeListener('destroyed', cleanup)
+    }
+    listening.set(webContents, cleanup)
+    webContents.on('found-in-page', onResult)
+    webContents.once('destroyed', cleanup)
   }
 
-  ipcMain.on(WINDOW_FIND_REQUEST_CHANNEL, (event: IpcMainEvent, request: unknown): void => {
+  const onRequest = (event: IpcMainEvent, request: unknown): void => {
     if (!isWindowFindRequest(request) || request.text.length === 0) return
     const webContents = resolveMainWindow(event.sender)?.webContents
     if (!webContents) return
@@ -95,20 +108,36 @@ const registerWindowFindIpcHandlers = (deps: WindowFindIpcDeps = {}): void => {
       rendererRequestId: request.requestId,
       replyTo: event.sender
     })
-  })
+  }
 
-  ipcMain.on(WINDOW_FIND_CLEAR_CHANNEL, (event: IpcMainEvent): void => {
+  const onClear = (event: IpcMainEvent): void => {
     const webContents = resolveMainWindow(event.sender)?.webContents
     if (!webContents) return
     activeRequests.delete(webContents)
     webContents.stopFindInPage('clearSelection')
-  })
+  }
 
   // The overlay asked to close (X button or its own Escape). Invoke the owner's close handle, which
   // hides the overlay view, clears the main selection, and refocuses the main window.
-  ipcMain.on(WINDOW_FIND_CLOSE_CHANNEL, (event: IpcMainEvent): void => {
+  const onClose = (event: IpcMainEvent): void => {
     resolveFindOverlayOwner(event.sender)?.closeOverlay()
-  })
+  }
+
+  const cleanup = (): void => {
+    ipcMain.removeListener(WINDOW_FIND_REQUEST_CHANNEL, onRequest)
+    ipcMain.removeListener(WINDOW_FIND_CLEAR_CHANNEL, onClear)
+    ipcMain.removeListener(WINDOW_FIND_CLOSE_CHANNEL, onClose)
+    for (const stopListening of listening.values()) stopListening()
+  }
+  try {
+    ipcMain.on(WINDOW_FIND_REQUEST_CHANNEL, onRequest)
+    ipcMain.on(WINDOW_FIND_CLEAR_CHANNEL, onClear)
+    ipcMain.on(WINDOW_FIND_CLOSE_CHANNEL, onClose)
+    return cleanup
+  } catch (error) {
+    cleanup()
+    throw error
+  }
 }
 
 export { registerWindowFindIpcHandlers }

@@ -11,6 +11,7 @@ type WorkflowStep = {
   if?: string
   name?: string
   run?: string
+  shell?: string
   'timeout-minutes'?: number
   uses?: string
   with?: Record<string, unknown>
@@ -91,34 +92,49 @@ describe('post-merge Windows validation', () => {
     const build = readWorkflow('build.yml')
     const workflow = readWorkflow('windows-full-test.yml')
     const plan = workflow.jobs.plan
+    const dependencies = workflow.jobs.windows_dependencies
     const job = workflow.jobs.windows_full_test
     const sandbox = workflow.jobs.notebook_sandbox
     const dispatch = workflow.on?.workflow_dispatch
 
     expect(build.jobs.windows_full_test).toBeUndefined()
     expect(workflow.on?.push).toBeUndefined()
-    expect(workflow.on?.schedule).toEqual([{ cron: '47 * * * *' }])
+    expect(workflow.on?.schedule).toEqual([{ cron: '47 18 * * *' }])
     expect(dispatch?.inputs?.mode).toMatchObject({
       default: 'full',
-      options: ['full', 'notebook-sandbox', 'regressions']
+      options: ['full', 'notebook-sandbox', 'notebook-mutation', 'regressions']
     })
     expect(workflow.on).not.toHaveProperty('workflow_call')
     expect(findStep(plan, 'Check for untested main changes').run).toContain(
       'event=schedule&status=success'
     )
     expect(job).toMatchObject({
-      needs: 'plan',
-      if: "${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode != 'notebook-sandbox') }}",
+      needs: ['plan', 'windows_dependencies'],
+      if: "${{ needs.plan.outputs.should_test == 'true' && needs.windows_dependencies.result == 'success' && (github.event_name != 'workflow_dispatch' || (inputs.mode == 'full' || inputs.mode == 'regressions')) }}",
       env: { VITEST_WINDOWS_FULL_TEST: '1' },
       'runs-on': 'windows-latest',
-      'timeout-minutes': 35
+      'timeout-minutes': 60
     })
+    expect(dependencies).toMatchObject({
+      needs: 'plan',
+      'runs-on': 'windows-latest',
+      outputs: {
+        artifact_id: '${{ steps.upload.outputs.artifact-id }}',
+        node_version: '${{ steps.node.outputs.node-version }}'
+      }
+    })
+    expect(findStep(dependencies, 'Install dependencies').run).toBe('node scripts/ci/npm-ci.mjs')
+    expect(findStep(dependencies, 'Pack dependencies').run).toContain('pack-dependencies')
+    expect(findStep(dependencies, 'Pack dependencies').shell).toBe('bash')
+    expect(findStep(job, 'Restore dependencies').run).toContain('restore-dependencies')
+    expect(findStep(job, 'Restore dependencies').shell).toBe('bash')
+    expect(findStep(workflow.jobs.notebook_mutation, 'Restore dependencies').shell).toBe('bash')
     expect(job['continue-on-error']).toBeUndefined()
     expect(job.strategy?.matrix).toEqual({
-      shard: "${{ fromJSON(inputs.mode == 'regressions' && '[1]' || '[1,2,3]') }}"
+      shard: "${{ fromJSON(inputs.mode == 'regressions' && '[1]' || '[1,2,3,4,5]') }}"
     })
     expect(findStep(job, 'Test complete suite shard').run).toBe(
-      'npm test -- --shard=${{ matrix.shard }}/3 --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000'
+      'npm test -- --shard=${{ matrix.shard }}/5 --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000 --reporter=default --reporter=github-actions'
     )
     expect(findStep(job, 'Test complete suite shard').if).toBe(
       "${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' }}"
@@ -131,7 +147,7 @@ describe('post-merge Windows validation', () => {
     expect(regressions.run).not.toContain('--shard')
     expect(sandbox).toMatchObject({
       needs: 'plan',
-      if: "${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode != 'regressions') }}",
+      if: "${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || (inputs.mode == 'full' || inputs.mode == 'notebook-sandbox')) }}",
       'runs-on': 'windows-latest',
       'timeout-minutes': 20
     })
@@ -509,14 +525,22 @@ describe('post-merge Windows validation', () => {
     expect(released.run).toContain('Released migrations are not a continuous prefix')
     expect(released.run).toContain('"sha=$releasedSha"')
     expect(released.run).toContain('"migration_count=$($migrationFiles.Count)"')
+    expect(released.run).toContain('1a6faf134836d417b8bb1cdf89571f5d9dee2a0b')
     expect(released.run).toContain('f12fd1f871022c7a9b771d193202d9ecf98aca96')
     expect(released.run)
-      .toContain(`$artifactReservationBase = git merge-base $artifactReservationCommit $releasedSha
+      .toContain(`$artifactSaveBase = git merge-base $artifactSaveCommit $releasedSha
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($artifactSaveBase)) {
+  Write-Error "Could not resolve the released Artifact RPC contract at $releasedSha."
+  exit 1
+}
+$artifactReservationBase = git merge-base $artifactReservationCommit $releasedSha
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($artifactReservationBase)) {
   Write-Error "Could not resolve the released Artifact RPC contract at $releasedSha."
   exit 1
 }
-if ($artifactReservationBase -eq $artifactReservationCommit) {
+if ($artifactSaveBase -eq $artifactSaveCommit) {
+  $artifactRpcContract = 'save'
+} elseif ($artifactReservationBase -eq $artifactReservationCommit) {
   $artifactRpcContract = 'reservation'
 } else {
   $artifactRpcContract = 'legacy'
@@ -552,8 +576,8 @@ if ($artifactReservationBase -eq $artifactReservationCommit) {
     expect(previous.run).toContain('gh release download')
     expect(previous.run).toContain('*-win-x64-setup.exe.blockmap')
     expect(previous.run).not.toContain('Get-AuthenticodeSignature')
-    expect(previous.run).toContain("$_.tagName -like 'v*'")
-    expect(previous.run).toContain('$_.tagName -ne $env:CURRENT_TAG')
+    expect(previous.run).toContain('gh api --paginate --slurp')
+    expect(previous.run).toContain('$version -lt $current')
     expect(findStep(upgrade, 'Certify Windows electron-updater differential update')).toMatchObject(
       {
         id: 'updater',
@@ -713,7 +737,9 @@ if ($artifactReservationBase -eq $artifactReservationCommit) {
     expect(historical.run).toContain('historical-blockmaps/$version/$name')
     expect(historical.run).toContain('gzip -t "$target"')
     const backfill = findStep(mirror, 'Backfill historical Windows blockmaps')
-    expect(backfill.run).toContain('releases/$version/$(basename "$blockmap")')
+    expect(backfill.run).toContain(
+      'scripts/publish-release-assets.mjs blockmaps historical-blockmaps'
+    )
     for (const sideEffectStep of [
       'Configure AWS credentials',
       'Collect historical Windows blockmaps',

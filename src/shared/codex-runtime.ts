@@ -1,5 +1,15 @@
 import { compareVersions } from './update'
 
+// App-tested native CLI target; this is not a minimum for all models or external installations.
+export const MANAGED_CODEX_VERSION = '0.153.4'
+
+export const hasCodexNativeUpdate = (version: string | undefined): boolean =>
+  Boolean(
+    version &&
+    /^\d+\.\d+\.\d+$/.test(version) &&
+    compareVersions(version, MANAGED_CODEX_VERSION) < 0
+  )
+
 // The app installs this adapter version and treats it as the oldest ACP contract it can safely run.
 // Newer compatible adapters remain usable; older installs stay discoverable so Settings can offer an
 // explicit update instead of misreporting them as missing.

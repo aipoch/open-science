@@ -830,6 +830,14 @@ class AcpPromptContentOwner {
       const targetPageNumber =
         pdfScope === 'current-page' ? pdfReadingPosition?.pageNumber : undefined
       const retrievalMode = targetPageNumber ? 'page-snapshot' : 'document-extraction'
+      const elementGuidance = linkedPdfContext?.active
+        ? [
+            `For specific figures, tables, algorithms, exact table values or visual relationships, use \`list_pdf_elements\` for the requested linked documentId (this PDF: ${JSON.stringify(linkedPdfContext.documentId)}), then \`read_pdf_element\` with its exact elementRef. These tools cover figures, tables and algorithms, not arbitrary Structure nodes.`,
+            'Use prose reading for methods and author claims; combine prose and element evidence only when the question needs both. Do not list elements for every paper summary or read every element by default.',
+            'List captions and previews locate evidence; they do not establish exact values or visual conclusions. Read the selected element before making those claims. Follow nextCursor as needed, and claim complete coverage only after exhausting it and checking warnings and parse coverage.',
+            'Element tools read existing caches only. Missing cached evidence does not prove absence; state the limitation. Prose can report what the authors say but cannot replace missing visual evidence. Library itemId and linked-PDF documentId are not interchangeable; Library-only PDFs are outside this element-tool scope.'
+          ]
+        : []
       if (linkedPdfContext && pdfScope === 'full-document') {
         const collectionRequested = PDF_COLLECTION_INTENT.test(input.text)
         const text = [
@@ -851,6 +859,7 @@ class AcpPromptContentOwner {
                 collectionRequested
                   ? 'For whole-document synthesis across the linked collection, call `read_document` separately for each linked documentId and read every sequential batch until nextCursor is null.'
                   : `For whole-document synthesis, call \`read_document\` with documentId ${JSON.stringify(linkedPdfContext.documentId)} and read every sequential batch until nextCursor is null.`,
+                ...elementGuidance,
                 'Do not call MCP resource-discovery tools, and do not use Notebook, shell, filesystem, or Python to extract linked PDFs.'
               ]
             : [])
@@ -888,7 +897,8 @@ class AcpPromptContentOwner {
           '</linked_pdf_reading_route>',
           ...(linkedPdfContext.active
             ? [
-                'For questions about linked literature, call `read_document` with a focused query and omit documentIds to retrieve relevant passages across all linked PDFs. Use documentIds only when the user identifies a subset. Use sequential batches only for whole-document synthesis.',
+                'For prose questions about linked literature, call `read_document` with a focused query and omit documentIds to retrieve relevant passages across all linked PDFs. Use documentIds only when the user identifies a subset. Use sequential batches only for whole-document synthesis.',
+                ...elementGuidance,
                 'Do not call MCP resource-discovery tools, and do not use Notebook, shell, filesystem, or Python to extract linked PDFs.'
               ]
             : [])
@@ -909,8 +919,12 @@ class AcpPromptContentOwner {
         })
         return [{ type: 'text', text }]
       }
+      const elementBlocks: ContentBlock[] = elementGuidance.length
+        ? [{ type: 'text', text: elementGuidance.join('\n') }]
+        : []
       if (size > MAX_AUTO_EXTRACT_PDF_BYTES) {
         const blocks: ContentBlock[] = [
+          ...elementBlocks,
           ...(pdfReadingPosition
             ? [
                 {
@@ -961,7 +975,7 @@ class AcpPromptContentOwner {
         : blocks.some((block) => block.type === 'text')
           ? 'budgeted-text-preview'
           : 'resource-link'
-      const injectedChars = blocks.reduce((total, block) => {
+      const injectedChars = [...elementBlocks, ...blocks].reduce((total, block) => {
         if (block.type === 'text') return total + block.text.length
         if (block.type === 'resource' && 'text' in block.resource) {
           return total + block.resource.text.length
@@ -991,7 +1005,7 @@ class AcpPromptContentOwner {
         bm25Used: false,
         bm25ResultCount: null
       })
-      return blocks
+      return [...elementBlocks, ...blocks]
     }
 
     if (isTextLikeAttachment(name, mimeType)) {

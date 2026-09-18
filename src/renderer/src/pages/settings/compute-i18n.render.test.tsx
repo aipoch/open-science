@@ -158,7 +158,7 @@ describe('ComputePanel i18n', () => {
 
     switchTo('zh-Hans')
 
-    const primary = container.querySelector('.text-destructive')
+    const primary = container.querySelector('[role="alert"] p')
     expect(primary?.textContent).toBe('无法加载主机。')
     expect(primary?.textContent).not.toContain('/private/data/compute.db')
     const details = container.querySelector('details')

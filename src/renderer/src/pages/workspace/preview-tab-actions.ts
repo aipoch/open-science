@@ -6,7 +6,16 @@
 // download, full screen) are deliberately absent: they are owned by the surfaces themselves. This
 // module only exposes actions that can run without mounting the tab's content.
 
-import { BookOpen, CircleX, ClipboardCopy, Download, Link2Off, PackagePlus, X } from 'lucide-react'
+import {
+  BookOpen,
+  CircleX,
+  ClipboardCopy,
+  Download,
+  Link2Off,
+  MessageSquare,
+  PackagePlus,
+  X
+} from 'lucide-react'
 
 import type { PreviewFileItem, PreviewItem } from '@/stores/preview-workbench-store'
 import type {
@@ -19,9 +28,16 @@ import type { SaveManagedFileRequest } from '../../../../shared/file-save'
 import type { PdfContextLinkState } from './use-pdf-context-action'
 
 export type PreviewTabActionCommand =
-  'toggle-pdf-context' | 'close' | 'close-others' | 'download' | 'copy-path' | 'save-as-artifact'
+  | 'view-session'
+  | 'toggle-pdf-context'
+  | 'close'
+  | 'close-others'
+  | 'download'
+  | 'copy-path'
+  | 'save-as-artifact'
 
 export const PREVIEW_TAB_ACTION_CATALOG: Record<PreviewTabActionCommand, ActionMenuDefinition> = {
+  'view-session': { labelKey: 'View main session', icon: MessageSquare },
   'toggle-pdf-context': { labelKey: 'Read with agent', icon: BookOpen },
   close: { labelKey: 'Close', icon: X },
   'close-others': { labelKey: 'Close others', icon: CircleX, danger: true },
@@ -52,6 +68,7 @@ export type PreviewTabActionGroups = {
 // Everything an action needs from its host. Injected so tests exercise the command→effect mapping
 // without a DOM, window.api, or a live store.
 export type PreviewTabActionDeps = {
+  viewSession?: (item: PreviewItem) => void
   closeTab: (itemId: string) => void
   closeOtherTabs: (keepItemId: string) => void
   saveManagedFile: (request: SaveManagedFileRequest) => Promise<unknown>
@@ -84,7 +101,12 @@ export const getPreviewTabActionGroups = (
 ): PreviewTabActionGroups => ({
   pdfContext: item.type === 'file' && context.pdfContext ? ['toggle-pdf-context'] : [],
   shared: sharedActions,
-  specific: item.type === 'file' ? fileSpecificActions(item) : []
+  specific:
+    item.type === 'tool' && item.toolKind === 'side-chat'
+      ? ['view-session']
+      : item.type === 'file'
+        ? fileSpecificActions(item)
+        : []
 })
 
 export const getPreviewTabActionRecipe = (
@@ -159,6 +181,7 @@ export const createPreviewTabActionBindings = (
   context: PreviewTabActionContext,
   deps: PreviewTabActionDeps
 ): Partial<Record<PreviewTabActionCommand, ActionMenuBinding<PreviewItem>>> => ({
+  'view-session': { execute: (item) => deps.viewSession?.(item) },
   close: { execute: (item) => runPreviewTabAction('close', item, deps) },
   'close-others': {
     execute: (item) => runPreviewTabAction('close-others', item, deps),

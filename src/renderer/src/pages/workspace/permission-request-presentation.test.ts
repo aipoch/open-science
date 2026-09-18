@@ -20,7 +20,7 @@ describe('describePermissionRequest', () => {
 
     expect(
       describePermissionRequest(
-        request({ appOwned: true, providerToolName: 'Open Science', rawInput })
+        request({ appOwned: true, providerToolName: 'Open-Science', rawInput })
       )
     ).toMatchObject({
       actionTitle: 'Connect to data.example.org?',
@@ -47,7 +47,7 @@ describe('describePermissionRequest', () => {
       describePermissionRequest(
         request({
           title: 'Switch to Data Analyst?',
-          providerToolName: 'Open Science',
+          providerToolName: 'Open-Science',
           rawInput: {
             specialistApproval: { kind: 'switch', targetName: 'Data Analyst' }
           }
@@ -330,9 +330,9 @@ describe('describePermissionRequest', () => {
     expect(
       describePermissionRequest(request({ title: 'open-science-notebook', isMcp: true }))
     ).toMatchObject({
-      actionTitle: 'Use Open Science Notebook?',
+      actionTitle: 'Use Open-Science Notebook?',
       categoryLabel: 'External service',
-      actionDetail: 'Open Science Notebook'
+      actionDetail: 'Open-Science Notebook'
     })
   })
 

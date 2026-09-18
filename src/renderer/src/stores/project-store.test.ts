@@ -72,7 +72,7 @@ describe('project store', () => {
 
     expect(useProjectStore.getState().isLoaded).toBe(true)
     expect(useProjectStore.getState().loadError).toBe(
-      'Open Science could not load projects. Retry to continue.'
+      'Open-Science could not load projects. Retry to continue.'
     )
     expect(useProjectStore.getState().loadError).not.toContain('/Users/private')
     expect(useProjectStore.getState().projects).toEqual([])
@@ -289,7 +289,7 @@ describe('project store', () => {
       await expect(update).resolves.toEqual(result)
       expect(useProjectStore.getState().projects).toEqual([accepted])
       expect(useProjectStore.getState().loadError).toBe(
-        'Open Science could not load projects. Retry to continue.'
+        'Open-Science could not load projects. Retry to continue.'
       )
     } finally {
       warn.mockRestore()

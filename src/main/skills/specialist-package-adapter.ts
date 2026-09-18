@@ -718,4 +718,7 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
   }
 }
 
-export { readMetadata as readSpecialistPackageSkillMetadata }
+export {
+  readMetadata as readSpecialistPackageSkillMetadata,
+  directoryHash as specialistSkillContentHash
+}

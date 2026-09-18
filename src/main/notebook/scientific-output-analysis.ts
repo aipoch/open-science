@@ -201,22 +201,33 @@ const analyzeScientificOutputs = (
     )
   }
 
-  const indexedModelRoots = uniqueSorted(
-    candidates.flatMap((candidate) =>
-      lower(posix.basename(candidate.relativePath)).endsWith('.index.json')
-        ? [posix.dirname(candidate.relativePath)]
-        : []
+  for (const index of candidates) {
+    const match = /^(.*)\.(safetensors|bin)\.index\.json$/iu.exec(
+      posix.basename(index.relativePath)
     )
-  )
-  for (const root of indexedModelRoots) {
+    if (!match) continue
+    const root = posix.dirname(index.relativePath)
+    const prefix = `${match[1]}-`
+    const extension = `.${match[2]}`
+    const shardPaths = new Set(
+      candidates.flatMap((candidate) => {
+        if (posix.dirname(candidate.relativePath) !== root) return []
+        const name = posix.basename(candidate.relativePath)
+        if (!name.startsWith(prefix) || !name.endsWith(extension)) return []
+        return /^\d+-of-\d+$/u.test(name.slice(prefix.length, -extension.length))
+          ? [candidate.relativePath]
+          : []
+      })
+    )
+    if (shardPaths.size === 0) continue
     addGroup(
       {
-        key: `indexed-model:${root}`,
-        storageShape: 'directory-tree',
+        key: `indexed-model:${index.relativePath}`,
+        storageShape: 'file-set',
         formatHint: 'sharded-model',
         riskCodes: [FORMAT_RISK, MULTI_FILE_RISK, RUNTIME_RISK]
       },
-      (path) => isWithin(root, path)
+      (path) => path === index.relativePath || shardPaths.has(path)
     )
   }
 
@@ -345,38 +356,36 @@ const analyzeScientificOutputs = (
     )
   }
 
-  const tenXDirectories = uniqueSorted(
-    candidates.flatMap((candidate) => {
-      const basename = lower(posix.basename(candidate.relativePath))
-      return ['matrix.mtx', 'matrix.mtx.gz'].includes(basename)
-        ? [posix.dirname(candidate.relativePath)]
-        : []
-    })
-  )
-  for (const root of tenXDirectories) {
-    const companionNames = new Set([
-      'matrix.mtx',
-      'matrix.mtx.gz',
-      'barcodes.tsv',
-      'barcodes.tsv.gz',
-      'features.tsv',
-      'features.tsv.gz',
-      'genes.tsv',
-      'genes.tsv.gz'
-    ])
-    const members = candidates.filter(
-      (candidate) =>
-        posix.dirname(candidate.relativePath) === root &&
-        companionNames.has(lower(posix.basename(candidate.relativePath)))
+  // Index companions by directory and exact sample prefix. A single directory
+  // can contain several 10x matrices, which must remain independent file sets.
+  const tenXGroups = new Map<string, { key: string; matrix: boolean; members: Set<string> }>()
+  for (const candidate of candidates) {
+    const match = /^(.*?)(matrix\.mtx|barcodes\.tsv|features\.tsv|genes\.tsv)(?:\.gz)?$/iu.exec(
+      posix.basename(candidate.relativePath)
     )
+    if (!match) continue
+    const root = posix.dirname(candidate.relativePath)
+    const prefix = match[1]!
+    const key = JSON.stringify([root, prefix])
+    const group = tenXGroups.get(key) ?? {
+      key: prefix ? `10x-matrix-prefix:${key}` : `10x-matrix:${root}`,
+      matrix: false,
+      members: new Set<string>()
+    }
+    group.matrix ||= lower(match[2]!) === 'matrix.mtx'
+    group.members.add(candidate.relativePath)
+    tenXGroups.set(key, group)
+  }
+  for (const group of tenXGroups.values()) {
+    if (!group.matrix) continue
     addGroup(
       {
-        key: `10x-matrix:${root}`,
+        key: group.key,
         storageShape: 'file-set',
         formatHint: '10x-matrix',
         riskCodes: [FORMAT_RISK, MULTI_FILE_RISK]
       },
-      (path) => members.some((member) => member.relativePath === path)
+      (path) => group.members.has(path)
     )
   }
 

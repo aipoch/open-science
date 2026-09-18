@@ -6,7 +6,7 @@ import type {
   ProviderValidationTarget,
   ValidationCategory
 } from '../../shared/settings'
-import { isCodexSubscriptionProvider } from '../../shared/settings'
+import { isCodexSubscriptionProvider, providerValidationTargetMatches } from '../../shared/settings'
 import { isCustomConnectorName, toCustomConnectorName } from '../../shared/custom-connector'
 import { normalizeLoopbackOAuthRedirectUri } from '../../shared/oauth-redirect'
 import type { PackageMirror } from '../../shared/mirror'
@@ -119,6 +119,18 @@ const sanitizeValidationFailure = (value: unknown): ProviderValidationFailure | 
   if (message) failure.message = message
   const target = sanitizeValidationTarget(value.target)
   if (target) failure.target = target
+  if (target && category === 'model-not-found' && Array.isArray(value.targets)) {
+    const targets = [
+      target,
+      ...value.targets
+        .map(sanitizeValidationTarget)
+        .filter((item): item is ProviderValidationTarget => item !== undefined)
+    ].filter(
+      (candidate, index, all) =>
+        all.findIndex((other) => providerValidationTargetMatches(candidate, other)) === index
+    )
+    if (targets.length > 1) failure.targets = targets
+  }
   return failure
 }
 
@@ -160,6 +172,12 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
   if (type === 'official' && !vendorId) return undefined
 
   const provider: StoredProvider = { id, type, name }
+  if (
+    typeof value.configRevision === 'number' &&
+    Number.isSafeInteger(value.configRevision) &&
+    value.configRevision >= 0
+  )
+    provider.configRevision = value.configRevision
   const baseUrl = asString(value.baseUrl)
   const model = asString(value.model)
   const positiveWholeNumber = (candidate: unknown): number | undefined => {

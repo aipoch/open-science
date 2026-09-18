@@ -85,7 +85,7 @@ const expectSettingsDialogChrome = (
 
   expect(overlay?.props.className).not.toContain('backdrop-blur')
   expect(panel?.props.className).toContain(expectedWidth)
-  expect(panel?.props.className).toContain('overflow-hidden')
+  expect(panel?.props.className).toContain('overflow-y-auto')
   expect(panel?.props.className).toContain('text-foreground')
   expect(panel?.props.className).toContain('shadow-dialog')
   expect(header?.props.className).toContain('px-5 py-3.5')
@@ -250,7 +250,7 @@ describe('home dialogs shared chrome', () => {
     expect(deleteButton?.props.className).toContain('bg-danger-000')
     expect(elements.some((element) => element.type === AlertDialog.Action)).toBe(false)
     expect(text).toContain(
-      'Generated artifacts and uploaded files stored by Open Science will also be deleted.'
+      'Generated artifacts and uploaded files stored by Open-Science will also be deleted.'
     )
     expect(text).toContain('Deleting this project will stop its running tasks and notebooks.')
     expect(text).toContain("Files in the project's working folder are not deleted.")

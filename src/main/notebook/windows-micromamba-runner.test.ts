@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, sep } from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
 
@@ -328,3 +328,96 @@ describe('createProductionMicromambaRunner', () => {
     }
   })
 })
+
+it.each([
+  { packaged: false, suffix: 'override' },
+  { packaged: true, suffix: 'local/Open-Science' }
+])(
+  'uses the same brand config rules for actual tool writes ($packaged)',
+  async ({ packaged, suffix }) => {
+    const root = mkdtempSync(join(tmpdir(), 'brand-tools-call-'))
+    try {
+      const binary = fixture(root, 'explicit', 'isolated-executable')
+      const runner = createProductionMicromambaRunner({
+        packaged,
+        platform: 'win32',
+        home: root,
+        resourcesPath: join(root, 'absent'),
+        env: {
+          LOCALAPPDATA: join(root, 'local'),
+          OPEN_SCIENCE_STORAGE_ROOT: `  ${root}/ignored/../override  `,
+          OPEN_SCIENCE_MICROMAMBA_BIN: binary.path
+        },
+        preflight: async () => undefined
+      })
+      const selected = await runner!.resolve()
+      expect(selected.startsWith(join(root, suffix, 'tools', 'micromamba') + sep)).toBe(true)
+      expect(contentsOf(selected)).toBe('isolated-executable')
+      expect(
+        JSON.parse(contentsOf(join(root, suffix, 'tools', 'micromamba', 'selection.json'))).schema
+      ).toBe(1)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  }
+)
+
+it('keeps the development config home separate from a custom research disk', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'brand-tools-home-'))
+  try {
+    const binary = fixture(root, 'explicit', 'isolated-executable')
+    const runner = createProductionMicromambaRunner({
+      packaged: false,
+      platform: 'win32',
+      home: join(root, 'research-disk'),
+      configHome: join(root, 'user-home'),
+      resourcesPath: join(root, 'absent'),
+      env: { LOCALAPPDATA: join(root, 'local'), OPEN_SCIENCE_MICROMAMBA_BIN: binary.path },
+      preflight: async () => undefined
+    })
+    expect(
+      (await runner!.resolve()).startsWith(
+        join(root, 'user-home', '.open-science-project', 'tools', 'micromamba') + sep
+      )
+    ).toBe(true)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+it('retains a validated legacy tool selection receipt when no configuration override is supplied', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'brand-tools-receipt-'))
+  try {
+    const binary = fixture(root, 'override', 'isolated-executable')
+    const toolsDir = join(root, 'local', 'OpenScience', 'tools', 'micromamba')
+    const first = await createMicromambaRunnerResolver({
+      candidates: [binary],
+      toolsDir,
+      preflight: async () => undefined
+    }).resolve()
+    const runner = createProductionMicromambaRunner({
+      packaged: true,
+      platform: 'win32',
+      home: root,
+      resourcesPath: join(root, 'absent'),
+      env: { LOCALAPPDATA: join(root, 'local'), OPEN_SCIENCE_MICROMAMBA_BIN: binary.path },
+      preflight: async () => undefined
+    })
+    expect(await runner!.resolve()).toBe(first)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+it.each(['OPEN_SCIENCE_E2E_STORAGE_ROOT', 'OPEN_SCIENCE_CONFIG_ROOT', 'OPEN_SCIENCE_STORAGE_ROOT'])(
+  'rejects a relative %s before creating tool state',
+  (key) => {
+    expect(() =>
+      createProductionMicromambaRunner({
+        packaged: false,
+        platform: 'win32',
+        env: { [key]: '  relative-path  ' }
+      })
+    ).toThrow(`${key} must be an absolute path.`)
+  }
+)

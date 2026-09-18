@@ -1,4 +1,6 @@
+import { createSessionBranchSource } from '../../../shared/session-branch-source'
 import type { StoreApi } from 'zustand'
+import { sessionExportLocked, usePackageOperationStore } from './package-operation-store'
 import {
   activateConversationBranch,
   forkEditedConversationMessage,
@@ -45,23 +47,6 @@ export const createMessageId = (): string => {
 const createPendingSessionId = (): string => {
   pendingSessionSequence += 1
   return `pending-session-${Date.now()}-${pendingSessionSequence}`
-}
-const createSessionBranchSource = (
-  source: ChatSession,
-  headMessageId?: string
-): NonNullable<ChatSession['branchSource']> => {
-  const graph = source.conversationGraph
-  const frame = graph?.frames.find((candidate) => candidate.id === graph.activeFrameId)
-  const branch = graph?.branches.find((candidate) => candidate.id === frame?.activeBranchId)
-
-  return {
-    sessionId: source.id,
-    ...(frame ? { agentFrameId: frame.id } : {}),
-    ...(branch ? { messageBranchId: branch.id } : {}),
-    ...((headMessageId ?? branch?.headMessageId)
-      ? { headMessageId: headMessageId ?? branch?.headMessageId }
-      : {})
-  }
 }
 
 export const createSortIndex = (): number => {
@@ -216,6 +201,7 @@ export const createSessionMessageGraphOwner = <
     agentModel,
     agentConfiguration,
     memoryEnabled,
+    autoReviewEnabled,
     delegationPolicy,
     isPending,
     specialistId,
@@ -368,6 +354,7 @@ export const createSessionMessageGraphOwner = <
         agentModel: normalizedAgentModel,
         ...(agentConfiguration ? { agentConfiguration } : {}),
         memoryEnabled: memoryEnabled !== false,
+        autoReviewEnabled: autoReviewEnabled === true,
         ...(delegationPolicy ? { delegationPolicy } : {}),
         ...(specialistId ? { specialistId } : {}),
         ...(enabledComputeHosts?.length
@@ -543,7 +530,8 @@ export const createSessionMessageGraphOwner = <
     agentFrameworkId,
     agentBackendId,
     providerSessionId,
-    providerContinuityToken
+    providerContinuityToken,
+    wslSetup
   }) => {
     if (!pendingSessionId || !sessionId) return undefined
 
@@ -577,6 +565,7 @@ export const createSessionMessageGraphOwner = <
               agentBackendId: agentBackendId ?? session.agentBackendId,
               providerSessionId: providerSessionId ?? session.providerSessionId,
               providerContinuityToken: providerContinuityToken ?? session.providerContinuityToken,
+              wslSetup,
               updatedAt: now
             }
           : session
@@ -780,6 +769,7 @@ export const createSessionMessageGraphOwner = <
         if (
           session.id !== sessionId ||
           !session.conversationGraph ||
+          sessionExportLocked(usePackageOperationStore.getState().operation, session) ||
           session.activeRun ||
           session.status === 'running' ||
           session.status === 'waiting-for-user' ||

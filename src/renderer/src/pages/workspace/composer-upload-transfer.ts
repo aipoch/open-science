@@ -34,10 +34,14 @@ type StageComposerFileOptions = {
 }
 
 export type ComposerUploadTransfer = UploadTransferProgress & {
+  // Derived from this controller's in-memory File; never restored from persisted draft metadata.
+  canRetry?: boolean
+  recoveryReceipt?: string
   mimeType?: string
   pastedTextId?: string
   status: 'queued' | 'uploading' | 'cancelling' | 'error'
   error?: string
+  errorDetail?: string
 }
 
 const abortError = (): DOMException => new DOMException('Upload cancelled.', 'AbortError')

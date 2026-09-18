@@ -3,7 +3,7 @@
 // Phase 1 (issue 01) covers host record management only: the SQLite/Prisma layer owns ComputeHost
 // rows (see src/main/compute). Probe/SSH execution and approvals land in later issues. Timestamps are
 // normalized to epoch milliseconds at the repository boundary so the renderer treats them like other
-// persisted timestamps. No credentials are ever stored — only an ssh alias and optional overrides.
+// persisted timestamps. Credentials are encrypted and stored separately; this projection exposes status only.
 
 // Host topology, inferred by probe in a later issue. Persisted so downstream issues can branch on it;
 // Phase 1 never reads it for behavior.
@@ -81,6 +81,13 @@ export type ProbeResult = {
   cpus?: number
   memMib?: number
   gpus?: ProbeGpu[]
+  // Optional recent facts; missing in legacy snapshots means unknown, never current admission.
+  sshConnected?: boolean
+  commandExecutable?: boolean
+  scratchPath?: string
+  scratchWritable?: boolean
+  // Required Slurm CLI presence plus a successful squeue query; not allocation/submission permission.
+  schedulerAvailable?: boolean
   detectedScheduler?: 'slurm' | 'pbs' | 'lsf' | 'none'
 }
 
@@ -398,6 +405,8 @@ export type ComputeJobCancellationStatus = 'cancelling' | 'cancelled'
 // via JSON RPC). Timestamps are epoch milliseconds; JSON columns are parsed at the repository
 // boundary to their respective types.
 export type ComputeJob = {
+  // Read-side scheduling diagnostics; never persisted as a Job status.
+  queue_blocked_reason?: ComputeQueueBlockedReason
   job_id: string
   provider_id: string
   shape: string
@@ -435,7 +444,7 @@ export type ComputeJob = {
   // Optional: absent means no poll error has been recorded for this job.
   last_poll_error?: string
   // Phase 3b harvest fields (compute-harvest issue 01). All optional; null until Phase 3b fills them.
-  // harvest_error: non-null means the harvest completed but with errors (harvest_failed outcome).
+  // harvest_error: latest collection error; only harvested_at confirms collection is final.
   harvest_error?: string
   // left_on_remote: JSON string [{uri, size_mb, reason}] — files not downloaded from remote.
   left_on_remote?: string
@@ -458,6 +467,8 @@ export type ComputeJob = {
 // Lightweight job status shape returned by attach_job().status() and the job_status computeCall op.
 // Only the fields needed for the agent to track job progress are included.
 export type JobStatusResult = {
+  // Read-side scheduling diagnostics; never persisted as a Job status.
+  queue_blocked_reason?: ComputeQueueBlockedReason
   job_id: string
   scheduler_job_id?: string
   error_code?: string
@@ -481,6 +492,8 @@ export type JobStatusResult = {
 // File lists are workspace-relative paths (e.g. "hpc/<jobId>/featured/out.result").
 // In non-terminal states or before harvest completes, file fields are empty arrays.
 export type JobResult = {
+  // Read-side scheduling diagnostics; never persisted as a Job status.
+  queue_blocked_reason?: ComputeQueueBlockedReason
   job_id: string
   // Notebook Run that submitted this job. Pass it as producerRunId when publishing a harvested
   // local file so cross-turn provenance resolves to the actual producing execution.
@@ -517,7 +530,18 @@ export type JobResult = {
 
 // Result returned by submit_job (immediate, before dispatch completes). remote_workdir is
 // deterministically computed from the job_id before any SSH connection is made.
+export type ComputeQueueBlockedReason =
+  | 'runtime_stopped'
+  | 'session_policy_unavailable'
+  | 'session_policy_identity_conflict'
+  | 'session_policy_missing'
+  | 'session_policy_deleted'
+  | 'session_policy_unsupported_version'
+  | 'session_policy_invalid'
+
 export type SubmitJobResult = {
+  // Read-side scheduling diagnostics; never persisted as a Job status.
+  queue_blocked_reason?: ComputeQueueBlockedReason
   job_id: string
   provider_id: string
   status: 'queued' | 'submitted'
@@ -530,6 +554,9 @@ export type CancelComputeJobRequest = Readonly<{
   sessionId: string
   projectId: string
 }>
+
+// Retries only unfinished local result collection for the original, fully scoped Job.
+export type RetryComputeJobHarvestRequest = CancelComputeJobRequest
 
 // Error codes for compute jobs (Phase 3a subset of spec §12).
 export type ComputeJobErrorCode =
@@ -548,6 +575,8 @@ export type ComputeJobErrorCode =
 // Phase 3b: notification payload fields (spec §11.3) are embedded here so the renderer can
 // display the done card and decide whether to trigger an analysis turn (issue 05/07).
 export type JobSummary = {
+  // Read-side scheduling diagnostics; never persisted as a Job status.
+  queue_blocked_reason?: ComputeQueueBlockedReason
   job_id: string
   provider_id: string
   // Human-readable host name, denormalized from ComputeHost.displayName at query time.

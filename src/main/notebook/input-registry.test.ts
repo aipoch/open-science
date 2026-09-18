@@ -266,6 +266,103 @@ describe('NotebookInputRegistry', () => {
     expect(registry.getTurnInputs(request)).toHaveLength(1)
   })
 
+  it('prepares inputs once and commits synchronously without repeating storage access', async () => {
+    const registry = await setup()
+    await createUpload({
+      projectId: 'project-1',
+      sessionId: 'source-session-1',
+      uploadFileId: 'upload-1',
+      versionId: 'upload-version-1',
+      filename: 'groups.csv',
+      content: 'group\nA\n'
+    })
+    const request = {
+      projectId: 'project-1',
+      appSessionId: 'active-session',
+      promptMessageId: 'prompt-1',
+      uploads: [
+        {
+          id: 'upload-1',
+          versionId: 'upload-version-1',
+          versionNumber: 1,
+          sessionId: 'source-session-1',
+          name: 'groups.csv',
+          originalName: 'groups.csv',
+          path: '/untrusted-renderer-path',
+          size: 8
+        }
+      ],
+      references: []
+    }
+
+    const prepared = await registry.prepareTurn(request)
+    expect(prepared.inputs).toEqual([
+      expect.objectContaining({ notebookPath: 'inputs/groups-dbdc13461d5e.csv' })
+    ])
+    expect(registry.getTurnInputs(request)).toEqual([])
+    // Removing storage after preparation makes any repeated materialization fail.
+    // Windows cannot unlink the database while the fixture's Prisma client holds it open.
+    await client!.$disconnect()
+    client = undefined
+    await rm(storageRoot!, { recursive: true, force: true })
+    expect(prepared.commit()).toBeUndefined()
+    expect(registry.getTurnInputs(request)).toHaveLength(1)
+    expect(prepared.commit()).toBeUndefined()
+    expect(registry.getTurnInputs(request)).toHaveLength(1)
+  })
+
+  it('rejects a conflicting registration committed after preparation', async () => {
+    const registry = await setup()
+    await createUpload({
+      projectId: 'project-1',
+      sessionId: 'source-session-1',
+      uploadFileId: 'upload-1',
+      versionId: 'upload-version-1',
+      filename: 'groups.csv',
+      content: 'group\nA\n'
+    })
+    const request = {
+      projectId: 'project-1',
+      appSessionId: 'active-session',
+      promptMessageId: 'prompt-1',
+      uploads: [
+        {
+          id: 'upload-1',
+          versionId: 'upload-version-1',
+          versionNumber: 1,
+          sessionId: 'source-session-1',
+          name: 'groups.csv',
+          originalName: 'groups.csv',
+          path: '/untrusted-renderer-path',
+          size: 8
+        }
+      ],
+      references: []
+    }
+
+    const prepared = await registry.prepareTurn(request)
+    await registry.registerTurn({ ...request, uploads: [] })
+    expect(() => prepared.commit()).toThrow('conflict')
+    expect(registry.getTurnInputs(request)).toEqual([])
+  })
+
+  it('rejects a prepared registration after its Session was cleared', async () => {
+    const registry = await setup()
+    const request = {
+      projectId: 'project-1',
+      appSessionId: 'active-session',
+      promptMessageId: 'prompt-1',
+      uploads: [],
+      references: []
+    }
+    const prepared = await registry.prepareTurn(request)
+    registry.clearSession(request.appSessionId)
+    expect(() => prepared.commit()).toThrow('Session was cleared')
+    expect(registry.getTurnInputs(request)).toEqual([])
+    const current = await registry.prepareTurn(request)
+    expect(current.commit()).toBeUndefined()
+  })
+
   it('freezes exact Upload and Artifact Versions in turn order without exposing absolute paths', async () => {
     const registry = await setup()
     await createUpload({
@@ -590,7 +687,7 @@ describe('NotebookInputRegistry', () => {
     expect(concurrentPath).toBe(stagedPath)
     await expect(readFile(stagedPath, 'utf8')).resolves.toBe('group\nA\n')
     await expect(lease.close()).resolves.toEqual([
-      expect.objectContaining({ association: 'resolver-accessed' })
+      expect.objectContaining({ association: 'resolver-accessed', accessEvidence: 'resolver' })
     ])
     expect(() => lease.getRunInputFiles()).toThrow(/closed/i)
   })

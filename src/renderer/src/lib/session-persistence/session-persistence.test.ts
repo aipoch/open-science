@@ -1,11 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { hydrateSession } from '../../stores/session-store-persistence-owner'
+import { usePackageOperationStore } from '../../stores/package-operation-store'
 
+import { AcpPermissionWaitOwner } from '../../../../main/acp/permission-wait-owner'
 import { SessionPersistenceStateOwner } from '../../../../main/session-persistence/state-owner'
+import { preserveImportedSession } from '../../../../main/session-persistence/imported-session'
 import { ARTIFACT_FINALIZATION_INVALID_PROOF } from '../../../../shared/artifacts'
 import {
   activateConversationBranch,
   createLinearConversationGraph,
   forkEditedConversationMessage,
+  projectConversationMessage,
+  resolveActiveConversationMessages,
   synchronizeActiveConversationMessages
 } from '../../../../shared/conversation-graph'
 import {
@@ -52,6 +58,70 @@ const createPersistedSession = (
   updatedAt: 1710000000000,
   ...overrides
 })
+
+const createCompletedTaskReplyConflict = (
+  agentFrameworkId: PersistedChatSession['agentFrameworkId'] = 'opencode'
+): {
+  base: PersistedChatSession
+  submitted: PersistedChatSession
+  latest: PersistedChatSession
+} => {
+  const prompt = {
+    id: 'cli-prompt',
+    role: 'user' as const,
+    content: 'CLI request',
+    status: 'complete' as const,
+    eventIds: [],
+    createdAt: 1,
+    updatedAt: 1
+  }
+  const base = materializeSessionConversationGraph(
+    createPersistedSession({
+      revision: 2,
+      agentFrameworkId,
+      status: 'running',
+      activeRun: { promptMessageId: prompt.id, startedAt: 1 },
+      messages: [prompt]
+    })
+  )
+  const reply = {
+    id: 'renderer-stream',
+    role: 'agent' as const,
+    content: 'Same runtime reply',
+    status: 'streaming' as const,
+    streamId: 'provider-stream',
+    responseToMessageId: prompt.id,
+    eventIds: ['runtime-event'],
+    createdAt: 3,
+    updatedAt: 3
+  }
+  const submitted = materializeSessionConversationGraph({
+    ...base,
+    messages: [prompt, reply],
+    title: 'Local title'
+  })
+  const latest = materializeSessionConversationGraph({
+    ...base,
+    revision: 3,
+    taskRunCommitId: 'completed-task',
+    status: 'idle',
+    activeRun: undefined,
+    messages: [
+      prompt,
+      {
+        ...reply,
+        id: 'durable-task-reply',
+        streamId: undefined,
+        status: 'complete',
+        createdAt: 2,
+        updatedAt: 2,
+        completedAt: 2,
+        turnUsageUnavailable: true
+      }
+    ]
+  })
+  return { base, submitted, latest }
+}
 
 const createHistoricalPlan = (
   artifactVersionId: string,
@@ -730,6 +800,55 @@ describe('reconcilePendingArtifacts', () => {
 })
 
 describe('renderer session persistence bridge', () => {
+  it('flushes after discarding an exported Session save from an older hydration generation', async () => {
+    const source = createPersistedSession()
+    usePackageOperationStore.getState().receive({
+      id: 'export-old',
+      kind: 'export',
+      state: 'running',
+      progress: { phase: 'copying' },
+      session: { projectId: source.projectId, sessionId: source.id }
+    })
+    const persistence = createOrderedSessionPersistence(createApi())
+    const saving = persistence
+      .saveLatestSession(`session:${source.id}`, async () => source)
+      .catch((error) => error)
+    await flushMicrotasks()
+    persistence.seedAcknowledgedSessions([source])
+    const flushing = persistence.flush()
+    await flushMicrotasks()
+    usePackageOperationStore.getState().receive(null)
+    await expect(saving).resolves.toMatchObject({
+      name: 'SessionPersistenceGenerationChangedError'
+    })
+    await expect(flushing).resolves.toBeUndefined()
+  })
+  it('keeps another Session writable while an exported Session has a delayed save', async () => {
+    const source = createPersistedSession()
+    usePackageOperationStore.getState().receive({
+      id: 'export-1',
+      kind: 'export',
+      state: 'running',
+      progress: { phase: 'copying' },
+      session: { projectId: source.projectId, sessionId: source.id }
+    })
+    const saveSession = vi.fn(async (session: PersistedChatSession) => session)
+    const persistence = createOrderedSessionPersistence(createApi({ saveSession }))
+    const first = persistence.saveSession(source)
+    const second = persistence.saveSession(createPersistedSession({ id: 'other-session' }))
+    try {
+      await second
+      expect(saveSession.mock.calls.map(([session]) => session.id)).toEqual(['other-session'])
+    } finally {
+      usePackageOperationStore.getState().receive(null)
+      await first
+    }
+    expect(saveSession.mock.calls.map(([session]) => session.id)).toEqual([
+      'other-session',
+      source.id
+    ])
+    await expect(persistence.flush()).resolves.toBeUndefined()
+  })
   it('falls back to the existing Web load-all path when load-one is unavailable', async () => {
     const selected = createPersistedSession({ id: 'session-1', projectId: 'project-1' })
     const loadAll = vi.fn().mockResolvedValue(createLoadResult([selected]))
@@ -1137,6 +1256,71 @@ describe('renderer session persistence bridge', () => {
     )
   })
 
+  it.each([undefined, true])(
+    'does not resave a same-client metadata receipt (context reset: %s)',
+    async (branchContextResetRequired) => {
+      vi.useFakeTimers()
+      let durable = createPersistedSession({
+        revision: 1,
+        selectedComputeHosts: [],
+        branchContextResetRequired,
+        conversationGraph: createLinearConversationGraph({
+          sessionId: 'session-1',
+          messages: [],
+          createdAt: 1710000000000,
+          updatedAt: 1710000000000
+        }),
+        runtimeContext: { version: 1, revision: 1 },
+        packageOrigin: {
+          importId: 'import-1',
+          sourceProjectId: 'source-project',
+          sourceSessionId: 'source-session',
+          importedAt: 1,
+          manifestChecksum: 'a'.repeat(64)
+        }
+      })
+      useSessionStore.getState().upsertPersistedSession(durable)
+      const saveSession = vi.fn(async (submitted: PersistedChatSession) => {
+        durable = {
+          ...preserveImportedSession(durable, submitted),
+          revision: (durable.revision ?? 0) + 1
+        }
+        // The same-client lifecycle event arrives before the invoke response, as in Electron.
+        useSessionStore.getState().applyDurableSessionProjection({
+          source: useSessionStore.getState().sessions[0],
+          session: durable,
+          mode: 'archive-authority'
+        })
+        return durable
+      })
+      const api = createApi({ saveSession })
+      const persistence = createOrderedSessionPersistence(api)
+      const save = createStoreSaver(api, useSessionStore.getState(), {}, persistence)
+      const unsubscribe = useSessionStore.subscribe((state) => {
+        void save(state)
+      })
+      try {
+        useSessionStore.getState().setBranchSwitchBlocked(durable.id, true)
+        await vi.advanceTimersByTimeAsync(500)
+
+        expect(saveSession).not.toHaveBeenCalled()
+        await persistence.flush()
+        expect(useSessionStore.getState().sessions[0].branchSwitchBlocked).toBe(true)
+
+        useSessionStore.getState().renameSession(durable.id, 'A real local edit')
+        await persistence.flush()
+        expect(saveSession).toHaveBeenCalledOnce()
+        expect(durable.title).toBe('A real local edit')
+        expect(durable.branchContextResetRequired).toBe(branchContextResetRequired)
+      } finally {
+        unsubscribe()
+        await vi.runAllTimersAsync()
+        await persistence.flush()
+        vi.useRealTimers()
+      }
+    }
+  )
+
   it('does not echo an externally hydrated session back to persistence', async () => {
     const api = createApi()
     const save = createStoreSaver(api)
@@ -1271,6 +1455,326 @@ describe('renderer session persistence bridge', () => {
     await save(useSessionStore.getState())
     expect(api.saveSession).not.toHaveBeenCalled()
   })
+
+  it.each([
+    'setBranchSwitchBlocked',
+    'setAgentPromptInFlight',
+    'setAwaitingFirstAgentOutput',
+    'finishRun'
+  ] as const)('does not republish a passive window Branch after %s', async (action) => {
+    const original = {
+      id: 'original-prompt',
+      role: 'user' as const,
+      content: 'Original prompt',
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const base = materializeSessionConversationGraph(
+      createPersistedSession({
+        revision: 8,
+        messages: [original],
+        branchContextResetRequired: true
+      })
+    )
+    const edited = {
+      ...original,
+      id: 'edited-prompt',
+      content: 'Edited in another window',
+      createdAt: 2,
+      updatedAt: 2
+    }
+    const reply = {
+      ...original,
+      id: 'remote-reply',
+      role: 'agent' as const,
+      content: 'Remote result',
+      responseToMessageId: edited.id,
+      status: 'streaming' as const,
+      createdAt: 3,
+      updatedAt: 3
+    }
+    const remoteMessages = action === 'finishRun' ? [edited, reply] : [edited]
+    const remote = {
+      ...base,
+      revision: 9,
+      branchContextResetRequired: undefined,
+      messages: remoteMessages,
+      status: action === 'finishRun' ? ('running' as const) : ('idle' as const),
+      conversationGraph: synchronizeActiveConversationMessages(
+        forkEditedConversationMessage(base.conversationGraph, original.id, 'remote-branch', 2),
+        remoteMessages,
+        3
+      )
+    }
+    useSessionStore.getState().hydrateSessions([base])
+    let durable: PersistedChatSession = remote
+    let receiptGate: Promise<void> | undefined
+    const api = createApi({
+      saveSession: vi.fn(async (submitted) => {
+        await receiptGate
+        durable = { ...submitted, revision: (durable.revision ?? 0) + 1 }
+        return durable
+      })
+    })
+    const save = createStoreSaver(api, useSessionStore.getState())
+    useSessionStore.getState().upsertPersistedSession(remote)
+    // Receiving another client's edit retains this window's selected path and reset requirement.
+    expect(useSessionStore.getState().sessions[0].messages[0].content).toBe(original.content)
+    expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBe(true)
+    await save(useSessionStore.getState())
+    // Background persistence must not replace the other client's explicit durable selection.
+    expect(durable.messages[0].content).toBe(edited.content)
+    expect(useSessionStore.getState().sessions[0].messages[0].content).toBe(original.content)
+    expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBe(true)
+
+    // Passive windows receive both transient running indicators and terminal events.
+    if (action === 'finishRun') useSessionStore.getState().finishRun(base.id, undefined, edited.id)
+    else useSessionStore.getState()[action](base.id, true)
+    await save(useSessionStore.getState())
+    expect(durable.messages[0].content).toBe(edited.content)
+    if (action === 'finishRun') {
+      expect(durable.status).toBe('idle')
+      expect(durable.messages.find((message) => message.id === reply.id)?.status).toBe('complete')
+      expect(
+        durable.conversationGraph?.messages.find((message) => message.id === reply.id)?.status
+      ).toBe('complete')
+    } else useSessionStore.getState()[action](base.id, false)
+    await save(useSessionStore.getState())
+    expect(durable.messages[0].content).toBe(edited.content)
+
+    // An explicit navigation still saves this window's chosen Branch and its reset requirement.
+    useSessionStore.getState().activateMessageBranch(base.id, 'remote-branch')
+    await save(useSessionStore.getState())
+    const callsBeforeSelection = vi.mocked(api.saveSession).mock.calls.length
+    const earlierReceipt = createDeferred<void>()
+    receiptGate = earlierReceipt.promise
+    useSessionStore
+      .getState()
+      .activateMessageBranch(base.id, base.conversationGraph.frames[0].activeBranchId)
+    const firstSelectionSave = save(useSessionStore.getState())
+    await vi.waitFor(() => expect(api.saveSession).toHaveBeenCalledTimes(callsBeforeSelection + 1))
+    useSessionStore.getState().activateMessageBranch(base.id, 'remote-branch')
+    const latestSelectionSave = save(useSessionStore.getState())
+    receiptGate = undefined
+    earlierReceipt.resolve()
+    await Promise.all([firstSelectionSave, latestSelectionSave])
+    expect(durable.messages[0].content).toBe(edited.content)
+    // The older receipt must not clear the newer selection before a subsequent save coalesces it.
+    useSessionStore.getState().renameSession(base.id, 'Keep my latest selection')
+    await Promise.all([latestSelectionSave, save(useSessionStore.getState())])
+    expect(durable.messages[0].content).toBe(edited.content)
+    expect(durable.branchContextResetRequired).toBe(true)
+  })
+
+  it('persists explicit descendant navigation after another client selects a root revision', async () => {
+    const rootPrompt = {
+      id: 'root-prompt',
+      role: 'user' as const,
+      content: 'Root prompt',
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const linear = materializeSessionConversationGraph(
+      createPersistedSession({ revision: 8, messages: [rootPrompt] })
+    )
+    const childPrompt = { ...rootPrompt, id: 'child-prompt', content: 'Child prompt' }
+    const graph = structuredClone(linear.conversationGraph)
+    graph.frames.push({
+      id: 'child-frame',
+      parentFrameId: graph.rootFrameId,
+      originMessageId: rootPrompt.id,
+      originBindingState: 'validated',
+      kind: 'delegate',
+      status: 'completed',
+      activeBranchId: 'child-original',
+      createdAt: 1,
+      completedAt: 2
+    })
+    graph.branches.push({
+      id: 'child-original',
+      agentFrameId: 'child-frame',
+      headMessageId: childPrompt.id,
+      createdAt: 1,
+      updatedAt: 2
+    })
+    graph.messages.push({
+      ...childPrompt,
+      agentFrameId: 'child-frame',
+      introducedOnBranchId: 'child-original'
+    })
+    graph.activeFrameId = 'child-frame'
+    const childEdit = { ...childPrompt, id: 'child-edited-prompt', content: 'Edited child prompt' }
+    const childGraph = synchronizeActiveConversationMessages(
+      forkEditedConversationMessage(graph, childPrompt.id, 'child-edited', 3),
+      [childEdit],
+      3
+    )
+    const base = {
+      ...linear,
+      conversationGraph: activateConversationBranch(childGraph, 'child-original'),
+      messages: [childPrompt]
+    }
+    const rootEdit = { ...rootPrompt, id: 'root-edited-prompt', content: 'Remote root edit' }
+    const remote = {
+      ...linear,
+      revision: 9,
+      messages: [rootEdit],
+      conversationGraph: synchronizeActiveConversationMessages(
+        forkEditedConversationMessage(
+          { ...childGraph, activeFrameId: graph.rootFrameId },
+          rootPrompt.id,
+          'root-edited',
+          4
+        ),
+        [rootEdit],
+        4
+      )
+    }
+    useSessionStore.getState().hydrateSessions([base])
+    let durable: PersistedChatSession = remote
+    const api = createApi({
+      saveSession: vi.fn(async (submitted) => {
+        durable = { ...submitted, revision: (durable.revision ?? 0) + 1 }
+        return durable
+      })
+    })
+    const save = createStoreSaver(api, useSessionStore.getState())
+    useSessionStore.getState().upsertPersistedSession(remote)
+    await save(useSessionStore.getState())
+    expect(useSessionStore.getState().sessions[0].messages[0].content).toBe(childEdit.content)
+    expect(api.saveSession).not.toHaveBeenCalled()
+    useSessionStore.getState().activateMessageBranch(base.id, 'child-original')
+    await save(useSessionStore.getState())
+    expect(durable.messages[0].content).toBe(childPrompt.content)
+    expect(durable.conversationGraph?.activeFrameId).toBe('child-frame')
+    expect(useSessionStore.getState().sessions[0].messages[0].content).toBe(childPrompt.content)
+    useSessionStore.getState().hydrateSessions([durable])
+    expect(useSessionStore.getState().sessions[0].messages[0].content).toBe(childPrompt.content)
+  })
+
+  it.each(['queued', 'in-flight'] as const)(
+    'preserves a remote Branch created while a passive save is %s',
+    async (phase) => {
+      const original = {
+        id: 'original-prompt',
+        role: 'user' as const,
+        content: 'Original prompt',
+        status: 'complete' as const,
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+      const base = materializeSessionConversationGraph(
+        createPersistedSession({ revision: 8, messages: [original] })
+      )
+      const edited = { ...original, id: 'remote-prompt', content: 'Latest remote edit' }
+      const remote = {
+        ...base,
+        revision: 9,
+        messages: [edited],
+        conversationGraph: synchronizeActiveConversationMessages(
+          forkEditedConversationMessage(base.conversationGraph, original.id, 'remote-branch', 2),
+          [edited],
+          2
+        )
+      }
+      useSessionStore.getState().hydrateSessions([base])
+      let durable: PersistedChatSession = base
+      const blocker = createDeferred<PersistedChatSession>()
+      const inFlight = createDeferred<void>()
+      const api = createApi({
+        loadOne: vi.fn(async () => durable),
+        saveSession: vi.fn(async (submitted) => {
+          if (phase === 'in-flight') await inFlight.promise
+          if (submitted.revision !== durable.revision) {
+            throw new SessionRevisionConflictError(submitted.revision ?? 0, durable.revision ?? 0)
+          }
+          durable = { ...submitted, revision: (durable.revision ?? 0) + 1 }
+          return durable
+        })
+      })
+      const persistence = createOrderedSessionPersistence(api)
+      const save = createStoreSaver(api, useSessionStore.getState(), {}, persistence)
+      const blocked =
+        phase === 'queued'
+          ? persistence.saveLatestSession('session:other-session', () => blocker.promise)
+          : Promise.resolve()
+      await flushMicrotasks()
+      // A terminal runtime event queues the old graph before another client's edit arrives.
+      useSessionStore.getState().finishRun(base.id)
+      const queued = save(useSessionStore.getState())
+      await flushMicrotasks()
+      if (phase === 'in-flight') expect(api.saveSession).toHaveBeenCalledOnce()
+      durable = remote
+      useSessionStore.getState().upsertPersistedSession(remote)
+      await save(useSessionStore.getState())
+      blocker.resolve(createPersistedSession({ id: 'other-session' }))
+      inFlight.resolve()
+      await Promise.all([blocked, queued])
+      expect(durable.messages[0].content).toBe(edited.content)
+      expect(durable.conversationGraph?.messages.map((message) => message.id)).toContain(edited.id)
+      expect(useSessionStore.getState().sessions[0].messages[0].content).toBe(original.content)
+    }
+  )
+
+  it.each(['terminal', 'archived'] as const)(
+    'retains a new run until an authoritative %s snapshot can settle it',
+    (completion) => {
+      const original = {
+        id: 'original-prompt',
+        role: 'user' as const,
+        content: 'Original prompt',
+        status: 'complete' as const,
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+      const base = materializeSessionConversationGraph(
+        createPersistedSession({ revision: 8, messages: [original] })
+      )
+      useSessionStore.getState().hydrateSessions([base])
+      useSessionStore.getState().truncateSessionFromMessage(base.id, original.id)
+      const appended = useSessionStore.getState().appendUserMessage({
+        sessionId: base.id,
+        messageId: 'edited-prompt',
+        content: 'Unsaved edit',
+        cwd: base.cwd,
+        projectId: base.projectId
+      })!
+      const source = useSessionStore.getState().sessions[0]
+      expect(source.activeRun?.promptMessageId).toBe(appended.messageId)
+      // Another window completes a save captured before this client appended the edited prompt.
+      useSessionStore.getState().upsertPersistedSession({ ...base, revision: 9 })
+      const merged = useSessionStore.getState().sessions[0]
+      expect(merged.messages[0].content).toBe('Unsaved edit')
+      expect(merged.activeRun).toBe(source.activeRun)
+      expect(merged.status).toBe('running')
+
+      // A terminal snapshot can acknowledge a prompt outside its flat selected transcript.
+      // An archive also remains authoritative even when it predates this pending prompt.
+      useSessionStore.getState().upsertPersistedSession(
+        completion === 'terminal'
+          ? {
+              ...toPersistedSession(merged),
+              conversationGraph: activateConversationBranch(
+                merged.conversationGraph!,
+                base.conversationGraph.frames[0].activeBranchId
+              ),
+              messages: base.messages,
+              revision: 10,
+              status: 'idle',
+              activeRun: undefined
+            }
+          : { ...base, revision: 10, archivedAt: Date.now() }
+      )
+      expect(useSessionStore.getState().sessions[0].activeRun).toBeUndefined()
+      expect(useSessionStore.getState().sessions[0].status).toBe('idle')
+    }
+  )
 
   it('still saves an unsaved title on an externally hydrated archive projection', async () => {
     const base = createPersistedSession({ revision: 42 })
@@ -2137,6 +2641,112 @@ describe('renderer session persistence bridge', () => {
     }
   })
 
+  it('flushes snapshots admitted during an in-flight write without waiting for cadence', async () => {
+    vi.useFakeTimers()
+    const firstWrite = createDeferred<PersistedChatSession>()
+    const session = createPersistedSession()
+    let flushing: Promise<void> | undefined
+    try {
+      const persistence = createOrderedSessionPersistence(createApi())
+      const saving = persistence.saveLatestSession('session:session-1', () => firstWrite.promise)
+      await vi.advanceTimersByTimeAsync(0)
+
+      let flushed = false
+      flushing = persistence.flush().then(() => {
+        flushed = true
+      })
+      const writeLatest = vi.fn(async () => session)
+      const savingLatest = persistence.saveLatestSession('session:session-1', writeLatest)
+      firstWrite.resolve(session)
+      await saving
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(writeLatest).toHaveBeenCalledOnce()
+      expect(flushed).toBe(true)
+      await savingLatest
+    } finally {
+      firstWrite.resolve(session)
+      await vi.runAllTimersAsync()
+      await flushing
+      vi.useRealTimers()
+    }
+  })
+
+  it('waits for a snapshot enqueued by the final in-flight save before completing flush', async () => {
+    vi.useFakeTimers()
+    const session = createPersistedSession()
+    const firstWrite = createDeferred<PersistedChatSession>()
+    const secondWrite = createDeferred<PersistedChatSession>()
+    const finalWrite = createDeferred<PersistedChatSession>()
+    let flushing: Promise<void> | undefined
+    try {
+      const persistence = createOrderedSessionPersistence(createApi())
+      void persistence.saveLatestSession('session:session-1', () => firstWrite.promise)
+      await vi.advanceTimersByTimeAsync(0)
+
+      let flushed = false
+      flushing = persistence.flush().then(() => {
+        flushed = true
+      })
+      void persistence.saveLatestSession('session:session-1', async () => {
+        await secondWrite.promise
+        void persistence.saveLatestSession('session:session-1', () => finalWrite.promise)
+        return session
+      })
+      firstWrite.resolve(session)
+      // Start B even on the original cadence implementation, isolating the queue-tail race.
+      await vi.advanceTimersByTimeAsync(500)
+      secondWrite.resolve(session)
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(flushed).toBe(false)
+      finalWrite.resolve(session)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(flushed).toBe(true)
+    } finally {
+      firstWrite.resolve(session)
+      secondWrite.resolve(session)
+      finalWrite.resolve(session)
+      await vi.runAllTimersAsync()
+      await flushing
+      vi.useRealTimers()
+    }
+  })
+
+  it.each([false, true])(
+    'restores save cadence after flush settles (failed: %s)',
+    async (failed) => {
+      vi.useFakeTimers()
+      try {
+        const session = createPersistedSession()
+        const persistence = createOrderedSessionPersistence(createApi())
+        const failure = new Error('Disk write failed')
+        const saving = persistence.saveLatestSession('session:session-1', async () => {
+          if (failed) throw failure
+          return session
+        })
+        if (failed) {
+          await expect(saving).rejects.toBe(failure)
+          await expect(persistence.flush()).rejects.toBe(failure)
+        } else {
+          await saving
+          await persistence.flush()
+        }
+
+        const writeLatest = vi.fn(async () => session)
+        const nextSave = persistence.saveLatestSession('session:session-1', writeLatest)
+        await vi.advanceTimersByTimeAsync(499)
+        expect(writeLatest).not.toHaveBeenCalled()
+        await vi.advanceTimersByTimeAsync(1)
+        await nextSave
+        expect(writeLatest).toHaveBeenCalledOnce()
+      } finally {
+        await vi.runAllTimersAsync()
+        vi.useRealTimers()
+      }
+    }
+  )
+
   it('relaxes the flush cadence while streaming and flushes the terminal commit promptly', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(0)
@@ -2274,6 +2884,187 @@ describe('renderer session persistence bridge', () => {
       title: 'Second queued'
     })
   })
+
+  it.each([
+    'delayed',
+    'delivered',
+    'new-run',
+    'new-branch',
+    'new-permission',
+    'competing-content'
+  ] as const)(
+    'saves a completed turn after Main clears its last durable permission wait (%s)',
+    async (scenario) => {
+      const prompt = {
+        id: 'prompt-1',
+        role: 'user' as const,
+        content: 'Run the analysis',
+        status: 'complete' as const,
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+      const partial = {
+        id: 'agent-message-1',
+        role: 'agent' as const,
+        content: 'Analysis result',
+        status: 'streaming' as const,
+        streamId: 'run-1',
+        responseToMessageId: prompt.id,
+        eventIds: ['event-1'],
+        createdAt: 2,
+        updatedAt: 2
+      }
+      let durable = materializeSessionConversationGraph(
+        createPersistedSession({
+          revision: 116,
+          agentFrameworkId: 'opencode',
+          status: 'running',
+          activeRun: { promptMessageId: prompt.id, startedAt: 1 },
+          messages: [prompt, partial]
+        })
+      )
+      const main = new SessionPersistenceStateOwner({
+        repository: {
+          loadSessionWithDiagnostics: async () => ({
+            status: 'found',
+            session: structuredClone(durable)
+          }),
+          saveSession: async (candidate) => {
+            durable = JSON.parse(
+              JSON.stringify({ ...candidate, revision: (durable.revision ?? 0) + 1 })
+            )
+            return structuredClone(durable)
+          }
+        },
+        fileIndex: { syncSession: async () => [] },
+        assertMutable: () => undefined,
+        notifyFilesChanged: () => undefined,
+        notifyRuntimeContextSessionUpdated: () => undefined,
+        log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+      })
+      const permissions = new AcpPermissionWaitOwner({
+        readSessionRuntimeContext: (projectId, sessionId) =>
+          main.readRuntimeContext(projectId, sessionId),
+        patchSessionRuntimeContext: (command) => main.patchRuntimeContext(command),
+        containsMessageOnActiveBranch: (projectId, sessionId, messageId) =>
+          main.containsMessageOnActiveBranch(projectId, sessionId, messageId),
+        loadSessionForContinuation: async () => structuredClone(durable)
+      })
+      const candidate = {
+        projectId: durable.projectId,
+        promptMessageId: prompt.id,
+        fingerprint: 'a'.repeat(64),
+        request: {
+          requestId: 'permission-1',
+          sessionId: durable.id,
+          toolCallId: 'tool-1',
+          title: 'Write analysis output',
+          options: [{ optionId: 'allow', name: 'Allow', kind: 'allow_once' as const }]
+        }
+      }
+      await permissions.persist(candidate)
+      expect(durable).toMatchObject({ revision: 117, status: 'waiting-permission' })
+      useSessionStore.getState().hydrateSessions([durable])
+      const saveSession = vi.fn<SessionPersistenceApi['saveSession']>((session, options) =>
+        main.saveSession(session, options)
+      )
+      const api = createApi({ loadOne: async () => structuredClone(durable), saveSession })
+      const save = createStoreSaver(api, useSessionStore.getState())
+
+      // The permission-clear snapshot can arrive after runtime output and stop have been projected.
+      await permissions.clearLive(candidate)
+      if (scenario === 'new-run') {
+        await main.saveSession({
+          ...durable,
+          activeRun: { promptMessageId: 'another-prompt', startedAt: 3 }
+        })
+      }
+      if (scenario === 'new-branch') {
+        const graph = forkEditedConversationMessage(
+          durable.conversationGraph!,
+          prompt.id,
+          'other-branch',
+          3
+        )
+        await main.saveSession({
+          ...durable,
+          conversationGraph: graph,
+          messages: resolveActiveConversationMessages(graph).map(projectConversationMessage)
+        })
+      }
+      if (scenario === 'new-permission') {
+        await permissions.persist({
+          ...candidate,
+          request: { ...candidate.request, requestId: 'permission-2' }
+        })
+      }
+      if (scenario === 'competing-content') {
+        await main.saveSession(
+          materializeSessionConversationGraph({
+            ...durable,
+            messages: [prompt, { ...partial, content: 'Remote replacement' }],
+            conversationGraph: synchronizeActiveConversationMessages(
+              durable.conversationGraph!,
+              [prompt, { ...partial, content: 'Remote replacement', updatedAt: 3 }],
+              3
+            )
+          })
+        )
+        useSessionStore.getState().appendAgentMessageChunk({
+          sessionId: durable.id,
+          streamId: partial.streamId,
+          eventId: 'local-output',
+          promptMessageId: prompt.id,
+          content: ' local continuation'
+        })
+      }
+      if (scenario === 'delivered') {
+        useSessionStore.getState().upsertPersistedSession(durable)
+        await save(useSessionStore.getState())
+      }
+      useSessionStore.getState().clearPermissionPending(durable.id, { authority: 'settled' })
+      useSessionStore.getState().finishRun(durable.id, undefined, prompt.id)
+      expect(toPersistedSession(useSessionStore.getState().sessions[0])).toMatchObject({
+        status: 'idle'
+      })
+      if (scenario === 'competing-content') {
+        expect(
+          durable.conversationGraph?.messages.find(({ id }) => id === partial.id)?.content
+        ).toBe('Remote replacement')
+        expect(
+          toPersistedSession(
+            useSessionStore.getState().sessions[0]
+          ).conversationGraph?.messages.find(({ id }) => id === partial.id)?.content
+        ).toBe('Analysis result local continuation')
+      }
+      if (scenario === 'new-run' || scenario === 'new-branch' || scenario === 'competing-content') {
+        const before = structuredClone(durable)
+        await expect(save(useSessionStore.getState())).rejects.toThrow('Session revision conflict:')
+        expect(durable).toEqual(before)
+        return
+      }
+      await expect(save(useSessionStore.getState())).resolves.toBeUndefined()
+      if (scenario === 'new-permission') {
+        expect(durable.status).toBe('waiting-permission')
+        expect(durable.runtimeContext?.permission?.request.requestId).toBe('permission-2')
+        return
+      }
+      expect(durable).toMatchObject({
+        status: 'idle',
+        messages: [
+          expect.objectContaining({ id: prompt.id }),
+          expect.objectContaining({
+            id: partial.id,
+            status: 'complete',
+            content: 'Analysis result'
+          })
+        ]
+      })
+      expect(durable.activeRun).toBeUndefined()
+      expect(durable.runtimeContext?.permission).toBeUndefined()
+    }
+  )
 
   it('retries a local graph save over a concurrent main-owned permission revision', async () => {
     const base = materializeSessionConversationGraph(
@@ -3300,6 +4091,122 @@ describe('renderer session persistence bridge', () => {
     })
   })
 
+  it('saves a generated file event already attached by Main after JSON readback', async () => {
+    const prompt = {
+      id: 'prompt-1',
+      role: 'user' as const,
+      content: 'Create a chart',
+      status: 'complete' as const,
+      eventIds: [] as string[],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const partial = {
+      id: 'agent-message-1',
+      role: 'agent' as const,
+      content: 'Partial',
+      status: 'streaming' as const,
+      streamId: 'run-1',
+      responseToMessageId: prompt.id,
+      eventIds: ['event-1'],
+      createdAt: 2,
+      updatedAt: 2
+    }
+    const base = materializeSessionConversationGraph(
+      createPersistedSession({
+        projectId: 'project-a',
+        revision: 8,
+        messages: [prompt, partial]
+      })
+    )
+    const authoritative = materializeSessionConversationGraph({
+      ...base,
+      revision: 9,
+      messages: [prompt, { ...partial, artifactIds: ['artifact-version-1'], updatedAt: 3 }],
+      artifacts: [
+        {
+          id: 'artifact-version-1',
+          kind: 'managed-file',
+          path: '/data/artifacts/chart.png',
+          fileUrl: 'file:///data/artifacts/chart.png',
+          size: 3,
+          name: 'chart.png',
+          createdAt: 3,
+          mtimeMs: 3
+        }
+      ],
+      updatedAt: base.updatedAt + 1
+    })
+    let durable: PersistedChatSession = JSON.parse(JSON.stringify(authoritative))
+    const main = new SessionPersistenceStateOwner({
+      repository: {
+        loadSessionWithDiagnostics: async () => ({ status: 'found', session: durable }),
+        saveSession: async (candidate) => {
+          durable = JSON.parse(
+            JSON.stringify({ ...candidate, revision: (durable.revision ?? 0) + 1 })
+          )
+          return durable
+        }
+      },
+      fileIndex: { syncSession: async () => [] },
+      assertMutable: () => undefined,
+      notifyFilesChanged: () => undefined,
+      notifyRuntimeContextSessionUpdated: () => undefined,
+      log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+    })
+    const saveSession = vi.fn<SessionPersistenceApi['saveSession']>((session, options) =>
+      main.saveSession(session, options)
+    )
+    const api = createApi({
+      loadOne: vi.fn(async () => JSON.parse(JSON.stringify(durable))),
+      saveSession
+    })
+
+    useSessionStore.getState().hydrateSessions([base])
+    const save = createStoreSaver(api, useSessionStore.getState())
+    useSessionStore.getState().attachRunArtifacts({
+      sessionId: base.id,
+      runId: 'run-1',
+      eventId: 'artifact-event-1',
+      promptMessageId: prompt.id,
+      artifacts: [
+        {
+          id: 'artifact-version-1',
+          projectId: 'project-a',
+          sessionId: base.id,
+          messageId: partial.id,
+          name: 'chart.png',
+          path: '/data/artifacts/chart.png',
+          fileUrl: 'file:///data/artifacts/chart.png',
+          size: 3,
+          createdAt: new Date(3).toISOString(),
+          mtimeMs: 3
+        }
+      ]
+    })
+
+    // Both owners describe the same file on disk; only absent versus undefined properties differ.
+    expect(
+      JSON.parse(
+        JSON.stringify(toPersistedSession(useSessionStore.getState().sessions[0]).artifacts)
+      )
+    ).toEqual(JSON.parse(JSON.stringify(authoritative.artifacts)))
+    await expect(save(useSessionStore.getState())).resolves.toBeUndefined()
+
+    expect(saveSession.mock.calls[1][0]).toMatchObject({
+      artifacts: [expect.objectContaining(authoritative.artifacts![0])],
+      messages: [
+        expect.objectContaining({ id: prompt.id }),
+        expect.objectContaining({
+          id: partial.id,
+          content: 'Partial',
+          eventIds: ['event-1', 'artifact-event-1'],
+          artifactIds: ['artifact-version-1']
+        })
+      ]
+    })
+  })
+
   it('does not merge competing edits that select different Branch identities', async () => {
     const target = {
       id: 'prompt-1',
@@ -3752,6 +4659,115 @@ describe('renderer session persistence bridge', () => {
     }
   })
 
+  it.each(['claude-code', 'opencode', 'codex-response', 'codex-bridge'] as const)(
+    'adopts the durable identity of the same completed %s Task reply before export',
+    async (agentFrameworkId) => {
+      const { base, submitted, latest } = createCompletedTaskReplyConflict(
+        agentFrameworkId === 'codex-response' || agentFrameworkId === 'codex-bridge'
+          ? 'codex'
+          : agentFrameworkId
+      )
+      const saveSession = vi
+        .fn<SessionPersistenceApi['saveSession']>()
+        .mockRejectedValueOnce(new SessionRevisionConflictError(2, 3))
+        .mockImplementation(async (session) => ({ ...session, revision: 4 }))
+      const api = createApi({ loadOne: vi.fn().mockResolvedValue(latest), saveSession })
+      const persistence = createOrderedSessionPersistence(api)
+      persistence.seedAcknowledgedSessions([base])
+
+      const saved = await saveSessionInOrder(submitted, persistence, api)
+      expect(saved).toMatchObject({
+        revision: 4,
+        status: 'idle',
+        title: 'Local title',
+        taskRunCommitId: 'completed-task'
+      })
+      expect(saved.activeRun).toBeUndefined()
+      expect(saved.conversationGraph).toEqual(latest.conversationGraph)
+      expect(saved.messages.map(({ id }) => id)).toEqual(['cli-prompt', 'durable-task-reply'])
+      await expect(persistence.flush()).resolves.toBeUndefined()
+    }
+  )
+
+  it('retains the renderer terminal context sample while reconciling the Task reply identity', async () => {
+    const { base, submitted, latest } = createCompletedTaskReplyConflict()
+    const sample = {
+      id: 'stop-event',
+      timestamp: 4,
+      termination: { kind: 'stop' as const, stopReason: 'end_turn' as const },
+      contextWindow: { used: 10, size: 100 },
+      source: 'local-estimate' as const
+    }
+    submitted.conversationGraph!.messages[0].contextWindowSamples = [sample]
+    submitted.conversationGraph!.messages[0].updatedAt = 4
+    const saveSession = vi
+      .fn<SessionPersistenceApi['saveSession']>()
+      .mockRejectedValueOnce(new SessionRevisionConflictError(2, 3))
+      .mockImplementation(async (session) => ({ ...session, revision: 4 }))
+    const api = createApi({ loadOne: vi.fn().mockResolvedValue(latest), saveSession })
+    const persistence = createOrderedSessionPersistence(api)
+    persistence.seedAcknowledgedSessions([base])
+    const saved = await saveSessionInOrder(submitted, persistence, api)
+    expect(saved.status).toBe('idle')
+    expect(saved.messages[0].contextWindowSamples).toEqual([sample])
+    expect(saved.messages.map(({ id }) => id)).toEqual(['cli-prompt', 'durable-task-reply'])
+    await expect(persistence.flush()).resolves.toBeUndefined()
+  })
+
+  it.each(['content', 'events', 'attachment', 'branch', 'existing-reply'] as const)(
+    'retains a real Task reply conflict when %s differs',
+    async (difference) => {
+      const { base, submitted, latest } = createCompletedTaskReplyConflict()
+      const reply = submitted.conversationGraph!.messages.at(-1)!
+      if (difference === 'content') reply.content = 'Different local content'
+      if (difference === 'events') reply.eventIds = ['unrelated-event']
+      if (difference === 'attachment') reply.artifactIds = ['local-artifact']
+      if (difference === 'branch')
+        submitted.conversationGraph!.frames[0].activeBranchId = 'other-branch'
+      if (difference === 'existing-reply') {
+        base.conversationGraph = structuredClone(submitted.conversationGraph)
+        base.conversationGraph!.messages.at(-1)!.content = 'Earlier local reply'
+      }
+      const conflict = new SessionRevisionConflictError(2, 3)
+      const saveSession = vi.fn<SessionPersistenceApi['saveSession']>().mockRejectedValue(conflict)
+      const api = createApi({ loadOne: vi.fn().mockResolvedValue(latest), saveSession })
+      const persistence = createOrderedSessionPersistence(api)
+      persistence.seedAcknowledgedSessions([base])
+      await expect(saveSessionInOrder(submitted, persistence, api)).rejects.toBe(conflict)
+      expect(saveSession).toHaveBeenCalledOnce()
+      await expect(persistence.flush()).rejects.toBe(conflict)
+    }
+  )
+
+  it.each([false, true])(
+    'does not let a queued Task projection (reply=%s) resurrect a completion',
+    async (hasReply) => {
+      const { base, submitted, latest } = createCompletedTaskReplyConflict()
+      if (!hasReply) {
+        submitted.messages = base.messages
+        submitted.conversationGraph = base.conversationGraph
+      }
+      useSessionStore.getState().hydrateSessions([base])
+      const api = createApi({
+        saveSession: vi.fn(async (session) => ({ ...session, revision: 4 }))
+      })
+      const save = createStoreSaver(api, useSessionStore.getState())
+      // Mutate the live projection before its queued write starts, then receive Main completion.
+      useSessionStore.setState({
+        sessions: [hydrateSession(submitted)]
+      })
+      const queued = save(useSessionStore.getState())
+      useSessionStore.getState().upsertPersistedSession(latest)
+      await save(useSessionStore.getState())
+      await queued
+      const saved = vi.mocked(api.saveSession).mock.calls[0][0]
+      expect(saved).toMatchObject({ revision: 3, status: 'idle', title: 'Local title' })
+      expect(saved.activeRun).toBeUndefined()
+      expect(saved.conversationGraph).toEqual(latest.conversationGraph)
+      expect(api.saveSession).toHaveBeenCalledOnce()
+    }
+  )
+
   it('rebases an explicit Session save over a disjoint concurrent main-process update', async () => {
     const base = createPersistedSession({ revision: 8, computeConcurrencyLimit: 1 })
     const submitted = createPersistedSession({
@@ -3934,3 +4950,72 @@ const flushMicrotasks = async (): Promise<void> => {
   await Promise.resolve()
   await Promise.resolve()
 }
+
+describe('passive plan projection hydration', () => {
+  it('does not save the conversation merely to display its existing plan', async () => {
+    const base = createPersistedSession({ revision: 42 })
+    useSessionStore.getState().hydrateSessions([base])
+    const api = createApi()
+    const save = createStoreSaver(api, useSessionStore.getState())
+    useSessionStore.getState().setActivePlanProjection(base.id, createHistoricalPlan('plan-a', 1))
+    await save(useSessionStore.getState())
+    expect(api.saveSession).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions[0].updatedAt).toBe(base.updatedAt)
+    expect(useSessionStore.getState().sessions[0].activePlanProjection?.artifactVersionId).toBe(
+      'plan-a'
+    )
+    useSessionStore
+      .getState()
+      .invalidateActivePlanProjection(base.id, { artifactVersionId: 'plan-a', revision: 1 })
+    await save(useSessionStore.getState())
+    useSessionStore.getState().setActivePlanProjection(base.id, createHistoricalPlan('plan-a', 1))
+    await save(useSessionStore.getState())
+    expect(api.saveSession).not.toHaveBeenCalled()
+  })
+
+  it('still saves a real local title edit after displaying a plan', async () => {
+    const base = createPersistedSession({ revision: 42 })
+    useSessionStore.getState().hydrateSessions([base])
+    const api = createApi()
+    const save = createStoreSaver(api, useSessionStore.getState())
+    useSessionStore.getState().setActivePlanProjection(base.id, createHistoricalPlan('plan-a', 1))
+    useSessionStore.getState().renameSession(base.id, 'Edited title')
+    await save(useSessionStore.getState())
+    expect(api.saveSession).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Edited title' }),
+      { conflictRebaseFields: ['title'] }
+    )
+  })
+})
+
+describe('passive summary hydration', () => {
+  it('does not read and rewrite full sessions when the project list is hydrated', async () => {
+    const base = createPersistedSession({ revision: 42 })
+    const api = createApi({ loadOne: vi.fn().mockResolvedValue(base) })
+    const save = createStoreSaver(api, useSessionStore.getState())
+    const summary: SessionSummary = {
+      number: 1,
+      id: base.id,
+      projectId: base.projectId,
+      title: base.title,
+      status: 'idle',
+      presentedStatus: 'idle',
+      revision: 42,
+      pinned: false,
+      activeMessageCount: 0,
+      artifactCount: 0,
+      filesRevision: 0,
+      createdAt: base.createdAt,
+      updatedAt: base.updatedAt,
+      needsStartupRecovery: false
+    }
+    useSessionStore.getState().hydrateSessionSummaries([summary], undefined)
+    await save(useSessionStore.getState())
+    expect(api.saveSession).not.toHaveBeenCalled()
+    expect(api.loadOne).not.toHaveBeenCalled()
+    useSessionStore.getState().hydrateSessionSummaries([{ ...summary }], undefined)
+    await save(useSessionStore.getState())
+    expect(api.saveSession).not.toHaveBeenCalled()
+    expect(api.loadOne).not.toHaveBeenCalled()
+  })
+})

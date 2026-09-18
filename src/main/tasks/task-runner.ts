@@ -5,6 +5,7 @@ import { isDeepStrictEqual } from 'node:util'
 
 import type { AcpRuntimeEvent, AgentTurnProvenanceContext } from '../../shared/acp'
 import { ComputeHostPreferenceValidationError } from '../../shared/compute'
+import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
 import {
   getAcpRuntimeEventImage,
   getAcpRuntimeEventText,
@@ -15,8 +16,10 @@ import {
 import type {
   ArtifactFile,
   FinalizeRunArtifactsRequest,
-  FinalizeRunArtifactsResult
+  FinalizeRunArtifactsResult,
+  ResolveArtifactVersionDescriptorsRequest
 } from '../../shared/artifacts'
+import type { ArtifactVersionDescriptor } from '../../shared/artifact-provenance'
 import { artifactCreatedAtMs } from '../../shared/artifacts'
 import { DEFAULT_PERMISSION_PROFILE } from '../../shared/permission-profiles'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
@@ -64,6 +67,8 @@ import {
   type PersistedMessageImage,
   type PersistedToolActivity,
   type SettleTaskSessionCompletionRequest,
+  type BindTaskSessionRequest,
+  type AdmitTaskSessionTurnRequest,
   type StageTaskSessionCompletionRequest
 } from '../../shared/session-persistence'
 import type {
@@ -99,6 +104,8 @@ type TaskProjectPort = {
 type TaskSessionPort = {
   list(): Promise<PersistedChatSession[]>
   save(session: PersistedChatSession): Promise<PersistedChatSession>
+  bindSession(request: BindTaskSessionRequest): Promise<PersistedChatSession>
+  admitTurn(request: AdmitTaskSessionTurnRequest): Promise<PersistedChatSession>
   stageCompletion(request: StageTaskSessionCompletionRequest): Promise<PersistedChatSession>
   settleCompletion(request: SettleTaskSessionCompletionRequest): Promise<PersistedChatSession>
   failRun(request: FailTaskSessionRunRequest): Promise<PersistedChatSession>
@@ -204,6 +211,9 @@ type TaskAgentPort = {
 }
 
 type TaskArtifactPort = {
+  resolveVersionDescriptors(
+    request: ResolveArtifactVersionDescriptorsRequest
+  ): Promise<ArtifactVersionDescriptor[]>
   finalizeRun(request: FinalizeRunArtifactsRequest): Promise<FinalizeRunArtifactsResult>
 }
 
@@ -303,7 +313,7 @@ class PartialTaskCompletionError extends Error {
 }
 
 const MAX_RETAINED_RUNS = 200
-const PROCESS_RESTARTED_MESSAGE = 'Run interrupted because Open Science restarted.'
+const PROCESS_RESTARTED_MESSAGE = 'Run interrupted because Open-Science restarted.'
 const TASK_RUN_HEARTBEAT_INTERVAL_MS = 10_000
 export const TASK_RUN_DISPOSAL_BUDGET_MS = 1000
 const VISIBLE_PROVIDER_EVENT_KINDS = new Set<AcpRuntimeEvent['kind']>([
@@ -480,57 +490,6 @@ const createUserMessage = (
   updatedAt: now
 })
 
-const rebaseTaskTurnOntoLatestSession = (
-  latest: PersistedChatSession,
-  prepared: PersistedChatSession,
-  contextReset: boolean
-): PersistedChatSession => {
-  const activeRun = prepared.activeRun
-  const promptMessageId = activeRun?.promptMessageId
-  const userMessage = prepared.messages.find((message) => message.id === promptMessageId)
-  if (!activeRun || !userMessage) {
-    throw new Error('Task prompt admission is missing its prepared user message.')
-  }
-
-  let rebased: PersistedChatSession = {
-    ...latest,
-    cwd: prepared.cwd,
-    status: 'running',
-    permissionProfile: prepared.permissionProfile,
-    autoReviewEnabled: prepared.autoReviewEnabled,
-    delegationPolicy: prepared.delegationPolicy,
-    specialistId: prepared.specialistId,
-    agentFrameworkId: prepared.agentFrameworkId,
-    agentBackendId: prepared.agentBackendId,
-    providerSessionId: prepared.providerSessionId,
-    providerContinuityToken: prepared.providerContinuityToken,
-    agentConfiguration: prepared.agentConfiguration,
-    messages: [...latest.messages.filter((message) => message.id !== userMessage.id), userMessage],
-    activeRun,
-    error: undefined,
-    updatedAt: prepared.updatedAt
-  }
-  delete rebased.resumeRecovery
-
-  const currentGraph = materializeSessionConversationGraph(latest).conversationGraph
-  const graphWithRuntime = ensureConversationRuntimeSegment(currentGraph, {
-    id: `runtime-segment-${promptMessageId}`,
-    frameworkId: rebased.agentFrameworkId ?? 'claude-code',
-    providerId: rebased.agentConfiguration?.providerId,
-    backendId: rebased.agentBackendId,
-    model: rebased.agentModel,
-    startedAt: activeRun.startedAt,
-    forceNew: contextReset
-  })
-  if (graphWithRuntime.runtimeSegments.length !== currentGraph.runtimeSegments.length) {
-    rebased = materializeSessionConversationGraph({
-      ...rebased,
-      conversationGraph: graphWithRuntime
-    })
-  }
-  return rebased
-}
-
 const toPersistedArtifact = (
   artifact: ArtifactFile,
   fallbackCreatedAt?: number
@@ -542,6 +501,10 @@ const toPersistedArtifact = (
       : undefined)
   return {
     id: artifact.id,
+    artifactId: artifact.artifactId,
+    versionId: artifact.versionId,
+    versionNumber: artifact.versionNumber,
+    sha256: artifact.checksum,
     kind: 'managed-file',
     path: artifact.path,
     fileUrl: artifact.fileUrl,
@@ -1216,11 +1179,24 @@ class TaskRunner {
       throw new TaskRunnerError('artifact_not_found', `Artifact not found: ${artifactId}`)
     }
     const { artifact, session } = owner
+    // Older Task completions omitted native identity fields. Resolve their Version id through
+    // the owning Project/Session authority; paths and the latest head are not version identities.
+    const descriptor =
+      !artifact.artifactId || !artifact.versionId
+        ? (
+            await this.dependencies.artifacts.resolveVersionDescriptors({
+              projectId: session.projectId,
+              appSessionId: session.id,
+              versionIds: [artifact.versionId ?? artifact.id]
+            })
+          )[0]
+        : undefined
+    const versionId = artifact.versionId ?? descriptor?.versionId
     const resource = await this.dependencies.previewResources.acquire({
       source: 'artifact',
       projectId: session.projectId,
-      fileId: artifact.artifactId ?? artifact.id,
-      ...(artifact.versionId ? { versionId: artifact.versionId } : {}),
+      fileId: artifact.artifactId ?? descriptor?.artifactId ?? artifact.id,
+      ...(versionId ? { versionId } : {}),
       mimeType: artifact.mimeType
     })
     return {
@@ -1836,17 +1812,22 @@ class TaskRunner {
         !isDeepStrictEqual(agentConfiguration, existing.agentConfiguration) ||
         needsHistoryReplay
       if (setupChanged) {
-        existing = await this.dependencies.sessions.save({
-          ...existing,
-          cwd,
-          permissionProfile: persistedPermissionProfile,
-          agentFrameworkId,
-          agentBackendId,
-          providerSessionId,
-          providerContinuityToken,
-          agentConfiguration,
-          ...(needsHistoryReplay ? { pendingHistoryReplay: { kind: 'all' } } : {}),
-          updatedAt: now
+        // Provider resume has already happened, even if prompt admission later rejects.
+        // Persist only its binding onto the latest Session under the existing write queue.
+        existing = await this.dependencies.sessions.bindSession({
+          session: {
+            id: existing.id,
+            projectId: existing.projectId,
+            cwd,
+            permissionProfile: persistedPermissionProfile,
+            agentFrameworkId,
+            agentBackendId,
+            providerSessionId,
+            providerContinuityToken,
+            agentConfiguration,
+            updatedAt: now
+          },
+          contextReset: sessionInfo.contextReset === true
         })
       }
     }
@@ -1948,7 +1929,7 @@ class TaskRunner {
       historyPreamble: contextReset ? previousHistoryPreamble : undefined,
       contextReset,
       resumeFallback:
-        request.skillIds?.length && previousHistoryPreamble
+        (request.skillIds?.length || specialistId) && previousHistoryPreamble
           ? { historyPreamble: previousHistoryPreamble }
           : undefined
     }
@@ -2004,23 +1985,11 @@ class TaskRunner {
             ? {
                 onPromptAdmitted: async () => {
                   return this.withLifecycleSessionAvailable(run.projectId, session.id, async () => {
-                    const latestSession = (await this.dependencies.sessions.list()).find(
-                      (candidate) => candidate.id === session.id
-                    )
-                    if (!latestSession || latestSession.projectId !== run.projectId) {
-                      throw new Error(`Session not found for Task prompt admission: ${session.id}`)
-                    }
-                    const sessionToSave = rebaseTaskTurnOntoLatestSession(
-                      latestSession,
-                      session,
-                      contextReset === true
-                    )
-                    // Once the durable save starts it may commit the Session before a derived
-                    // projection rejects. Retain the admitted aggregate so failure cleanup can
-                    // clear that partially committed active run.
-                    admittedSession = sessionToSave
                     try {
-                      const saved = await this.dependencies.sessions.save(sessionToSave)
+                      const saved = await this.dependencies.sessions.admitTurn({
+                        session,
+                        contextReset: contextReset === true
+                      })
                       admittedSession = saved
                       return getActiveConversationContext(
                         materializeSessionConversationGraph(saved).conversationGraph,
@@ -2064,7 +2033,10 @@ class TaskRunner {
     if (!admittedSession) {
       const cancellation = run.cancellation
       if (cancellation) await cancellation.dispatch.catch(() => undefined)
-      if (cancellationAtPromptFailure?.accepted === true) {
+      if (
+        cancellationAtPromptFailure?.accepted === true &&
+        !(promptError instanceof NotebookExecutionStopError)
+      ) {
         run.attention = undefined
         const cancelledAt = this.dependencies.now()
         run.completedAt = cancelledAt
@@ -2121,7 +2093,9 @@ class TaskRunner {
 
     const cancellation = run.cancellation
     if (cancellation) await cancellation.dispatch.catch(() => undefined)
-    const promptFailureWasCancelled = cancellationAtPromptFailure?.accepted === true
+    const promptFailureWasCancelled =
+      cancellationAtPromptFailure?.accepted === true &&
+      !(promptError instanceof NotebookExecutionStopError)
     const failure = completionError ?? (promptFailureWasCancelled ? undefined : promptError)
     if (failure) {
       await this.failRun(run, acceptedSession, completed, failure)

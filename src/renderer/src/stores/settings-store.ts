@@ -292,6 +292,18 @@ export const selectFrameworkApiEndpoints = (state: SettingsStoreData): ChatApiEn
   state.agentFrameworks.find((framework) => framework.id === state.agentFrameworkId)
     ?.supportedApiTypes ?? DEFAULT_FRAMEWORK_API_ENDPOINTS
 
+// The currently-selected agent framework's descriptor; undefined before the framework list has
+// loaded. Returns the stored view object (stable reference), never a fresh literal.
+export const selectActiveAgentFramework = (
+  state: SettingsStoreData
+): AgentFrameworkView | undefined =>
+  state.agentFrameworks.find((framework) => framework.id === state.agentFrameworkId)
+
+// Display name of the active agent framework for surfaces that mention it in copy; falls back to
+// the framework id until the framework list has loaded.
+export const selectFrameworkDisplayName = (state: SettingsStoreData): string =>
+  selectActiveAgentFramework(state)?.displayName ?? state.agentFrameworkId
+
 export const selectVisionRelayAvailable = (state: SettingsStoreData): boolean => {
   const configuration = state.visionModel
   if (!configuration) return false
@@ -344,7 +356,7 @@ export const selectProviderModelOptions = (
 }
 
 let settingsLoadPromise: Promise<boolean> | undefined
-const SAFE_SETTINGS_LOAD_ERROR = 'Open Science could not load settings. Retry to continue.'
+const SAFE_SETTINGS_LOAD_ERROR = 'Open-Science could not load settings. Retry to continue.'
 
 // Keep raw IPC diagnostics in the developer channel while renderer state remains path-safe.
 const reportSettingsLoadError = (error: unknown): void => {

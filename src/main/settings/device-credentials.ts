@@ -1,3 +1,10 @@
+import { renameSync } from 'node:fs'
+import { assertCredentialAccessAllowed } from '../credential-identity/runtime'
+import { isRecord } from '../value-guards'
+import {
+  canonicalizeResourceUri,
+  decodeDeviceCredentialsDocument
+} from './device-credentials-codec'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 
@@ -15,10 +22,9 @@ import {
   assertCreateDeviceCredentialLimits,
   assertDeviceCredentialCapacity,
   assertDeviceCredentialDiscriminants,
-  assertDeviceCredentialDocumentCapacity,
   assertDeviceCredentialDocumentContentsLimits,
-  assertDeviceCredentialOAuthStateLimits,
   assertStoredDeviceCredentialLimits,
+  assertDeviceCredentialOAuthStateLimits,
   assertUpdateDeviceCredentialLimits
 } from './device-credential-resource-limits'
 import type {
@@ -36,112 +42,6 @@ const parseCredentialReference = (reference: string | undefined): string | undef
   if (!reference?.startsWith(CREDENTIAL_REFERENCE_PREFIX)) return undefined
   const id = reference.slice(CREDENTIAL_REFERENCE_PREFIX.length)
   return id || undefined
-}
-
-const canonicalizeResourceUri = (value: string): string => {
-  const url = new URL(value.trim())
-  if (hasEmbeddedConnectorCredentials({ url: value })) {
-    throw new Error('OAuth resource URL cannot contain credentials')
-  }
-  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
-    throw new Error('OAuth resource URL must use HTTP or HTTPS')
-  }
-  url.hash = ''
-  return url.toString()
-}
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
-
-const optionalString = (value: unknown): string | undefined =>
-  typeof value === 'string' && value.length > 0 ? value : undefined
-
-const decodeOAuthConfig = (value: unknown): StoredCustomMcpOAuthConfig => {
-  if (!isRecord(value)) throw new Error('Invalid OAuth credential configuration')
-  const scopes = Array.isArray(value.scopes)
-    ? value.scopes.filter((scope): scope is string => typeof scope === 'string' && scope.length > 0)
-    : undefined
-  const oauth = {
-    ...(optionalString(value.clientMetadataUrl)
-      ? { clientMetadataUrl: String(value.clientMetadataUrl) }
-      : {}),
-    ...(optionalString(value.authorizationServerUrl)
-      ? { authorizationServerUrl: String(value.authorizationServerUrl) }
-      : {}),
-    ...(scopes?.length ? { scopes } : {}),
-    ...(optionalString(value.clientId) ? { clientId: String(value.clientId) } : {}),
-    ...(optionalString(value.redirectUri)
-      ? { redirectUri: normalizeLoopbackOAuthRedirectUri(String(value.redirectUri)) }
-      : {})
-  }
-  if (hasEmbeddedConnectorCredentials({ oauth })) {
-    throw new Error('OAuth URLs cannot contain credentials')
-  }
-  return oauth
-}
-
-const decodeCredential = (value: unknown): StoredDeviceCredential => {
-  if (!isRecord(value)) throw new Error('Invalid credential record')
-  const id = optionalString(value.id)
-  const displayName = optionalString(value.displayName)
-  const createdAt = typeof value.createdAt === 'number' ? value.createdAt : undefined
-  const updatedAt = typeof value.updatedAt === 'number' ? value.updatedAt : undefined
-  if (!id || !displayName || createdAt === undefined || updatedAt === undefined) {
-    throw new Error('Invalid credential record')
-  }
-  if (value.kind === 'api_key' || value.kind === 'token') {
-    const secretRef = optionalString(value.secretRef)
-    if (!secretRef) throw new Error('Invalid static credential record')
-    const credential: StoredDeviceCredential = {
-      id,
-      displayName,
-      kind: value.kind,
-      secretRef,
-      createdAt,
-      updatedAt
-    }
-    assertStoredDeviceCredentialLimits(credential)
-    return credential
-  }
-  if (value.kind === 'oauth') {
-    const resourceUri = optionalString(value.resourceUri)
-    if (!resourceUri || (value.transport !== 'streamable_http' && value.transport !== 'sse')) {
-      throw new Error('Invalid OAuth credential record')
-    }
-    const normalizedResourceUri = canonicalizeResourceUri(resourceUri)
-    assertSecureCustomMcpUrl(normalizedResourceUri)
-    const credential: StoredDeviceCredential = {
-      id,
-      displayName,
-      kind: 'oauth',
-      resourceUri: normalizedResourceUri,
-      transport: value.transport,
-      oauth: decodeOAuthConfig(value.oauth),
-      ...(optionalString(value.clientSecretRef)
-        ? { clientSecretRef: String(value.clientSecretRef) }
-        : {}),
-      ...(optionalString(value.stateRef) ? { stateRef: String(value.stateRef) } : {}),
-      createdAt,
-      updatedAt
-    }
-    assertStoredDeviceCredentialLimits(credential)
-    return credential
-  }
-  throw new Error('Unsupported credential kind')
-}
-
-const decodeDocument = (contents: string): StoredDeviceCredentialsDocument => {
-  assertDeviceCredentialDocumentContentsLimits(contents)
-  const value: unknown = JSON.parse(contents)
-  if (!isRecord(value) || value.version !== DOCUMENT_VERSION || !Array.isArray(value.credentials)) {
-    throw new Error('Unsupported credentials document')
-  }
-  assertDeviceCredentialDocumentCapacity(value.credentials.length)
-  const credentials = value.credentials.map(decodeCredential)
-  if (new Set(credentials.map(({ id }) => id)).size !== credentials.length) {
-    throw new Error('Duplicate credential ID')
-  }
-  return { version: DOCUMENT_VERSION, credentials }
 }
 
 const normalizeOAuthConfig = (
@@ -415,17 +315,24 @@ export class DeviceCredentialStore {
   }
 
   private async read(): Promise<StoredDeviceCredentialsDocument> {
-    const result = await readDurableJsonFile(this.filePath, decodeDocument)
+    assertCredentialAccessAllowed()
+    const result = await readDurableJsonFile(this.filePath, decodeDeviceCredentialsDocument)
     return result.status === 'found' ? result.value : { version: DOCUMENT_VERSION, credentials: [] }
   }
 
   private write(document: StoredDeviceCredentialsDocument): Promise<void> {
+    assertCredentialAccessAllowed()
     for (const credential of document.credentials) {
       assertStoredDeviceCredentialLimits(credential)
     }
     const contents = `${JSON.stringify(document, null, 2)}\n`
     assertDeviceCredentialDocumentContentsLimits(contents)
-    return writeDurableJsonFile(this.filePath, contents)
+    return writeDurableJsonFile(this.filePath, contents, {
+      rename: async (source, destination) => {
+        assertCredentialAccessAllowed()
+        renameSync(source, destination)
+      }
+    })
   }
 
   private async run<Result>(operation: () => Promise<Result>): Promise<Result> {

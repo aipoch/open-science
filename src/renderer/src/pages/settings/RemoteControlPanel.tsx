@@ -1,3 +1,5 @@
+import { InlineNotice } from '@/components/ui/inline-notice'
+import { ErrorNotice } from '@/components/error-notice'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { QRCodeSVG } from '@rc-component/qrcode'
 import * as Dialog from '@/components/ui/dialog'
@@ -133,7 +135,7 @@ const getAccessModes = (
   {
     mode: 'remoteit',
     title: t('App access'),
-    description: t('Open Open Science from the signed-in mobile app with two-step verification.'),
+    description: t('Open Open-Science from the signed-in mobile app with two-step verification.'),
     icon: RadioTower
   },
   {
@@ -352,27 +354,16 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
       return (
         <TooltipProvider delayDuration={200}>
           <div className="p-5" data-testid="remote-control-load-error">
-            <div
-              className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+            <ErrorNotice
               role="alert"
-            >
-              <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-              <div className="min-w-0 flex-1">
-                <div className="font-medium">{t("Remote access couldn't be loaded.")}</div>
-                <div className="mt-1 break-words text-xs">{actionError}</div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="mt-3"
-                  disabled={busy !== null}
-                  onClick={retryInitialLoad}
-                >
-                  <RefreshCw className="size-3.5" aria-hidden="true" />
-                  {t('Try again')}
-                </Button>
-              </div>
-            </div>
+              title={t("Remote access couldn't be loaded.")}
+              description={actionError}
+              primaryButton={{
+                label: t('Try again'),
+                disabled: busy !== null,
+                onClick: retryInitialLoad
+              }}
+            />
           </div>
         </TooltipProvider>
       )
@@ -474,7 +465,7 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
           description={
             <>
               <Trans
-                i18nKey="Choose who can reach this computer's Open Science workspace. All projects, agents, files, and notebook runtimes continue to run on this computer. Install and sign in to the Remote.It desktop app before enabling access. <lnk>Download Remote.It App</lnk>"
+                i18nKey="Choose who can reach this computer's Open-Science workspace. All projects, agents, files, and notebook runtimes continue to run on this computer. Install and sign in to the Remote.It desktop app before enabling access. <lnk>Download Remote.It App</lnk>"
                 components={{
                   lnk: (
                     <ExternalTextLink
@@ -566,64 +557,51 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
             })}
           </div>
 
-          {modeError ? (
-            <div className="rounded-lg border border-destructive/35 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-              {t(modeError)}
-            </div>
-          ) : null}
+          {modeError ? <ErrorNotice inline role="alert" description={t(modeError)} /> : null}
 
           {incompleteShutdown ? (
-            <div
+            <ErrorNotice
               role="alert"
-              className="rounded-lg border border-status-warning-foreground/30 bg-status-warning-surface dark:bg-status-warning-dark-surface px-3 py-2 text-sm"
-            >
-              <p>
-                {t(
-                  'Remote access is off on this computer, but turning it off did not finish. The Off setting may not have been saved, and access may turn on again after restarting.'
-                )}
-              </p>
-              {snapshot.canManage ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="mt-3"
-                  disabled={busy !== null}
-                  onClick={() => {
-                    operationTriggerRef.current = offModeRef.current
-                    void run('mode:off', () => window.api.remoteAccess.setMode({ mode: 'off' }))
-                  }}
-                >
-                  <RefreshCw className="size-3.5" aria-hidden="true" />
-                  {t('Retry turning off')}
-                </Button>
-              ) : null}
-            </div>
+              description={t(
+                'Remote access is off on this computer, but turning it off did not finish. The Off setting may not have been saved, and access may turn on again after restarting.'
+              )}
+              primaryButton={
+                snapshot.canManage
+                  ? {
+                      label: t('Retry turning off'),
+                      disabled: busy !== null,
+                      onClick: () => {
+                        operationTriggerRef.current = offModeRef.current
+                        void run('mode:off', () => window.api.remoteAccess.setMode({ mode: 'off' }))
+                      }
+                    }
+                  : undefined
+              }
+            />
           ) : null}
 
           {providerError ? (
-            <div
+            <ErrorNotice
               role="alert"
-              className="rounded-lg border border-status-warning-foreground/30 bg-status-warning-surface dark:bg-status-warning-dark-surface px-3 py-2 text-sm"
-            >
-              <p>
-                {snapshot.enabled
+              title={
+                snapshot.enabled
                   ? t(
                       'Local remote access remains enabled, but the latest external status check failed.'
                     )
-                  : t('The latest external status check failed.')}
-              </p>
-              <p className="mt-1 break-words text-xs text-muted-foreground">{t(providerError)}</p>
-              {snapshot.mode === 'off' ? <div className="mt-3">{detectButton}</div> : null}
-            </div>
+                  : t('The latest external status check failed.')
+              }
+              description={t(providerError)}
+            >
+              {snapshot.mode === 'off' ? detectButton : null}
+            </ErrorNotice>
           ) : null}
 
           {!snapshot.canManage ? (
             <div className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
               {t(
                 snapshot.canManagePairing && accessUsesPairing
-                  ? 'Remote access settings can only be changed from the Open Science desktop window on the home computer. Two-step verification requests and trusted browsers can be managed below.'
-                  : 'Remote access settings can only be changed from the Open Science desktop window on the home computer.'
+                  ? 'Remote access settings can only be changed from the Open-Science desktop window on the home computer. Two-step verification requests and trusted browsers can be managed below.'
+                  : 'Remote access settings can only be changed from the Open-Science desktop window on the home computer.'
               )}
             </div>
           ) : null}
@@ -642,7 +620,7 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <p className="max-w-2xl text-[13px] leading-5 text-muted-foreground">
                 {t(
-                  'Open this computer from the signed-in mobile app. Open Science creates and maintains the local service automatically after this computer is added once.'
+                  'Open this computer from the signed-in mobile app. Open-Science creates and maintains the local service automatically after this computer is added once.'
                 )}
               </p>
               {detectButton}
@@ -665,7 +643,7 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
                   </li>
                   <li>
                     <span className="font-medium">2.</span> {t('Select this computer, then select')}{' '}
-                    <span className="font-medium">Open Science Remote</span>.
+                    <span className="font-medium">Open-Science Remote</span>.
                   </li>
                   <li>
                     <span className="font-medium">3.</span>{' '}
@@ -698,7 +676,7 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <p className="max-w-2xl text-[13px] leading-5 text-muted-foreground">
                 {t(
-                  'Open a persistent HTTPS address from any modern browser. Open Science creates and maintains the public browser service automatically.'
+                  'Open a persistent HTTPS address from any modern browser. Open-Science creates and maintains the public browser service automatically.'
                 )}
               </p>
               {detectButton}
@@ -735,8 +713,13 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
                               size="sm"
                               onClick={() => void copyUrl()}
                             >
-                              <Copy className="size-3.5" aria-hidden="true" />
-                              {copyStatus === 'copied' ? t('Copied') : t('Copy')}
+                              <span
+                                key={String(copyStatus === 'copied')}
+                                className="button-feedback"
+                              >
+                                <Copy className="size-3.5" aria-hidden="true" />
+                                {copyStatus === 'copied' ? t('Copied') : t('Copy')}
+                              </span>
                             </Button>
                             <Button type="button" variant="outline" size="sm" asChild>
                               <a href={snapshot.accessUrl} target="_blank" rel="noreferrer">
@@ -750,13 +733,14 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
                           {snapshot.accessUrl}
                         </div>
                         {copyStatus === 'error' ? (
-                          <div
+                          <InlineNotice
+                            level="error"
                             role="alert"
-                            className="mt-2 text-xs text-destructive"
+                            className="mt-2"
                             data-testid="remote-link-copy-error"
                           >
                             {t('Could not copy the browser link. Select it and copy it manually.')}
-                          </div>
+                          </InlineNotice>
                         ) : null}
                         <span
                           role="status"
@@ -782,7 +766,7 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
                       marginSize={2}
                       bgColor="#ffffff"
                       fgColor="#111827"
-                      title={t('Scan to open Open Science')}
+                      title={t('Scan to open Open-Science')}
                     />
                     <div className="mt-1 text-center text-[11px] font-medium text-slate-700">
                       {t('Scan to open')}
@@ -925,7 +909,7 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
 
         <p className="mt-5 text-xs leading-relaxed text-muted-foreground">
           {t(
-            'Remote.It is a third-party service. Open Science only calls its user-installed desktop CLI and does not include, redistribute, register, or create an account for it.'
+            'Remote.It is a third-party service. Open-Science only calls its user-installed desktop CLI and does not include, redistribute, register, or create an account for it.'
           )}
         </p>
       </div>

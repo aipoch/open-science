@@ -1,0 +1,46 @@
+[
+  {
+    "name": "metagenomic contig taxonomy and abundance",
+    "consumed": ["contigs", "abundance", "taxonomy"],
+    "cells": [
+      "from Bio import SeqIO\nimport pandas as pd\nimport numpy as np\ncontigs = pd.DataFrame([\n    {\"contig_id\": record.id, \"length_bp\": len(record.seq),\n     \"gc_fraction\": (record.seq.upper().count(\"G\") + record.seq.upper().count(\"C\")) / max(len(record.seq), 1)}\n    for record in SeqIO.parse(\"inputs/contigs.fasta\", \"fasta\")\n])\nabundance = pd.read_csv(\"inputs/contig_abundance.tsv\", sep=\"\\t\")\ntaxonomy = pd.read_csv(\"inputs/contig_taxonomy.tsv\", sep=\"\\t\")\nassert contigs[\"contig_id\"].is_unique\nassert taxonomy[\"contig_id\"].is_unique\nassert abundance[\"reads\"].ge(0).all()",
+      "merged = abundance.merge(contigs, on=\"contig_id\", how=\"left\", validate=\"many_to_one\")\nmerged = merged.merge(taxonomy[[\"contig_id\", \"taxon\"]], on=\"contig_id\", how=\"left\", validate=\"many_to_one\")\nassert merged[\"length_bp\"].notna().all()\nmerged[\"taxon\"] = merged[\"taxon\"].fillna(\"unclassified\")\ntaxon_abundance = merged.groupby([\"sample_id\", \"taxon\"], as_index=False)[\"reads\"].sum()\nsample_totals = taxon_abundance.groupby(\"sample_id\")[\"reads\"].transform(\"sum\")\ntaxon_abundance[\"relative_abundance\"] = taxon_abundance[\"reads\"].div(sample_totals.replace(0, np.nan)).fillna(0)\nmerged.to_csv(\"outputs/merged_contig_table.tsv\", sep=\"\\t\", index=False)\ntaxon_abundance.to_csv(\"outputs/taxon_abundance.tsv\", sep=\"\\t\", index=False)",
+      "import matplotlib.pyplot as plt\ndetected = taxon_abundance.loc[taxon_abundance[\"reads\"] > 0]\nsummary = detected.groupby(\"taxon\", as_index=False).agg(samples_detected=(\"sample_id\", \"nunique\"), total_reads=(\"reads\", \"sum\"))\nsummary.to_csv(\"outputs/taxon_summary.tsv\", sep=\"\\t\", index=False)\nplt.figure(figsize=(6, 4))\nplt.scatter(contigs[\"length_bp\"] / 1000, contigs[\"gc_fraction\"] * 100, s=8, alpha=0.5)\nplt.xlabel(\"Contig length (kb)\")\nplt.ylabel(\"GC (%)\")\nplt.tight_layout()\nplt.savefig(\"outputs/contig_qc.png\", dpi=150)\nplt.close()"
+    ],
+    "reads": [
+      ["inputs/contig_abundance.tsv", "inputs/contig_taxonomy.tsv", "inputs/contigs.fasta"],
+      [],
+      []
+    ],
+    "writes": [
+      [],
+      ["outputs/merged_contig_table.tsv", "outputs/taxon_abundance.tsv"],
+      ["outputs/contig_qc.png", "outputs/taxon_summary.tsv"]
+    ],
+    "states": [
+      ["partial", "partial", "partial"],
+      ["partial", "complete", "complete"],
+      ["partial", "complete", "complete"]
+    ]
+  },
+  {
+    "name": "metabolite quality control and principal components",
+    "consumed": ["filtered"],
+    "cells": [
+      "import pandas as pd\nimport numpy as np\nfeatures = pd.read_csv(\"inputs/metabolite_features.tsv\", sep=\"\\t\")\nmetadata = pd.read_csv(\"inputs/sample_metadata.tsv\", sep=\"\\t\")\nassert features[\"feature_id\"].is_unique\nassert metadata[\"sample_id\"].is_unique\nsample_ids = [column for column in features.columns if column != \"feature_id\"]\nassert set(sample_ids) <= set(metadata[\"sample_id\"])\nmatrix = features.set_index(\"feature_id\")[sample_ids].apply(pd.to_numeric, errors=\"coerce\")\nassert (matrix.fillna(0).to_numpy() >= 0).all()\nmissing = matrix.isna().mean(axis=1)\nfiltered = matrix.loc[missing <= 0.20].copy()\nfiltered = filtered.loc[filtered.median(axis=1) > 0]\nqc = pd.DataFrame({\"feature_id\": matrix.index, \"missing_fraction\": missing.to_numpy(), \"retained\": matrix.index.isin(filtered.index)})\nqc.to_csv(\"outputs/feature_qc.tsv\", sep=\"\\t\", index=False)",
+      "imputed = filtered.T.fillna(filtered.median(axis=1)).T\ntransformed = np.log1p(imputed)\nfeature_mean = transformed.mean(axis=1)\nfeature_sd = transformed.std(axis=1, ddof=1).replace(0, 1)\nscaled = transformed.sub(feature_mean, axis=0).div(feature_sd, axis=0)\nassert scaled.shape[0] >= 2 and scaled.shape[1] >= 2\nassert np.isfinite(scaled.to_numpy()).all()",
+      "from sklearn.decomposition import PCA\nimport matplotlib.pyplot as plt\npca = PCA(n_components=2, svd_solver=\"full\")\nvalues = pca.fit_transform(scaled.T)\nscores = pd.DataFrame(values, columns=[\"PC1\", \"PC2\"])\nscores.insert(0, \"sample_id\", sample_ids)\nscores = scores.merge(metadata, on=\"sample_id\", how=\"left\", validate=\"one_to_one\")\nreport = pd.DataFrame({\"component\": [\"PC1\", \"PC2\"], \"variance_ratio\": pca.explained_variance_ratio_})\nscores.to_csv(\"outputs/pca_scores.tsv\", sep=\"\\t\", index=False)\nreport.to_csv(\"outputs/pca_report.tsv\", sep=\"\\t\", index=False)\nplt.figure(figsize=(6, 4))\nplt.scatter(scores[\"PC1\"], scores[\"PC2\"], alpha=0.8)\nplt.xlabel(\"PC1\")\nplt.ylabel(\"PC2\")\nplt.tight_layout()\nplt.savefig(\"outputs/pca_scores.png\", dpi=150)\nplt.close()"
+    ],
+    "reads": [["inputs/metabolite_features.tsv", "inputs/sample_metadata.tsv"], [], []],
+    "writes": [
+      ["outputs/feature_qc.tsv"],
+      [],
+      ["outputs/pca_report.tsv", "outputs/pca_scores.png", "outputs/pca_scores.tsv"]
+    ],
+    "states": [
+      ["partial", "partial", "partial"],
+      ["partial", "complete", "complete"],
+      ["partial", "complete", "complete"]
+    ]
+  }
+]

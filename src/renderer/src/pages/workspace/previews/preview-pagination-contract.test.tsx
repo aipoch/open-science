@@ -149,21 +149,29 @@ const Probe = ({
     <div>{result.status}</div>
   )
 }
-const settle = async (): Promise<void> => {
-  await act(async () => {
-    await new Promise((r) => setTimeout(r, 30))
-  })
+const settle = async (expected?: string | (() => boolean)): Promise<void> => {
+  const deadline = Date.now() + 5_000
+  while (Date.now() < deadline) {
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 30))
+    })
+    if (
+      typeof expected === 'function' ? expected() : !expected || container!.textContent === expected
+    ) {
+      return
+    }
+  }
 }
 it.each(['artifact', 'upload', 'notebook-input', 'local'] as const)(
   'reads bounded pages of a larger %s file',
   async (source) => {
     const env = await setup(8)
     await act(async () => root!.render(<Probe path={env.path} source={source} maxBytes={4} />))
-    await settle()
+    await settle('AAAA')
     expect(container!.textContent).toBe('AAAA')
     expect(container!.querySelector('button')?.disabled).toBe(false)
     await act(async () => container!.querySelector('button')!.click())
-    await settle()
+    await settle('AAAA')
     expect(container!.textContent).toBe('AAAA')
     expect(container!.querySelector('button')?.disabled).toBe(true)
   }
@@ -182,7 +190,7 @@ it('text above 1 MiB exposes bounded page navigation', async () => {
       />
     )
   )
-  await settle()
+  await settle(() => container!.querySelector('[aria-label="Next preview page"]') !== null)
   expect(container!.querySelector('[aria-label="Next preview page"]')).not.toBeNull()
 })
 it('same resource and protocol can serve bounded pages when no whole-file admission cap is requested', async () => {
@@ -204,9 +212,9 @@ it('same resource and protocol can serve bounded pages when no whole-file admiss
 it('retains an explicit full-file admission cap independently of the page size', async () => {
   const env = await setup(8)
   await act(async () => root!.render(<Probe path={env.path} maxBytes={4} maxFileBytes={8} />))
-  await settle()
+  await settle('AAAA')
   expect(container!.textContent).toBe('AAAA')
   await act(async () => root!.render(<Probe path={env.path} maxBytes={4} maxFileBytes={7} />))
-  await settle()
+  await settle('error')
   expect(container!.textContent).toBe('error')
 })

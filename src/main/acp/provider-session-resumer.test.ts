@@ -7,11 +7,16 @@ import type { AcpCreateSessionResponse, AcpResumeSessionRequest } from '../../sh
 import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
 import type { EffectiveSpecialistSkills } from '../../shared/specialist'
 import { claudeCodeFramework, codexFramework, opencodeFramework } from '../agent-framework'
+import {
+  shellRuntimeAgentContract,
+  type ShellRuntimeAgentContract
+} from '../notebook/shell-runtime'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 import { AcpProviderSessionResumer } from './provider-session-resumer'
 import {
   CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
   SIDE_CHAT_SESSION_CAPABILITY_POLICY,
+  type SessionCapabilityName,
   type SessionCapabilityPolicy
 } from './session-capability-owner'
 import { AcpSessionRegistry } from './session-registry'
@@ -61,6 +66,7 @@ const opencodeBackend: AcpBackendGenerationView = {
 
 type HarnessOptions = {
   attached?: boolean
+  isWslSetupSession?: () => Promise<boolean>
   attachError?: Error
   backendAfterFirstConfigure?: AcpBackendGenerationView
   capabilityPolicy?: SessionCapabilityPolicy
@@ -89,6 +95,8 @@ type HarnessOptions = {
   supportsResume?: boolean
   supportsClose?: boolean
   capabilityMcpServers?: McpServer[]
+  descriptorCapabilities?: SessionCapabilityName[]
+  shellRuntimeAgentContract?: ShellRuntimeAgentContract
 }
 
 type ResumerHarness = {
@@ -188,7 +196,9 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
   })
   const connection = { agent: { request, attachSession } } as unknown as ClientConnection
   const commit = vi.fn(() => order.push('capability commit'))
-  const release = vi.fn(() => order.push('capability release'))
+  const release = vi.fn(() => {
+    order.push('capability release')
+  })
   const adopt = vi.fn(
     async (
       stableAppSessionId: string,
@@ -257,7 +267,7 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
       role: 'primary' as const,
       delegation: 'denied' as const,
       transport: 'none' as const,
-      capabilities: [],
+      capabilities: options.descriptorCapabilities ?? [],
       canonicalMcpServerNames: [],
       modelFacingMcpServerNames: [],
       controlRpcMethods: []
@@ -265,6 +275,9 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
     return {
       mcpServers,
       descriptor,
+      ...(options.shellRuntimeAgentContract
+        ? { shellRuntimeAgentContract: options.shellRuntimeAgentContract }
+        : {}),
       includeFrameworkMcpServers: (servers: readonly McpServer[]) => ({
         mcpServers: [...mcpServers, ...servers],
         descriptor: {
@@ -300,7 +313,7 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
         mayRenewAfterConnectionSetup: true,
         blockStartup: false
       }),
-    capabilities: { provision },
+    capabilities: { provision, isWslSetupSession: options.isWslSetupSession },
     capabilityPolicy: options.capabilityPolicy ?? CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
     configurator: { configure, configurePermissionProfile },
     adopter: { adopt },
@@ -465,6 +478,40 @@ describe('AcpProviderSessionResumer', () => {
     )
   })
 
+  it('resumes with one redacted WSL shell prompt after persistent instructions', async () => {
+    const contract = shellRuntimeAgentContract({
+      kind: 'wsl2-bash',
+      profileId: 'private-profile',
+      distro: 'Ubuntu-22.04',
+      user: 'researcher'
+    })
+    const harness = createHarness({
+      descriptorCapabilities: ['notebook'],
+      shellRuntimeAgentContract: contract,
+      providerSessionId: '019fb8c8-6c66-7f22-9653-17b5b287dbbb',
+      initialBackend: {
+        ...codexResponsesBackend,
+        prompt: {
+          systemPromptAppends: [],
+          persistentSystemPrompt: 'Baked Codex developer instructions.'
+        }
+      }
+    })
+
+    await harness.resume({
+      providerSessionId: '019fb8c8-6c66-7f22-9653-17b5b287dbbb'
+    })
+
+    const setupText = harness.sessionSetupAppends.flat().join('\n')
+    expect(setupText.match(/Notebook `bash_execute` is bound to WSL2 Bash/g)).toHaveLength(1)
+    expect(setupText).not.toMatch(/private-profile|Ubuntu-22\.04|researcher/)
+    const prefix = harness.registry
+      .lookup('stable-app-session')
+      ?.aggregate.snapshot().sessionSetupPromptPrefix
+    expect(prefix).toContain('host and workspace path are Windows')
+    expect(prefix).not.toContain('Baked Codex developer instructions.')
+  })
+
   it.each([
     ['claude-code', backend],
     ['opencode', opencodeBackend],
@@ -585,6 +632,7 @@ describe('AcpProviderSessionResumer', () => {
       backend: harness.backend,
       connection: harness.connection,
       session: harness.providerSession,
+      cancellationSignal: expect.any(AbortSignal),
       permissionProfile: 'full'
     })
     expect(harness.registry.lookup('stable-app-session')?.aggregate.snapshot()).toMatchObject({
@@ -598,8 +646,58 @@ describe('AcpProviderSessionResumer', () => {
     expect(harness.order).toEqual(['configure permission', 'cwd callback', 'state callback'])
     expect(harness.request).not.toHaveBeenCalled()
     expect(harness.adopt).not.toHaveBeenCalled()
-    expect(harness.setTimer).not.toHaveBeenCalled()
+    expect(harness.setTimer).toHaveBeenCalledOnce()
     expect(harness.assertCurrentConnection).toHaveBeenCalledWith(harness.connection)
+  })
+
+  it('bounds an attached refresh without disconnecting its live provider or committing late metadata', async () => {
+    const harness = createHarness({ attached: true })
+    const attachment = harness.registry.lookup('stable-app-session')?.attachment
+    const before = harness.registry.lookup('stable-app-session')?.aggregate.snapshot()
+    let complete!: (value: SessionPermissionProfileState) => void
+    harness.configurePermissionProfile.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          complete = resolve
+        })
+    )
+    const pending = harness.resume({
+      cwd: '/late-workspace',
+      specialistId: 'late-specialist',
+      permissionProfile: 'full'
+    })
+    await vi.waitFor(() => expect(harness.configurePermissionProfile).toHaveBeenCalledOnce())
+    const rejected = expect(pending).rejects.toThrow(/timed out.*permission.*unknown/i)
+    harness.fireTimeout()
+    await rejected
+    expect(harness.disconnectTimedOutConnection).not.toHaveBeenCalled()
+    expect(harness.registry.lookup('stable-app-session')?.attachment).toBe(attachment)
+    complete({ ...permissionProfile, selectedProfile: 'full' })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(harness.registry.lookup('stable-app-session')?.aggregate.snapshot()).toEqual(before)
+    expect(harness.clearLivePermissionProfile).not.toHaveBeenCalled()
+  })
+
+  it('does not start permission configuration after an attached capability lookup times out', async () => {
+    let complete!: (value: boolean) => void
+    const lookup = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          complete = resolve
+        })
+    )
+    const harness = createHarness({ attached: true, isWslSetupSession: lookup })
+    const pending = harness.resume({ permissionProfile: 'full' })
+    await vi.waitFor(() => expect(lookup).toHaveBeenCalledOnce())
+    const rejected = expect(pending).rejects.toThrow(/No permission update was attempted/)
+    harness.fireTimeout()
+    await rejected
+    complete(false)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(harness.configurePermissionProfile).not.toHaveBeenCalled()
+    expect(harness.disconnectTimedOutConnection).not.toHaveBeenCalled()
   })
 
   it('does not change an attached Codex Skill scope through a presentation-only resume', async () => {
@@ -678,7 +776,7 @@ describe('AcpProviderSessionResumer', () => {
     expect(harness.registry.lookup('stable-app-session')?.aggregate.snapshot()).toMatchObject({
       cwd: '/successor-workspace',
       projectId: 'successor-project',
-      specialistId: 'stale-specialist',
+      specialistId: undefined,
       permissionProfile
     })
     expect(harness.registry.currentSessionId).toBe('stable-app-session')

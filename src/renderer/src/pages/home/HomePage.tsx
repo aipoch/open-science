@@ -1,3 +1,5 @@
+import { ErrorNotice } from '@/components/error-notice'
+import { PackageOperationIndicator } from '@/components/SessionPackageOperation'
 /* Hallmark · macrostructure: operational-home-dashboard · genre: modern-minimal · tone: quiet/technical · anchor: teal
  * pre-emit critique: P5 H5 E5 S5 R5 V4 · contrast: pass (40–41) · icons: pass (30)
  * slop: pass (42–49) · mobile: pass (34, 49, 50–57)
@@ -42,6 +44,7 @@ import { useProjectStore } from '@/stores/project-store'
 import { useArchiveUndoStore } from '@/stores/archive-undo-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useProjectFormDialog } from '@/hooks/useProjectFormDialog'
+import { startWslSetupConversation } from '@/lib/wsl-support-handoff'
 import { GitHubStarBadge } from '@/components/GitHubStarBadge'
 import { NetworkStatusIndicator } from '@/components/NetworkStatusIndicator'
 import { NotificationBell } from '@/components/NotificationBell'
@@ -193,7 +196,13 @@ const HomePage = ({
   const openSession = useNavigationStore((state) => state.openSession)
   const openLibrary = useNavigationStore((state) => state.openLibrary)
   const pendingProjectCreation = useNavigationStore((state) => state.pendingProjectCreation)
+  const pendingWslSetupAfterProjectCreation = useNavigationStore(
+    (state) => state.pendingWslSetupAfterProjectCreation
+  )
   const consumeProjectCreation = useNavigationStore((state) => state.consumeProjectCreation)
+  const consumeWslSetupProjectCreation = useNavigationStore(
+    (state) => state.consumeWslSetupProjectCreation
+  )
   const openSettings = useSettingsStore((state) => state.openSettings)
   const environmentCheck = useSettingsStore((state) => state.environmentCheck)
   const openSettingsToPanel = useSettingsStore((state) => state.openSettingsToPanel)
@@ -205,7 +214,19 @@ const HomePage = ({
     openCreateDialog,
     openEditDialog,
     dialogProps: projectFormDialogProps
-  } = useProjectFormDialog()
+  } = useProjectFormDialog({
+    onCreateCancelled: consumeWslSetupProjectCreation,
+    onCreated: (project) => {
+      if (!pendingWslSetupAfterProjectCreation) {
+        openProject(project.id, 'user')
+        return
+      }
+      consumeWslSetupProjectCreation()
+      void startWslSetupConversation(project.id, t).catch(() => {
+        openProject(project.id, 'user')
+      })
+    }
+  })
 
   const [projectToDelete, setProjectToDelete] = useState<Project | undefined>(undefined)
   const [isDeletingProject, setIsDeletingProject] = useState(false)
@@ -498,7 +519,7 @@ const HomePage = ({
         )
       }
       if (effectiveCatalogRecovery.kind === 'unsupported-version') {
-        return t('Update Open Science before archiving this project.')
+        return t('Update Open-Science before archiving this project.')
       }
       return t('Repair the project index before archiving.')
     }
@@ -631,7 +652,7 @@ const HomePage = ({
                   rel="noreferrer"
                   className="font-serif text-[26px] font-medium leading-none tracking-[-0.02em] text-text-000 hover:text-text-100"
                 >
-                  Open Science
+                  Open-Science
                 </a>
                 {hasCompleteSessionCatalog &&
                 (activeSessionCounts.waiting > 0 || activeSessionCounts.running > 0) ? (
@@ -724,6 +745,7 @@ const HomePage = ({
               </Button>
             </div>
           </header>
+          <PackageOperationIndicator />
 
           {sessionUpdates.length > 0 ? (
             <section className="mt-8 sm:mt-10" aria-label={t('Session updates')}>
@@ -898,22 +920,15 @@ const HomePage = ({
               ) : null}
               <ProjectDeletionCleanupNotice className="mb-3 rounded-2xl px-4 py-3" />
               {loadError ? (
-                <div
-                  className="rounded-2xl border border-danger-000/30 px-4 py-6 text-center text-sm text-danger-000"
+                <ErrorNotice
                   role="alert"
-                >
-                  <p>{t('Open Science could not load projects. Retry to continue.')}</p>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="mt-3"
-                    disabled={isRetryingProjects}
-                    onClick={retryProjectLoad}
-                  >
-                    {isRetryingProjects ? t('Retrying...') : t('Retry')}
-                  </Button>
-                </div>
+                  description={t('Open-Science could not load projects. Retry to continue.')}
+                  primaryButton={{
+                    label: isRetryingProjects ? t('Retrying...') : t('Retry'),
+                    loading: isRetryingProjects,
+                    onClick: retryProjectLoad
+                  }}
+                />
               ) : !isProjectsLoaded && projectSummaries.length === 0 ? (
                 <div role="status" className="px-4 py-10 text-center text-sm text-muted-foreground">
                   {t('Loading…')}

@@ -11,7 +11,7 @@ import {
   type ComputeConnectionLease
 } from './connection-broker'
 import {
-  computeRemoteWorkdir,
+  computeLegacyRemoteWorkdir,
   quoteRemotePath,
   REMOTE_PROCESS_OWNERSHIP_FUNCTION,
   type RemoteHandle
@@ -62,8 +62,10 @@ const POLL_BATCH_MAX_JOBS = 8
 const POLLER_KILL_GRACE_SECONDS = 60
 
 const buildDispatchRecoveryCommand = (workdir: string): string => {
-  const marker = '/.openscience/jobs/'
-  const markerIndex = workdir.lastIndexOf(marker)
+  const markerIndex = Math.max(
+    workdir.lastIndexOf('/.open-science/jobs/'),
+    workdir.lastIndexOf('/.openscience/jobs/')
+  )
   if (markerIndex < 0) throw new Error('Unsafe remote Compute Job recovery path.')
   const scratchRoot = markerIndex === 0 ? '/' : workdir.slice(0, markerIndex)
   const workdirSuffix = workdir.slice(markerIndex + 1)
@@ -376,7 +378,7 @@ export class JobPoller {
     for (const job of legacyNoHandle) {
       if (signal.aborted) return
       const fallbackWorkdir = hasRecoveryFallback
-        ? computeRemoteWorkdir(recoveryFallbackRoot, job.job_id)
+        ? computeLegacyRemoteWorkdir(recoveryFallbackRoot, job.job_id)
         : undefined
       const recovered = await this._recoverSubmittedJob(job, connection, signal, fallbackWorkdir)
       if (recovered) withHandle.push(recovered)
@@ -441,7 +443,7 @@ export class JobPoller {
           await this.lifecycle.recordPollError(
             job.job_id,
             job.status,
-            'slurm_submission_unconfirmed: Open Science found no scheduler candidate with matching workdir ownership evidence; inspect squeue/sacct before resubmitting',
+            'slurm_submission_unconfirmed: Open-Science found no scheduler candidate with matching workdir ownership evidence; inspect squeue/sacct before resubmitting',
             false
           )
           continue

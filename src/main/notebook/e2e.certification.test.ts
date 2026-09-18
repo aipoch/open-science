@@ -450,6 +450,7 @@ gate('notebook capability certification (E2E)', () => {
       workspaceCwd: h.storageRoot,
       code: 'life_marker'
     })
+    const state = await h.service.state({ sessionId: SESSION, workspaceCwd: h.storageRoot })
     expect(afterRespawn.status).toBe('failed')
     expect(afterRespawn.text.traceback).toMatch(/name 'life_marker' is not defined/)
     evidence(
@@ -457,7 +458,6 @@ gate('notebook capability certification (E2E)', () => {
       afterRespawn.text.traceback.trim().split('\n').slice(-1)[0]
     )
 
-    const state = await h.service.state({ sessionId: SESSION, workspaceCwd: h.storageRoot })
     expect(state.kernelStatus).toBe('idle')
     evidence('kernel status after respawn run', state.kernelStatus)
   }, 30_000)

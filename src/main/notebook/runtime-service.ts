@@ -3,6 +3,7 @@ import { existsSync, realpathSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
+import { isImportedResearchSession } from '../storage/session-package-state'
 import type {
   NotebookCell,
   AbortNotebookCodeCellRequest,
@@ -19,6 +20,7 @@ import type {
   ExportNotebookKernelRequest,
   ExportNotebookResult,
   FinishNotebookCodeCellRequest,
+  NotebookEnvironmentLock,
   NotebookLanguage,
   NotebookNamespaceRequest,
   NotebookNamespaceSnapshot,
@@ -34,7 +36,8 @@ import type {
   NotebookSessionStateRequest,
   NotebookSessionReference,
   NotebookSessionState,
-  RunNotebookCellRequest
+  RunNotebookCellRequest,
+  ShellRuntimeBinding
 } from '../../shared/notebook'
 import { publishUserFile } from '../user-file-publisher'
 import { NotebookBackgroundRunError } from '../../shared/notebook'
@@ -61,6 +64,7 @@ import type { NotebookKernelExecutorOptions } from './kernel-executor'
 import { saveIpynbAll } from './save-ipynb-all'
 import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
 import type { ProbeDeps } from './mirror-probe'
+import { defaultShellRuntimeBinding, shellRuntimePlatform } from './shell-runtime'
 import { detachedShellMechanism } from './shell-detachment-policy.windows-posix'
 import {
   installPackages as installPackagesDefault,
@@ -115,6 +119,7 @@ import {
 import { NotebookSessionRegistry } from './session-registry'
 import { createLogger, errorLogFields } from '../logger'
 import { EnvironmentStateTracker, type EnvironmentCaptureTarget } from './environment-state-tracker'
+import { resolveMicromamba } from './micromamba'
 import { NotebookRuntimeBindingOwner } from './runtime-binding'
 import type { RuntimeDiagnosticLogger } from './runtime-diagnostics'
 import { resolveProjectId, type ProjectIdScope } from '../../shared/project-scope'
@@ -181,6 +186,8 @@ type NotebookExecutionRequest = NotebookSessionExecutionRequest
 type NotebookExecutionResult = NotebookSessionExecutionResult
 
 type NotebookExecutor = NotebookSessionExecutor
+type NotebookDependencyAnalyzerPort = Pick<NotebookDependencyAnalyzer, 'project'> &
+  Partial<Pick<NotebookDependencyAnalyzer, 'sourceFileAccessContext' | 'finalizeEpochs'>>
 
 type NotebookRuntimeServiceCallbacks = NotebookSessionLifecycleCallbacks
 
@@ -203,6 +210,7 @@ type McpRpcConnectionBinding = {
 }
 
 type NotebookRuntimeServiceOptions = ProjectIdScope & {
+  admitSessionWork?: (projectId: string, sessionId: string) => () => void
   // Config root: source of the app-owned claude config dir (protected from the kernel). Never relocated.
   configRoot: string
   // Data root: where notebook workspaces, data, and the runtime install live (user-relocatable).
@@ -251,6 +259,9 @@ type NotebookRuntimeServiceOptions = ProjectIdScope & {
   // environment projection, and timeout teardown; tests inject a fake without crossing IPC/shared.
   shellProcess?: NotebookShellProcess
   shellConcurrencyLimit?: number
+  // Immutable shell capability selected before execution. Later switching creates a fresh service /
+  // capability; an in-flight Run never re-reads Settings.
+  shellRuntimeBinding?: ShellRuntimeBinding
   processSandbox?: NotebookProcessSandbox
   // Latency-probe deps for the fastest-mirror auto-selection, injectable so tests stay hermetic (the
   // real probe does live HEAD requests). Undefined in production → effectiveMirrorAsync's real probe.
@@ -287,7 +298,7 @@ type NotebookRuntimeServiceOptions = ProjectIdScope & {
     | 'markPackageMutationDirty'
     | 'refreshAfterPackageMutation'
   >
-  dependencyAnalyzer?: Pick<NotebookDependencyAnalyzer, 'project'>
+  dependencyAnalyzer?: NotebookDependencyAnalyzerPort
   helperModuleCatalog?: NotebookHelperModuleCatalog
 }
 
@@ -391,7 +402,7 @@ class NotebookRuntimeService {
   private readonly executionOwner: NotebookExecutionOwner
   private readonly shellProcessOwnership: ShellProcessOwnershipRegistry
   private readonly helperModules: NotebookHelperModuleHost
-  private readonly dependencyAnalyzer: Pick<NotebookDependencyAnalyzer, 'project'>
+  private readonly dependencyAnalyzer: NotebookDependencyAnalyzerPort
   private readonly dataExecutionAdmission: NotebookDataExecutionAdmissionOwner
   private readonly packageOperations: NotebookPackageOperations
   private readonly repairPolicy: NotebookRuntimeRepairPolicy
@@ -487,6 +498,8 @@ class NotebookRuntimeService {
       runtimeSettings,
       repairPolicy: this.repairPolicy,
       discoverRuntimes: options.discoverRuntimes,
+      acquireEnvironmentBindingLease: (environment) =>
+        this.environmentOperations.acquireBindingLease(environment),
       waitForEnvironmentStartup: () => this.environmentStartupBarrier,
       platform: options.platform
     })
@@ -522,10 +535,14 @@ class NotebookRuntimeService {
         this.sessions.get(this.sessionLifecycle.rootLane(sessionId, projectId)),
       runtimeBindings: (session) => this.runtimeBindingOwner.snapshot(session),
       runtimeEnvironment: (session, language) => this.resolveRunEnv(session, language),
-      isRestartRecommended: (processKey) =>
-        this.environmentOperations.isRestartRecommended(processKey)
+      isRestartRecommended: (processKey, session) =>
+        this.environmentOperations.isRestartRecommended(
+          processKey,
+          this.restartRecommendationScope(session, processKey)
+        )
     })
     this.sessionLifecycle = new NotebookSessionLifecycleOwner({
+      admitSessionWork: options.admitSessionWork,
       storageRoot: options.dataRoot,
       defaultProjectId,
       repository: this.repository,
@@ -542,6 +559,18 @@ class NotebookRuntimeService {
       platform: options.platform,
       callbacks: options.callbacks,
       toSessionReference: (session) => this.sessionReadModel.toSessionReference(session),
+      finalizeKernelEpochs: async (request) => {
+        try {
+          await this.dependencyAnalyzer.finalizeEpochs?.(request)
+        } catch (error) {
+          this.runtimeLogger.error('Notebook dependency epoch finalization failed', {
+            ...errorLogFields(error),
+            projectId: request.projectId,
+            sessionId: request.sessionId,
+            kernelEpochIds: request.kernelEpochIds
+          })
+        }
+      },
       onKernelStatusPersistenceFailure: ({ operation, lane, kind, env, error }) => {
         const message = 'notebook kernel lifecycle persistence failed'
         const fields = {
@@ -580,6 +609,10 @@ class NotebookRuntimeService {
       new EnvironmentStateTracker({
         dataRoot: options.dataRoot,
         platform: options.platform,
+        resolveMicromamba: async () =>
+          options.micromambaRunner
+            ? options.micromambaRunner.resolve()
+            : resolveMicromamba({ platform: options.platform }),
         logger: this.runtimeLogger
       })
     this.packageOperations = new NotebookPackageOperations({
@@ -605,10 +638,11 @@ class NotebookRuntimeService {
       installPackages: options.installPackagesImpl ?? installPackagesDefault,
       ...(options.processSandbox
         ? {
-            packageSpawn: (target) =>
+            packageSpawn: (target, mirror) =>
               sandboxedPackageSpawn({
                 processSandbox: options.processSandbox!,
                 request: target.request,
+                mirror,
                 runtimeRoot,
                 storageRoot: options.dataRoot,
                 interpreter: target.interpreter
@@ -666,7 +700,9 @@ class NotebookRuntimeService {
         }
       }
     })
-    this.shellProcessOwnership = new ShellProcessOwnershipRegistry(options.dataRoot)
+    this.shellProcessOwnership = new ShellProcessOwnershipRegistry(options.dataRoot, {
+      processHostPath: resolveNotebookResource(undefined, 'kernel_process_host.js')
+    })
     this.helperModules = new NotebookHelperModuleHost(options.helperModuleCatalog)
     this.executionOwner = new NotebookExecutionOwner({
       configRoot: options.configRoot,
@@ -688,9 +724,23 @@ class NotebookRuntimeService {
           completedRun: run,
           ...(interpreter ? { interpreter } : {})
         }),
+      sourceFileAccessContext: (session, run) =>
+        (run.kernelKind === 'python' || run.kernelKind === 'r') &&
+        run.kernelEpochId &&
+        this.dependencyAnalyzer.sourceFileAccessContext
+          ? this.dependencyAnalyzer.sourceFileAccessContext({
+              projectId: session.projectId,
+              sessionId: session.sessionId,
+              currentRunId: run.runId,
+              language: run.kernelKind,
+              environment: run.environment,
+              kernelEpochId: run.kernelEpochId
+            })
+          : Promise.resolve(undefined),
       helperModules: this.helperModules,
       logger: this.runtimeLogger,
       platform: options.platform,
+      shellRuntimeBinding: options.shellRuntimeBinding,
       shellProcess:
         options.shellProcess ??
         new NotebookShellProcessAdapter(
@@ -770,6 +820,17 @@ class NotebookRuntimeService {
     return language === 'r' ? DEFAULT_R_ENV : DEFAULT_PY_ENV
   }
 
+  private restartRecommendationScope(
+    session: RuntimeSession,
+    key: string
+  ): { sessionId: string; runtimeId: string } | undefined {
+    if (key !== dataProcessKey('r', DEFAULT_R_ENV)) return undefined
+    const binding = session.runtimeBinding('r')
+    return binding?.source === 'external'
+      ? { sessionId: session.id, runtimeId: binding.runtimeId }
+      : undefined
+  }
+
   // The Session binding picks the run's conda env. External or missing bindings use the language's
   // default env key, even when an external binding overrides the interpreter.
   private resolveRunEnv(session: RuntimeSession, language: NotebookLanguage): string {
@@ -796,7 +857,7 @@ class NotebookRuntimeService {
           ? rScriptBin(prefix, this.options.platform)
           : pythonBin(prefix, this.options.platform)),
       args: resolvedInterpreter?.args,
-      ...(language === 'r' && (resolvedInterpreter?.condaPrefix || binding?.source !== 'external')
+      ...(resolvedInterpreter?.condaPrefix || binding?.source !== 'external'
         ? { condaPrefix: resolvedInterpreter?.condaPrefix ?? prefix }
         : {})
     }
@@ -911,6 +972,9 @@ class NotebookRuntimeService {
   ): Promise<void> {
     const processKey = dataProcessKey(language, env)
     await this.sessionLifecycle.clearPersistedKernelTermination(session, processKey)
+    const restartScope = this.restartRecommendationScope(session, processKey)
+    if (restartScope)
+      this.environmentOperations.clearRestartRecommendations([processKey], restartScope)
     session.clearProcessState(processKey)
   }
 
@@ -1223,8 +1287,10 @@ class NotebookRuntimeService {
                       ? ((error as { code: string }).code ?? 'BACKGROUND_RUN_ADMISSION_FAILED')
                       : 'BACKGROUND_RUN_ADMISSION_FAILED',
                   stage: 'pre-admission',
-                  retryable: true,
-                  hint: 'Query by submissionIdentity before deciding whether to submit again.',
+                  retryable: Boolean(request.executionInvocationId),
+                  hint: request.executionInvocationId
+                    ? 'Query background_run with this submissionIdentity before deciding whether to submit again.'
+                    : 'No Run lookup identity is available, so this result cannot confirm whether a Run was accepted. Do not resubmit the same work; application-side recovery is required.',
                   ...(request.executionInvocationId
                     ? { submissionIdentity: request.executionInvocationId }
                     : {})
@@ -1446,7 +1512,8 @@ class NotebookRuntimeService {
   // terminalization, and completion interception belong to NotebookExecutionOwner.
   async executeControl(
     request: ExecuteNotebookControlRequest,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    onExecutionSettled?: (error?: unknown) => void
   ): Promise<NotebookControlResult> {
     if (request.background) {
       throw new NotebookBackgroundRunError(
@@ -1465,7 +1532,9 @@ class NotebookRuntimeService {
       return this.executionOwner.executeControl(
         session,
         request,
-        signal ? AbortSignal.any([signal, deletionSignal]) : deletionSignal
+        signal ? AbortSignal.any([signal, deletionSignal]) : deletionSignal,
+        undefined,
+        onExecutionSettled
       )
     })
   }
@@ -1533,8 +1602,10 @@ class NotebookRuntimeService {
                     ? ((error as { code: string }).code ?? 'BACKGROUND_RUN_ADMISSION_FAILED')
                     : 'BACKGROUND_RUN_ADMISSION_FAILED',
                 stage: 'pre-admission',
-                retryable: true,
-                hint: 'Query by submissionIdentity before deciding whether to submit again.',
+                retryable: Boolean(request.executionInvocationId),
+                hint: request.executionInvocationId
+                  ? 'Query background_run with this submissionIdentity before deciding whether to submit again.'
+                  : 'No Run lookup identity is available, so this result cannot confirm whether a Run was accepted. Do not resubmit the same work; application-side recovery is required.',
                 ...(request.executionInvocationId
                   ? { submissionIdentity: request.executionInvocationId }
                   : {})
@@ -1650,8 +1721,10 @@ class NotebookRuntimeService {
                       ? ((error as { code: string }).code ?? 'BACKGROUND_RUN_ADMISSION_FAILED')
                       : 'BACKGROUND_RUN_ADMISSION_FAILED',
                   stage: 'pre-admission',
-                  retryable: true,
-                  hint: 'Query by submissionIdentity before deciding whether to submit again.',
+                  retryable: Boolean(backgroundRequest.executionInvocationId),
+                  hint: backgroundRequest.executionInvocationId
+                    ? 'Query background_run with this submissionIdentity before deciding whether to submit again.'
+                    : 'No Run lookup identity is available, so this result cannot confirm whether a Run was accepted. Do not resubmit the same work; application-side recovery is required.',
                   ...(backgroundRequest.executionInvocationId
                     ? { submissionIdentity: backgroundRequest.executionInvocationId }
                     : {})
@@ -1673,7 +1746,12 @@ class NotebookRuntimeService {
   private assertManagedShellCommand(request: ExecuteShellRequest): void {
     const mechanism = detachedShellMechanism(
       request.command,
-      this.options.platform ?? process.platform
+      shellRuntimePlatform(
+        request.shellRuntime ??
+          this.options.shellRuntimeBinding ??
+          defaultShellRuntimeBinding(this.options.platform),
+        this.options.platform
+      )
     )
     if (!mechanism) return
     throw new NotebookBackgroundRunError(
@@ -1692,7 +1770,12 @@ class NotebookRuntimeService {
     signal?: AbortSignal
   ): Promise<RequestNotebookNetworkAccessResult> {
     if (!this.options.processSandbox?.requestNetworkAccess) {
-      return { hostname: request.hostname, status: 'unavailable' }
+      return {
+        hostname: request.hostname,
+        status: 'unavailable',
+        message:
+          'Network access approval is unavailable for the current Notebook runtime. No user decision was requested and no access was granted.'
+      }
     }
     return this.options.processSandbox.requestNetworkAccess({
       sessionId: request.sessionId,
@@ -1738,6 +1821,16 @@ class NotebookRuntimeService {
         throw new Error('Notebook history limit must be 1-100.')
       if (request.historyBefore && !isNotebookRunCursor(request.historyBefore))
         throw new Error('Notebook state history cursor is invalid.')
+      const projectId = resolveProjectId(request, resolveProjectId(this.options))
+      if (await isImportedResearchSession(this.options.dataRoot, projectId, request.sessionId)) {
+        return this.sessionReadModel.importedState(
+          request,
+          runIds,
+          request.historySummaryFrameId,
+          request.historyBefore,
+          historyLimit
+        )
+      }
       const session = await this.sessionLifecycle.ensure(request)
       // Project durable history only after the lane's binding commit settles, including reads
       // that arrived just before shutdown closed session creation admission.
@@ -1843,7 +1936,10 @@ class NotebookRuntimeService {
               await this.sessionLifecycle.persistKernelStatus(session, 'idle', processKey)
             }
             session.clearKernelTerminated(processKey)
-            this.environmentOperations.clearRestartRecommendations([processKey])
+            this.environmentOperations.clearRestartRecommendations(
+              [processKey],
+              this.restartRecommendationScope(session, processKey)
+            )
           } catch (error) {
             if (hasTargetState) {
               const failureStatus =
@@ -1898,7 +1994,12 @@ class NotebookRuntimeService {
 
       try {
         await session.restartExecutor(() => this.sessionLifecycle.createExecutor(session.lane))
-        this.environmentOperations.clearRestartRecommendations(envKeys)
+        for (const key of envKeys) {
+          this.environmentOperations.clearRestartRecommendations(
+            [key],
+            this.restartRecommendationScope(session, key)
+          )
+        }
         await this.repository.clearKernelTerminations({
           projectId: session.projectId,
           sessionId: session.sessionId,
@@ -1965,6 +2066,15 @@ class NotebookRuntimeService {
     signal?: AbortSignal
   ): Promise<ManageEnvironmentsResult> {
     return this.environmentManagement.manage(request, signal)
+  }
+
+  async importEnvironmentLock(input: {
+    projectId?: string
+    language: NotebookLanguage
+    lock: NotebookEnvironmentLock
+    lockChecksum: string
+  }): Promise<{ environmentName: string; reused: boolean }> {
+    return this.environmentManagement.importLock(input)
   }
 
   // Shuts down one session executor and removes its in-memory routing state.
@@ -2090,6 +2200,10 @@ class NotebookRuntimeService {
   // once recovery has settled, and when recovery was never kicked off (e.g. tests). Public so the
   // startup env gate and UI provision/repair handlers can share the SAME barrier (they touch prefixes
   // too, not just materialize/install).
+  recoveryStatus(): import('../../shared/notebook-env').NotebookRecoveryStatus {
+    return this.recoveryCoordinator.status()
+  }
+
   async ensureRecovered(): Promise<void> {
     if (this.runLifecycleRecovery) await this.recoverInterruptedOperations()
     await this.kernelProcessLifecycle.ensureReady()
@@ -2104,7 +2218,8 @@ class NotebookRuntimeService {
       throw new Error(
         `RUNTIME_RECOVERY_BLOCKED: a previous operation on "${prefix}" was interrupted and its worker ` +
           'process could not be confirmed stopped, so writing this environment now could corrupt it. ' +
-          'Restart the app to re-check and recover it, then try again.'
+          'Use Recheck in Settings → Runtimes. If the block remains, wait for the old worker to exit. ' +
+          'Restarting the app does not prove that the worker stopped.'
       )
     }
   }
@@ -2223,13 +2338,27 @@ class NotebookRuntimeService {
   // Shuts down every live interpreter, used by app-level cleanup paths. Returns { reaped }: true only
   // when every kernel tree was cleanly reaped, so the update-install gate can refuse to trigger the
   // NSIS uninstall while a kernel may still hold file handles under the install dir.
-  async shutdownAll(): Promise<{ reaped: boolean }> {
+  async shutdownAll(options?: { legacyShellRecoveryToken?: string }): Promise<{
+    reaped: boolean
+    legacyShellRecovery?: { token: string; count: number }
+  }> {
     const releaseFence = this.executionOwner.fenceShellRuns({ global: true })
     try {
       const shell = await this.executionOwner.cancelShellRuns(
         {},
         new Error('Notebook runtime is shutting down.')
       )
+      const sessions = await this.sessionLifecycle.shutdownAll()
+      if (shell.reaped && sessions.reaped && options?.legacyShellRecoveryToken) {
+        try {
+          this.shellProcessOwnership.archiveLegacyLaunches(options.legacyShellRecoveryToken)
+        } catch {
+          return {
+            reaped: false,
+            legacyShellRecovery: this.shellProcessOwnership.getLegacyRecovery()
+          }
+        }
+      }
       const shellRecoveryReaped =
         shell.reaped && !this.shellProcessOwnership.hasReceipts()
           ? true
@@ -2237,8 +2366,12 @@ class NotebookRuntimeService {
               .recover()
               .then(() => true)
               .catch(() => false)
-      const sessions = await this.sessionLifecycle.shutdownAll()
-      return { reaped: shellRecoveryReaped && sessions.reaped }
+      return {
+        reaped: shell.reaped && shellRecoveryReaped && sessions.reaped,
+        ...(!shellRecoveryReaped && shell.reaped && sessions.reaped
+          ? { legacyShellRecovery: this.shellProcessOwnership.getLegacyRecovery() }
+          : {})
+      }
     } finally {
       // shutdownAll is reusable when an update/migration is cancelled.
       releaseFence()

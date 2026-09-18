@@ -79,8 +79,13 @@ export const hashCommand = (command: string): string =>
 // This is called both at submit time (to return immediately) and by the dispatcher.
 export const computeRemoteWorkdir = (scratchRoot: string | undefined, jobId: string): string => {
   const root = scratchRoot?.trim() || '~'
-  return `${root}/.openscience/jobs/${jobId}`
+  return `${root}/.open-science/jobs/${jobId}`
 }
+
+export const computeLegacyRemoteWorkdir = (
+  scratchRoot: string | undefined,
+  jobId: string
+): string => `${scratchRoot?.trim() || '~'}/.openscience/jobs/${jobId}`
 
 // Quotes a remote path for safe interpolation into a remote shell command, while still allowing a
 // leading `~` to be expanded to $HOME by the shell. A tilde inside double/single quotes is NOT
@@ -273,7 +278,7 @@ async function dispatchJobInner(jobId: string, deps: DispatcherDeps): Promise<vo
     return
   }
 
-  const workdir = job.remote_workdir ?? computeRemoteWorkdir(host.scratchRoot, jobId)
+  const workdir = job.remote_workdir ?? computeLegacyRemoteWorkdir(host.scratchRoot, jobId)
   const timeoutSecs = job.timeout_seconds ?? 86400 // default 24h
 
   // Stage inputs declared in the manifest (all-or-nothing: failure → dispatch_failed).

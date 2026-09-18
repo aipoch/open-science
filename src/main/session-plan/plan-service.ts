@@ -622,7 +622,17 @@ class PlanService {
     const valid =
       startsStep ||
       (previous === 'in_progress' && ['in_progress', 'completed', 'blocked'].includes(input.status))
-    if (!valid) throw new PlanCommandError('invalid-transition', 'Invalid Plan step transition.')
+    if (!valid) {
+      const allowed = !previous
+        ? ['in_progress', 'skipped']
+        : previous === 'in_progress'
+          ? ['in_progress', 'completed', 'blocked']
+          : [previous]
+      throw new PlanCommandError(
+        'invalid-transition',
+        `Plan step ${JSON.stringify(input.title)} is ${previous ?? 'not_started'}; requested ${input.status}. Allowed statuses: ${allowed.join(', ')}${previous && isTerminalStepStatus(previous) ? ' (same terminal status is idempotent)' : ''}.`
+      )
+    }
     if (startsStep) this.requireStartDependencies(document, plan, input.title)
     const updated: SessionPlanRuntimeContext = {
       ...plan,
@@ -865,7 +875,35 @@ class PlanService {
     ) {
       throw new PlanCommandError(
         'dependency-not-satisfied',
-        'The Plan step dependencies are not satisfied.'
+        `Cannot start Plan step ${JSON.stringify(title)}. ` +
+          [
+            ...delegation.steps
+              .slice(0, stepIndex)
+              .filter((step) => !isNormallyFinished(step.title))
+              .slice(0, 1)
+              .map(
+                (step) =>
+                  `Prior step ${JSON.stringify(step.title)} is ${runtimeStatusFor(plan, step.title)?.status ?? 'not_started'}; it must be completed or skipped.`
+              ),
+            ...document.phases
+              .slice(0, phaseIndex)
+              .flatMap((priorPhase) =>
+                priorPhase.delegations.flatMap((priorDelegation) =>
+                  priorDelegation.steps
+                    .filter((step) => !isNormallyFinished(step.title))
+                    .map(
+                      (step) =>
+                        `Prior phase ${JSON.stringify(priorPhase.name)} has unfinished step ${JSON.stringify(step.title)} (${runtimeStatusFor(plan, step.title)?.status ?? 'not_started'}); prior phases must be completed or skipped.`
+                    )
+                )
+              )
+              .slice(0, 1),
+            ...(blockedTitle !== undefined && !delegationStartedBeforeBlock
+              ? [
+                  `Plan step ${JSON.stringify(blockedTitle)} is blocked; a new delegation cannot start.`
+                ]
+              : [])
+          ].join(' ')
       )
     }
   }

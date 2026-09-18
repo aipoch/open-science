@@ -1,5 +1,5 @@
-import { createReadStream } from 'node:fs'
-import { mkdir, open, rm, stat } from 'node:fs/promises'
+import { constants, createReadStream } from 'node:fs'
+import { mkdir, open, rm, type FileHandle } from 'node:fs/promises'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
@@ -29,7 +29,7 @@ type ActiveTransferOwnerOptions = {
   maxFileBytes?: number
   createLocalReadStream?: (
     sourcePath: string,
-    options: { highWaterMark: number; signal: AbortSignal }
+    options: { highWaterMark: number; signal: AbortSignal; fd: FileHandle; autoClose: false }
   ) => ReturnType<typeof createReadStream>
 }
 
@@ -262,12 +262,14 @@ class ActiveTransferOwner {
     }
     let receivedBytes = 0
     let output: Awaited<ReturnType<typeof open>> | undefined
+    let source: Awaited<ReturnType<typeof open>> | undefined
 
     // Register before the first await so renderer teardown can cancel validation/directory setup too.
     this.activeLocalTransfers.set(transferId, localTransfer)
 
     try {
-      const sourceInfo = await stat(request.sourcePath)
+      source = await open(request.sourcePath, constants.O_RDONLY | constants.O_NONBLOCK)
+      const sourceInfo = await source.stat({ bigint: true })
 
       if (!sourceInfo.isFile()) {
         throw new Error(`Upload source is not a file: ${originalName}`)
@@ -277,7 +279,7 @@ class ActiveTransferOwner {
           `Upload exceeds the ${formatUploadSizeLimit(maxFileBytes)} per-file limit: ${originalName}`
         )
       }
-      if (sourceInfo.size !== request.size) {
+      if (sourceInfo.size !== BigInt(request.size)) {
         throw new Error(`Upload source changed before it could be staged: ${originalName}`)
       }
       if (localTransfer.cancelled) throw new Error(`Upload cancelled: ${originalName}`)
@@ -290,6 +292,8 @@ class ActiveTransferOwner {
       const sourceStream = (this.options.createLocalReadStream ?? createReadStream)(
         request.sourcePath,
         {
+          fd: source,
+          autoClose: false,
           highWaterMark: MAX_UPLOAD_CHUNK_BYTES,
           signal: localTransfer.abortController.signal
         }
@@ -327,7 +331,13 @@ class ActiveTransferOwner {
       await output.close()
       output = undefined
 
-      if (receivedBytes !== request.size) {
+      const sourceAfter = await source.stat({ bigint: true })
+      if (
+        receivedBytes !== request.size ||
+        sourceAfter.size !== sourceInfo.size ||
+        sourceAfter.mtimeNs !== sourceInfo.mtimeNs ||
+        sourceAfter.ctimeNs !== sourceInfo.ctimeNs
+      ) {
         throw new Error(`Upload source changed while it was being staged: ${originalName}`)
       }
 
@@ -350,6 +360,7 @@ class ActiveTransferOwner {
       await rm(stagingPath, { force: true })
       throw error
     } finally {
+      await source?.close().catch(() => undefined)
       if (this.activeLocalTransfers.get(transferId) === localTransfer) {
         this.activeLocalTransfers.delete(transferId)
       }

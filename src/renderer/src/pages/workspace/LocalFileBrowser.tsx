@@ -1,3 +1,4 @@
+import { InlineNotice } from '@/components/ui/inline-notice'
 // Local ("This computer") file browser. Rendered as one of the two containers the Files tab can show:
 // the source dropdown swaps between the artifacts list and this browser, so it owns no tab or modal
 // chrome of its own. Forked from the remote FileBrowserModal chrome (editable address bar, Go-to
@@ -320,9 +321,9 @@ const LocalListing = ({
   return (
     <div className="min-h-0 flex-1 overflow-auto">
       {state.truncated ? (
-        <div className="bg-amber-50 px-4 py-1.5 text-[11px] text-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
+        <InlineNotice className="m-2">
           {t('Showing the first entries only — this directory is very large.')}
-        </div>
+        </InlineNotice>
       ) : null}
       {state.entries.length === 0 ? (
         <div className="flex h-full items-center justify-center text-xs text-muted-foreground">

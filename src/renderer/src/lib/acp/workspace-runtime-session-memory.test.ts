@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type { AgentTurnProvenanceContext } from '../../../../shared/elicitation'
 import { SessionSizeLimitError } from '../../../../shared/session-persistence'
-import { useSessionStore, type ChatSession } from '../../stores/session-store'
+import { toPersistedSession, useSessionStore, type ChatSession } from '../../stores/session-store'
+import { sendWorkspaceMessage } from './workspace-runtime-command-owner'
 import { createWorkspaceRuntimeSessionLifecycleOwner } from './workspace-runtime-session-lifecycle-owner'
 import { reconfigureWorkspaceMemory } from './workspace-runtime-session-memory-owner'
 
@@ -67,6 +69,99 @@ describe('workspace Session Memory reconfiguration', () => {
       providerContinuityToken: 'continuity-replacement',
       pendingHistoryReplay: { kind: 'all' }
     })
+  })
+
+  it('persists a fresh Runtime Segment before the next real workspace prompt uses it', async () => {
+    useSessionStore.setState({
+      sessions: [
+        session({
+          agentFrameworkId: 'codex',
+          agentBackendId: 'codex:provider-1',
+          providerSessionId: 'provider-original'
+        })
+      ],
+      selectedSessionId: 'session-1'
+    })
+    const persisted: ReturnType<typeof toPersistedSession>[] = []
+    const persist = vi.fn(async (sessionId: string) => {
+      const current = useSessionStore
+        .getState()
+        .sessions.find((candidate) => candidate.id === sessionId)
+      if (!current) throw new Error(`Session not found: ${sessionId}`)
+      persisted.push(toPersistedSession(current))
+    })
+    const sendPrompt = vi.fn((...args: unknown[]) => {
+      void args
+      return Promise.resolve({ sessionIds: ['session-1'] })
+    })
+    const runtime = {
+      state: {
+        sessionIds: ['session-1'],
+        cwd: '/workspace',
+        events: [],
+        pendingPermissions: [],
+        promptInFlightSessionIds: []
+      },
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(async () => ({
+        sessionId: 'session-1',
+        frameworkId: 'codex',
+        backendId: 'codex:provider-1',
+        providerSessionId: 'provider-replacement',
+        providerContinuityToken: 'continuity-replacement',
+        contextReset: true
+      })),
+      sendPrompt
+    }
+
+    await reconfigureWorkspaceMemory(runtime as never, 'session-1', false, persist)
+
+    const previousRuntimeSegmentId = persisted[0]?.conversationGraph?.runtimeSegments.at(-1)?.id
+    const resetSnapshot = persisted.at(-1)
+    const resetRuntimeSegmentId = resetSnapshot?.conversationGraph?.runtimeSegments.at(-1)?.id
+    expect(resetRuntimeSegmentId).toEqual(expect.any(String))
+    expect(resetRuntimeSegmentId).not.toBe(previousRuntimeSegmentId)
+    expect(resetSnapshot).toMatchObject({
+      providerSessionId: 'provider-replacement',
+      pendingHistoryReplay: { kind: 'all' }
+    })
+
+    const sent = await sendWorkspaceMessage(
+      runtime as never,
+      {
+        sessionId: 'session-1',
+        text: 'Continue after Memory reset',
+        cwd: '/workspace',
+        projectId: 'project-1',
+        agentFrameworkId: 'codex',
+        agentBackendId: 'codex:provider-1'
+      },
+      { flushPersistence: () => persist('session-1') }
+    )
+
+    expect(useSessionStore.getState().sessions[0]?.error).toBeUndefined()
+    expect(sent).toEqual({ sessionId: 'session-1', messageId: expect.any(String) })
+    await vi.waitFor(() => expect(sendPrompt).toHaveBeenCalledOnce())
+    const provenance = sendPrompt.mock.calls[0]?.[9] as AgentTurnProvenanceContext | undefined
+    expect(provenance).toMatchObject({ runtimeSegmentId: resetRuntimeSegmentId })
+    expect(
+      resetSnapshot?.conversationGraph?.runtimeSegments.some(
+        (segment) => segment.id === provenance?.runtimeSegmentId
+      )
+    ).toBe(true)
+    expect(
+      persisted
+        .at(-1)
+        ?.conversationGraph?.messages.some(
+          (message) =>
+            message.id === provenance?.promptMessageId &&
+            message.runtimeSegmentId === provenance?.runtimeSegmentId
+        )
+    ).toBe(true)
+    expect(persist.mock.invocationCallOrder.at(-1)!).toBeLessThan(
+      sendPrompt.mock.invocationCallOrder[0]!
+    )
   })
 
   it('rolls back the preference when capability replacement fails', async () => {

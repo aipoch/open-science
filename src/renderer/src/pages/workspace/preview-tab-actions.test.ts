@@ -312,3 +312,29 @@ describe('runPreviewTabAction', () => {
     expect(togglePdfContext).not.toHaveBeenCalled()
   })
 })
+
+it('offers a relationship-bound navigation action for Side chat tabs', () => {
+  const item = createToolItem({
+    toolKind: 'side-chat',
+    projectId: 'project-1',
+    sessionId: 'parent-1'
+  })
+  const viewSession = vi.fn()
+  const deps: PreviewTabActionDeps = {
+    viewSession,
+    closeTab: vi.fn(),
+    closeOtherTabs: vi.fn(),
+    saveManagedFile: vi.fn(),
+    copyText: vi.fn(),
+    stageLocalPath: undefined,
+    activeProjectId: 'project-1'
+  }
+  const context = { tabCount: 2 }
+  expect(commandsOf(getPreviewTabActionGroups(item, context))).toEqual([
+    'close',
+    'close-others',
+    'view-session'
+  ])
+  createPreviewTabActionBindings(context, deps)['view-session']!.execute!(item)
+  expect(viewSession).toHaveBeenCalledWith(item)
+})

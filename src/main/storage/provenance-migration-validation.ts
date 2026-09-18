@@ -7,9 +7,15 @@ import { validateConversationGraph } from '../../shared/conversation-graph'
 import { NOTEBOOK_RUN_FILE } from '../../shared/notebook'
 import { normalizeSessionFile } from '../../shared/session-persistence'
 import { operationJournalPath, RuntimeOperationJournal } from '../notebook/operation-journal'
+import { parseNotebookEnvironmentLock } from '../notebook/environment-lock'
 import { createProjectDbClient } from '../projects/prisma-client'
 import { requireAgentArtifactVersion } from '../artifacts/provenance-version-kind'
 import { resolveContentStorageKey } from './content-repository'
+import {
+  decodeArtifactExecutionSnapshot,
+  validateArtifactReproducibilityReceiptStorage,
+  validateArtifactReproducibilityRecipeStorage
+} from '../artifacts/provenance-storage-contract'
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
 const storageKey = (...segments: string[]): string => segments.join('/')
@@ -120,11 +126,79 @@ const collectEnvironmentManifests = async (root: string): Promise<Set<string>> =
   return manifestChecksums
 }
 
+const collectEnvironmentLocks = async (root: string): Promise<Set<string>> => {
+  const lockDirectory = join(root, 'runtime', 'provenance', 'environment-locks')
+  const lockChecksums = new Set<string>()
+  for (const entry of await readEntries(lockDirectory)) {
+    if (!entry.isFile() || !entry.name.endsWith('.json')) continue
+    const checksum = entry.name.slice(0, -'.json'.length)
+    if (SHA256_PATTERN.test(checksum)) lockChecksums.add(checksum)
+  }
+  return lockChecksums
+}
+
+const validateEnvironmentManifestChecksum = async (
+  root: string,
+  checksum: string,
+  manifestChecksums: Set<string>,
+  validated: Set<string>
+): Promise<void> => {
+  if (!SHA256_PATTERN.test(checksum)) {
+    throw new Error(`Notebook Environment reference is invalid: ${checksum}`)
+  }
+  if (validated.has(checksum)) return
+  if (!manifestChecksums.has(checksum)) {
+    throw new Error(`Notebook Environment manifest is unavailable: ${checksum}`)
+  }
+  const manifestPath = join(
+    root,
+    'runtime',
+    'provenance',
+    'environment-manifests',
+    `${checksum}.json`
+  )
+  if ((await sha256File(manifestPath)) !== checksum) {
+    throw new Error(`Notebook Environment manifest checksum mismatch: ${checksum}`)
+  }
+  validated.add(checksum)
+}
+
+const validateEnvironmentLockReference = async (
+  root: string,
+  value: unknown,
+  lockChecksums: Set<string>,
+  validated: Set<string>,
+  label: string
+): Promise<void> => {
+  const capture = recordValue(value)
+  if (!capture || (capture.state !== 'available' && capture.state !== 'partial')) return
+  const checksum = capture.lockChecksum
+  if (typeof checksum !== 'string' || !SHA256_PATTERN.test(checksum)) {
+    throw new Error(`${label} Environment lock reference is invalid.`)
+  }
+  if (validated.has(checksum)) return
+  if (!lockChecksums.has(checksum)) {
+    throw new Error(`Environment lock is unavailable: ${checksum}`)
+  }
+  const lockPath = join(root, 'runtime', 'provenance', 'environment-locks', `${checksum}.json`)
+  if ((await sha256File(lockPath)) !== checksum) {
+    throw new Error(`Environment lock checksum mismatch: ${checksum}`)
+  }
+  try {
+    parseNotebookEnvironmentLock(await readFile(lockPath, 'utf8'))
+  } catch {
+    throw new Error(`Environment lock is invalid: ${checksum}`)
+  }
+  validated.add(checksum)
+}
+
 const validateReferencedEnvironmentManifests = async (
   root: string,
-  manifestChecksums: Set<string>
+  manifestChecksums: Set<string>,
+  lockChecksums: Set<string>,
+  validatedLocks: Set<string>,
+  validatedManifests: Set<string>
 ): Promise<void> => {
-  const validated = new Set<string>()
   const notebooksRoot = join(root, 'notebooks')
   for (const project of await readEntries(notebooksRoot)) {
     if (!project.isDirectory()) continue
@@ -149,31 +223,33 @@ const validateReferencedEnvironmentManifests = async (
             : captureState === 'available' || captureState === 'partial'
               ? capture?.manifestChecksum
               : undefined
+        await validateEnvironmentLockReference(
+          root,
+          run.environmentLock,
+          lockChecksums,
+          validatedLocks,
+          `Notebook run ${String(run.runId ?? '')}`
+        )
         if (checksum === undefined) continue
         if (typeof checksum !== 'string' || !SHA256_PATTERN.test(checksum)) {
           throw new Error(`Notebook Environment reference is invalid: ${String(run.runId ?? '')}`)
         }
-        if (validated.has(checksum)) continue
-        if (!manifestChecksums.has(checksum)) {
-          throw new Error(`Notebook Environment manifest is unavailable: ${checksum}`)
-        }
-        const manifestPath = join(
+        await validateEnvironmentManifestChecksum(
           root,
-          'runtime',
-          'provenance',
-          'environment-manifests',
-          `${checksum}.json`
+          checksum,
+          manifestChecksums,
+          validatedManifests
         )
-        if ((await sha256File(manifestPath)) !== checksum) {
-          throw new Error(`Notebook Environment manifest checksum mismatch: ${checksum}`)
-        }
-        validated.add(checksum)
       }
     }
   }
 }
 
-const validateArtifactVersions = async (root: string): Promise<void> => {
+const validateArtifactVersions = async (
+  root: string,
+  lockChecksums: Set<string>,
+  validatedLocks: Set<string>
+): Promise<void> => {
   const artifactsRoot = join(root, 'artifacts')
   for (const project of await readEntries(artifactsRoot)) {
     if (!project.isDirectory()) continue
@@ -213,14 +289,38 @@ const validateArtifactVersions = async (root: string): Promise<void> => {
           if (contentSize !== sizeBytes || (await sha256File(contentPath)) !== checksum) {
             throw new Error(`Artifact content checksum mismatch: ${version.name}`)
           }
+          await validateArtifactReproducibilityReceiptStorage(versionDirectory)
           if (recordValue(evidence.execution_status)?.state === 'available') {
             const executionChecksum = evidence.execution_snapshot_checksum
+            const executionPath = join(versionDirectory, 'execution.json')
             if (
               typeof executionChecksum !== 'string' ||
               !SHA256_PATTERN.test(executionChecksum) ||
-              (await sha256File(join(versionDirectory, 'execution.json'))) !== executionChecksum
+              (await sha256File(executionPath)) !== executionChecksum
             ) {
               throw new Error(`Artifact execution checksum mismatch: ${version.name}`)
+            }
+            const execution = await readRecord(executionPath)
+            if (execution.reproducibilityRecipe !== undefined) {
+              const decoded = decodeArtifactExecutionSnapshot(JSON.stringify(execution))
+              if (decoded.status !== 'valid' || !decoded.value.reproducibilityRecipe) {
+                throw new Error(`Artifact reproducibility recipe is invalid: ${version.name}`)
+              }
+              await validateArtifactReproducibilityRecipeStorage(
+                decoded.value.reproducibilityRecipe,
+                root
+              )
+            }
+            for (const rawRun of Array.isArray(execution.runs) ? execution.runs : []) {
+              const run = recordValue(rawRun)
+              if (!run) throw new Error(`Artifact execution run is invalid: ${version.name}`)
+              await validateEnvironmentLockReference(
+                root,
+                run.environmentLock,
+                lockChecksums,
+                validatedLocks,
+                `Artifact execution run ${String(run.runId ?? '')}`
+              )
             }
           }
         }
@@ -616,7 +716,16 @@ export const validateProvenanceMigrationState = async (
   await validateSessionGraphs(authorityRoot)
   await validateSqliteStore(dataRoot, authorityRoot)
   const manifests = await collectEnvironmentManifests(dataRoot)
-  await validateReferencedEnvironmentManifests(dataRoot, manifests)
-  await validateArtifactVersions(dataRoot)
+  const locks = await collectEnvironmentLocks(dataRoot)
+  const validatedLocks = new Set<string>()
+  const validatedManifests = new Set<string>()
+  await validateReferencedEnvironmentManifests(
+    dataRoot,
+    manifests,
+    locks,
+    validatedLocks,
+    validatedManifests
+  )
+  await validateArtifactVersions(dataRoot, locks, validatedLocks)
   await assertNoUploadStaging(dataRoot)
 }

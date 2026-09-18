@@ -78,7 +78,7 @@ describe('writeImported swap atomicity', () => {
 
     await expect(
       repo.importFromGitHub(SKILL_URL, fetchSkill('---\nname: Foo\n---\nnew body'))
-    ).rejects.toThrow(/simulated swap failure/)
+    ).rejects.toThrow(/The previous copy was restored.*simulated swap failure/)
 
     // The failed swap left the previous skill intact — not deleted, not half-written.
     expect(await repo.body(first.id)).toContain('old body')
@@ -106,7 +106,7 @@ describe('writeImported swap atomicity', () => {
 
     await expect(
       repo.importFromGitHub(SKILL_URL, fetchSkill('---\nname: Foo\n---\nnew body'))
-    ).rejects.toThrow(/preserved at .*backup-.*restored on the next operation/)
+    ).rejects.toThrow(/preserved at .*backup-.*retried on the next operation/)
 
     // With a healthy filesystem again, the SAME instance recovers the preserved backup on its next
     // operation — recovery is not memoized after the first pass, so a backup left later is still fixed.
@@ -228,6 +228,28 @@ describe.each(['imported', 'personal'] as const)('%s replacement recovery valida
 
     expect(validate).toHaveBeenCalledTimes(1)
     expect(await readFile(join(live, 'SKILL.md'), 'utf8')).toBe(oldDocument)
+    expect(await fsp.readdir(sourceDir)).toEqual(['foo'])
+  })
+
+  it('reports pending recovery when validation fails and backup restoration is unavailable', async () => {
+    const repo = new UserSkillRepository(root, undefined, async () => {
+      throw new Error('new helper rejected')
+    })
+    vi.mocked(fsp.rename).mockImplementation(async (from, to) => {
+      if (String(from).includes('.backup-')) throw new Error('backup restore unavailable')
+      return realRename(from, to)
+    })
+    const operation =
+      source === 'imported'
+        ? repo.importFromGitHub(SKILL_URL, fetchSkill(newDocument))
+        : repo.updatePersonal('personal-foo', { name: 'foo', description: '', body: 'new body' })
+    await expect(operation).rejects.toThrow('recovery is pending')
+    const backups = (await fsp.readdir(sourceDir)).filter((entry) => entry.includes('.backup-'))
+    expect(backups).toHaveLength(1)
+    expect(await readFile(join(sourceDir, backups[0], 'SKILL.md'), 'utf8')).toBe(oldDocument)
+    vi.mocked(fsp.rename).mockImplementation((from, to) => realRename(from, to))
+    const restarted = new UserSkillRepository(root)
+    expect(await restarted.body(`${source}-foo`)).toContain('old body')
     expect(await fsp.readdir(sourceDir)).toEqual(['foo'])
   })
 

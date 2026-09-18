@@ -168,7 +168,8 @@ const reviseWorkspaceElicitation = async (
               agentFrameworkId: resumed.frameworkId,
               agentBackendId: resumed.backendId,
               providerSessionId: resumed.providerSessionId,
-              providerContinuityToken: resumed.providerContinuityToken
+              providerContinuityToken: resumed.providerContinuityToken,
+              wslSetup: resumed.wslSetup
             }
           : undefined
       )
@@ -224,7 +225,8 @@ const reviseWorkspaceElicitation = async (
               agentFrameworkId: reset.frameworkId,
               agentBackendId: reset.backendId,
               providerSessionId: reset.providerSessionId,
-              providerContinuityToken: reset.providerContinuityToken
+              providerContinuityToken: reset.providerContinuityToken,
+              wslSetup: reset.wslSetup
             }
           : undefined
       )
@@ -336,7 +338,8 @@ const respondToWorkspaceElicitation = async (
             agentFrameworkId: resumed.frameworkId,
             agentBackendId: resumed.backendId,
             providerSessionId: resumed.providerSessionId,
-            providerContinuityToken: resumed.providerContinuityToken
+            providerContinuityToken: resumed.providerContinuityToken,
+            wslSetup: resumed.wslSetup
           }
         : undefined
     )

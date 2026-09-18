@@ -3,6 +3,7 @@ import { act, useEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { usePackageOperationStore } from '../../stores/package-operation-store'
 import type { BackgroundResultActivityItem } from '../../../../shared/background-result-delivery'
 import type { NotebookRunRecord, NotebookSessionReference } from '../../../../shared/notebook'
 import {
@@ -149,8 +150,45 @@ describe('useSessionBackgroundTasks', () => {
   afterEach(() => {
     act(() => root?.unmount())
     document.body.innerHTML = ''
+    usePackageOperationStore.setState({ operation: null })
+    vi.useRealTimers()
     vi.unstubAllGlobals()
     latest = undefined
+  })
+
+  it('pauses Notebook polling while its Session is exporting and resumes after release', async () => {
+    vi.useFakeTimers()
+    const state = vi.fn().mockResolvedValue({ runs: [run()] })
+    stubApi({
+      backgroundResultDelivery: emptyDeliveryApi(),
+      notebook: { state, onChanged: vi.fn(() => () => undefined) }
+    })
+    await mount('session-1', 'project-1', notebook)
+    expect(state).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      usePackageOperationStore.getState().receive({
+        id: 'export-1',
+        kind: 'export',
+        state: 'awaiting-selection',
+        session: { projectId: 'project-1', sessionId: 'session-1' },
+        progress: { phase: 'selecting' }
+      })
+    })
+    state.mockClear()
+    state.mockRejectedValue(
+      new Error('This Session is locked while its research package is being exported.')
+    )
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000)
+    })
+    expect(state).not.toHaveBeenCalled()
+    expect(latest?.runs).toHaveLength(1)
+    state.mockResolvedValue({ runs: [] })
+    await act(async () => {
+      usePackageOperationStore.getState().receive(null)
+    })
+    expect(state).toHaveBeenCalledTimes(1)
+    expect(latest?.runs).toHaveLength(0)
   })
 
   it('collects background Runs, deliveries, and Compute Jobs with a unified summary', async () => {
@@ -341,4 +379,86 @@ describe('useSessionBackgroundTasks', () => {
     act(() => changed?.({ projectId: 'project-1' }))
     await vi.waitFor(() => expect(getSessionActivity).toHaveBeenCalledTimes(2))
   })
+
+  it.each(['resolve', 'reject', 'unmount', 'switch'] as const)(
+    'coalesces events and polling during an in-flight read, then handles %s',
+    async (outcome) => {
+      vi.useFakeTimers()
+      let resolve!: (value: { runs: NotebookRunRecord[] }) => void
+      let reject!: (error: Error) => void
+      const pending = new Promise<{ runs: NotebookRunRecord[] }>((done, fail) => {
+        resolve = done
+        reject = fail
+      })
+      const state = vi.fn().mockResolvedValue({ runs: [run({ runId: 'fresh' })] })
+      state.mockReturnValueOnce(pending)
+      const deliveryApi = emptyDeliveryApi()
+      const jobsList = vi.fn().mockResolvedValue([])
+      const stopNotebook = vi.fn()
+      const stopCompute = vi.fn()
+      const stopDelivery = vi.fn()
+      let changed!: (event: { projectId: string; sessionId: string }) => void
+      let jobUpdated!: (job: typeof runningJob) => void
+      let deliveryChanged!: (event: { projectId: string }) => void
+      deliveryApi.onChanged.mockImplementation((callback) => {
+        deliveryChanged = callback
+        return stopDelivery
+      })
+      stubApi({
+        notebook: {
+          state,
+          onChanged: (callback: typeof changed) => {
+            changed = callback
+            return stopNotebook
+          }
+        },
+        backgroundResultDelivery: deliveryApi,
+        compute: {
+          jobsList,
+          onJobUpdated: (callback: typeof jobUpdated) => {
+            jobUpdated = callback
+            return stopCompute
+          }
+        }
+      })
+      await mount('session-1', 'project-1', notebook)
+      await act(async () => {
+        for (let i = 0; i < 50; i++) {
+          changed({ projectId: 'project-1', sessionId: 'session-1' })
+          jobUpdated(runningJob)
+          deliveryChanged({ projectId: 'project-1' })
+        }
+        await vi.advanceTimersByTimeAsync(30_000)
+      })
+      expect(state).toHaveBeenCalledOnce()
+      expect(jobsList).toHaveBeenCalledOnce()
+      expect(deliveryApi.getSessionActivity).toHaveBeenCalledOnce()
+
+      await act(async () => {
+        if (outcome === 'unmount') {
+          root?.unmount()
+          root = undefined
+        }
+        if (outcome === 'switch')
+          root?.render(<Probe sessionId="session-2" projectId="project-1" notebook={undefined} />)
+      })
+      await act(async () => {
+        if (outcome === 'reject') reject(new Error('temporary read failure'))
+        else resolve({ runs: [run({ runId: 'stale' })] })
+      })
+      if (outcome === 'unmount' || outcome === 'switch') {
+        act(() => changed({ projectId: 'project-1', sessionId: 'session-1' }))
+        expect(state).toHaveBeenCalledOnce()
+        expect(stopNotebook).toHaveBeenCalledOnce()
+        expect(stopCompute).toHaveBeenCalledOnce()
+        expect(stopDelivery).toHaveBeenCalledOnce()
+        if (outcome === 'switch') expect(latest?.runs).toEqual([])
+      } else {
+        expect(state).toHaveBeenCalledTimes(2)
+        expect(jobsList).toHaveBeenCalledTimes(2)
+        expect(deliveryApi.getSessionActivity).toHaveBeenCalledTimes(2)
+        expect(latest?.runs.map((value) => value.runId)).toEqual(['fresh'])
+      }
+    }
+  )
 })

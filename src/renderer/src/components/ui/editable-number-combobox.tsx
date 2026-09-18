@@ -1,4 +1,4 @@
-/* Hallmark · component: editable number combobox · genre: modern-minimal · theme: Open Science Settings
+/* Hallmark · component: editable number combobox · genre: modern-minimal · theme: Open-Science Settings
  * states: default · hover · focus · active · disabled · loading · error · success
  * contrast: uses the project semantic foreground, muted, ring, destructive, and success tokens
  * pre-emit critique: P5 H5 E5 S5 R5 V5

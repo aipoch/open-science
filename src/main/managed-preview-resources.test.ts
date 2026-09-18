@@ -244,6 +244,42 @@ describe('ManagedPreviewResources', () => {
     }
   )
 
+  it('waits for a logical managed version that is still being published', async () => {
+    const trustedBytes = Buffer.from('published after preview request')
+    const publicationPending = Object.assign(new Error('Managed file has no published version.'), {
+      code: 'VERSION_NOT_FOUND'
+    })
+    const openManagedFileVersion = vi
+      .fn()
+      .mockRejectedValueOnce(publicationPending)
+      .mockResolvedValue({
+        path: '/managed/published.pdf',
+        size: trustedBytes.byteLength,
+        versionToken: 42,
+        snapshot: { dev: 1n, ino: 2n, size: BigInt(trustedBytes.byteLength), mtimeNs: 3n },
+        read: vi.fn(),
+        readRange: vi.fn(async (begin: number, end: number) => trustedBytes.subarray(begin, end)),
+        copyTo: vi.fn(),
+        verifyUnchanged: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn().mockResolvedValue(undefined)
+      })
+    const resources = new ManagedPreviewResources({
+      resolvePath: vi.fn(),
+      openManagedFileVersion,
+      createId: () => 'published-resource'
+    } as never)
+
+    await expect(
+      resources.acquire(17, {
+        source: 'artifact',
+        projectId: 'project-1',
+        fileId: 'artifact-1',
+        versionId: 'artifact-v1'
+      })
+    ).resolves.toMatchObject({ id: 'published-resource' })
+    expect(openManagedFileVersion).toHaveBeenCalledTimes(2)
+  })
+
   it('keeps a Notebook input Version lease open for capability reads instead of resolving a path', async () => {
     const trustedBytes = Buffer.from('staged through a live lease')
     const close = vi.fn().mockResolvedValue(undefined)

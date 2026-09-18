@@ -1,17 +1,12 @@
+import { Notice } from '@/components/notice'
 import { Check, Plus, Search, Tags, X } from 'lucide-react'
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { TAG_NAME_MAX_LENGTH, type TagResourceRef } from '../../../../shared/tags'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuTrigger
-} from '@/components/ui/dropdown-menu'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -39,7 +34,46 @@ const ResourceTagMenu = ({
   const createTag = useTagStore((state) => state.create)
   const [error, setError] = useState<string>()
   const [query, setQuery] = useState('')
+  const [localOpen, setLocalOpen] = useState(false)
+  const isOpen = open ?? localOpen
+  const [activeKey, setActiveKey] = useState<string>()
   const [creating, setCreating] = useState(false)
+  const createPending = useRef(false)
+  const interactionVersion = useRef(0)
+  const saveBatch = useRef<
+    | {
+        version: number
+        pending: number
+        operations: Map<string, { failed: boolean }>
+      }
+    | undefined
+  >(undefined)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const tabDismissal = useRef(false)
+  const listboxId = useId()
+  const errorId = useId()
+  const changeOpen = (nextOpen: boolean): void => {
+    interactionVersion.current += 1
+    setLocalOpen(nextOpen)
+    onOpenChange?.(nextOpen)
+  }
+  const scope = JSON.stringify([isOpen, reference.resourceType, reference.resourceId])
+  const [previousScope, setPreviousScope] = useState(scope)
+  if (previousScope !== scope) {
+    setPreviousScope(scope)
+    setQuery('')
+    setActiveKey(undefined)
+    setError(undefined)
+  }
+  useEffect(() => {
+    interactionVersion.current += 1
+    saveBatch.current = undefined
+    return () => {
+      interactionVersion.current += 1
+      saveBatch.current = undefined
+    }
+  }, [scope])
   const assignedIds = new Set(
     assignments
       .filter(
@@ -58,32 +92,101 @@ const ResourceTagMenu = ({
     query.trim().length > 0 &&
     !tags.some((tag) => normalizeName(tagPresentation(tag, t).name) === normalizedQuery)
 
-  const createAndAssign = async (): Promise<void> => {
-    if (!canCreate || creating) return
-    setCreating(true)
+  const options = [
+    ...visibleTags.map((tag) => ({ key: `tag:${tag.id}`, tag })),
+    ...(canCreate ? [{ key: 'create', tag: undefined }] : [])
+  ]
+  const activeIndex = Math.max(
+    0,
+    options.findIndex((option) => option.key === activeKey)
+  )
+  const activeOption = options[activeIndex]
+  const activeId = activeOption ? `${listboxId}-${activeIndex}` : undefined
+
+  useEffect(() => {
+    if (isOpen && activeId) {
+      document.getElementById(activeId)?.scrollIntoView?.({ block: 'nearest' })
+    }
+  }, [isOpen, activeId, normalizedQuery])
+
+  const activate = async (option: (typeof options)[number]): Promise<void> => {
+    if (!option.tag) {
+      if (createPending.current) return
+      createPending.current = true
+      setCreating(true)
+    }
     setError(undefined)
+    const version = interactionVersion.current
+    // Search edits invalidate completion effects, but do not end the picker's save lifecycle.
+    saveBatch.current ??= { version, pending: 0, operations: new Map() }
+    const batch = saveBatch.current
+    const operation = { failed: false }
+    let operationKey = option.key
+    batch.version = version
+    batch.operations.set(operationKey, operation)
+    batch.pending += 1
     try {
-      const tagId = await createTag({ name: query, iconKey: 'tag', colorKey: 'blue' })
-      await setAssignment({ ...reference, tagId, assigned: true })
-      setQuery('')
+      if (option.tag) {
+        await setAssignment({
+          ...reference,
+          tagId: option.tag.id,
+          assigned: !useTagStore
+            .getState()
+            .assignments.some(
+              (assignment) =>
+                assignment.tagId === option.tag?.id &&
+                assignment.resourceType === reference.resourceType &&
+                assignment.resourceId === reference.resourceId
+            )
+        })
+      } else {
+        const tagId = await createTag({ name: query, iconKey: 'tag', colorKey: 'blue' })
+        // A retry after creation succeeds is an assignment of this existing Tag.
+        batch.operations.delete(operationKey)
+        operationKey = `tag:${tagId}`
+        batch.operations.set(operationKey, operation)
+        await setAssignment({ ...reference, tagId, assigned: true })
+      }
+      if (version === interactionVersion.current) {
+        if (!option.tag) {
+          setQuery('')
+          setActiveKey(undefined)
+        }
+      }
     } catch {
-      setError(t('Could not update Tags.'))
+      operation.failed = true
+      if (saveBatch.current === batch && batch.operations.get(operationKey) === operation) {
+        setError(t('Could not update Tags.'))
+      }
     } finally {
-      setCreating(false)
+      batch.pending -= 1
+      if (
+        batch.pending === 0 &&
+        ![...batch.operations.values()].some((item) => item.failed) &&
+        saveBatch.current === batch &&
+        batch.version === interactionVersion.current &&
+        !keepOpenOnSelect
+      ) {
+        changeOpen(false)
+      }
+      if (!option.tag) {
+        createPending.current = false
+        setCreating(false)
+      }
     }
   }
 
   return (
     <TooltipProvider>
       <Tooltip>
-        <DropdownMenu modal={false} open={open} onOpenChange={onOpenChange}>
+        <Popover open={isOpen} onOpenChange={changeOpen}>
           <TooltipTrigger
             asChild
             onFocus={(event) => {
               if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
             }}
           >
-            <DropdownMenuTrigger asChild>
+            <PopoverTrigger asChild ref={triggerRef}>
               {trigger ?? (
                 <Button
                   type="button"
@@ -95,62 +198,124 @@ const ResourceTagMenu = ({
                   <Tags className="size-4" aria-hidden="true" />
                 </Button>
               )}
-            </DropdownMenuTrigger>
+            </PopoverTrigger>
           </TooltipTrigger>
-          <DropdownMenuContent align="end" className="min-w-52">
-            <DropdownMenuLabel>{error ?? t('Add or remove Tags')}</DropdownMenuLabel>
-            <div className="relative px-2 pb-1">
+          <PopoverContent
+            align="end"
+            aria-label={t('Manage Tags')}
+            className="w-64 max-w-[calc(100vw-1rem)] overflow-hidden border border-border bg-popover p-1 text-popover-foreground shadow-menu"
+            onOpenAutoFocus={(event) => {
+              event.preventDefault()
+              inputRef.current?.focus()
+            }}
+            onCloseAutoFocus={(event) => {
+              if (tabDismissal.current) event.preventDefault()
+              tabDismissal.current = false
+            }}
+          >
+            <div className="px-2 py-1.5 text-xs font-medium">{t('Add or remove Tags')}</div>
+            <div className="relative px-1 pb-1">
               <Search
-                className="pointer-events-none absolute top-1/2 left-4 size-3.5 -translate-y-1/2 text-muted-foreground"
+                className="pointer-events-none absolute top-4 left-3 size-3.5 -translate-y-1/2 text-muted-foreground"
                 aria-hidden="true"
               />
               <Input
-                type="search"
+                ref={inputRef}
+                type="text"
+                role="combobox"
+                aria-autocomplete="list"
+                aria-expanded={isOpen}
+                aria-controls={listboxId}
+                aria-activedescendant={activeId}
+                aria-invalid={Boolean(error)}
+                aria-describedby={error ? errorId : undefined}
+                autoComplete="off"
                 maxLength={TAG_NAME_MAX_LENGTH}
                 value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                onKeyDown={(event) => event.stopPropagation()}
+                onChange={(event) => {
+                  interactionVersion.current += 1
+                  setQuery(event.target.value)
+                  setActiveKey(undefined)
+                  setError(undefined)
+                }}
+                onKeyDown={(event) => {
+                  if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return
+                  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    if (options.length) {
+                      const offset = event.key === 'ArrowDown' ? 1 : -1
+                      setActiveKey(
+                        options[(activeIndex + offset + options.length) % options.length].key
+                      )
+                    }
+                  } else if (event.key === 'Enter') {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    if (activeOption) void activate(activeOption)
+                  } else if (event.key === 'Tab') {
+                    tabDismissal.current = true
+                    triggerRef.current?.focus()
+                    changeOpen(false)
+                  }
+                }}
                 placeholder={t('Search Tags…')}
                 aria-label={t('Search Tags')}
-                className="h-8 pl-7"
+                className="h-8 pl-7 transition-none [@media(pointer:coarse)]:h-11"
               />
             </div>
-            {visibleTags.map((tag) => {
-              const assigned = assignedIds.has(tag.id)
-              return (
-                <DropdownMenuItem
-                  key={tag.id}
-                  className="gap-2"
-                  onSelect={(event) => {
-                    if (keepOpenOnSelect) event.preventDefault()
-                    setError(undefined)
-                    void setAssignment({ ...reference, tagId: tag.id, assigned: !assigned }).catch(
-                      () => setError(t('Could not update Tags.'))
-                    )
-                  }}
-                >
-                  <span className="flex size-4 items-center justify-center">
-                    {assigned ? <Check className="size-3.5" aria-hidden="true" /> : null}
-                  </span>
-                  <span className="truncate">{tagPresentation(tag, t).name}</span>
-                </DropdownMenuItem>
-              )
-            })}
-            {canCreate ? (
-              <DropdownMenuItem
-                className="gap-2"
-                disabled={creating}
-                onSelect={(event) => {
-                  if (keepOpenOnSelect) event.preventDefault()
-                  void createAndAssign()
-                }}
-              >
-                <Plus className="size-4" aria-hidden="true" />
-                <span className="truncate">{t('Create “{{name}}”', { name: query.trim() })}</span>
-              </DropdownMenuItem>
+            <div
+              id={listboxId}
+              role="listbox"
+              aria-label={t('Tags')}
+              aria-multiselectable="true"
+              className="max-h-60 overflow-y-auto overscroll-contain"
+            >
+              {options.map((option, index) => {
+                const assigned = Boolean(option.tag && assignedIds.has(option.tag.id))
+                return (
+                  <div
+                    key={option.key}
+                    id={`${listboxId}-${index}`}
+                    role="option"
+                    aria-selected={assigned}
+                    aria-disabled={!option.tag && creating}
+                    data-active={index === activeIndex || undefined}
+                    onPointerMove={() => setActiveKey(option.key)}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => void activate(option)}
+                    className="flex min-h-8 cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none select-none data-[active]:bg-muted data-[active]:text-foreground active:bg-muted aria-disabled:opacity-50 [@media(pointer:coarse)]:min-h-11"
+                  >
+                    <span className="flex size-4 shrink-0 items-center justify-center">
+                      {!option.tag ? (
+                        <Plus className="size-4" aria-hidden="true" />
+                      ) : assigned ? (
+                        <Check className="size-3.5" aria-hidden="true" />
+                      ) : null}
+                    </span>
+                    {option.tag ? (
+                      <TagBadge tag={option.tag} className="max-w-full" />
+                    ) : (
+                      <span className="truncate">
+                        {t('Create “{{name}}”', { name: query.trim() })}
+                      </span>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+            {error ? (
+              <Notice
+                inline
+                id={errorId}
+                level="error"
+                role="alert"
+                className="mx-1 my-1"
+                description={error}
+              />
             ) : null}
-          </DropdownMenuContent>
-        </DropdownMenu>
+          </PopoverContent>
+        </Popover>
         <TooltipContent>{t('Manage Tags')}</TooltipContent>
       </Tooltip>
     </TooltipProvider>
@@ -313,9 +478,7 @@ const ResourceTagBadges = ({
         ) : null}
       </div>
       {error ? (
-        <span role="alert" className="shrink-0 text-xs text-destructive">
-          {error}
-        </span>
+        <Notice inline level="error" role="alert" className="basis-full" description={error} />
       ) : null}
     </>
   )

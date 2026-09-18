@@ -20,6 +20,17 @@ afterEach(async () => {
 })
 
 describe('NotebookRuntimeSettingsModule', () => {
+  it('requires fresh scoped R consent and retains it when execution is disabled', async () => {
+    const settings = await createModule()
+    await expect(settings.setInstallAuthorized('r', '/R', true)).rejects.toThrow('library')
+    await settings.setInstallAuthorized('r', '/R', true, '/personal/library')
+    await settings.setEnvironmentEnabled('r', '/R', false)
+    expect((await settings.getSnapshot('r')).runtimeEnablement.installLibraries).toEqual({
+      '/R': '/personal/library'
+    })
+    await settings.setInstallAuthorized('r', '/R', false)
+    expect((await settings.getSnapshot('r')).runtimeEnablement.installLibraries).toEqual({})
+  })
   it('returns a detached default policy snapshot for one language', async () => {
     const settings = await createModule()
 

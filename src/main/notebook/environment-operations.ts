@@ -212,6 +212,17 @@ export class NotebookEnvironmentOperations {
     return this.withLease(kind, environment, 'shared', operation)
   }
 
+  async acquireBindingLease(environment: string): Promise<EnvironmentLease> {
+    // Binding already owns a session write slot. Never wait for a mutation that may need that
+    // slot to publish repair/revocation: refuse the selection before stopping its old kernel.
+    if (this.leases.hasExclusive(environment)) {
+      throw new Error(
+        `ENVIRONMENT_MUTATION_ALREADY_PENDING: an environment mutation is running or queued for "${environment}". Retry selecting this runtime after it finishes.`
+      )
+    }
+    return this.leases.acquire(environment, 'shared').granted
+  }
+
   runMutation<T>(
     environment: string,
     operation: () => Promise<T>,
@@ -314,16 +325,38 @@ export class NotebookEnvironmentOperations {
     return Promise.all(Array.from(this.revocationDrains)).then(() => undefined)
   }
 
-  recommendRestart(language: NotebookLanguage, environment: string): void {
-    this.restartRecommendations.add(processKey(language, environment))
+  recommendRestart(
+    language: NotebookLanguage,
+    environment: string,
+    scope?: { sessionId: string; runtimeId: string }
+  ): void {
+    this.restartRecommendations.add(
+      this.restartRecommendationKey(processKey(language, environment), scope)
+    )
   }
 
-  clearRestartRecommendations(processKeys: Iterable<string>): void {
-    for (const key of processKeys) this.restartRecommendations.delete(key)
+  clearRestartRecommendations(
+    processKeys: Iterable<string>,
+    scope?: { sessionId: string; runtimeId: string }
+  ): void {
+    for (const key of processKeys)
+      this.restartRecommendations.delete(this.restartRecommendationKey(key, scope))
   }
 
-  isRestartRecommended(environmentProcessKey: string): boolean {
-    return this.restartRecommendations.has(environmentProcessKey)
+  isRestartRecommended(
+    environmentProcessKey: string,
+    scope?: { sessionId: string; runtimeId: string }
+  ): boolean {
+    return this.restartRecommendations.has(
+      this.restartRecommendationKey(environmentProcessKey, scope)
+    )
+  }
+
+  private restartRecommendationKey(
+    key: string,
+    scope?: { sessionId: string; runtimeId: string }
+  ): string {
+    return scope ? JSON.stringify([key, scope.runtimeId, scope.sessionId]) : key
   }
 
   isRepairBlocked(environmentKey: string): boolean {

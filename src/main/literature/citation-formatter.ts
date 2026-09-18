@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 
-import { createEngine, resultShapeVersion, type WasmCitationEngine } from 'citeme-engine-wasm'
+import type { WasmCitationEngine } from 'citeme-engine-wasm'
 import { z } from 'zod'
 
 import {
@@ -187,18 +187,23 @@ const parseNbib = (input: string): ParsedCitationRecords | undefined => {
     const authors = nbibCreators(record)
     warnings.push(authors.uncertain.length ? ['uncertain-author-name'] : [])
     items.push({
-      itemType: publicationTypes.includes('review') ? 'review' : 'journalArticle',
+      itemType: publicationTypes.includes('preprint')
+        ? 'preprint'
+        : publicationTypes.includes('review')
+          ? 'review'
+          : 'journalArticle',
       title,
       abstract: nbibText(record, 'AB'),
       issuedText,
       issuedYear: /^\d{4}/u.test(issuedText) ? Number(issuedText.slice(0, 4)) : undefined,
       containerTitle: nbibText(record, 'JT') || nbibText(record, 'TA'),
-      shortTitle: nbibText(record, 'TA'),
+      shortTitle: '',
       language: nbibText(record, 'LA'),
       rights: '',
       url: pmid ? `https://pubmed.ncbi.nlm.nih.gov/${encodeURIComponent(pmid)}/` : '',
       extra: authors.uncertain.join('\n'),
       typeFields: {
+        ...(nbibText(record, 'TA') ? { journalAbbreviation: nbibText(record, 'TA') } : {}),
         ...(nbibText(record, 'VI') ? { volume: nbibText(record, 'VI') } : {}),
         ...(nbibText(record, 'IP') ? { issue: nbibText(record, 'IP') } : {}),
         ...(nbibText(record, 'PG') ? { pages: nbibText(record, 'PG') } : {})
@@ -231,6 +236,7 @@ const parseResultSchema = z
 const loadEngine = async (
   styleLibrary?: LiteratureCitationStyleLibrary
 ): Promise<WasmCitationEngine> => {
+  const { createEngine, resultShapeVersion } = await import('citeme-engine-wasm')
   const wasmPath = require.resolve('citeme-engine-wasm/pkg/citeme_engine_wasm_bg.wasm')
   const engine = await createEngine(await readFile(wasmPath))
   if (resultShapeVersion() !== 1) throw new Error('Unsupported citation engine result shape.')

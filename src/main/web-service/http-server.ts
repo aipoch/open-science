@@ -168,6 +168,10 @@ type WebServerOptions = {
         | 'updateCredential'
         | 'getAgentRouting'
         | 'updateAgentRouting'
+        | 'doctor'
+        | 'bootstrap'
+        | 'installCli'
+        | 'listRuntimes'
       >
     >
   waitUntilTasksReady?: () => Promise<void>
@@ -988,6 +992,39 @@ const handleTaskApiRequest = async (
   tasks.runWithCallerContext(callerContext, async () => {
     try {
       await waitUntilTasksReady?.()
+      if (url.pathname === '/api/v1/doctor' && request.method === 'GET' && tasks.doctor) {
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        const data = await tasks.doctor()
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        json(response, 200, { data })
+        return true
+      }
+      if (url.pathname === '/api/v1/bootstrap' && request.method === 'POST' && tasks.bootstrap) {
+        const body = await readJsonBody(
+          request,
+          response,
+          requestBodyBudgetRegistry,
+          requestBodyClientId
+        )
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        const data = await tasks.bootstrap(
+          body as import('../../shared/bootstrap').BootstrapRequest
+        )
+        json(response, 200, { data })
+        return true
+      }
+      if (url.pathname === '/api/v1/cli/install' && request.method === 'POST' && tasks.installCli) {
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        json(response, 200, { data: await tasks.installCli() })
+        return true
+      }
+      if (url.pathname === '/api/v1/runtimes' && request.method === 'GET' && tasks.listRuntimes) {
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        const data = await tasks.listRuntimes()
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        json(response, 200, { data })
+        return true
+      }
       const connectorMatch = url.pathname.match(
         /^\/api\/v1\/connectors(?:\/([^/]+)(?:\/(enabled|test))?)?$/
       )
@@ -1463,6 +1500,11 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
         json(response, 200, {
           ...(auth.ok ? options.bootstrap : remoteWebBootstrap(options.bootstrap)),
           webCallerLocation: auth.ok ? 'local' : 'remote',
+          draftScope: createHash('sha256')
+            .update(options.token)
+            .update('\0')
+            .update(clientPrincipalId)
+            .digest('hex'),
           rpcProtocolVersion: WEB_RPC_PROTOCOL_VERSION,
           rpcCapabilities: auth.ok ? WEB_RPC_CAPABILITIES : [],
           rpcChannels,

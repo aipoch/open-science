@@ -45,6 +45,7 @@ describe('accessibility E2E result contract', () => {
       const root = mkdtempSync(join(tmpdir(), 'accessibility-exit-'))
       const resultPath = join(root, 'summary.json')
       vi.mocked(spawnSync).mockImplementation((_command, _args, options) => {
+        expect(_args).toContain('--fail-on-flaky-tests')
         expect(options?.env?.ACCESSIBILITY_COLLECT_ALL).toBe('1')
         expect(options?.env?.ACCESSIBILITY_ADVISORY).toBeUndefined()
         writeFileSync(resultPath, JSON.stringify({ ...completeResult('passed'), status }))

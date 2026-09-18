@@ -1,10 +1,18 @@
 import { useEffect, useId, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { CircleAlert, LoaderCircle, PackageOpen, RotateCw, SearchX } from 'lucide-react'
+import {
+  CircleAlert,
+  LoaderCircle,
+  PackageOpen,
+  RotateCw,
+  SearchX,
+  SquareTerminal
+} from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 
 import type { SkillSource, SkillView } from '../../../../../shared/settings'
+import type { Wsl2BashPreviewStatus } from '../../../../../shared/wsl-setup'
 import { useSettingsStore } from '@/stores/settings-store'
 
 import { fuzzyScore } from './fuzzy-match'
@@ -27,6 +35,7 @@ type SkillMentionPopupProps = {
   listboxId?: string
   onActiveOptionIdChange?: (optionId: string | undefined) => void
   onSelect: (skill: SkillView) => void
+  onSelectWslSetup?: () => void
   onClose: () => void
 }
 
@@ -45,6 +54,7 @@ export const SkillMentionPopup = ({
   listboxId,
   onActiveOptionIdChange,
   onSelect,
+  onSelectWslSetup,
   onClose
 }: SkillMentionPopupProps): React.JSX.Element | null => {
   const { t } = useTranslation()
@@ -52,9 +62,11 @@ export const SkillMentionPopup = ({
   const skillsLoaded = useSettingsStore((state) => state.skillsLoaded)
   const [loadError, setLoadError] = useState(false)
   const [retryAttempt, setRetryAttempt] = useState(0)
+  const [wslStatus, setWslStatus] = useState<Wsl2BashPreviewStatus>()
   const loadSkills = useSettingsStore((state) => state.loadSkills)
   const generatedListboxId = useId()
   const resolvedListboxId = listboxId ?? generatedListboxId
+  const isWindows = window.api?.platform === 'win32'
 
   // Catalog ownership stays in the store; only this popup's retry feedback is local.
   useEffect(() => {
@@ -67,6 +79,23 @@ export const SkillMentionPopup = ({
       cancelled = true
     }
   }, [skillsLoaded, skills.length, loadSkills, retryAttempt])
+
+  useEffect(() => {
+    if (!isWindows) return
+    const getStatus = window.api?.settings?.getWsl2BashPreviewStatus
+    if (!getStatus) return
+    let active = true
+    void getStatus()
+      .then((status) => {
+        if (active) setWslStatus(status)
+      })
+      .catch(() => {
+        if (active) setWslStatus({ available: false, reason: 'not-initialized' })
+      })
+    return () => {
+      active = false
+    }
+  }, [isWindows])
 
   const visibleSkills = useMemo(() => {
     const allowed = allowedSkillIds ? new Set(allowedSkillIds) : undefined
@@ -108,6 +137,16 @@ export const SkillMentionPopup = ({
     )
   }, [visibleSkills, query])
 
+  const productCommandNeedle = query.trim().toLowerCase()
+  const productCommandMatches =
+    isWindows &&
+    onSelectWslSetup !== undefined &&
+    (productCommandNeedle.length === 0 ||
+      '/setup-wsl'.includes(productCommandNeedle) ||
+      'set up or repair wsl2 bash'.includes(productCommandNeedle))
+  const wslSetupOptionIndex = matches.length
+  const optionCount = matches.length + (productCommandMatches ? 1 : 0)
+
   const [activeIndex, setActiveIndex] = useState(0)
 
   // Reset the highlight to the top when the query changes. This is the setState-during-render pattern
@@ -119,8 +158,8 @@ export const SkillMentionPopup = ({
   }
 
   // Keep the highlight within the current match set even after filtering shrinks it.
-  const safeIndex = matches.length === 0 ? 0 : Math.min(activeIndex, matches.length - 1)
-  const activeOptionId = matches.length > 0 ? `${resolvedListboxId}-option-${safeIndex}` : undefined
+  const safeIndex = optionCount === 0 ? 0 : Math.min(activeIndex, optionCount - 1)
+  const activeOptionId = optionCount > 0 ? `${resolvedListboxId}-option-${safeIndex}` : undefined
 
   // Focus remains in the editor, so keep its active-descendant target synchronized and visible.
   useEffect(() => {
@@ -139,10 +178,10 @@ export const SkillMentionPopup = ({
       if (event.isComposing || composingRef?.current) return
       if (event.key === 'ArrowDown') {
         event.preventDefault()
-        if (matches.length > 0) setActiveIndex((safeIndex + 1) % matches.length)
+        if (optionCount > 0) setActiveIndex((safeIndex + 1) % optionCount)
       } else if (event.key === 'ArrowUp') {
         event.preventDefault()
-        if (matches.length > 0) setActiveIndex((safeIndex - 1 + matches.length) % matches.length)
+        if (optionCount > 0) setActiveIndex((safeIndex - 1 + optionCount) % optionCount)
       } else if (
         event.key === 'Enter' ||
         (event.key === 'Tab' &&
@@ -151,10 +190,19 @@ export const SkillMentionPopup = ({
           !event.ctrlKey &&
           !event.metaKey)
       ) {
-        const active = matches[safeIndex]
-        if (active) {
+        if (
+          productCommandMatches &&
+          safeIndex === wslSetupOptionIndex &&
+          wslStatus?.available !== false
+        ) {
           event.preventDefault()
-          onSelect(active.skill)
+          onSelectWslSetup?.()
+        } else {
+          const active = matches[safeIndex]
+          if (active) {
+            event.preventDefault()
+            onSelect(active.skill)
+          }
         }
       } else if (event.key === 'Escape') {
         event.preventDefault()
@@ -164,7 +212,18 @@ export const SkillMentionPopup = ({
 
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
-  }, [matches, safeIndex, onSelect, onClose, composingRef])
+  }, [
+    matches,
+    optionCount,
+    productCommandMatches,
+    safeIndex,
+    wslSetupOptionIndex,
+    onSelect,
+    onSelectWslSetup,
+    onClose,
+    composingRef,
+    wslStatus
+  ])
 
   const loading = skills.length === 0 && !skillsLoaded && !loadError
   const failed = skills.length === 0 && !skillsLoaded && loadError
@@ -184,7 +243,7 @@ export const SkillMentionPopup = ({
         aria-label={t('Skill suggestions')}
         className="min-h-0 flex-1 overflow-y-auto"
       >
-        {matches.length === 0 && (
+        {optionCount === 0 && (
           <li role="presentation" className="flex min-h-18 items-center gap-3 px-3 py-3.5">
             <span
               aria-hidden="true"
@@ -254,9 +313,36 @@ export const SkillMentionPopup = ({
             </li>
           )
         })}
+        {productCommandMatches ? (
+          <li
+            id={`${resolvedListboxId}-option-${wslSetupOptionIndex}`}
+            role="option"
+            aria-selected={safeIndex === wslSetupOptionIndex}
+            aria-disabled={wslStatus?.available === false}
+            data-testid="product-command-setup-wsl"
+            onMouseEnter={() => setActiveIndex(wslSetupOptionIndex)}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => {
+              if (wslStatus?.available !== false) onSelectWslSetup?.()
+            }}
+            className={`w-full flex items-start gap-2 px-2 py-1.5 rounded-lg text-sm text-text-100 hover:bg-bg-200 hover:text-text-000 transition-colors ${wslStatus?.available === false ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'}${safeIndex === wslSetupOptionIndex ? ' bg-bg-200 !text-text-000' : ''}`}
+          >
+            <SquareTerminal className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+            <div className="flex-1 min-w-0">
+              <div className="truncate font-medium text-sm">/setup-wsl</div>
+              <div className="text-xs text-text-300 line-clamp-2 mt-0.5">
+                {wslStatus && !wslStatus.available
+                  ? t('WSL2 setup is unavailable on this system ({{reason}}).', {
+                      reason: wslStatus.reason
+                    })
+                  : t('Set up or repair WSL2 Bash in a guided conversation')}
+              </div>
+            </div>
+          </li>
+        ) : null}
       </ul>
       <div className="mt-1 -mx-1.5 -mb-1.5 flex shrink-0 items-center justify-end gap-3 border-t border-border-200 bg-bg-200/40 px-3 py-1.5 text-[11px] text-text-100 select-none">
-        {matches.length > 0 && (
+        {optionCount > 0 && (
           <>
             <span>
               <kbd className="rounded border border-border-200 bg-bg-000 px-1 py-0.5 font-sans text-[10px] font-medium">

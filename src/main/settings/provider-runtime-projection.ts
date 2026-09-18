@@ -37,6 +37,7 @@ type RuntimeProviderModelSelection =
   | { kind: 'provider-default' }
 
 type ProviderRuntimeTarget = {
+  configRevision?: number
   providerId: string
   providerType: StoredProvider['type']
   disconnectedAt?: number
@@ -71,7 +72,7 @@ class ProviderRuntimeProjectionOwner {
     if (provider.type === 'official' && provider.vendorId) {
       return resolveVendorModelApiEndpoints(
         provider.vendorId,
-        activeModel ?? defaultVendorModel(provider.vendorId)
+        activeModel ?? defaultVendorModel(provider.vendorId, provider.region)
       )
     }
 
@@ -86,6 +87,7 @@ class ProviderRuntimeProjectionOwner {
 
     return {
       id: provider.id,
+      configRevision: provider.configRevision,
       type: provider.type,
       codexAuthMode: provider.codexAuthMode,
       codexTransport: provider.codexTransport,
@@ -110,6 +112,9 @@ class ProviderRuntimeProjectionOwner {
       needsKey,
       lastValidatedAt: provider.lastValidatedAt,
       lastValidatedTarget: provider.lastValidatedTarget,
+      // A legacy 'incompatible' verdict is a derivable (provider, framework) relationship, not
+      // endpoint health; validation no longer records it, and providerValidationFailed ignores
+      // stored copies — the single seam every reader of this field goes through.
       lastValidationFailure: provider.lastValidationFailure,
       ...(provider.expiresAt !== undefined ? { expiresAt: provider.expiresAt } : {})
     }
@@ -167,6 +172,7 @@ class ProviderRuntimeProjectionOwner {
 
     return {
       providerId: storedProvider.id,
+      configRevision: storedProvider.configRevision ?? 0,
       providerType: storedProvider.type,
       ...(storedProvider.disconnectedAt === undefined
         ? {}
@@ -229,7 +235,7 @@ class ProviderRuntimeProjectionOwner {
       }
     }
     if (provider.type === 'official' && provider.vendorId) {
-      const model = modelOverride ?? defaultVendorModel(provider.vendorId)
+      const model = modelOverride ?? defaultVendorModel(provider.vendorId, provider.region)
       const contextWindow = resolveModelContextWindow(provider.vendorId, model)
       return {
         type: 'custom',
@@ -284,7 +290,7 @@ class ProviderRuntimeProjectionOwner {
     if (provider.type === 'official' && provider.vendorId) {
       return isVendorModelMultimodal(
         provider.vendorId,
-        activeModel ?? defaultVendorModel(provider.vendorId)
+        activeModel ?? defaultVendorModel(provider.vendorId, provider.region)
       )
     }
     return false
@@ -300,10 +306,7 @@ class ProviderRuntimeProjectionOwner {
         : getOfficialVendorModelIds('xai')
     }
     if (provider.type === 'official' && provider.vendorId) {
-      if (provider.fetchedModels && provider.fetchedModels.length > 0) {
-        return provider.fetchedModels
-      }
-      return getOfficialVendorModelIds(provider.vendorId)
+      return getOfficialVendorModelIds(provider.vendorId, provider.region, provider.fetchedModels)
     }
     return provider.model ? [provider.model] : []
   }

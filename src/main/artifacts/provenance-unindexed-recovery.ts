@@ -4,7 +4,9 @@ import { dirname, join } from 'node:path'
 
 import type { PrismaClient } from '@prisma/client'
 
+import { artifactProvenanceGraphMatchesTarget } from './artifact-provenance-graph'
 import { canonicalJson, sha256, type CanonicalJson } from './provenance-canonical'
+import { decodeArtifactExecutionSnapshot } from './provenance-execution-snapshot-decoder'
 import { normalizeArtifactFilename as normalizeFilename } from './provenance-version-writer'
 import { resolveStorageKey, storageKey } from './provenance-storage'
 import { ArtifactCompatibilityScanIncompleteError, type ArtifactRepository } from './repository'
@@ -251,7 +253,8 @@ class ArtifactProvenanceUnindexedRecovery {
       ) {
         throw new Error('Recovered Artifact execution snapshot is corrupt.')
       }
-      const execution = recordValue(JSON.parse(executionSnapshotJson))
+      const decodedExecution = decodeArtifactExecutionSnapshot(executionSnapshotJson)
+      const execution = decodedExecution.status === 'valid' ? decodedExecution.value : undefined
       producerRunId = stringValue(producer?.producer_run_id)
       producerRunIndex = numberValue(producer?.run_index)
       notebookSessionId = stringValue(producer?.notebook_session_id)
@@ -262,6 +265,19 @@ class ArtifactProvenanceUnindexedRecovery {
         execution.producerRunIndex !== producerRunIndex
       ) {
         throw new Error('Recovered Artifact producer binding is invalid.')
+      }
+      const graph = execution.provenanceGraph
+      if (
+        graph &&
+        !artifactProvenanceGraphMatchesTarget(graph, {
+          versionId: input.versionId,
+          filename,
+          checksum,
+          sizeBytes,
+          producerRunId: execution.producerRunId
+        })
+      ) {
+        throw new Error('Recovered Artifact graph binding is invalid.')
       }
     }
 

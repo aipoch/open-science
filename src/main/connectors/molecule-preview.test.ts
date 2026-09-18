@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { Molecule } from 'openchemlib'
 
 import { createMoleculePreviewHandler } from './molecule-preview'
 
@@ -58,6 +59,36 @@ describe('molecule preview handler', () => {
     const out = await handler({ smiles: 'not-a-real-smiles' }, { sessionId: 's-1' })
 
     expect(out).toMatchObject({ valid: false })
+    expect(writeArtifactForCurrentRun).not.toHaveBeenCalled()
+  })
+
+  it('publishes the intact structure when a molfile has an empty title', async () => {
+    const writeArtifactForCurrentRun = vi.fn().mockResolvedValue({
+      id: 'version-1',
+      name: 'aspirin.mol'
+    })
+    const handler = createMoleculePreviewHandler({ writeArtifactForCurrentRun })
+    const molfile = Molecule.fromSmiles(ASPIRIN_SMILES).toMolfile()
+
+    const out = await handler({ molfile, filename: 'aspirin' }, { sessionId: 's-1' })
+
+    expect(out).toMatchObject({ valid: true, formula: 'C9H8O4', heavy_atom_count: 13 })
+    expect(writeArtifactForCurrentRun).toHaveBeenCalledTimes(1)
+    const [sessionId, written] = writeArtifactForCurrentRun.mock.calls[0]
+    expect(sessionId).toBe('s-1')
+    const savedMolecule = Molecule.fromMolfile(written.content)
+    expect(savedMolecule.getAllAtoms()).toBe(13)
+    expect(savedMolecule.getMolecularFormula().formula).toBe('C9H8O4')
+    expect(written.producer.normalizedArguments.inputKind).toBe('molfile')
+  })
+
+  it('does not publish an empty molecular structure', async () => {
+    const writeArtifactForCurrentRun = vi.fn()
+    const handler = createMoleculePreviewHandler({ writeArtifactForCurrentRun })
+
+    const out = await handler({ molfile: new Molecule(0, 0).toMolfile() }, { sessionId: 's-1' })
+
+    expect(out).toMatchObject({ valid: false, error: expect.any(String) })
     expect(writeArtifactForCurrentRun).not.toHaveBeenCalled()
   })
 

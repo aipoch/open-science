@@ -14,6 +14,7 @@ test('synchronizes ordinary writes across two Electron renderers and a Web clien
 }) => {
   test.setTimeout(180_000)
   const first = await app.completeOnboarding()
+  await first.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
   const second = await app.openAdditionalRenderer()
   const web = await browser.newPage()
   try {

@@ -13,10 +13,12 @@ import {
   OFFICIAL_VENDORS,
   defaultVendorModel,
   getOfficialVendor,
+  getOfficialVendorModelIds,
   resolveVendorModelApiEndpoints,
   type OfficialVendorId
 } from '../../../../shared/provider-registry'
 import {
+  customProviderRequiresKey,
   getCustomProviderBaseUrlError,
   type CustomProviderBaseUrlError
 } from '../../../../shared/provider-base-url'
@@ -83,6 +85,48 @@ type ProviderFormTokenLimits = Pick<
   'contextWindow' | 'maxInputTokens' | 'maxOutputTokens'
 >
 
+// Quick-fill presets for local model servers. Every one serves OpenAI Chat Completions on a
+// well-known loopback port and requires no API key, so applying a preset seeds the base URL and
+// the Chat Completions API format. The model stays for the user to fill: local model ids depend
+// on what they have pulled, so guessing one would be noise. Selecting a preset never blocks
+// editing anything afterwards.
+export type LocalModelPreset = Readonly<{
+  id: string
+  label: string
+  baseUrl: string
+}>
+
+export const LOCAL_MODEL_PRESETS: readonly LocalModelPreset[] = [
+  { id: 'ollama', label: 'Ollama', baseUrl: 'http://localhost:11434' },
+  { id: 'lmstudio', label: 'LM Studio', baseUrl: 'http://localhost:1234' },
+  { id: 'llamacpp', label: 'llama.cpp', baseUrl: 'http://localhost:8080' },
+  { id: 'vllm', label: 'vLLM', baseUrl: 'http://localhost:8000' }
+]
+
+// The form patch a preset applies — or, when the preset is already active, reverts. Tapping the
+// active preset clears exactly what it filled: the base URL, the format it selected (back to the
+// framework's default), and the name it seeded. Fields the user typed themselves — the model
+// above all — are never touched in either direction.
+export const localModelPresetPatch = (
+  preset: LocalModelPreset,
+  value: ProviderFormValue,
+  defaultApiEndpoint: ProviderFormValue['apiEndpoint']
+): Partial<ProviderFormValue> => {
+  if (value.baseUrl.trim() === preset.baseUrl) {
+    return {
+      baseUrl: '',
+      apiEndpoint: defaultApiEndpoint,
+      ...(value.name.trim() === preset.label ? { name: '' } : {})
+    }
+  }
+
+  return {
+    baseUrl: preset.baseUrl,
+    apiEndpoint: 'openai',
+    ...(value.name.trim() ? {} : { name: preset.label })
+  }
+}
+
 // Both Settings and onboarding persist this shared form. Keep optional-number conversion here so a
 // blank custom value explicitly clears a saved override while non-custom requests omit the fields.
 export const providerFormTokenLimits = (value: ProviderFormValue): ProviderFormTokenLimits =>
@@ -108,7 +152,7 @@ export const providerFormApiEndpoints = (value: ProviderFormValue): ChatApiEndpo
   if (value.type === 'official' && value.vendorId) {
     return resolveVendorModelApiEndpoints(
       value.vendorId,
-      value.model.trim() || defaultVendorModel(value.vendorId)
+      value.model.trim() || defaultVendorModel(value.vendorId, value.region)
     )
   }
   if (value.type === 'xai-subscription') return ['anthropic', 'openai', 'responses']
@@ -129,11 +173,11 @@ export const providerFormModelForFramework = (
 
   const vendorId = value.vendorId
   return (
-    getOfficialVendor(vendorId)?.models.find(({ id }) =>
+    getOfficialVendorModelIds(vendorId, value.region).find((id) =>
       resolveVendorModelApiEndpoints(vendorId, id).some((endpoint) =>
         frameworkEndpoints.includes(endpoint)
       )
-    )?.id ?? defaultVendorModel(vendorId)
+    ) ?? defaultVendorModel(vendorId, value.region)
   )
 }
 
@@ -220,7 +264,11 @@ export const getProviderFormErrors = (
     if (positiveWholeNumberError(value.maxOutputTokens)) {
       errors.maxOutputTokens = 'Maximum output tokens must be a positive whole number of tokens.'
     }
-    if (!value.key.trim() && !options.hasStoredKey) errors.key = 'API key is required.'
+    // Local loopback gateways (Ollama, LM Studio, llama.cpp, vLLM) serve without a key; only a
+    // remote gateway requires one.
+    if (!value.key.trim() && !options.hasStoredKey && customProviderRequiresKey(value.baseUrl)) {
+      errors.key = 'API key is required.'
+    }
   } else if (value.type === 'official') {
     // No model is chosen at add time: the vendor catalog + the global model selection cover that.
     if (!value.key.trim() && !options.hasStoredKey) errors.key = 'API key is required.'
@@ -249,8 +297,8 @@ export type ProviderKindGroupLabelKey =
 // string: it is a vendor name from the registry (`Anthropic`, `Moonshot`) or a subscription identity,
 // which the glossary keeps in English in every locale. Only the description is prose.
 export type ProviderKindDescriptionKey =
-  | 'Use an existing Codex profile or sign in with a separate Open Science profile.'
-  | 'Use an existing Claude profile or sign in with a separate Open Science profile.'
+  | 'Use an existing Codex profile or sign in with a separate Open-Science profile.'
+  | 'Use an existing Claude profile or sign in with a separate Open-Science profile.'
   | 'Sign in to your xAI subscription with a browser device code.'
   | 'API key — models provided'
   | 'Base URL, key, and model for a Messages or Chat Completions endpoint'
@@ -289,7 +337,7 @@ export const PROVIDER_KINDS: ProviderKind[] = [
     key: 'codex-subscription',
     label: codexSubscriptionProviderIdentity().name,
     descriptionKey:
-      'Use an existing Codex profile or sign in with a separate Open Science profile.',
+      'Use an existing Codex profile or sign in with a separate Open-Science profile.',
     group: 'codex'
   },
   {
@@ -299,7 +347,7 @@ export const PROVIDER_KINDS: ProviderKind[] = [
     key: 'claude-subscription',
     label: claudeIsolatedProviderIdentity().name,
     descriptionKey:
-      'Use an existing Claude profile or sign in with a separate Open Science profile.',
+      'Use an existing Claude profile or sign in with a separate Open-Science profile.',
     group: 'claude'
   },
   ...OFFICIAL_VENDORS.map((vendor): ProviderKind => ({

@@ -6,6 +6,7 @@ const DEFAULT_PREVIEW_BYTES = 8192
 // Raised beyond the thumbnail-sized default so the preview panel can render full-size images
 // without truncation; callers that only need a thumbnail keep passing a smaller explicit maxBytes.
 const MAX_PREVIEW_BYTES = 10 * 1024 * 1024
+const MANAGED_FILE_PUBLICATION_RETRY_DELAYS_MS = [100, 250, 500, 1000, 2000] as const
 
 type ManagedFilePreviewReadLease = Readonly<{
   size: number
@@ -21,6 +22,29 @@ type ManagedFilePreviewReadLease = Readonly<{
 
 type ManagedFilePreviewReader = Pick<ManagedFilePreviewReadLease, 'size' | 'read'> &
   Partial<Pick<ManagedFilePreviewReadLease, 'verifyUnchanged'>>
+
+const isManagedFilePublicationPendingError = (error: unknown): boolean => {
+  if ((error as { code?: unknown } | undefined)?.code !== 'VERSION_NOT_FOUND') return false
+  const message = error instanceof Error ? error.message : String(error)
+  return /Managed file (?:has no published version|version is not published)/i.test(message)
+}
+
+// A preview can be requested from the Session projection just before the first managed Version is
+// published. Keep that expected race inside the main-process request so Electron sees one pending
+// IPC call instead of a series of rejected renderer retries.
+const waitForManagedFilePublication = async <Result>(
+  openManagedFile: () => Promise<Result>
+): Promise<Result> => {
+  for (const delayMs of MANAGED_FILE_PUBLICATION_RETRY_DELAYS_MS) {
+    try {
+      return await openManagedFile()
+    } catch (error) {
+      if (!isManagedFilePublicationPendingError(error)) throw error
+    }
+    await new Promise((resolve) => setTimeout(resolve, delayMs))
+  }
+  return openManagedFile()
+}
 
 const readBoundedManagedFilePreviewFromReader = async (
   reader: ManagedFilePreviewReader,
@@ -96,5 +120,9 @@ const readBoundedManagedFilePreviewLease = (
 ): Promise<ArtifactPreviewResult> =>
   readBoundedManagedFilePreviewFromReader(lease, request, invalidEncodingMessage)
 
-export { readBoundedManagedFilePreview, readBoundedManagedFilePreviewLease }
+export {
+  readBoundedManagedFilePreview,
+  readBoundedManagedFilePreviewLease,
+  waitForManagedFilePublication
+}
 export type { ManagedFilePreviewReadLease }

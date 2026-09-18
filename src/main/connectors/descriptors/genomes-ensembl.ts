@@ -1,14 +1,13 @@
 import { createHash } from 'node:crypto'
-import type { ToolDescriptor } from '../types'
+import type { ToolContext, ToolDescriptor } from '../types'
 
 // Ensembl REST — keyless GETs; the engine already sends Accept: application/json for fetchJson, so
 // plain paths return JSON without the ?content-type suffix.
 const ENSEMBL = 'https://rest.ensembl.org'
 const DEFAULT_SPECIES = 'homo_sapiens'
 
-// A TRUE Ensembl stable id: ENS + optional 3-4 letter species code + a feature letter [EGTP] + a
-// >=6-digit block (optionally .version), OR an LRG_N id. Symbols merely STARTING with "ENS" (ENSA,
-// ENSAP1) fail the digit block and route to the symbol endpoint instead.
+// Recognizes Ensembl/LRG IDs for version normalization and for avoiding symbol fallback on a
+// missing canonical ID. This is not an exhaustive list of IDs accepted by Ensembl (e.g. FlyBase).
 const STABLE_ID_RE = /^(ENS([A-Z]{3,4})?[EGTP]\d{6,}(\.\d+)?|LRG_\d+)$/
 
 const isStableId = (query: string): boolean => STABLE_ID_RE.test(query.trim())
@@ -30,6 +29,28 @@ function clampInt(v: unknown, def: number, lo: number, hi: number): number {
 const isNotFound = (err: unknown): boolean =>
   err instanceof Error && /\bHTTP 400\b/.test(err.message)
 
+// Only an exact upstream absence response permits fallback or found:false. A bad species,
+// invalid arguments, malformed JSON, or a server failure must remain an error.
+async function lookupRecord(
+  ctx: ToolContext,
+  url: string,
+  missingMessage: string
+): Promise<Dict | null> {
+  const { body: record, status } = await ctx.fetchJsonWithHeaders(url, { allowHttpStatuses: [400] })
+  if (record && typeof record === 'object' && !Array.isArray(record)) {
+    const error = (record as Dict).error
+    if (typeof error === 'string') {
+      if (status === 400 && error === missingMessage) return null
+      throw new Error(`Ensembl lookup failed: ${error.slice(0, 1000)}`)
+    }
+    if (status === 400) throw new Error('Ensembl lookup returned an unrecognized HTTP 400 response')
+    if (typeof (record as Dict).species === 'string' && String((record as Dict).species).trim()) {
+      return record as Dict
+    }
+  }
+  throw new Error('Ensembl lookup returned a record without a valid species')
+}
+
 // hex sha256 of a string (used to fingerprint sequences even when the text is omitted).
 const sha256 = (s: string): string => createHash('sha256').update(s, 'utf8').digest('hex')
 
@@ -43,10 +64,68 @@ const impactRank = (impact: unknown): number => IMPACT_RANK[String(impact ?? '')
 
 type Dict = Record<string, unknown>
 
+// GET VEP reads the reference on the region strand, but submits it as strand=1.
+// Always request the forward strand. Existing callers supply forward alleles;
+// interpreting an allele on the region strand requires an explicit opt-in.
+function normalizeVepRegion(
+  region: string,
+  allele: string,
+  orientation: unknown
+): {
+  original: { region: string; allele: string; allele_orientation: string }
+  forward: { region: string; allele: string }
+  reverse_complemented: boolean
+} {
+  const alleleOrientation = orientation ?? 'forward'
+  if (alleleOrientation !== 'forward' && alleleOrientation !== 'region') {
+    throw new Error('allele_orientation must be forward or region')
+  }
+  const match = /^([A-Za-z0-9_.-]+):(\d+)-(\d+)(?::([+-]?1))?$/.exec(region)
+  if (!match) {
+    throw new Error('region must be chrom:start-end with an optional :1 or :-1 strand')
+  }
+  const [, chrom, startText, endText, strand] = match
+  const start = Number(startText)
+  const end = Number(endText)
+  if (
+    !Number.isSafeInteger(start) ||
+    !Number.isSafeInteger(end) ||
+    start < 1 ||
+    end < 1 ||
+    start > end + 1
+  ) {
+    throw new Error('region requires positive 1-based coordinates; insertions use start=end+1')
+  }
+  let forwardAllele = allele.toUpperCase()
+  if (!/^(?:[ACGT]+|-|INS|DUP|DEL|TDUP)$/.test(forwardAllele)) {
+    throw new Error('allele must be an A/C/G/T sequence, -, INS, DUP, DEL, or TDUP')
+  }
+  const reverseComplemented =
+    strand === '-1' && alleleOrientation === 'region' && forwardAllele !== '-'
+  if (reverseComplemented) {
+    if (!/^[ACGT]+$/.test(forwardAllele)) {
+      throw new Error(
+        'Negative-strand region-oriented alleles require an A/C/G/T sequence or -; symbolic alleles require allele_orientation=forward'
+      )
+    }
+    const complement: Record<string, string> = { A: 'T', C: 'G', G: 'C', T: 'A' }
+    forwardAllele = [...forwardAllele]
+      .reverse()
+      .map((base) => complement[base])
+      .join('')
+  }
+  return {
+    original: { region, allele, allele_orientation: alleleOrientation },
+    forward: { region: `${chrom}:${start}-${end}:1`, allele: forwardAllele },
+    reverse_complemented: reverseComplemented
+  }
+}
+
 // One VEP transcript-consequence row, keeping only the fields the summary surfaces.
 function leanTranscriptConsequence(tc: Dict): Dict {
   return {
     transcript_id: tc.transcript_id,
+    variant_allele: tc.variant_allele,
     gene_id: tc.gene_id,
     gene_symbol: tc.gene_symbol,
     consequence_terms: tc.consequence_terms,
@@ -83,14 +162,21 @@ function summarizeVepResult(r: Dict, maxConsequences: number): Dict {
   const sorted = [...tcs].sort((a, b) => impactRank(b.impact) - impactRank(a.impact))
   const kept = sorted.slice(0, maxConsequences)
 
-  // Per-gene worst impact + transcript count across the complete (un-truncated) list.
+  // Count distinct transcript IDs per gene across all alleles in the complete (un-truncated) list.
   const geneMap = new Map<
     string,
-    { gene_id: unknown; gene_symbol: unknown; worstRank: number; worst_impact: unknown; n: number }
+    {
+      gene_id: unknown
+      gene_symbol: unknown
+      worstRank: number
+      worst_impact: unknown
+      transcriptIds: Set<string>
+    }
   >()
   for (const tc of tcs) {
     const gid = String(tc.gene_id ?? '')
     const rank = impactRank(tc.impact)
+    const transcriptId = strArg(tc.transcript_id)
     const existing = geneMap.get(gid)
     if (!existing) {
       geneMap.set(gid, {
@@ -98,10 +184,10 @@ function summarizeVepResult(r: Dict, maxConsequences: number): Dict {
         gene_symbol: tc.gene_symbol,
         worstRank: rank,
         worst_impact: tc.impact,
-        n: 1
+        transcriptIds: new Set(transcriptId ? [transcriptId] : [])
       })
     } else {
-      existing.n += 1
+      if (transcriptId) existing.transcriptIds.add(transcriptId)
       if (rank > existing.worstRank) {
         existing.worstRank = rank
         existing.worst_impact = tc.impact
@@ -114,7 +200,7 @@ function summarizeVepResult(r: Dict, maxConsequences: number): Dict {
       gene_id: g.gene_id,
       gene_symbol: g.gene_symbol,
       worst_impact: g.worst_impact,
-      n_transcripts: g.n
+      n_transcripts: g.transcriptIds.size
     }))
 
   const reg = (r.regulatory_feature_consequences as unknown[] | undefined) ?? []
@@ -172,11 +258,12 @@ export const GENOMES_ENSEMBL_TOOLS: ToolDescriptor[] = [
     id: 'ensembl_lookup',
     connector: 'genomes',
     description:
-      'Look up an Ensembl gene/transcript/protein by stable ID or a gene by symbol; returns the core annotation record (location, biotype, canonical transcript, description). Args: query (Ensembl stable ID ENSG.../ENST.../ENSP..., versioned accepted; or a gene symbol/alias like BRAF — true stable IDs [ENS + optional species code + feature letter + >=6-digit block, or LRG_N] route to the ID endpoint; everything else, incl. symbols starting with "ENS" like ENSA, to the symbol endpoint); species (Ensembl species name for symbol lookups, default homo_sapiens; ignored for stable IDs); expand (include the child feature tree — a gene\'s transcripts/exons/translation; default off). Returns {found, query, species, record}; record is null when nothing matches, else the upstream lookup dict — for a gene {id, display_name, description, biotype, object_type, seq_region_name, start, end, strand, assembly_name, canonical_transcript, version, ...} with 1-based inclusive coordinates.',
+      'Look up genes, transcripts, or proteins by stable ID, or genes by symbol. query accepts ENS IDs (versioned allowed), FlyBase/WormBase/yeast IDs, or symbols such as BRAF. query_type: auto (default) tries ID first, then symbol only on explicit absence unless the input is a canonical ENS/LRG ID; id uses only ID lookup; symbol uses only symbol lookup without version normalization. species applies only to symbol lookup (default homo_sapiens) and is not inferred. expand includes transcripts, exons and translations (default false). Invalid requests and service failures raise errors.',
     input: {
       type: 'object',
       properties: {
         query: { type: 'string' },
+        query_type: { type: 'string', enum: ['auto', 'id', 'symbol'], default: 'auto' },
         species: { type: 'string', default: DEFAULT_SPECIES },
         expand: { type: 'boolean', default: false }
       },
@@ -184,22 +271,36 @@ export const GENOMES_ENSEMBL_TOOLS: ToolDescriptor[] = [
     },
     required: ['query'],
     returns:
-      '{found, query, species, record} — record is the upstream lookup dict (1-based inclusive coords) or null when nothing matches.',
-    example: 'const result = await host.mcp("genomes", "ensembl_lookup", {"query": "BRAF"})',
+      '{found, query, species, record} — species is the upstream record species on success, otherwise the requested/default species; record is the upstream lookup dict (1-based inclusive coords) or null when nothing matches.',
+    example:
+      'const result = await host.mcp("genomes", "ensembl_lookup", {"query": "BRAF", "query_type": "symbol"})',
     run: async (ctx, a) => {
       const query = String(a.query).trim()
+      const queryType = a.query_type === undefined ? 'auto' : a.query_type
+      if (queryType !== 'auto' && queryType !== 'id' && queryType !== 'symbol') {
+        throw new Error('query_type must be auto, id, or symbol')
+      }
       const species = String(a.species ?? DEFAULT_SPECIES)
       const expand = a.expand === true ? 1 : 0
-      const url = isStableId(query)
-        ? `${ENSEMBL}/lookup/id/${encodeURIComponent(upstreamStableId(query))}?expand=${expand}`
-        : `${ENSEMBL}/lookup/symbol/${encodeURIComponent(species)}/${encodeURIComponent(query)}?expand=${expand}`
-      try {
-        const record = await ctx.fetchJson(url)
-        return { found: true, query, species, record }
-      } catch (err) {
-        if (isNotFound(err)) return { found: false, query, species, record: null }
-        throw err
+      let record: Dict | null = null
+      if (queryType !== 'symbol') {
+        const stableId = upstreamStableId(query)
+        record = await lookupRecord(
+          ctx,
+          `${ENSEMBL}/lookup/id/${encodeURIComponent(stableId)}?expand=${expand}`,
+          `ID '${stableId}' not found`
+        )
       }
+      if (queryType === 'symbol' || (queryType === 'auto' && !record && !isStableId(query))) {
+        record = await lookupRecord(
+          ctx,
+          `${ENSEMBL}/lookup/symbol/${encodeURIComponent(species)}/${encodeURIComponent(query)}?expand=${expand}`,
+          `No valid lookup found for symbol ${query}`
+        )
+      }
+      if (!record) return { found: false, query, species, record: null }
+      // Stable IDs select their own species; the requested/default species only routes symbols.
+      return { found: true, query, species: record.species, record }
     }
   },
   {
@@ -245,19 +346,26 @@ export const GENOMES_ENSEMBL_TOOLS: ToolDescriptor[] = [
     id: 'ensembl_vep_variant',
     connector: 'genomes',
     description:
-      'Predict variant consequences with Ensembl VEP — most-severe-first summary of the (often huge) per-transcript consequence list. Pass EITHER variant_id OR region+allele. Args: variant_id (dbSNP rsID rs7412, COSMIC COSV..., or HGMD ID); region (GRCh38 1-based inclusive chrom:start-end, e.g. 7:140753336-140753336; SNV start==end; insertion start=end+1; explicit strand suffix :1/:-1 accepted); allele (variant allele on forward strand for the region route, e.g. T or - for deletion); species (default homo_sapiens); max_consequences (cap on returned per-transcript rows, default 25; full count in n_transcript_consequences, rows kept are most severe HIGH>MODERATE>LOW>MODIFIER; transcript_consequences_truncated flags the cap). Returns {query, n_results, results:[{input, assembly_name, seq_region_name, start, end, strand, allele_string, most_severe_consequence, genes:[{gene_id, gene_symbol, worst_impact, n_transcripts}], n_transcript_consequences, transcript_consequences_truncated, transcript_consequences:[...], n_regulatory_feature_consequences, n_motif_feature_consequences, colocated_variants:[...]}]}. Unknown rsIDs raise with the upstream message.',
+      'Predict variant consequences with Ensembl VEP — most-severe-first summary of the (often huge) per-transcript consequence list. If variant_id is provided, the ID route takes precedence and region/allele/allele_orientation are ignored. Otherwise, both region and allele are required. allele does not filter results from the ID route. Args: variant_id (dbSNP rsID rs7412, COSMIC COSV..., or HGMD ID); region (1-based inclusive chrom:start-end on the current species assembly, GRCh38 for human, e.g. 7:140753336-140753336; SNV start==end; insertion start=end+1; explicit strand suffix :1/:-1 accepted; coordinates always refer to the reference genome, including on the negative strand); allele (A/C/G/T replacement sequence, or - for deletion; upstream symbolic alleles INS/DUP/DEL/TDUP are accepted in forward orientation); allele_orientation (forward by default, preserving existing calls: allele is on the reference forward strand regardless of the region suffix; region opts into interpreting allele on the region strand, so :-1 reverse-complements sequence alleles before querying; symbolic alleles on a negative region require forward orientation). Every region request is sent on the forward strand; returned alleles are forward-oriented. A negative-strand gene does not require negative-strand input; species (default homo_sapiens); max_consequences (cap on returned per-transcript rows, default 25; full count in n_transcript_consequences, rows kept are most severe HIGH>MODERATE>LOW>MODIFIER; transcript_consequences_truncated flags the cap). Returns {query, n_results, results:[{input, assembly_name, seq_region_name, start, end, strand, allele_string, most_severe_consequence, genes:[{gene_id, gene_symbol, worst_impact, n_transcripts}], n_transcript_consequences, transcript_consequences_truncated, transcript_consequences:[...], n_regulatory_feature_consequences, n_motif_feature_consequences, colocated_variants:[...]}]}. Each transcript consequence retains variant_allele. n_transcripts counts distinct non-empty transcript IDs per gene across the full list; worst_impact spans all returned upstream alleles, while n_transcript_consequences counts rows. Unknown rsIDs raise with the upstream message.',
     input: {
       type: 'object',
       properties: {
         variant_id: { type: 'string' },
         region: { type: 'string' },
         allele: { type: 'string' },
+        allele_orientation: {
+          type: 'string',
+          enum: ['forward', 'region'],
+          default: 'forward',
+          description:
+            'Region route only: forward preserves existing allele semantics; region interprets allele on the region strand (:-1 reverse-complements sequence alleles).'
+        },
         species: { type: 'string', default: DEFAULT_SPECIES },
         max_consequences: { type: 'integer', default: 25 }
       }
     },
     returns:
-      '{query, n_results, results[]} — each result the most-severe-first VEP summary (per-transcript rows sorted HIGH>MODERATE>LOW>MODIFIER and capped, plus per-gene worst impact and colocated variants).',
+      '{query, n_results, results[], normalization?} — each result the most-severe-first VEP summary. Region calls add normalization: {original:{region,allele,allele_orientation}, forward:{region,allele}, reverse_complemented}; coordinates are not lifted or reversed. query retains the original input; results use forward-strand alleles. ID calls omit normalization.',
     example:
       'const result = await host.mcp("genomes", "ensembl_vep_variant", {"variant_id": "rs7412", "max_consequences": 25})',
     run: async (ctx, a) => {
@@ -268,18 +376,25 @@ export const GENOMES_ENSEMBL_TOOLS: ToolDescriptor[] = [
       const allele = strArg(a.allele)
       let url: string
       let query: string
+      let normalization: ReturnType<typeof normalizeVepRegion> | undefined
       if (variantId) {
         url = `${ENSEMBL}/vep/${species}/id/${encodeURIComponent(variantId)}`
         query = variantId
       } else if (region && allele) {
-        url = `${ENSEMBL}/vep/${species}/region/${region}/${encodeURIComponent(allele)}`
+        normalization = normalizeVepRegion(region, allele, a.allele_orientation)
+        url = `${ENSEMBL}/vep/${species}/region/${normalization.forward.region}/${encodeURIComponent(normalization.forward.allele)}`
         query = `${region} ${allele}`
       } else {
         throw new Error('ensembl_vep_variant requires either variant_id or both region and allele')
       }
       const raw = ((await ctx.fetchJson(url)) as Dict[] | undefined) ?? []
       const results = raw.map((r) => summarizeVepResult(r, maxConsequences))
-      return { query, n_results: results.length, results }
+      return {
+        query,
+        n_results: results.length,
+        results,
+        ...(normalization ? { normalization } : {})
+      }
     }
   },
   {
@@ -357,7 +472,7 @@ export const GENOMES_ENSEMBL_TOOLS: ToolDescriptor[] = [
     id: 'ensembl_sequence',
     connector: 'genomes',
     description:
-      'Fetch sequence from Ensembl — by stable ID (gene/transcript/protein) or by genomic region. Pass EITHER stable_id OR region. Args: stable_id (ENSG.../ENST.../ENSP..., versioned accepted); region (1-based inclusive chrom:start..end or chrom:start-end, GRCh38 for human, max 10Mb); species (for region route, default homo_sapiens; ignored for stable IDs); seq_type (ID route: genomic default/cdna/cds/protein — protein only for ENST/ENSP; ignored for regions which always return genomic); max_bytes (payload guard default 400000 — larger sequences have `seq` omitted; length/sha256/metadata always returned; re-call with larger max_bytes for full text). Returns {found, query, seq_type, id, description, molecule, length, sha256, seq} — length in the unit implied by molecule (bases for dna, residues for protein); seq replaced by seq_omitted when capped; found:false with null fields for unknown stable IDs; malformed/oversized regions raise with the upstream message.',
+      'Fetch sequence from Ensembl — by stable ID (gene/transcript/protein) or by genomic region. Pass EITHER stable_id OR region. Args: stable_id (ENSG.../ENST.../ENSP..., versioned accepted); region (1-based inclusive chrom:start..end or chrom:start-end, GRCh38 for human, max 10Mb); species (for region route, default homo_sapiens; ignored for stable IDs); seq_type (ID route: genomic default/cdna/cds/protein; ignored for regions which always return genomic). This tool returns one sequence: for gene-level cdna/cds/protein requests that resolve to multiple sequences, specify a transcript/protein stable ID instead; max_bytes (payload guard default 400000 — larger sequences have `seq` omitted; length/sha256/metadata always returned; re-call with larger max_bytes for full text). Returns {found, query, seq_type, id, description, molecule, length, sha256, seq} — length in the unit implied by molecule (bases for dna, residues for protein); seq replaced by seq_omitted when capped; found:false with null fields only when Ensembl explicitly reports the requested stable ID as not found; multiple-sequence requests, incompatible sequence types, and other upstream failures raise errors.',
     input: {
       type: 'object',
       properties: {
@@ -373,7 +488,7 @@ export const GENOMES_ENSEMBL_TOOLS: ToolDescriptor[] = [
       }
     },
     returns:
-      '{found, query, seq_type, id, description, molecule, length, sha256, seq} — seq replaced by seq_omitted:true when byte length exceeds max_bytes; found:false with null fields for unknown stable IDs.',
+      '{found, query, seq_type, id, description, molecule, length, sha256, seq} — seq replaced by seq_omitted:true when byte length exceeds max_bytes; found:false with null fields only for an explicit upstream ID-not-found response; other failures raise errors.',
     example:
       'const result = await host.mcp("genomes", "ensembl_sequence", {"stable_id": "ENSP00000288602", "seq_type": "protein"})',
     run: async (ctx, a) => {
@@ -389,12 +504,18 @@ export const GENOMES_ENSEMBL_TOOLS: ToolDescriptor[] = [
 
       let resp: Dict
       if (stableId) {
-        try {
-          resp = (await ctx.fetchJson(
-            `${ENSEMBL}/sequence/id/${encodeURIComponent(upstreamStableId(stableId))}?type=${encodeURIComponent(seqType)}`
-          )) as Dict
-        } catch (err) {
-          if (isNotFound(err)) {
+        const id = upstreamStableId(stableId)
+        const { body, status } = await ctx.fetchJsonWithHeaders(
+          `${ENSEMBL}/sequence/id/${encodeURIComponent(id)}?type=${encodeURIComponent(seqType)}`,
+          { allowHttpStatuses: [400] }
+        )
+        if (status === 400) {
+          const record =
+            body && typeof body === 'object' && !Array.isArray(body) ? (body as Dict) : null
+          const error = record?.error
+          // Ensembl also uses 400 for multiple sequences and incompatible sequence types.
+          // Only explicit absence of this exact ID is a negative lookup result.
+          if (error === `ID '${id}' not found`) {
             return {
               found: false,
               query,
@@ -406,8 +527,12 @@ export const GENOMES_ENSEMBL_TOOLS: ToolDescriptor[] = [
               sha256: null
             }
           }
-          throw err
+          if (typeof error === 'string') {
+            throw new Error(`Ensembl sequence failed: ${error.slice(0, 1000)}`)
+          }
+          throw new Error('Ensembl sequence returned an unrecognized HTTP 400 response')
         }
+        resp = body as Dict
       } else {
         // Region route: malformed/oversized regions raise the upstream 400 (not caught).
         resp = (await ctx.fetchJson(`${ENSEMBL}/sequence/region/${species}/${region}`)) as Dict

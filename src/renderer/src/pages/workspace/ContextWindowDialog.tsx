@@ -1,3 +1,4 @@
+import { InlineNotice } from '@/components/ui/inline-notice'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
 /* Hallmark · component: context-window dialog · turns: composition (full-width ratio strip) + pinned run history; calls: 3-metric summary + stacked per-call chart with gray turn lanes and pinned call details · genre: modern-minimal · theme: product tokens (chart-1..5) · contrast: pass (40–41) · mobile: pass (34, 49, 50–57) · slop: pass (1–58) */
 import { Button } from '@/components/ui/button'
@@ -158,7 +159,9 @@ const pointState = (point: ContextWindowTrendPoint): PointPresentation => {
   return {
     label: stopReasonLabel[termination.stopReason],
     code: termination.stopReason,
-    color: interrupted ? 'text-warning-900' : 'text-muted-foreground',
+    color: interrupted
+      ? 'text-status-warning-foreground dark:text-status-warning-dark-foreground'
+      : 'text-muted-foreground',
     ring: interrupted ? 'ring-warning-900' : 'ring-transparent',
     icon: interrupted ? CircleStop : CheckCircle2
   }
@@ -1209,15 +1212,12 @@ const ContextWindowDialogData = ({
         <>
           <ContextCallSummary summary={callSummary} />
           {reportedCallCount > callPoints.length ? (
-            <p
-              className="rounded-md border border-status-warning-foreground/30 bg-status-warning-surface/40 px-3 py-2 text-xs leading-5 text-status-warning-foreground dark:border-status-warning-dark-foreground/30 dark:bg-status-warning-dark-surface/20 dark:text-status-warning-dark-foreground"
-              data-slot="context-call-coverage-notice"
-            >
+            <InlineNotice data-slot="context-call-coverage-notice">
               {t(
                 'Showing {{detailed}} of {{reported}} reported calls because some turns have no exact call details.',
                 { detailed: callPoints.length, reported: reportedCallCount }
               )}
-            </p>
+            </InlineNotice>
           ) : null}
           {callPoints.length ? (
             <ContextCallHistory points={callPoints} />

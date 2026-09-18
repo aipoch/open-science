@@ -16,6 +16,39 @@ test.describe('Windows window system', () => {
   test.skip(process.platform !== 'win32', 'Windows window behavior requires a Windows host.')
   test.use({ windowMode: 'normal' })
 
+  test('zooms with Windows plus aliases and preserves native zoom shortcuts', async ({
+    app
+  }, testInfo) => {
+    const page = await app.completeOnboarding()
+    await app.setMainWindowZoomFactor(1)
+    const pixelRatio = (): Promise<number> => page.evaluate(() => window.devicePixelRatio)
+    const baseline = await pixelRatio()
+    await testInfo.attach('zoom-before', {
+      body: await page.screenshot(),
+      contentType: 'image/png'
+    })
+
+    for (const key of ['=', 'numadd']) {
+      for (let step = 1; step <= 3; step++) {
+        await app.pressMainWindowShortcut(key, ['control'])
+        await expect
+          .poll(async () => (await pixelRatio()) / baseline)
+          .toBeCloseTo(1.2 ** (step * 0.5), 4)
+      }
+      await testInfo.attach(`zoom-after-${key === '=' ? 'equal' : 'numpad'}`, {
+        body: await page.screenshot(),
+        contentType: 'image/png'
+      })
+      await app.pressMainWindowShortcut('0', ['control'])
+      await expect.poll(pixelRatio).toBeCloseTo(baseline, 4)
+    }
+
+    await app.pressMainWindowShortcut('+', ['control', 'shift'])
+    await expect.poll(async () => (await pixelRatio()) / baseline).toBeCloseTo(1.2 ** 0.5, 4)
+    await app.pressMainWindowShortcut('-', ['control'])
+    await expect.poll(pixelRatio).toBeCloseTo(baseline, 4)
+  })
+
   test('persists minimize-to-tray across titlebar close, relaunch, and Ctrl+W', async ({ app }) => {
     let page = await app.completeOnboarding()
     let settings = await openGeneralSettings(page)

@@ -1,3 +1,4 @@
+import { computeQueueBlockedLabel } from '@/lib/compute/queue-blocked-label'
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowUpRight, ChevronDown, Cpu, RadioTower } from 'lucide-react'
@@ -54,6 +55,9 @@ const kernelStatusClassName = (status: NotebookProjectKernelActivity['status']):
 }
 
 const jobStatusLabel = (job: JobSummary, t: ReturnType<typeof useTranslation>['t']): string =>
+  (job.status === 'queued' && !job.cancellation_status
+    ? computeQueueBlockedLabel(job.queue_blocked_reason, t)
+    : undefined) ??
   backgroundActivityStatusLabel(
     job.cancellation_status === 'cancelling'
       ? 'cancelling'

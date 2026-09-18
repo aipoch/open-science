@@ -38,6 +38,29 @@ model Project {
   sessions         Session[]
   memoryEntries    MemoryEntry[]
   literatureItems  ProjectLiterature[]
+  bookmarks        Bookmark[]
+}
+
+// A private, Session-scoped saved source location. Session identity deliberately has no foreign key:
+// the Session table is a rebuildable projection and Bookmark rows must survive projection rebuilds.
+model Bookmark {
+  id           String   @id
+  projectId    String
+  sessionId    String
+  kind         String
+  sourceKind   String
+  sourceId     String
+  sourceJson   String
+  selectorJson String
+  quote        String?
+  note         String   @default("")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  project      Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, sessionId, createdAt, id])
+  @@index([projectId, sessionId, sourceKind, sourceId])
+  @@map("bookmarks")
 }
 
 // Monotonic allocator for the app-wide human-facing Session number. The row is never deleted when

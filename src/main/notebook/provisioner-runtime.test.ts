@@ -15,6 +15,41 @@ import {
 import { condaActivatedPath } from './runtime-paths'
 
 describe('verifyExecutable', () => {
+  it('preserves cancellation before launching a verification process', async () => {
+    const reason = new Error('verification cancelled')
+    await expect(
+      verifyExecutable('/no/such/bin', { signal: AbortSignal.abort(reason) })
+    ).rejects.toBe(reason)
+  })
+
+  it.skipIf(process.platform === 'win32')(
+    'cancels an active verification and reaps its worker',
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'os-verify-cancel-'))
+      const bin = join(dir, 'probe')
+      const pidFile = join(dir, 'pid')
+      writeFileSync(
+        bin,
+        `#!${process.execPath}\nrequire('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000)\n`
+      )
+      chmodSync(bin, 0o755)
+      const controller = new AbortController()
+      const reason = new Error('verification cancelled')
+      const outcome = verifyExecutable(bin, { signal: controller.signal }).catch(
+        (error: unknown) => error
+      )
+      try {
+        await vi.waitFor(() => expect(existsSync(pidFile)).toBe(true), { timeout: 5_000 })
+        const pid = Number(readFileSync(pidFile, 'utf8'))
+        controller.abort(reason)
+        expect(await outcome).toBe(reason)
+        expect(() => process.kill(pid, 0)).toThrow()
+      } finally {
+        controller.abort(reason)
+        await outcome
+      }
+    }
+  )
   it('resolves for a real interpreter that answers --version', async () => {
     // node itself answers `--version`; use it as a stand-in executable.
     await expect(verifyExecutable(process.execPath)).resolves.toBeUndefined()
@@ -44,39 +79,43 @@ describe('verifyExecutable', () => {
     await expect(verifyExecutable(bin, { prefix })).rejects.toThrow(/outside.*prefix|relocat/i)
   })
 
-  it('rejects an R runtime that mixes a managed library with an injected host library', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'os-mixed-r-libraries-'))
-    const prefix = join(dir, 'runtime', 'envs', 'default-r')
-    const library = join(prefix, 'lib', 'R', 'library')
-    const hostLibrary = join(dir, 'host-library')
-    const bin = join(prefix, 'bin', 'R')
-    mkdirSync(library, { recursive: true })
-    mkdirSync(hostLibrary, { recursive: true })
-    mkdirSync(join(prefix, 'bin'), { recursive: true })
-    writeFileSync(
-      bin,
-      `#!${process.execPath}\n` +
-        `process.stdout.write([` +
-        `'OPEN_SCIENCE_R_HOME=${join(prefix, 'lib', 'R')}',` +
-        `'OPEN_SCIENCE_R_BASE_LIBRARY=${library}',` +
-        `'OPEN_SCIENCE_R_LIBRARY=${library}',` +
-        `'OPEN_SCIENCE_R_LIBRARY=${hostLibrary}'` +
-        `].join('\\n') + '\\n')\n`
-    )
-    chmodSync(bin, 0o755)
+  it.skipIf(process.platform === 'win32')(
+    'rejects an R runtime that mixes a managed library with an injected host library',
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'os-mixed-r-libraries-'))
+      const prefix = join(dir, 'runtime', 'envs', 'default-r')
+      const library = join(prefix, 'lib', 'R', 'library')
+      const hostLibrary = join(dir, 'host-library')
+      const bin = join(prefix, 'bin', 'R')
+      mkdirSync(library, { recursive: true })
+      mkdirSync(hostLibrary, { recursive: true })
+      mkdirSync(join(prefix, 'bin'), { recursive: true })
+      writeFileSync(
+        bin,
+        `#!${process.execPath}\n` +
+          `process.stdout.write([` +
+          `'OPEN_SCIENCE_R_HOME=${join(prefix, 'lib', 'R')}',` +
+          `'OPEN_SCIENCE_R_BASE_LIBRARY=${library}',` +
+          `'OPEN_SCIENCE_R_LIBRARY=${library}',` +
+          `'OPEN_SCIENCE_R_LIBRARY=${hostLibrary}'` +
+          `].join('\\n') + '\\n')\n`
+      )
+      chmodSync(bin, 0o755)
 
-    await expect(verifyExecutable(bin, { prefix })).rejects.toThrow(/outside.*prefix|relocat/i)
-  })
+      await expect(verifyExecutable(bin, { prefix })).rejects.toThrow(/outside.*prefix|relocat/i)
+    }
+  )
 
   it.skipIf(process.platform === 'win32')(
     'passes the activated Windows conda PATH to the interpreter process',
     async () => {
       const dir = mkdtempSync(join(tmpdir(), 'os-r-path-'))
       const bin = join(dir, 'R.exe')
+      const rscript = join(dir, 'Rscript.exe')
       const prefix = 'C:\\runtime\\envs\\default-r'
       const expectedPath = condaActivatedPath(prefix, 'C:\\Windows', 'win32')
       writeFileSync(
-        bin,
+        rscript,
         `#!${process.execPath}\n` +
           `if (process.env.PATH !== process.env.EXPECTED_PATH) process.exit(19)\n` +
           `process.stdout.write([` +
@@ -85,7 +124,7 @@ describe('verifyExecutable', () => {
           `'OPEN_SCIENCE_R_LIBRARY=C:\\\\runtime\\\\envs\\\\default-r\\\\lib\\\\R\\\\library'` +
           `].join('\\n') + '\\n')\n`
       )
-      chmodSync(bin, 0o755)
+      chmodSync(rscript, 0o755)
 
       await expect(
         verifyExecutable(bin, {
@@ -133,6 +172,29 @@ describe('runMicromamba', () => {
     await expect(
       runMicromamba([process.execPath, '-e', 'process.exit(0)'])
     ).resolves.toBeUndefined()
+  })
+
+  it('streams stdout and stderr without changing successful completion', async () => {
+    const onOutput = vi.fn()
+
+    await runMicromamba(
+      [
+        process.execPath,
+        '-e',
+        "process.stdout.write('linking numpy\\n'); process.stderr.write('warning\\n')"
+      ],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      600_000,
+      onOutput
+    )
+
+    expect(onOutput.mock.calls.flatMap(([output]) => output)).toEqual([
+      { stream: 'stdout', text: 'linking numpy\n' },
+      { stream: 'stderr', text: 'warning\n' }
+    ])
   })
 
   it('rejects with a short stderr excerpt on non-zero exit, keeping full tails in data', async () => {

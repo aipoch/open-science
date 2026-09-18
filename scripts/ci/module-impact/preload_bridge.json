@@ -1,0 +1,36 @@
+{
+  "ownerPaths": [
+    "src/preload/electron-renderer-api.ts",
+    "src/preload/electron-renderer-contract-adapter.test.ts",
+    "src/preload/electron-renderer-contract-adapter.ts",
+    "src/preload/find-overlay.test.ts",
+    "src/preload/find-overlay.ts",
+    "src/preload/index.test.ts",
+    "src/preload/index.ts",
+    "src/preload/installation-assistant.ts",
+    "src/preload/renderer-api.d.ts"
+  ],
+  "interfacePaths": [
+    "src/preload/electron-renderer-contract-adapter.ts",
+    "src/preload/find-overlay.ts",
+    "src/preload/index.ts"
+  ],
+  "consumerModules": [],
+  "testFiles": {
+    "owner": [
+      "src/preload/electron-renderer-contract-adapter.test.ts",
+      "src/preload/find-overlay.test.ts",
+      "src/preload/index.test.ts"
+    ],
+    "contract": [],
+    "consumer": [
+      "src/renderer/src/hooks/useWindowFindAppearanceSync.overlay.test.tsx",
+      "src/renderer/web/api-installer.test.ts",
+      "src/renderer/web/renderer-argument-shape-characterization.test.ts",
+      "src/shared/renderer-surface-inventory.test.ts",
+      "src/shared/renderer-surface-matrix.test.ts"
+    ]
+  },
+  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
+  "fallbackCapability": "shared_contract"
+}

@@ -1,5 +1,13 @@
+import { NoticeText } from './notice-text'
+import { useNoticeCountdown } from './use-notice-countdown'
+import {
+  noticeSurfaceClassName,
+  noticeCapsuleClassName,
+  noticeActionClassName,
+  noticeDismissClassName
+} from './ui/notice-chrome'
 /* Hallmark · pre-emit critique: P5 H4 E5 S5 R5 V4 */
-/* Hallmark · component: snackbar · genre: modern-minimal · theme: Open Science semantic tokens
+/* Hallmark · component: snackbar · genre: modern-minimal · theme: Open-Science semantic tokens
  * states: default · hover · focus · active · disabled · loading · error · success
  * contrast: pass (46–50)
  */
@@ -9,18 +17,29 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { usePermissionGrantsStore } from '@/stores/permission-grants-store'
 import type { PermissionUndo } from '@/stores/permission-grants-store'
-import { useArchiveUndoStore, type ArchiveUndo } from '@/stores/archive-undo-store'
+import {
+  useArchiveUndoStore,
+  isArchiveUndoActive,
+  type ArchiveUndo
+} from '@/stores/archive-undo-store'
 
 const EDITABLE_SHORTCUT_TARGET =
   'input, textarea, select, [role="textbox"], [contenteditable]:not([contenteditable="false"])'
 
-const UNDO_ENTER_TRANSITION = { duration: 0.4, ease: [0.16, 1, 0.3, 1] } as const
-const UNDO_EXIT_TRANSITION = { duration: 0.28, ease: [0.7, 0, 0.84, 0] } as const
-const UNDO_LAYOUT_TRANSITION = { duration: 0.22, ease: [0.16, 1, 0.3, 1] } as const
-const UNDO_REDUCED_TRANSITION = { duration: 0.12, ease: 'linear' } as const
+const undoSurfaceClassName = cn(
+  noticeSurfaceClassName,
+  noticeCapsuleClassName,
+  'pointer-events-auto flex w-full shadow-menu'
+)
+
+const UNDO_ENTER_TRANSITION = { duration: 0.18, ease: [0.16, 1, 0.3, 1] } as const
+const UNDO_EXIT_TRANSITION = { duration: 0.14, ease: [0.4, 0, 1, 1] } as const
+const UNDO_LAYOUT_TRANSITION = { duration: 0.18, ease: [0.16, 1, 0.3, 1] } as const
+const UNDO_REDUCED_TRANSITION = { duration: 0, ease: 'linear' } as const
 
 const archiveUndoShortcut = (): { aria: string; label: string } =>
   window.api.platform === 'darwin'
@@ -37,10 +56,11 @@ const UndoItemPresence = ({ children }: { children: ReactNode }): React.JSX.Elem
   return (
     <motion.div
       data-testid="undo-snackbar-presence"
+      className="w-fit max-w-full"
       aria-hidden={isPresent ? undefined : true}
       inert={isPresent ? undefined : true}
       layout={shouldReduceMotion ? false : 'position'}
-      initial={{ opacity: 0, y: shouldReduceMotion ? 0 : -8 }}
+      initial={{ opacity: 0, y: shouldReduceMotion ? 0 : -4 }}
       animate={{
         opacity: 1,
         y: 0,
@@ -48,7 +68,7 @@ const UndoItemPresence = ({ children }: { children: ReactNode }): React.JSX.Elem
       }}
       exit={{
         opacity: 0,
-        y: shouldReduceMotion ? 0 : -6,
+        y: shouldReduceMotion ? 0 : -4,
         transition: shouldReduceMotion ? UNDO_REDUCED_TRANSITION : UNDO_EXIT_TRANSITION
       }}
       transition={{ layout: UNDO_LAYOUT_TRANSITION }}
@@ -81,17 +101,19 @@ const PermissionUndoItem = ({
 
   const [pointerPaused, setPointerPaused] = useState(false)
   const [focusPaused, setFocusPaused] = useState(false)
-  const paused = pointerPaused || focusPaused
+  const paused = pointerPaused || focusPaused || isRestoring
 
-  useEffect(() => {
-    if (paused) return
-    const remaining = Math.max(0, undo.expiresAt - Date.now())
-    const timer = window.setTimeout(() => dismiss(undo.token), remaining)
-    return () => window.clearTimeout(timer)
-  }, [dismiss, paused, undo.expiresAt, undo.token])
+  useNoticeCountdown(
+    () => Math.max(0, undo.expiresAt - Date.now()),
+    paused,
+    () => dismiss(undo.token),
+    undo.messageKey
+  )
 
+  // Keep the receipt valid through the remaining countdown after hover/focus ends.
+  // Stopping renewal on unpause can expire Undo before its visible action dismisses.
   useEffect(() => {
-    if (!paused || undo.canRestore === false) return
+    if (isRestoring || undo.canRestore === false) return
     let cancelled = false
     let renewalTimer: number | undefined
     const renew = async (): Promise<void> => {
@@ -111,7 +133,7 @@ const PermissionUndoItem = ({
       cancelled = true
       if (renewalTimer !== undefined) window.clearTimeout(renewalTimer)
     }
-  }, [dismiss, extend, paused, undo.canRestore, undo.token])
+  }, [dismiss, extend, isRestoring, undo.canRestore, undo.token])
 
   return (
     <div
@@ -128,16 +150,16 @@ const PermissionUndoItem = ({
       onKeyDown={(event) => {
         if (event.key === 'Escape') dismiss(undo.token)
       }}
-      className="pointer-events-auto flex max-w-[calc(100vw-2rem)] items-center gap-2 rounded-2xl bg-popover px-3 py-2 text-sm text-popover-foreground shadow-card"
+      className={undoSurfaceClassName}
     >
       <KeyRound className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-      <span className="max-w-[min(28rem,55vw)] truncate">{t(undo.messageKey, messageParams)}</span>
+      <NoticeText text={t(undo.messageKey, messageParams)} />
       {undo.canRestore !== false ? (
         <Button
           type="button"
           variant="ghost"
           size="sm"
-          className="relative ml-1 h-8 whitespace-nowrap px-2 font-medium text-primary hover:text-primary before:absolute before:-inset-y-1.5 before:inset-x-0 before:content-['']"
+          className={`${noticeActionClassName} relative ml-1 h-auto before:absolute before:-inset-y-1.5 before:inset-x-0 before:content-['']`}
           disabled={isRestoring}
           onClick={() => void restore(undo.token)}
         >
@@ -163,7 +185,7 @@ const PermissionUndoItem = ({
               type="button"
               variant="ghost"
               size="icon"
-              className="relative size-8 shrink-0 before:absolute before:-inset-1.5 before:content-['']"
+              className={`${noticeDismissClassName} relative before:absolute before:-inset-1.5 before:content-['']`}
               aria-label={t('Dismiss permission Undo')}
               disabled={isRestoring}
               onClick={() => dismiss(undo.token)}
@@ -183,12 +205,14 @@ const ArchiveUndoItem = ({
   dismiss,
   restore,
   isRestoring,
+  restoreDisabled,
   isShortcutTarget
 }: {
   undo: ArchiveUndo
   dismiss: (key: string) => void
   restore: (key: string) => Promise<void>
   isRestoring: boolean
+  restoreDisabled: boolean
   isShortcutTarget: boolean
 }): React.JSX.Element => {
   const { t } = useTranslation()
@@ -196,14 +220,20 @@ const ArchiveUndoItem = ({
 
   const [pointerPaused, setPointerPaused] = useState(false)
   const [focusPaused, setFocusPaused] = useState(false)
-  const paused = pointerPaused || focusPaused
+  const paused = pointerPaused || focusPaused || isRestoring
+
+  const setPaused = useArchiveUndoStore((state) => state.setPaused)
+  useEffect(() => {
+    setPaused(undo.key, paused)
+    return () => setPaused(undo.key, false)
+  }, [paused, setPaused, undo.key])
 
   useEffect(() => {
-    if (paused) return
+    if (paused || undo.pausedAt !== undefined) return
     const remaining = Math.max(0, undo.expiresAt - Date.now())
     const timer = window.setTimeout(() => dismiss(undo.key), remaining)
     return () => window.clearTimeout(timer)
-  }, [dismiss, paused, undo.expiresAt, undo.key])
+  }, [dismiss, paused, undo.expiresAt, undo.key, undo.pausedAt])
 
   return (
     <div
@@ -219,19 +249,19 @@ const ArchiveUndoItem = ({
       onKeyDown={(event) => {
         if (event.key === 'Escape') dismiss(undo.key)
       }}
-      className="pointer-events-auto flex max-w-[calc(100vw-2rem)] items-center gap-2 rounded-2xl bg-popover px-3 py-2 text-sm text-popover-foreground shadow-card"
+      className={undoSurfaceClassName}
     >
       <Archive className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-      <span className="max-w-[min(28rem,55vw)] truncate">
-        {'messageKey' in undo ? t(undo.messageKey, undo.messageParams) : undo.message}
-      </span>
+      <NoticeText
+        text={'messageKey' in undo ? t(undo.messageKey, undo.messageParams) : undo.message}
+      />
       <Button
         type="button"
         variant="ghost"
         size="sm"
-        className="relative ml-1 h-8 whitespace-nowrap px-2 font-medium text-primary hover:text-primary before:absolute before:-inset-y-1.5 before:inset-x-0 before:content-['']"
+        className={`${noticeActionClassName} relative ml-1 h-auto before:absolute before:-inset-y-1.5 before:inset-x-0 before:content-['']`}
         aria-keyshortcuts={isShortcutTarget ? shortcut.aria : undefined}
-        disabled={isRestoring}
+        disabled={restoreDisabled}
         onClick={() => void restore(undo.key)}
       >
         {isRestoring ? (
@@ -263,7 +293,7 @@ const ArchiveUndoItem = ({
               type="button"
               variant="ghost"
               size="icon"
-              className="relative size-8 shrink-0 before:absolute before:-inset-1.5 before:content-['']"
+              className={`${noticeDismissClassName} relative before:absolute before:-inset-1.5 before:content-['']`}
               aria-label={t('Dismiss archive Undo')}
               disabled={isRestoring}
               onClick={() => dismiss(undo.key)}
@@ -296,13 +326,13 @@ const PermissionUndoSnackbar = ({
   const dismissArchive = useArchiveUndoStore((state) => state.dismiss)
   const archiveRestoringKey = useArchiveUndoStore((state) => state.restoringKey)
   const [archiveProjectionTime, setArchiveProjectionTime] = useState(() => Date.now())
-  const archiveShortcutTargetKey = archiveNotices.find(
-    (notice) => notice.expiresAt > archiveProjectionTime
+  const archiveShortcutTargetKey = archiveNotices.find((notice) =>
+    isArchiveUndoActive(notice, archiveProjectionTime)
   )?.key
 
   useEffect(() => {
     const nextExpiry = archiveNotices
-      .filter((notice) => notice.expiresAt > archiveProjectionTime)
+      .filter((notice) => notice.pausedAt === undefined && notice.expiresAt > archiveProjectionTime)
       .reduce<number | undefined>(
         (earliest, notice) =>
           earliest === undefined ? notice.expiresAt : Math.min(earliest, notice.expiresAt),
@@ -338,7 +368,7 @@ const PermissionUndoSnackbar = ({
 
       const archiveUndo = useArchiveUndoStore.getState()
       const target = archiveUndo.notices.find(
-        (notice) => notice.key === archiveShortcutTargetKey && notice.expiresAt > Date.now()
+        (notice) => notice.key === archiveShortcutTargetKey && isArchiveUndoActive(notice)
       )
       if (!target || archiveUndo.restoringKey !== undefined) return
 
@@ -360,7 +390,7 @@ const PermissionUndoSnackbar = ({
     <div
       aria-live="polite"
       data-testid="permission-undo-stack"
-      className="pointer-events-none z-toast fixed top-[max(1.5rem,env(safe-area-inset-top))] left-1/2 max-h-[min(70svh,32rem)] -translate-x-1/2 overflow-y-auto overscroll-contain"
+      className="pointer-events-none mx-auto w-full max-w-[min(24rem,calc(100vw-1.5rem))]"
     >
       <div className="flex flex-col items-center gap-2 p-1">
         <AnimatePresence>
@@ -382,7 +412,10 @@ const PermissionUndoSnackbar = ({
                 dismiss={dismissArchive}
                 restore={restoreArchive}
                 isRestoring={archiveRestoringKey === item.key}
-                isShortcutTarget={item.key === archiveShortcutTargetKey}
+                restoreDisabled={archiveRestoringKey !== undefined}
+                isShortcutTarget={
+                  archiveRestoringKey === undefined && item.key === archiveShortcutTargetKey
+                }
               />
             </UndoItemPresence>
           ))}

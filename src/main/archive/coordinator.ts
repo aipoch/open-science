@@ -25,6 +25,7 @@ type SessionArchivePersistence = {
 
 type SessionRuntimeActivity = {
   isSessionBusy(projectId: string, sessionId: string): boolean | Promise<boolean>
+  isSessionExportBusy?(projectId: string, sessionId: string): boolean | Promise<boolean>
   isProjectBusy(projectId: string): boolean | Promise<boolean>
   liveSessionProjectId(sessionId: string): string | undefined
 }
@@ -36,20 +37,138 @@ class ArchiveCoordinator {
   private readonly projectQueues = new Map<string, Promise<void>>()
   private markReadSessions: (sessionIds: string[]) => Promise<void> = async () => undefined
   private readonly deletingProjectIds = new Set<string>()
+  private readonly exportingSessions = new Map<string, string>()
+  private readonly importingProjects = new Set<string>()
+  private readonly pendingDispatches = new Map<
+    string,
+    { projectId: string; count: number; userPrompts: number }
+  >()
+
+  // Independent execution owners hold this synchronous admission through their asynchronous
+  // startup/cleanup. Export observes both pending work and already-published runtime activity.
+  admitSessionWork(projectId: string, sessionId: string, userPrompt = false): () => void {
+    this.assertProjectDeletionAvailable(projectId)
+    this.assertExportAvailable(sessionId)
+    const pending = this.pendingDispatches.get(sessionId) ?? { projectId, count: 0, userPrompts: 0 }
+    pending.count += 1
+    if (userPrompt) pending.userPrompts += 1
+    this.pendingDispatches.set(sessionId, pending)
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      pending.count -= 1
+      if (userPrompt) pending.userPrompts -= 1
+      if (!pending.count) this.pendingDispatches.delete(sessionId)
+    }
+  }
+
+  isSessionExporting(projectId: string, sessionId: string): boolean {
+    return this.exportingSessions.get(sessionId) === projectId
+  }
+
+  reserveProjectImport(projectId: string, signal?: AbortSignal): Promise<() => void> {
+    return this.enqueue(
+      projectId,
+      async () => {
+        await this.activeProject(projectId)
+        if (this.importingProjects.has(projectId))
+          throw new Error('A project import is already in progress.')
+        this.importingProjects.add(projectId)
+        return () => {
+          this.importingProjects.delete(projectId)
+        }
+      },
+      signal
+    )
+  }
+
+  reserveSessionExport(
+    projectId: string,
+    sessionId: string,
+    assertIdle: () => Promise<void>,
+    signal?: AbortSignal
+  ): Promise<() => void> {
+    return this.enqueue(
+      projectId,
+      async () => {
+        await this.activeProject(projectId)
+        this.assertExportAvailable(sessionId)
+        if (this.pendingDispatches.has(sessionId))
+          throw new Error('Wait for the Session to become idle before exporting.')
+        // Fence new work before awaiting the runtime's database-backed activity check.
+        this.exportingSessions.set(sessionId, projectId)
+        try {
+          const isExportBusy = this.runtime.isSessionExportBusy ?? this.runtime.isSessionBusy
+          if (await isExportBusy(projectId, sessionId))
+            throw new Error('Wait for the Session to become idle before exporting.')
+          await assertIdle()
+          if (await isExportBusy(projectId, sessionId))
+            throw new Error('The Session is still active.')
+          return () => {
+            this.exportingSessions.delete(sessionId)
+          }
+        } catch (error) {
+          this.exportingSessions.delete(sessionId)
+          throw error
+        }
+      },
+      signal
+    )
+  }
+
+  private assertExportAvailable(sessionId: string): void {
+    if (this.exportingSessions.has(sessionId))
+      throw new Error('This Session is locked while its research package is being exported.')
+  }
+
+  private assertProjectExportAvailable(projectId: string): void {
+    if (this.importingProjects.has(projectId))
+      throw new Error(
+        'Wait for the research package import to finish before changing this Project.'
+      )
+    if ([...this.exportingSessions.values()].includes(projectId))
+      throw new Error(
+        'Wait for the research package export to finish before changing this Project.'
+      )
+  }
 
   constructor(
     private readonly projects: ProjectArchiveRepository,
     private readonly sessions: SessionArchivePersistence,
-    private readonly runtime: SessionRuntimeActivity
+    private readonly runtime: SessionRuntimeActivity,
+    private readonly backgroundWork?: {
+      cancelProject(projectId: string): Promise<void>
+      cancelSession(projectId: string, sessionId: string): Promise<void>
+    }
   ) {}
 
-  private enqueue<Result>(projectId: string, operation: () => Promise<Result>): Promise<Result> {
+  private enqueue<Result>(
+    projectId: string,
+    operation: () => Promise<Result>,
+    signal?: AbortSignal
+  ): Promise<Result> {
     const currentQueue = this.projectQueues.get(projectId) ?? Promise.resolve()
-    const result = currentQueue.then(operation, operation)
-    const nextQueue = result.then(
-      () => undefined,
-      () => undefined
-    )
+    // Cancelling a waiter must not advance the project queue or start its operation later.
+    const ready = signal
+      ? new Promise<void>((resolve, reject) => {
+          const abort = (): void => reject(signal.reason)
+          if (signal.aborted) {
+            abort()
+            return
+          }
+          signal.addEventListener('abort', abort, { once: true })
+          void currentQueue.finally(() => {
+            signal.removeEventListener('abort', abort)
+            resolve()
+          })
+        })
+      : currentQueue
+    const result = ready.then(() => {
+      signal?.throwIfAborted()
+      return operation()
+    })
+    const nextQueue = Promise.allSettled([currentQueue, result]).then(() => undefined)
     this.projectQueues.set(projectId, nextQueue)
     void nextQueue.then(() => {
       if (this.projectQueues.get(projectId) === nextQueue) {
@@ -72,6 +191,7 @@ class ArchiveCoordinator {
 
   updateProjectArchive(request: UpdateProjectArchiveRequest): Promise<Project> {
     return this.enqueue(request.id, async () => {
+      this.assertProjectExportAvailable(request.id)
       this.assertProjectDeletionAvailable(request.id)
       const project = await this.projects.get(request.id)
       if (!project) throw new Error('Project not found.')
@@ -79,9 +199,18 @@ class ArchiveCoordinator {
       if ((project.archiveRevision ?? 0) !== request.expectedArchiveRevision) {
         throw new Error('Project archive state changed elsewhere.')
       }
-      if (request.archived === (currentArchivedAt !== null)) return project
+      if (request.archived === (currentArchivedAt !== null)) {
+        if (request.archived) await this.backgroundWork?.cancelProject(request.id)
+        return project
+      }
 
-      if (request.archived && (await this.runtime.isProjectBusy(request.id))) {
+      if (
+        request.archived &&
+        ([...this.pendingDispatches.values()].some(
+          (pending) => pending.projectId === request.id && pending.userPrompts > 0
+        ) ||
+          (await this.runtime.isProjectBusy(request.id)))
+      ) {
         throw new Error('Finish or stop active sessions before archiving this project.')
       }
       const sessionIds = request.archived
@@ -91,6 +220,8 @@ class ArchiveCoordinator {
         : []
       const next = await this.projects.updateArchive(request, Date.now())
       if (request.archived) {
+        // Admission shares this queue, so no check can start between archive and drain.
+        await this.backgroundWork?.cancelProject(request.id)
         // Read state is an attention projection, not archive authority. A transient badge/database
         // failure must not roll back the durable archive transition.
         await this.markReadSessions(sessionIds).catch(() => undefined)
@@ -101,11 +232,18 @@ class ArchiveCoordinator {
 
   updateSessionArchive(request: UpdateSessionArchiveRequest): Promise<PersistedChatSession> {
     return this.enqueue(request.projectId, async () => {
+      this.assertExportAvailable(request.sessionId)
       await this.activeProject(request.projectId)
-      const session = await this.sessions.updateArchive(request, () =>
-        this.runtime.isSessionBusy(request.projectId, request.sessionId)
+      const session = await this.sessions.updateArchive(
+        request,
+        () =>
+          (this.pendingDispatches.get(request.sessionId)?.userPrompts ?? 0) > 0 ||
+          this.runtime.isSessionBusy(request.projectId, request.sessionId)
       )
-      if (request.archived) await this.markReadSessions([request.sessionId]).catch(() => undefined)
+      if (request.archived) {
+        await this.backgroundWork?.cancelSession(request.projectId, request.sessionId)
+        await this.markReadSessions([request.sessionId]).catch(() => undefined)
+      }
       return session
     })
   }
@@ -137,6 +275,7 @@ class ArchiveCoordinator {
     operation: () => Promise<Result>
   ): Promise<Result> {
     return this.enqueue(projectId, async () => {
+      this.assertProjectExportAvailable(projectId)
       // ProjectDeletionIntent is durable before this boundary. Re-entry is a recovery retry, and a
       // failed teardown must retain the fence until the coordinator completes or explicitly aborts.
       this.deletingProjectIds.add(projectId)
@@ -157,6 +296,7 @@ class ArchiveCoordinator {
   }
 
   restoreProjectDeletion(projectId: string): void {
+    this.assertProjectExportAvailable(projectId)
     this.deletingProjectIds.add(projectId)
   }
 
@@ -207,13 +347,22 @@ class ArchiveCoordinator {
 
   withSessionDeletionAdmissionById<Result>(
     sessionId: string,
-    operation: () => Promise<Result>
+    operation: () => Promise<Result>,
+    requireAvailable = false
   ): Promise<Result> {
     const admitted = this.resolveSessionProjectId(sessionId).then((projectId) => {
-      if (!projectId) return { result: operation() }
-      return this.enqueue(projectId, async () => {
-        this.assertProjectDeletionAvailable(projectId)
+      if (!projectId) {
+        if (requireAvailable)
+          throw new Error('Cannot use a Session whose Project owner is unavailable.')
         return { result: operation() }
+      }
+      return this.enqueue(projectId, async () => {
+        // New user work and archive must agree on one active state, including asynchronous startup.
+        // Application continuations retain deletion-only admission so existing cleanup can finish.
+        if (requireAvailable) await this.assertSessionAvailableByIdNow(sessionId, projectId)
+        const release = this.admitSessionWork(projectId, sessionId, requireAvailable)
+        const result = Promise.resolve().then(operation).finally(release)
+        return { result }
       })
     })
     return admitted.then(({ result }) => result)
@@ -227,6 +376,7 @@ class ArchiveCoordinator {
   }
 
   private async assertSessionAvailableNow(projectId: string, sessionId: string): Promise<void> {
+    this.assertExportAvailable(sessionId)
     const ownerProjectId =
       (await this.sessions.sessionProjectId(sessionId)) ??
       this.runtime.liveSessionProjectId(sessionId)
@@ -241,6 +391,7 @@ class ArchiveCoordinator {
   }
 
   private async assertSessionAvailableByIdNow(sessionId: string, projectId: string): Promise<void> {
+    this.assertExportAvailable(sessionId)
     await this.activeProject(projectId)
     await this.sessions.assertSessionAvailable(projectId, sessionId)
   }

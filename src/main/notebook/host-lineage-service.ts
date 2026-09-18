@@ -61,10 +61,13 @@ const projectPackageSource = (value: unknown): ArtifactPackageSourceEvidence => 
   }
   if (value.type === 'github') {
     if (
-      Object.keys(value).some((key) => !['type', 'repository', 'ref', 'commit'].includes(key)) ||
+      Object.keys(value).some(
+        (key) => !['type', 'repository', 'ref', 'commit', 'subdirectory'].includes(key)
+      ) ||
       typeof value.repository !== 'string' ||
       (value.ref !== undefined && typeof value.ref !== 'string') ||
-      (value.commit !== undefined && typeof value.commit !== 'string')
+      (value.commit !== undefined && typeof value.commit !== 'string') ||
+      (value.subdirectory !== undefined && typeof value.subdirectory !== 'string')
     ) {
       throw new Error('Artifact Version package source evidence is corrupt.')
     }
@@ -72,7 +75,8 @@ const projectPackageSource = (value: unknown): ArtifactPackageSourceEvidence => 
       type: value.type,
       repository: value.repository,
       ...(value.ref !== undefined ? { ref: value.ref } : {}),
-      ...(value.commit !== undefined ? { commit: value.commit } : {})
+      ...(value.commit !== undefined ? { commit: value.commit } : {}),
+      ...(value.subdirectory !== undefined ? { subdirectory: value.subdirectory } : {})
     }
   }
   if (
@@ -98,11 +102,11 @@ const normalizeGraphOptions = (
   }
   const maxDepth = value.max_depth ?? 5
   if (!Number.isInteger(maxDepth) || (maxDepth as number) < 0 || (maxDepth as number) > 20) {
-    throw new Error('host.lineage.graph max_depth must be an integer between 0 and 20.')
+    throw new Error('host.lineage.graph maxDepth must be an integer between 0 and 20.')
   }
   const maxNodes = value.max_nodes ?? 100
   if (!Number.isInteger(maxNodes) || (maxNodes as number) < 1 || (maxNodes as number) > 500) {
-    throw new Error('host.lineage.graph max_nodes must be an integer between 1 and 500.')
+    throw new Error('host.lineage.graph maxNodes must be an integer between 1 and 500.')
   }
   return { direction, maxDepth: maxDepth as number, maxNodes: maxNodes as number }
 }
@@ -292,7 +296,7 @@ class HostLineageService {
 
   async get(versionIdValue: unknown, context: HostLineageReadContext): Promise<HostLineageVersion> {
     if (typeof versionIdValue !== 'string' || !versionIdValue) {
-      throw new Error('host.lineage.get version_id must be a non-empty string.')
+      throw new Error('host.lineage.get versionId must be a non-empty string.')
     }
     const items = await this.options.catalog.readHostArtifactCatalog({
       projectId: context.projectId,
@@ -435,7 +439,7 @@ class HostLineageService {
     context: HostLineageReadContext
   ): Promise<HostLineageGraph> {
     if (typeof versionIdValue !== 'string' || !versionIdValue) {
-      throw new Error('host.lineage.graph version_id must be a non-empty string.')
+      throw new Error('host.lineage.graph versionId must be a non-empty string.')
     }
     const { direction, maxDepth, maxNodes } = normalizeGraphOptions(optionsValue)
     const resolveNode = async (versionId: string): Promise<HostLineageNode> => {

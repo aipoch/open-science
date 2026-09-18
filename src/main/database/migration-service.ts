@@ -1,5 +1,6 @@
-import { artifactHiddenMigration } from './migrations/0041-artifact-hidden'
+import { artifactHiddenMigration } from './migrations/0042-artifact-hidden'
 import { literatureCollectionRevisionMigration } from './migrations/0040-literature-collection-revision'
+import { bookmarksMigration } from './migrations/0041-bookmarks'
 import {
   literatureSearchTextMigration,
   backfillLiteratureSearchText
@@ -807,6 +808,17 @@ const MIGRATION_MANIFEST = [
     backupRetention: 'retain'
   },
   {
+    ...bookmarksMigration,
+    checksum: checksumMigrationPayload(
+      bookmarksMigration.id,
+      bookmarksMigration.statements,
+      bookmarksMigration.verifiers,
+      bookmarksMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
     ...artifactHiddenMigration,
     checksum: checksumMigrationPayload(
       artifactHiddenMigration.id,
@@ -921,6 +933,8 @@ const verifyForeignKeyIntegrity = async (client: PrismaClient): Promise<void> =>
 
 const verifyManagedFileVersionDomain = async (client: PrismaClient): Promise<void> => {
   await verifyForeignKeyIntegrity(client)
+  // Repeated saves can durably reference a pending revision before the turn finalizes. Accept
+  // that ancestry only within the same unfinished Agent ownership context, including crash staging.
   const violations = await migrationSqlExecutor.query<Array<{ kind: string; id: string }>>(
     client,
     `
@@ -951,8 +965,22 @@ const verifyManagedFileVersionDomain = async (client: PrismaClient): Promise<voi
         SELECT 1 FROM "ArtifactVersion" AS "parent"
         WHERE "parent"."id" = "version"."basedOnVersionId"
           AND "parent"."artifactId" = "version"."artifactId"
-          AND "parent"."state" = 'finalized'
           AND "parent"."versionNumber" < "version"."versionNumber"
+          AND (
+            "parent"."state" = 'finalized'
+            OR (
+              "parent"."state" = 'pending'
+              AND "version"."state" IN ('staging', 'pending')
+              AND "parent"."originKind" = 'agent_generated'
+              AND "version"."originKind" = 'agent_generated'
+              AND "parent"."artifactRunId" = "version"."artifactRunId"
+              AND "parent"."rootFrameId" = "version"."rootFrameId"
+              AND "parent"."agentFrameId" = "version"."agentFrameId"
+              AND "parent"."messageBranchId" = "version"."messageBranchId"
+              AND "parent"."runtimeSegmentId" = "version"."runtimeSegmentId"
+              AND "parent"."promptMessageId" = "version"."promptMessageId"
+            )
+          )
       )
     UNION ALL
     SELECT 'upload-based-on', "version"."id"
@@ -1543,7 +1571,7 @@ const validateLedger = (
     const newerMigration = ledger[manifest.length]!
     throw new DatabaseMigrationError(
       'database_newer_than_app',
-      'The database was updated by a newer version of Open Science.',
+      'The database was updated by a newer version of Open-Science.',
       false,
       newerMigration.id
     )
@@ -1622,7 +1650,7 @@ const classifyDatabaseFailure = (
   if (phase !== 'migration') {
     return new DatabaseMigrationError(
       'database_open_failed',
-      'Open Science could not open its database.',
+      'Open-Science could not open its database.',
       transient,
       undefined,
       { cause: error }
@@ -1630,7 +1658,7 @@ const classifyDatabaseFailure = (
   }
   return new DatabaseMigrationError(
     'database_migration_failed',
-    'Open Science could not update its database. Existing data was not reset.',
+    'Open-Science could not update its database. Existing data was not reset.',
     transient,
     migrationId,
     { cause: error }

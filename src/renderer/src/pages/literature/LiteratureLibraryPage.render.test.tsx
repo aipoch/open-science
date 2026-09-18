@@ -1,3 +1,4 @@
+import { FocusScope } from '@radix-ui/react-focus-scope'
 import { literatureDeletionError } from '../../../../shared/literature-deletion'
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
@@ -17,6 +18,7 @@ import type {
 } from '../../../../shared/literature'
 import type { Project } from '../../../../shared/projects'
 import { useNavigationStore } from '@/stores/navigation-store'
+import { createInitialSessionState, useSessionStore } from '@/stores/session-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
@@ -60,20 +62,22 @@ vi.mock('../workspace/FilePreviewDialog', () => ({
   }) => {
     filePreviewRenderCount.value += 1
     return item ? (
-      <div
-        data-testid="literature-pdf-preview"
-        data-allow-reading-context={String(allowReadingContext)}
-      >
-        {`${item.title} · ${item.path}`}
-        <button type="button" onClick={() => onClose()}>
-          Close PDF
-        </button>
-        {onReadWithAgent ? (
-          <button type="button" onClick={() => onReadWithAgent(item)}>
-            Read with agent
+      <FocusScope trapped asChild>
+        <div
+          data-testid="literature-pdf-preview"
+          data-allow-reading-context={String(allowReadingContext)}
+        >
+          {`${item.title} · ${item.path}`}
+          <button type="button" onClick={() => onClose()}>
+            Close PDF
           </button>
-        ) : null}
-      </div>
+          {onReadWithAgent ? (
+            <button type="button" onClick={() => onReadWithAgent(item)}>
+              Read with agent
+            </button>
+          ) : null}
+        </div>
+      </FocusScope>
     ) : null
   }
 }))
@@ -207,6 +211,7 @@ describe('LiteratureLibraryPage', () => {
 
   beforeEach(() => {
     useAttachmentOperations.setState({ operations: [] })
+    useSessionStore.setState(createInitialSessionState())
     // Failed assertions must not leak unused one-shot IPC replies into another scenario.
     search.mockReset()
     get.mockReset()
@@ -452,6 +457,64 @@ describe('LiteratureLibraryPage', () => {
     vi.clearAllMocks()
     transact.mockReset().mockResolvedValue({ kind: 'item', id: 'item-1', state: 'present' })
     vi.unstubAllGlobals()
+  })
+
+  it.each([false, true])(
+    'returns to the selected conversation with collapsed sidebar %s',
+    async (collapsed) => {
+      useSessionStore.getState().hydrateSessions([
+        {
+          id: 'older',
+          projectId: 'project-1',
+          title: 'Earlier work',
+          cwd: '/workspace',
+          status: 'idle',
+          messages: [],
+          createdAt: 1,
+          updatedAt: 1
+        },
+        {
+          id: 'newer',
+          projectId: 'project-1',
+          title: 'Later work',
+          cwd: '/workspace',
+          status: 'idle',
+          messages: [],
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ])
+      useNavigationStore.getState().openSession('project-1', 'older', 'user')
+      useNavigationStore.getState().openLibrary('user')
+      render(<LiteratureLibraryPage />)
+      if (collapsed) fireEvent.click(screen.getByRole('button', { name: 'Collapse sidebar panel' }))
+      const back = screen.getByRole('button', { name: 'Back to Project' })
+      if (collapsed) expect(back.getAttribute('title')).toBe('Back to Project')
+      else expect(back.textContent).toBe('Back to Project')
+      fireEvent.click(back)
+      expect(useNavigationStore.getState()).toMatchObject({
+        view: 'workspace',
+        activeProjectId: 'project-1'
+      })
+      expect(useSessionStore.getState().selectedSessionId).toBe('older')
+    }
+  )
+
+  it.each(['home', 'deleted', 'archived'] as const)('returns Home for a %s origin', (kind) => {
+    useNavigationStore.setState({ activeProjectId: kind === 'home' ? undefined : 'project-1' })
+    if (kind === 'deleted') useProjectStore.setState({ projects: [] })
+    if (kind === 'archived')
+      useProjectStore.setState({
+        projects: useProjectStore
+          .getState()
+          .projects.map((project) => ({ ...project, archivedAt: 2 }))
+      })
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'Back to Home' }))
+    expect(useNavigationStore.getState()).toMatchObject({
+      view: 'home',
+      activeProjectId: undefined
+    })
   })
 
   it.each(['Edit metadata', 'New collection'])(
@@ -1768,7 +1831,7 @@ describe('LiteratureLibraryPage', () => {
       search.mockImplementation(originalSearch)
       const warning = screen
         .getByText('The update could not be confirmed. Check the Inbox before trying again.')
-        .closest('[role="alert"]')!
+        .closest('section')!
       await act(async () =>
         fireEvent.click(within(warning as HTMLElement).getByRole('button', { name: 'Retry' }))
       )
@@ -2383,6 +2446,53 @@ describe('LiteratureLibraryPage', () => {
       }
     }
   )
+
+  it('previews promoted children and opens the conflicting child in the existing editor', async () => {
+    const parent = {
+      id: 'parent',
+      revision: 1,
+      name: 'Parent',
+      description: '',
+      itemCount: 0,
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const child = { ...parent, id: 'child', name: 'Review', parentId: parent.id }
+    const root = { ...parent, id: 'root', name: 'review' }
+    search.mockImplementation((request: { scope: string }) =>
+      Promise.resolve(
+        request.scope === 'collections' ? { entries: [parent, child, root] } : { entries: [] }
+      )
+    )
+    useNavigationStore.setState({ pendingLiteratureCollectionId: parent.id })
+    render(<LiteratureLibraryPage />)
+    await screen.findByRole('heading', { name: parent.name })
+    await openMenu(screen.getByRole('button', { name: 'Collection actions' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete collection' }))
+    const alert = await screen.findByRole('alertdialog')
+    expect(within(alert).getByText('Child collections will move to the top level.')).not.toBeNull()
+    expect(
+      within(alert).getByRole('button', { name: 'Delete collection' }).hasAttribute('disabled')
+    ).toBe(true)
+    fireEvent.click(within(alert).getByRole('button', { name: 'Rename conflicting collection' }))
+    const editor = await screen.findByRole('dialog', { name: 'Edit collection' })
+    const name = within(editor).getByLabelText('Name')
+    expect((name as HTMLInputElement).value).toBe(child.name)
+    fireEvent.change(name, { target: { value: 'Child review' } })
+    fireEvent.click(within(editor).getByRole('button', { name: 'Save changes' }))
+    await waitFor(() =>
+      expect(transact).toHaveBeenCalledWith({
+        kind: 'update-collection',
+        collectionId: child.id,
+        expectedRevision: 1,
+        name: 'Child review',
+        description: ''
+      })
+    )
+    expect(transact).not.toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'delete-collection' })
+    )
+  })
 
   it('truncates a long Collection view name without squeezing the action toolbar', async () => {
     const longCollectionName = `Collection ${'research '.repeat(12)}`.trim()
@@ -3035,6 +3145,7 @@ describe('LiteratureLibraryPage', () => {
         sources: [
           {
             sourceKind: 'literature-attachment-version',
+            sourceFileId: 'attachment-1',
             sourceVersionId: 'version-1'
           }
         ]
@@ -3048,6 +3159,7 @@ describe('LiteratureLibraryPage', () => {
       }),
       {
         sourceKind: 'literature-attachment-version',
+        sourceFileId: 'attachment-1',
         sourceVersionId: 'version-1'
       }
     )
@@ -3083,12 +3195,18 @@ describe('LiteratureLibraryPage', () => {
       false
     )
     expect(within(viewport).getAllByRole('button')).toHaveLength(35)
+    fireEvent.change(within(dialog).getByRole('searchbox'), { target: { value: 'project 35' } })
+    expect(within(viewport).getAllByRole('button')).toHaveLength(1)
     fireEvent.click(lastProject)
     await waitFor(() =>
       expect(startPdfReadingConversation).toHaveBeenCalledWith(
         'project-35',
         expect.objectContaining({ source: 'literature' }),
-        { sourceKind: 'literature-attachment-version', sourceVersionId: 'version-1' }
+        {
+          sourceKind: 'literature-attachment-version',
+          sourceFileId: 'attachment-1',
+          sourceVersionId: 'version-1'
+        }
       )
     )
   })
@@ -3135,13 +3253,25 @@ describe('LiteratureLibraryPage', () => {
     await waitFor(() =>
       expect(startPdfReadingConversations).toHaveBeenCalledWith('project-1', [
         expect.objectContaining({
-          source: { sourceKind: 'literature-attachment-version', sourceVersionId: 'version-1' }
+          source: {
+            sourceKind: 'literature-attachment-version',
+            sourceFileId: 'attachment-1',
+            sourceVersionId: 'version-1'
+          }
         }),
         expect.objectContaining({
-          source: { sourceKind: 'literature-attachment-version', sourceVersionId: 'version-3' }
+          source: {
+            sourceKind: 'literature-attachment-version',
+            sourceFileId: 'attachment-3',
+            sourceVersionId: 'version-3'
+          }
         }),
         expect.objectContaining({
-          source: { sourceKind: 'literature-attachment-version', sourceVersionId: 'version-4' }
+          source: {
+            sourceKind: 'literature-attachment-version',
+            sourceFileId: 'attachment-4',
+            sourceVersionId: 'version-4'
+          }
         })
       ])
     )
@@ -3149,6 +3279,7 @@ describe('LiteratureLibraryPage', () => {
       projectId: 'project-1',
       sources: [1, 3, 4].map((id) => ({
         sourceKind: 'literature-attachment-version',
+        sourceFileId: `attachment-${id}`,
         sourceVersionId: `version-${id}`
       }))
     })
@@ -3200,8 +3331,16 @@ describe('LiteratureLibraryPage', () => {
     expect(filterPdfContextCandidates).toHaveBeenCalledWith({
       projectId: 'project-1',
       sources: [
-        { sourceKind: 'literature-attachment-version', sourceVersionId: 'version-1' },
-        { sourceKind: 'literature-attachment-version', sourceVersionId: 'last-version' }
+        {
+          sourceKind: 'literature-attachment-version',
+          sourceFileId: 'attachment-1',
+          sourceVersionId: 'version-1'
+        },
+        {
+          sourceKind: 'literature-attachment-version',
+          sourceFileId: 'last-attachment',
+          sourceVersionId: 'last-version'
+        }
       ]
     })
   })
@@ -3590,7 +3729,10 @@ describe('LiteratureLibraryPage', () => {
     expect.soft(alert.textContent).not.toBe('The attachment operation failed. Try again.')
     // A user must be able to inspect the blocking reference or recovery diagnosis.
     expect(
-      [...within(alert).queryAllByRole('button'), ...within(alert).queryAllByRole('link')].length
+      [
+        ...within(alert.closest('section')!).queryAllByRole('button'),
+        ...within(alert.closest('section')!).queryAllByRole('link')
+      ].length
     ).toBeGreaterThan(0)
   })
 
@@ -3778,15 +3920,25 @@ describe('LiteratureLibraryPage', () => {
     expect(within(detail).queryByRole('button', { name: 'Preview paper.pdf' })).toBeNull()
   })
 
-  it('does not block PDF wheel events behind reference details and restores the detail modal on close', async () => {
+  it('preserves reference detail and scroll position while releasing only the PDF scroll lock', async () => {
     const itemWithPdf = createLibraryItemWithPdf()
     search.mockImplementation((request: { scope: string }) =>
       Promise.resolve(request.scope === 'library' ? { entries: [itemWithPdf] } : { entries: [] })
     )
     render(<LiteratureLibraryPage />)
     fireEvent.click(screen.getByRole('button', { name: 'All references' }))
-    await openReferenceDetail(await screen.findByText('Corrective Retrieval Augmented Generation'))
-    fireEvent.click(screen.getByRole('button', { name: 'Preview paper.pdf' }))
+    const detail = await openReferenceDetail(
+      await screen.findByText('Corrective Retrieval Augmented Generation')
+    )
+    const trigger = within(detail).getByRole('button', { name: 'Preview paper.pdf' })
+    const scrim = detail.previousElementSibling
+    const scroll = within(detail).getByText('Attachments').closest('.overflow-y-auto')!
+    scroll.scrollTop = 120
+    fireEvent.click(trigger)
+    expect(screen.getByRole('dialog')).toBe(detail)
+    expect(detail.previousElementSibling).toBe(scrim)
+    expect(trigger.isConnected).toBe(true)
+    expect(scroll.scrollTop).toBe(120)
     const preview = screen.getByTestId('literature-pdf-preview')
     const previewClose = within(preview).getByRole('button', { name: 'Close PDF', hidden: true })
     previewClose.focus()
@@ -3797,7 +3949,10 @@ describe('LiteratureLibraryPage', () => {
     expect(wheel.defaultPrevented).toBe(false)
     expect(document.activeElement).toBe(previewClose)
     fireEvent.click(within(preview).getByRole('button', { name: 'Close PDF', hidden: true }))
-    expect(await screen.findByRole('button', { name: 'Preview paper.pdf' })).not.toBeNull()
+    expect(await screen.findByRole('button', { name: 'Preview paper.pdf' })).toBe(trigger)
+    expect(screen.getByRole('dialog')).toBe(detail)
+    expect(detail.previousElementSibling).toBe(scrim)
+    expect(scroll.scrollTop).toBe(120)
     const outsideWheel = new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 600 })
     await act(async () => {
       document.body.dispatchEvent(outsideWheel)
@@ -3846,6 +4001,7 @@ describe('LiteratureLibraryPage', () => {
         sources: [
           {
             sourceKind: 'literature-attachment-version',
+            sourceFileId: 'attachment-1',
             sourceVersionId: 'version-1'
           }
         ]
@@ -3856,6 +4012,7 @@ describe('LiteratureLibraryPage', () => {
       expect.objectContaining({ path: 'literature-attachment-version:version-1' }),
       {
         sourceKind: 'literature-attachment-version',
+        sourceFileId: 'attachment-1',
         sourceVersionId: 'version-1'
       }
     )
@@ -3886,6 +4043,7 @@ describe('LiteratureLibraryPage', () => {
         sources: [
           {
             sourceKind: 'literature-attachment-version',
+            sourceFileId: 'attachment-1',
             sourceVersionId: 'version-1'
           }
         ]
@@ -3896,6 +4054,7 @@ describe('LiteratureLibraryPage', () => {
       expect.objectContaining({ path: 'literature-attachment-version:version-1' }),
       {
         sourceKind: 'literature-attachment-version',
+        sourceFileId: 'attachment-1',
         sourceVersionId: 'version-1'
       }
     )
@@ -4382,8 +4541,8 @@ describe('LiteratureLibraryPage', () => {
     await openReferenceDetail(await screen.findByText('Corrective Retrieval Augmented Generation'))
 
     const detailDialog = screen.getByRole('dialog')
-    await openMenu(within(detailDialog).getByRole('button', { name: 'Manage Tags' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Favorites' }))
+    fireEvent.click(within(detailDialog).getByRole('button', { name: 'Manage Tags' }))
+    fireEvent.click(screen.getByRole('option', { name: 'Favorites' }))
     await waitFor(() => expect(tagsApi.setAssignment).toHaveBeenCalledOnce())
     await act(async () => {
       emitChanged?.({ revision: 3 })
@@ -4391,9 +4550,9 @@ describe('LiteratureLibraryPage', () => {
     })
 
     expect(screen.getByText('Add or remove Tags')).not.toBeNull()
-    expect(screen.getByRole('menuitem', { name: 'Favorites' })).not.toBeNull()
+    expect(screen.getByRole('option', { name: 'Favorites' })).not.toBeNull()
 
-    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' })
+    fireEvent.keyDown(screen.getByRole('listbox'), { key: 'Escape' })
     await waitFor(() => expect(screen.queryByText('Add or remove Tags')).toBeNull())
   })
 
@@ -4412,13 +4571,13 @@ describe('LiteratureLibraryPage', () => {
     filePreviewRenderCount.value = 0
     fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false })
     fireEvent.click(trigger)
-    expect(screen.getByRole('menu')).not.toBeNull()
+    expect(screen.getByRole('listbox')).not.toBeNull()
     expect(filePreviewRenderCount.value).toBe(0)
 
     fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false })
     fireEvent.click(trigger)
 
-    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull())
+    await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull())
     expect(screen.getByRole('dialog')).toBe(detail)
   })
 
@@ -4433,15 +4592,15 @@ describe('LiteratureLibraryPage', () => {
 
     const detail = screen.getByRole('dialog')
     const trigger = within(detail).getByRole('button', { name: 'Manage Tags' })
-    await openMenu(trigger)
-    expect(screen.getByRole('menu')).not.toBeNull()
+    fireEvent.click(trigger)
+    expect(screen.getByRole('listbox')).not.toBeNull()
 
-    fireEvent.keyDown(trigger, { key: 'Enter' })
+    fireEvent.click(trigger)
     await act(async () => {
       await new Promise((resolve) => window.setTimeout(resolve, 10))
     })
 
-    expect(screen.queryByRole('menu')).toBeNull()
+    expect(screen.queryByRole('listbox')).toBeNull()
     expect(screen.getByRole('dialog')).toBe(detail)
   })
 
@@ -4551,6 +4710,29 @@ describe('LiteratureLibraryPage', () => {
     expect(headings.indexOf('Abstract')).toBeLessThan(headings.indexOf('Publication metadata'))
   })
 
+  it('uses the full journal title when only an article short title is available', async () => {
+    const entry: LiteratureItemView = {
+      ...libraryItem,
+      item: {
+        ...libraryItem.item,
+        containerTitle: 'Journal of Useful Results',
+        shortTitle: 'Article short title',
+        issuedText: '2024',
+        typeFields: {},
+        identifiers: []
+      }
+    }
+    search.mockImplementation((request: { scope: string }) =>
+      Promise.resolve(request.scope === 'library' ? { entries: [entry] } : { entries: [] })
+    )
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    await openReferenceDetail(await screen.findByText(entry.item.title))
+    expect(
+      within(screen.getByRole('dialog')).getByText('Journal of Useful Results. 2024')
+    ).not.toBeNull()
+  })
+
   it('orders a reference detail as publication, title, full authors, abstract, then metadata', async () => {
     const richItem: LiteratureItemView = {
       ...libraryItem,
@@ -4558,8 +4740,13 @@ describe('LiteratureLibraryPage', () => {
         ...libraryItem.item,
         itemType: 'review',
         issuedText: '2024 Jan',
-        shortTitle: 'J Retrieval',
-        typeFields: { volume: '12', issue: '3', pages: '44-58' },
+        shortTitle: 'Article short title',
+        typeFields: {
+          volume: '12',
+          issue: '3',
+          pages: '44-58',
+          journalAbbreviation: 'J Retrieval'
+        },
         creators: [
           ...libraryItem.item.creators,
           {
@@ -5239,7 +5426,8 @@ describe('LiteratureLibraryPage', () => {
           target: { value: 'No identifier manual reference' }
         })
         fireEvent.click(screen.getByRole('button', { name: 'Save' }))
-        await within(screen.getByRole('dialog')).findByRole('alert')
+        // This integration fixture commits to real SQLite before the failed readback is rendered.
+        await within(screen.getByRole('dialog')).findByRole('alert', {}, { timeout: 10_000 })
         expect(await client.literatureItem.count()).toBe(1)
         expect((await catalog.get(committedId!))?.item.identifiers).toEqual([])
         const dialog = screen.getByRole('dialog')
@@ -5247,7 +5435,11 @@ describe('LiteratureLibraryPage', () => {
           within(dialog).queryByRole('button', { name: /retry/i }) ??
             within(dialog).getByRole('button', { name: 'Save' })
         )
-        await screen.findByRole('heading', { name: 'No identifier manual reference' })
+        await screen.findByRole(
+          'heading',
+          { name: 'No identifier manual reference' },
+          { timeout: 10_000 }
+        )
         expect
           .soft(await client.literatureItem.findMany({ select: { id: true, title: true } }))
           .toEqual([{ id: committedId, title: 'No identifier manual reference' }])
@@ -7389,159 +7581,186 @@ describe('LiteratureLibraryPage', () => {
     ).toHaveLength(listRequests)
   })
 
-  it('pages filtered ordered results and selects only the current page', async () => {
-    const yearOrderedItems = Array.from({ length: 51 }, (_, index) => createLibraryItem(index))
-    const titleOrderedItem = {
-      ...createLibraryItem(51),
-      item: { ...createLibraryItem(51).item, title: 'Alphabetical result' }
-    }
-    search.mockImplementation(
-      (request: {
-        filter?: { yearFrom?: number }
-        limit?: number
-        offset?: number
-        scope: string
-        sortBy?: string
-        sortDirection?: string
-      }) => {
-        if (request.scope !== 'library') return Promise.resolve({ entries: [] })
-        if (request.sortBy === 'title') {
-          return Promise.resolve({ entries: [titleOrderedItem], totalCount: 1 })
-        }
-        const offset = request.offset ?? 0
-        const limit = request.limit ?? 50
-        const entries = yearOrderedItems.slice(offset, offset + limit)
-        return Promise.resolve({
-          entries,
-          ...(offset + entries.length < yearOrderedItems.length
-            ? { nextOffset: offset + entries.length }
-            : {}),
-          totalCount: yearOrderedItems.length
-        })
+  describe('filtered pagination', () => {
+    beforeEach(async () => {
+      const yearOrderedItems = Array.from({ length: 51 }, (_, index) => createLibraryItem(index))
+      const titleOrderedItem = {
+        ...createLibraryItem(51),
+        item: { ...createLibraryItem(51).item, title: 'Alphabetical result' }
       }
-    )
+      search.mockImplementation(
+        (request: {
+          filter?: { yearFrom?: number }
+          limit?: number
+          offset?: number
+          scope: string
+          sortBy?: string
+          sortDirection?: string
+        }) => {
+          if (request.scope !== 'library') return Promise.resolve({ entries: [] })
+          if (request.sortBy === 'title') {
+            return Promise.resolve({ entries: [titleOrderedItem], totalCount: 1 })
+          }
+          const offset = request.offset ?? 0
+          const limit = request.limit ?? 50
+          const entries = yearOrderedItems.slice(offset, offset + limit)
+          return Promise.resolve({
+            entries,
+            ...(offset + entries.length < yearOrderedItems.length
+              ? { nextOffset: offset + entries.length }
+              : {}),
+            totalCount: yearOrderedItems.length
+          })
+        }
+      )
 
-    render(<LiteratureLibraryPage />)
-    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
-    fireEvent.click(await screen.findByRole('button', { name: 'Filters' }))
-    fireEvent.change(screen.getByLabelText('From year'), { target: { value: '2020' } })
-    expect(screen.getByLabelText('References per page').textContent).toContain('25')
-    await waitFor(() =>
-      expect(search).toHaveBeenCalledWith(
-        expect.objectContaining({
-          scope: 'library',
-          limit: 25,
-          filter: expect.objectContaining({ yearFrom: 2020 })
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+      fireEvent.click(await screen.findByRole('button', { name: 'Filters' }))
+      fireEvent.change(screen.getByLabelText('From year'), { target: { value: '2020' } })
+      expect(screen.getByLabelText('References per page').textContent).toContain('25')
+      await waitFor(() =>
+        expect(search).toHaveBeenCalledWith(
+          expect.objectContaining({
+            scope: 'library',
+            limit: 25,
+            filter: expect.objectContaining({ yearFrom: 2020 })
+          })
+        )
+      )
+      await waitFor(() => expect(screen.getAllByLabelText(/^Select Reference /)).toHaveLength(25))
+      fireEvent.click(screen.getByLabelText('Sort references'))
+      fireEvent.click(screen.getByRole('option', { name: 'Year: newest first' }))
+      await waitFor(() =>
+        expect(search).toHaveBeenCalledWith(
+          expect.objectContaining({
+            scope: 'library',
+            offset: 0,
+            limit: 25,
+            sortBy: 'year',
+            sortDirection: 'desc',
+            filter: expect.objectContaining({ yearFrom: 2020 })
+          })
+        )
+      )
+      await screen.findByText('Reference 0')
+    })
+
+    it('resizes pages and clears the previous page selection', async () => {
+      fireEvent.click(screen.getByLabelText('References per page'))
+      fireEvent.click(screen.getByRole('option', { name: '50' }))
+
+      await waitFor(() =>
+        expect(search).toHaveBeenCalledWith(
+          expect.objectContaining({
+            scope: 'library',
+            offset: 0,
+            limit: 50,
+            sortBy: 'year',
+            sortDirection: 'desc',
+            filter: expect.objectContaining({ yearFrom: 2020 })
+          })
+        )
+      )
+      await screen.findByText('Reference 0')
+      expect(screen.getAllByLabelText(/^Select Reference /)).toHaveLength(50)
+      expect(screen.getByText('Reference 49')).not.toBeNull()
+      expect(screen.queryByText('Reference 50')).toBeNull()
+      const defaultRange = screen.getByText('1–50')
+      expect(defaultRange.parentElement?.textContent).toContain('51')
+
+      fireEvent.click(screen.getByLabelText('Select all references'))
+      expect(screen.getByText('50 selected')).not.toBeNull()
+
+      fireEvent.click(screen.getByLabelText('References per page'))
+      fireEvent.click(screen.getByRole('option', { name: '25' }))
+      await waitFor(() =>
+        expect(search).toHaveBeenCalledWith(
+          expect.objectContaining({
+            scope: 'library',
+            offset: 0,
+            limit: 25,
+            sortBy: 'year',
+            sortDirection: 'desc',
+            filter: expect.objectContaining({ yearFrom: 2020 })
+          })
+        )
+      )
+      await waitFor(() => expect(screen.getAllByLabelText(/^Select Reference /)).toHaveLength(25))
+      expect(screen.queryByText(/ selected$/)).toBeNull()
+      expect(screen.getByText('1–25')).not.toBeNull()
+    })
+
+    it('pages ordered results, selects only the current page and reuses cached pages', async () => {
+      fireEvent.click(screen.getByLabelText('Select all references'))
+      expect(screen.getByText('25 selected')).not.toBeNull()
+      fireEvent.click(
+        within(screen.getByRole('navigation', { name: 'Page 1' })).getByRole('button', {
+          name: 'Next page'
         })
       )
-    )
-    await waitFor(() => expect(screen.getAllByLabelText(/^Select Reference /)).toHaveLength(25))
-    fireEvent.click(screen.getByLabelText('References per page'))
-    fireEvent.click(screen.getByRole('option', { name: '50' }))
-    fireEvent.click(screen.getByLabelText('Sort references'))
-    fireEvent.click(screen.getByRole('option', { name: 'Year: newest first' }))
-
-    await waitFor(() =>
-      expect(search).toHaveBeenCalledWith(
-        expect.objectContaining({
-          scope: 'library',
-          offset: 0,
-          limit: 50,
-          sortBy: 'year',
-          sortDirection: 'desc',
-          filter: expect.objectContaining({ yearFrom: 2020 })
-        })
+      await waitFor(() =>
+        expect(search).toHaveBeenCalledWith(
+          expect.objectContaining({
+            scope: 'library',
+            offset: 25,
+            sortBy: 'year',
+            sortDirection: 'desc',
+            filter: expect.objectContaining({ yearFrom: 2020 })
+          })
+        )
       )
-    )
-    await screen.findByText('Reference 0')
-    expect(screen.getAllByLabelText(/^Select Reference /)).toHaveLength(50)
-    expect(screen.getByText('Reference 49')).not.toBeNull()
-    expect(screen.queryByText('Reference 50')).toBeNull()
-    const defaultRange = screen.getByText('1–50')
-    expect(defaultRange.parentElement?.textContent).toContain('51')
 
-    fireEvent.click(screen.getByLabelText('Select all references'))
-    expect(screen.getByText('50 selected')).not.toBeNull()
-
-    fireEvent.click(screen.getByLabelText('References per page'))
-    fireEvent.click(screen.getByRole('option', { name: '25' }))
-    await waitFor(() =>
-      expect(search).toHaveBeenCalledWith(
-        expect.objectContaining({
-          scope: 'library',
-          offset: 0,
-          limit: 25,
-          sortBy: 'year',
-          sortDirection: 'desc',
-          filter: expect.objectContaining({ yearFrom: 2020 })
-        })
+      expect(await screen.findByText('Reference 25')).not.toBeNull()
+      expect(screen.getByText('Reference 49')).not.toBeNull()
+      expect(screen.queryByText('Reference 50')).toBeNull()
+      expect(screen.queryByText('Reference 0')).toBeNull()
+      expect(document.querySelector('[data-row-number="26"]')?.textContent).toBe('26')
+      const pagination = within(screen.getByRole('navigation', { name: 'Page 2' }))
+      expect(pagination.getByRole('button', { name: 'Page 2' }).getAttribute('aria-current')).toBe(
+        'page'
       )
-    )
-    await waitFor(() => expect(screen.getAllByLabelText(/^Select Reference /)).toHaveLength(25))
-    expect(screen.queryByText(/ selected$/)).toBeNull()
-    expect(screen.getByText('1–25')).not.toBeNull()
+      expect(screen.getByText('26–50')).not.toBeNull()
+      expect(
+        (pagination.getByRole('button', { name: 'Previous page' }) as HTMLButtonElement).disabled
+      ).toBe(false)
 
-    fireEvent.click(screen.getByLabelText('Select all references'))
-    expect(screen.getByText('25 selected')).not.toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: 'Next page' }))
-    await waitFor(() =>
-      expect(search).toHaveBeenCalledWith(
-        expect.objectContaining({
-          scope: 'library',
-          offset: 25,
-          sortBy: 'year',
-          sortDirection: 'desc',
-          filter: expect.objectContaining({ yearFrom: 2020 })
-        })
-      )
-    )
-
-    expect(await screen.findByText('Reference 25')).not.toBeNull()
-    expect(screen.getByText('Reference 49')).not.toBeNull()
-    expect(screen.queryByText('Reference 50')).toBeNull()
-    expect(screen.queryByText('Reference 0')).toBeNull()
-    expect(document.querySelector('[data-row-number="26"]')?.textContent).toBe('26')
-    expect(screen.getByRole('button', { name: 'Page 2' }).getAttribute('aria-current')).toBe('page')
-    expect(screen.getByText('26–50')).not.toBeNull()
-    expect(
-      (screen.getByRole('button', { name: 'Previous page' }) as HTMLButtonElement).disabled
-    ).toBe(false)
-
-    const firstPageRequestCount = search.mock.calls.filter(
-      ([request]) =>
-        request.scope === 'library' &&
-        request.offset === 0 &&
-        request.limit === 25 &&
-        request.sortBy === 'year'
-    ).length
-    fireEvent.click(screen.getByRole('button', { name: 'Previous page' }))
-    expect(await screen.findByText('Reference 0')).not.toBeNull()
-    expect(
-      search.mock.calls.filter(
+      const firstPageRequestCount = search.mock.calls.filter(
         ([request]) =>
           request.scope === 'library' &&
           request.offset === 0 &&
           request.limit === 25 &&
           request.sortBy === 'year'
-      )
-    ).toHaveLength(firstPageRequestCount)
+      ).length
+      fireEvent.click(pagination.getByRole('button', { name: 'Previous page' }))
+      expect(await screen.findByText('Reference 0')).not.toBeNull()
+      expect(
+        search.mock.calls.filter(
+          ([request]) =>
+            request.scope === 'library' &&
+            request.offset === 0 &&
+            request.limit === 25 &&
+            request.sortBy === 'year'
+        )
+      ).toHaveLength(firstPageRequestCount)
 
-    fireEvent.click(screen.getByLabelText('Sort references'))
-    fireEvent.click(screen.getByRole('option', { name: 'Title: A–Z' }))
-    await waitFor(() =>
-      expect(search).toHaveBeenCalledWith(
-        expect.objectContaining({
-          scope: 'library',
-          offset: 0,
-          sortBy: 'title',
-          sortDirection: 'asc',
-          filter: expect.objectContaining({ yearFrom: 2020 })
-        })
+      fireEvent.click(screen.getByLabelText('Sort references'))
+      fireEvent.click(screen.getByRole('option', { name: 'Title: A–Z' }))
+      await waitFor(() =>
+        expect(search).toHaveBeenCalledWith(
+          expect.objectContaining({
+            scope: 'library',
+            offset: 0,
+            sortBy: 'title',
+            sortDirection: 'asc',
+            filter: expect.objectContaining({ yearFrom: 2020 })
+          })
+        )
       )
-    )
-    expect(await screen.findByText('Alphabetical result')).not.toBeNull()
-    expect(screen.queryByRole('button', { name: 'Page 2' })).toBeNull()
-    expect(screen.queryByText('Reference 25')).toBeNull()
+      expect(await screen.findByText('Alphabetical result')).not.toBeNull()
+      expect(screen.queryByRole('button', { name: 'Page 2' })).toBeNull()
+      expect(screen.queryByText('Reference 25')).toBeNull()
+    })
   })
 
   it('starts a page request and shows its loading state in the pagination click', async () => {
@@ -8546,16 +8765,14 @@ describe('LiteratureLibraryPage', () => {
       await waitFor(() =>
         expect(
           (
-            within(message.closest('[role="alert"]')!).getByRole('button', {
+            within(message.closest('section')!).getByRole('button', {
               name: 'Retry'
             }) as HTMLButtonElement
           ).disabled
         ).toBe(false)
       )
       failRefresh = false
-      fireEvent.click(
-        within(message.closest('[role="alert"]')!).getByRole('button', { name: 'Retry' })
-      )
+      fireEvent.click(within(message.closest('section')!).getByRole('button', { name: 'Retry' }))
       await waitFor(() =>
         expect(
           screen.queryByText(

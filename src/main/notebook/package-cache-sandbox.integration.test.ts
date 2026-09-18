@@ -51,7 +51,11 @@ it.skipIf(process.platform !== 'darwin')(
           args: invocation.args,
           env: invocation.env,
           annotateStderr: (stderr) => stderr,
-          cleanup: () => {}
+          cleanup: async () => ({
+            processesTerminated: true,
+            networkClosed: true,
+            temporaryResourcesRemoved: true
+          })
         })
       }
     })
@@ -378,7 +382,11 @@ it.skipIf(process.platform === 'win32')(
             args: invocation.args,
             env: invocation.env,
             annotateStderr: (stderr) => stderr,
-            cleanup: () => {}
+            cleanup: async () => ({
+              processesTerminated: true,
+              networkClosed: true,
+              temporaryResourcesRemoved: true
+            })
           })
         }
       })
@@ -473,9 +481,9 @@ it.skipIf(process.platform === 'win32')(
         micromamba: fakeMicromamba,
         spawn,
         pathExists: () => true,
-        readCondaPackageIdentity: () => ({
-          name: 'r-base',
-          version: '4.4.3',
+        readCondaPackageIdentity: (_prefix: string, name: string) => ({
+          name,
+          version: name === 'r-renv' ? '1.1.5' : '4.4.3',
           build: 'h123_0',
           buildNumber: 0
         })
@@ -503,7 +511,10 @@ it.skipIf(process.platform === 'win32')(
         )
       )
 
-      expect(results.map(({ ok }) => ok)).toEqual([true, true, true, true])
+      expect(
+        results.map(({ ok }) => ok),
+        JSON.stringify(results)
+      ).toEqual([true, true, true, true])
       expect(results.every(({ log }) => log.includes('isolated managed R'))).toBe(true)
     } finally {
       for (const key of inheritedKeys) {
@@ -555,7 +566,11 @@ it.skipIf(process.platform !== 'darwin' || !existsSync(micromamba))(
             args: ['-f', profile, invocation.executable, ...invocation.args],
             env: invocation.env,
             annotateStderr: (stderr) => stderr,
-            cleanup: () => {}
+            cleanup: async () => ({
+              processesTerminated: true,
+              networkClosed: true,
+              temporaryResourcesRemoved: true
+            })
           })
         }
       })
@@ -631,7 +646,11 @@ it.skipIf(process.platform !== 'darwin' || !existsSync(micromamba))(
           ],
           env: invocation.env,
           annotateStderr: (stderr: string) => stderr,
-          cleanup: () => {}
+          cleanup: async () => ({
+            processesTerminated: true,
+            networkClosed: true,
+            temporaryResourcesRemoved: true
+          })
         })
       }
       const provisioner = createProductionProvisioner(

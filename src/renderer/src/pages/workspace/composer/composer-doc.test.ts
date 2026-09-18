@@ -521,6 +521,69 @@ describe('domToDoc', () => {
     expect(domToDoc(root)).toEqual({ nodes: [{ type: 'text', text: 'ab' }] })
   })
 
+  it('preserves multiline contenteditable text represented by block elements', () => {
+    const root = document.createElement('div')
+    root.appendChild(document.createTextNode('first line'))
+    const secondLine = document.createElement('div')
+    secondLine.textContent = 'second line'
+    const thirdLine = document.createElement('div')
+    thirdLine.textContent = 'third line'
+    root.append(secondLine, thirdLine)
+
+    expect(domToDoc(root)).toEqual({
+      nodes: [{ type: 'text', text: 'first line\nsecond line\nthird line' }]
+    })
+  })
+
+  it('preserves explicit contenteditable line breaks', () => {
+    const root = document.createElement('div')
+    root.append('first line', document.createElement('br'), 'second line')
+
+    expect(domToDoc(root)).toEqual({
+      nodes: [{ type: 'text', text: 'first line\nsecond line' }]
+    })
+  })
+
+  it('treats a trailing empty contenteditable block as one line break', () => {
+    const root = document.createElement('div')
+    const firstLine = document.createElement('div')
+    firstLine.textContent = 'first line'
+    const emptyLine = document.createElement('div')
+    emptyLine.append(document.createElement('br'))
+    root.append(firstLine, emptyLine)
+
+    expect(domToDoc(root)).toEqual({ nodes: [{ type: 'text', text: 'first line\n' }] })
+  })
+
+  it('preserves an empty contenteditable block between populated lines', () => {
+    const root = document.createElement('div')
+    const firstLine = document.createElement('div')
+    firstLine.textContent = 'first line'
+    const emptyLine = document.createElement('div')
+    emptyLine.append(document.createElement('br'))
+    const thirdLine = document.createElement('div')
+    thirdLine.textContent = 'third line'
+    root.append(firstLine, emptyLine, thirdLine)
+
+    expect(domToDoc(root)).toEqual({
+      nodes: [{ type: 'text', text: 'first line\n\nthird line' }]
+    })
+  })
+
+  it('preserves leading and consecutive empty contenteditable blocks', () => {
+    const root = document.createElement('div')
+    const firstEmptyLine = document.createElement('div')
+    firstEmptyLine.append(document.createElement('br'))
+    const secondEmptyLine = firstEmptyLine.cloneNode(true)
+    const thirdLine = document.createElement('div')
+    thirdLine.textContent = 'third line'
+    root.append(firstEmptyLine, secondEmptyLine, thirdLine)
+
+    expect(domToDoc(root)).toEqual({
+      nodes: [{ type: 'text', text: '\n\nthird line' }]
+    })
+  })
+
   it('preserves user-entered word-joiner characters', () => {
     const root = document.createElement('div')
     root.appendChild(document.createTextNode('a\u2060b'))

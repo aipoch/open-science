@@ -21,6 +21,7 @@ it.skipIf(process.platform !== 'win32' || !rscript)(
     await mkdir(runtimeRoot)
     const dllDirectory = process.env.OPEN_SCIENCE_TEST_R_DLL_DIR
     if (dllDirectory) vi.stubEnv('PATH', `${dllDirectory};${process.env.PATH ?? ''}`)
+    for (const key of ['LANG', 'LC_ALL', 'LC_CTYPE']) vi.stubEnv(key, 'C.UTF-8')
     const sandbox = new NotebookNetworkSandboxOwner({
       resourceRoot: resolve('packages/notebook-network-sandbox/vendor'),
       getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
@@ -63,11 +64,12 @@ it.skipIf(process.platform !== 'win32' || !rscript)(
       })
       expect(result, JSON.stringify(result)).toMatchObject({ status: 'completed' })
       expect(result.stdout).toContain('SANDBOX_R_OK')
+      expect(result.stderr).not.toMatch(/Setting LC_.*failed/)
     } finally {
       await executor.shutdown()
       await sandbox.dispose()
       vi.unstubAllEnvs()
-      await rm(root, { recursive: true, force: true })
+      await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   },
   40_000

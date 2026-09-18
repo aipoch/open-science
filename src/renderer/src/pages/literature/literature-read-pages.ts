@@ -15,7 +15,12 @@ export async function readLiteratureDisplayPage(
 ): Promise<LiteratureCatalogSearchPage> {
   const read = recoverOversized ? readSelectionTransportPage : window.api.literature.search
   const first = await read(request)
-  if (request.scope !== 'library' || request.allItemIds || request.countOnly) return first
+  if (
+    (request.scope !== 'library' && request.scope !== 'global-search') ||
+    request.allItemIds ||
+    request.countOnly
+  )
+    return first
   const entries = [...first.entries]
   const limit = request.limit ?? 50
   let nextOffset = first.nextOffset
@@ -50,7 +55,12 @@ async function readSelectionTransportPage(
     return await window.api.literature.search(request)
   } catch (error) {
     const itemId = oversizedLiteratureReference(error)
-    if (!itemId || request.scope !== 'library' || request.allItemIds || request.countOnly)
+    if (
+      !itemId ||
+      (request.scope !== 'library' && request.scope !== 'global-search') ||
+      request.allItemIds ||
+      request.countOnly
+    )
       throw error
     const item = literatureItemViewSchema.parse(JSON.parse(await readLiteratureRecord(itemId)))
     if (item.id !== itemId) throw new Error('Reference changed while reading search results.')

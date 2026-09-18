@@ -1,7 +1,16 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
 import { PresentedAgentMarkdown } from '@/components/streamdown/AgentMarkdown'
 import { SessionMessageLink } from '@/components/streamdown/SessionMessageLink'
-import { memo, useEffect, useMemo, useState, type ComponentProps, type ReactNode } from 'react'
+import {
+  createContext,
+  memo,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ComponentProps,
+  type ReactNode
+} from 'react'
 import { useTranslation } from 'react-i18next'
 import type { Components } from 'streamdown'
 
@@ -13,7 +22,7 @@ import {
 } from './artifact-preview-utils'
 import { createPreviewResourceKey } from './previews/preview-resource-key'
 import { usePreviewResourceKey } from './previews/usePreviewResourceGeneration'
-import { useManagedPreviewResource } from './previews/useManagedPreviewResource'
+import { useCachedPreviewImage } from './previews/useCachedPreviewImage'
 import { useNearViewport } from './previews/useNearViewport'
 import {
   createSessionArtifactReferenceNormalizer,
@@ -28,6 +37,13 @@ type SessionMessageMarkdownProps = {
   onPreviewArtifact: (artifact: MessageArtifact) => void
   onPreviewArtifactModal: (artifact: MessageArtifact) => void
 }
+
+// Streamdown memoizes unchanged Markdown without comparing its custom components. Context carries
+// changing Artifact metadata and preview handlers through that boundary without reparsing the text.
+const SessionArtifactContext = createContext<Pick<
+  SessionMessageMarkdownProps,
+  'artifacts' | 'onPreviewArtifact' | 'onPreviewArtifactModal'
+> | null>(null)
 
 type SessionArtifactImageProps = {
   children?: ReactNode
@@ -86,6 +102,7 @@ const SessionArtifactImage = ({
     projectId: artifact.resolvedProjectId,
     sessionId: artifact.resolvedSessionId,
     managedFileId: artifact.artifactId,
+    selectedVersionId: artifact.versionId,
     source: 'artifact' as const,
     mimeType: artifact.mimeType,
     size: artifact.size,
@@ -104,9 +121,12 @@ const SessionArtifactImage = ({
     setHasBeenNearViewport(true)
   }
   const hasFailed = failedRequestKey === resourceRequestKey
-  const resourceState = useManagedPreviewResource(
+  // Share publication retries and decoded-source caching with the Generated thumbnail. A transient
+  // first read must not leave the inline image stuck while the same artifact is visible below it.
+  const resourceState = useCachedPreviewImage(
     request,
-    !publicationPending && !isTiff && hasBeenNearViewport && !hasFailed
+    !publicationPending && !isTiff && hasBeenNearViewport && !hasFailed,
+    hasFailed
   )
   const accessibleAlt = alt || t('Preview of {{name}}', { name })
   const hasError = hasFailed || resourceState.status === 'error'
@@ -115,7 +135,7 @@ const SessionArtifactImage = ({
   // first frame, even when this instance's <img> never decodes (lazy loading keeps offscreen
   // images undecoded until the window recycles them). Seeding only fills a missing entry: a
   // measured onLoad value wins because it reflects EXIF orientation as actually displayed.
-  const readyResource = resourceState.status === 'ready' ? resourceState.resource : undefined
+  const readyResource = resourceState.status === 'ready' ? resourceState : undefined
   const metadataWidth = readyResource?.width
   const metadataHeight = readyResource?.height
   useEffect(() => {
@@ -147,9 +167,26 @@ const SessionArtifactImage = ({
             projectId={artifact.resolvedProjectId}
             sessionId={artifact.resolvedSessionId}
             managedFileId={artifact.artifactId}
+            selectedVersionId={artifact.versionId}
             isVisible={isNearViewport}
           />
         </span>
+      </button>
+    )
+  }
+
+  if (hasError) {
+    return (
+      <button
+        ref={setElement}
+        type="button"
+        data-session-artifact-image-status=""
+        data-state="error"
+        aria-label={t('Preview {{name}}', { name })}
+        onClick={onPreview}
+      >
+        {accessibleAlt}
+        <span className="block">{t("Image couldn't be loaded for preview")}</span>
       </button>
     )
   }
@@ -160,7 +197,7 @@ const SessionArtifactImage = ({
       <span
         ref={setElement}
         data-session-artifact-image-status=""
-        data-state={hasError ? 'error' : 'loading'}
+        data-state="loading"
         style={
           cachedGeometry
             ? {
@@ -202,7 +239,7 @@ const SessionArtifactImage = ({
       onClick={onPreview}
     >
       <img
-        src={resourceState.resource.url}
+        src={resourceState.url}
         alt={accessibleAlt}
         loading="lazy"
         decoding="async"
@@ -237,13 +274,16 @@ const SessionMessageMarkdown = memo(
     )
     const components = useMemo<Components>(
       () => ({
-        a: ({
+        a: function ArtifactLink({
           href,
           className,
           title,
           children,
           'data-incomplete': dataIncomplete
-        }: SessionMessageLinkComponentProps) => {
+        }: SessionMessageLinkComponentProps) {
+          const context = useContext(SessionArtifactContext)
+          if (!context) return null
+          const { artifacts, onPreviewArtifact } = context
           const artifact = resolveMessageArtifactReference(href, artifacts)
           if (!artifact || artifact.kind !== 'managed-file') {
             return (
@@ -273,10 +313,13 @@ const SessionMessageMarkdown = memo(
             </button>
           )
         },
-        'session-artifact-image': ({
+        'session-artifact-image': function ArtifactImageReference({
           artifact_ref: artifactRef,
           alt_text: alt
-        }: SessionArtifactImageProps) => {
+        }: SessionArtifactImageProps) {
+          const context = useContext(SessionArtifactContext)
+          if (!context) return null
+          const { artifacts, onPreviewArtifactModal } = context
           const artifact = resolveMessageArtifactReference(
             artifactRef ? `{{artifact:${artifactRef}}}` : undefined,
             artifacts
@@ -303,16 +346,22 @@ const SessionMessageMarkdown = memo(
           )
         }
       }),
+      []
+    )
+    const artifactContext = useMemo(
+      () => ({ artifacts, onPreviewArtifact, onPreviewArtifactModal }),
       [artifacts, onPreviewArtifact, onPreviewArtifactModal]
     )
 
     return (
-      <PresentedAgentMarkdown
-        content={normalizedContent}
-        isAnimating={isAnimating}
-        sessionLinks
-        components={components}
-      />
+      <SessionArtifactContext.Provider value={artifactContext}>
+        <PresentedAgentMarkdown
+          content={normalizedContent}
+          isAnimating={isAnimating}
+          sessionLinks
+          components={components}
+        />
+      </SessionArtifactContext.Provider>
     )
   }
 )

@@ -1,0 +1,41 @@
+{
+  "ownerPaths": [
+    "src/renderer/src/assets/agent-markdown.css",
+    "src/renderer/src/assets/diff-colors.test.ts",
+    "src/renderer/src/assets/electron.svg",
+    "src/renderer/src/assets/installation-assistant.css",
+    "src/renderer/src/assets/logo-dark.png",
+    "src/renderer/src/assets/logo.png",
+    "src/renderer/src/assets/main.css",
+    "src/renderer/src/assets/pdf-text-layer.test.ts",
+    "src/renderer/src/assets/provider-icons/anthropic.svg",
+    "src/renderer/src/assets/provider-icons/apodex.svg",
+    "src/renderer/src/assets/provider-icons/bailian.svg",
+    "src/renderer/src/assets/provider-icons/claude.svg",
+    "src/renderer/src/assets/provider-icons/codebuddy.svg",
+    "src/renderer/src/assets/provider-icons/deepseek.svg",
+    "src/renderer/src/assets/provider-icons/grok.svg",
+    "src/renderer/src/assets/provider-icons/kimi.svg",
+    "src/renderer/src/assets/provider-icons/minimax.svg",
+    "src/renderer/src/assets/provider-icons/openai.svg",
+    "src/renderer/src/assets/provider-icons/openrouter.svg",
+    "src/renderer/src/assets/provider-icons/sensenova.svg",
+    "src/renderer/src/assets/provider-icons/stepfun.svg",
+    "src/renderer/src/assets/provider-icons/volcengine.svg",
+    "src/renderer/src/assets/provider-icons/xiaomimimo.svg",
+    "src/renderer/src/assets/provider-icons/zhipu.svg",
+    "src/renderer/src/assets/wavy-lines.svg"
+  ],
+  "interfacePaths": ["src/renderer/src/assets/agent-markdown.css"],
+  "consumerModules": [],
+  "testFiles": {
+    "owner": [
+      "src/renderer/src/assets/diff-colors.test.ts",
+      "src/renderer/src/assets/pdf-text-layer.test.ts"
+    ],
+    "contract": [],
+    "consumer": []
+  },
+  "capabilityOverlays": [],
+  "fallbackCapability": "renderer_view"
+}

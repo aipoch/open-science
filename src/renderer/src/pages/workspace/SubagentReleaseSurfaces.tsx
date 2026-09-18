@@ -1,3 +1,4 @@
+import { ErrorNotice } from '@/components/error-notice'
 import { AlertCircle, Bot, ChevronDown, ChevronRight, Loader2, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -45,9 +46,9 @@ const SUBAGENT_STATUS_LABELS = {
 
 const statusDotClassName: Record<SubagentRawStatus, string> = {
   running: 'bg-primary',
-  awaiting_user: 'bg-warning-100',
+  awaiting_user: 'bg-status-warning-surface dark:bg-status-warning-dark-surface',
   completed: 'bg-success-000',
-  cancelled: 'bg-warning-100',
+  cancelled: 'bg-status-warning-surface dark:bg-status-warning-dark-surface',
   error: 'bg-danger-000'
 }
 
@@ -243,7 +244,7 @@ const SubagentsBar = ({ session, permissions }: SubagentSurfaceProps): React.JSX
                       {' · '}
                       <span
                         id={`subagent-origin-warning-${session.id}-${child.frameId}`}
-                        className="text-warning-100"
+                        className="text-status-warning-foreground dark:text-status-warning-dark-foreground"
                       >
                         {t('Imported history may be incomplete')}
                       </span>
@@ -417,28 +418,36 @@ const SubagentPreview = ({
       </header>
 
       {!detail || !session ? (
-        <div role="alert" className="m-auto max-w-sm p-6 text-center text-[12px] text-text-300">
-          <AlertCircle className="mx-auto mb-2 size-5" aria-hidden="true" />
-          <p>{t('This Subagent conversation could not be read.')}</p>
-          <button
-            type="button"
-            aria-label={t('Retry Subagent preview')}
-            disabled={isRetrying}
-            className="mt-3 rounded-md border border-border-200 px-3 py-1.5 text-text-100 hover:bg-bg-200 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
-            onClick={() => void retryRead()}
-          >
-            {isRetrying ? t('Retrying…') : t('Retry')}
-          </button>
-        </div>
+        <ErrorNotice
+          role="alert"
+          className="m-auto max-w-sm"
+          description={t('This Subagent conversation could not be read.')}
+          primaryButton={{
+            label: t('Retry Subagent preview'),
+            loading: isRetrying,
+            onClick: () => void retryRead()
+          }}
+        />
       ) : (
         <div className="flex min-h-0 flex-1 flex-col" aria-live="off">
           <div className="shrink-0 border-b border-border-100 px-4 py-2 text-[11px] text-text-300">
             <span className="font-medium text-text-100">{detail.agentLabel}</span>
             {detail.originUnavailable ? (
-              <span className="text-warning-100">
+              <span className="text-status-warning-foreground dark:text-status-warning-dark-foreground">
                 {' · '}
                 {t('Imported history may be incomplete')}
               </span>
+            ) : null}
+            {detail.status === 'completed' ? (
+              <p className="pt-1">
+                {t(
+                  'Execution completed. Check the Main Agent conversation to confirm it received the result.'
+                )}
+              </p>
+            ) : null}
+            {detail.attempt?.terminalMessageId &&
+            detail.messages.some((message) => message.id === detail.attempt?.terminalMessageId) ? (
+              <p className="pt-1">{t('Saved result available below.')}</p>
             ) : null}
             {detail.attempt?.cancellationReason ? (
               <span> · {detail.attempt.cancellationReason}</span>

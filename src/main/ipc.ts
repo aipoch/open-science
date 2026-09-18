@@ -1,23 +1,28 @@
+import { getDefaultPermissionProfile } from '../shared/permission-profiles'
+import { PackageLiteratureReader } from './session-package/literature-reader'
+import { PdfElementAgentReader } from './literature/pdf-structure/agent-reader'
 import { transactLiterature } from './literature/transact'
+import { createPdfStructureOwner } from './literature/pdf-structure/owner'
+import { createPdfStructureEngine } from './literature/pdf-structure/engine'
+import { PdfStructureSourceAuthority } from './literature/pdf-structure/source'
+import { PdfStructureReader } from './literature/pdf-structure/reader'
 import { createSpecialistApplicationOwner } from './specialist/application-commands'
-import { basename, dirname, join } from 'node:path'
-import { randomUUID } from 'node:crypto'
-import { readFile, stat, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
+import { mkdir, realpath } from 'node:fs/promises'
+import { initializeDataLocation } from './storage/initialize-location'
 
 import {
   app,
   BrowserWindow,
   dialog,
-  net,
   Notification,
-  protocol,
   session,
   shell,
   webContents,
   type WebContents
 } from 'electron'
 
-import { createIpcHandlerInstallationScope, ipcMainHandle } from './ipc-handler-registry'
+import { ipcMainHandle } from './ipc-handler-registry'
 import {
   APPLICATION_MODULE_DISPOSAL_BUDGET_MS,
   composeApplicationRuntimeWithAdapters,
@@ -29,6 +34,9 @@ import {
   type ApplicationCommandCompositionDependencies
 } from './application-command-composition'
 import { registerApplicationCommandElectronAdapter } from './application-command-electron-adapter'
+import { isPathInsideWorkspace } from './acp/workspace-path'
+import { BookmarkRepository } from './bookmarks/repository'
+import { BookmarkService } from './bookmarks/service'
 import type { ApplicationInvocation } from './application-command-router'
 import { createApplicationEventModule, type ApplicationEventSource } from './application-events'
 import type { JobSummary } from '../shared/compute'
@@ -80,13 +88,26 @@ import { VisionEvidenceRepository } from './acp/vision-evidence-repository'
 import { ArtifactTurnOwner } from './acp/artifact-turn-owner'
 import { ArchiveCoordinator } from './archive/coordinator'
 import { ArtifactCodeReconstructionService } from './artifacts/code-reconstruction'
+import { withReproducibilityNotebookLifecycle } from './artifacts/reproducibility-notebook-lifecycle'
+import { ArtifactReproducibilityAttemptOwner } from './artifacts/artifact-reproducibility-lifecycle'
+import {
+  appendArtifactReproducibilityReceipt,
+  retainArtifactReproducibilityOutput,
+  pruneArtifactReproducibilityOutputs,
+  getArtifactReproducibilityCheckLog,
+  listArtifactReproducibilityReceipts,
+  recordFailedArtifactReproducibilityAttempt,
+  type ArtifactReproducibilityCheckLogDraft,
+  type ArtifactReproducibilityFailedAttemptDraft,
+  type ArtifactReproducibilityReceiptDraft
+} from './artifacts/artifact-reproducibility-receipts'
 import {
   createArtifactHandlers,
   createDefaultArtifactRepository,
-  registerArtifactIpcHandlers,
   type ArtifactHandlers
 } from './artifacts/ipc'
 import { ArtifactProvenanceRepository } from './artifacts/provenance-repository'
+import { readArtifactReproducibilityExecutionEvidence } from './artifacts/provenance-reproducibility-execution-evidence'
 import { ProvenanceMessageSnapshotRepository } from './artifacts/provenance-message-snapshot'
 import { ArtifactRunRegistry } from './artifacts/run-registry'
 import { broadcastJobUpdated, createComputeIpcModule, toJobSummary } from './compute/ipc'
@@ -119,12 +140,10 @@ import { isCustomMcpServerRouteSafe } from './connectors/custom-mcp-bootstrap'
 import { createMoleculePreviewHandler } from './connectors/molecule-preview'
 import { ALL_CONNECTOR_IDS } from './connectors/registry'
 import { connectorSkillSourceDir } from './connectors/provision'
-import { registerFileSaveHandlers } from './file-save'
-import { publishUserFile } from './user-file-publisher'
 import { ImmutableInputAuthority } from './immutable-input-authority'
-import { createCliCommandOwner, registerCliInstallIpcHandlers } from './cli-install/ipc'
+import { createCliCommandOwner } from './cli-install/ipc'
 
-import { createGithubCommandOwner, registerGithubIpcHandlers } from './github-ipc'
+import { createGithubCommandOwner } from './github-ipc'
 import {
   BackendShutdownOutcomeError,
   BackendShutdownCoordinator,
@@ -132,7 +151,6 @@ import {
   UPDATE_SHUTDOWN_BUDGET_MS,
   type ShutdownStepOutcome
 } from './lifecycle-shutdown'
-import { registerLifecycleIpcHandlers } from './lifecycle-broadcast'
 import {
   createWebSessionPersistenceFlush,
   rendererSessionPersistenceFlushBlocksShutdown,
@@ -140,21 +158,23 @@ import {
   type RendererSessionPersistenceSurface,
   type RendererSessionPersistenceTarget
 } from './session-persistence/renderer-flush'
-import { createLogsCommandOwner, registerLogsIpcHandlers } from './logs-ipc'
-import { registerWindowIpcHandlers } from './window-ipc'
-import { registerWindowFindIpcHandlers } from './window-find-ipc'
+import { createLogsCommandOwner } from './logs-ipc'
 import { TaskNotificationService } from './notifications/task-notifications'
 import { createNotificationInboxController } from './notifications/notification-inbox-controller'
-import { registerNotificationInboxIpcAdapter } from './notifications/notification-inbox-ipc'
+import { createOfficePreviewElectronSurfaces } from './ipc-surfaces/office-preview'
+import { createSessionPersistenceElectronSurface } from './ipc-surfaces/session-persistence'
+import { createArtifactElectronSurface } from './ipc-surfaces/artifacts'
+import { createSettingsElectronSurface } from './ipc-surfaces/settings'
+import { createDesktopUtilitiesElectronSurface } from './ipc-surfaces/desktop-utilities'
+import { createConnectorApprovalElectronSurface } from './ipc-surfaces/connector-approvals'
+import { createNotificationElectronSurface } from './ipc-surfaces/notifications'
 import { NotificationInboxDbRepository } from './notifications/notification-inbox-repository'
 import { bindNotificationInboxDeletionRuntime } from './notifications/notification-inbox-runtime'
 import {
   buildSkillImportApprovalBroadcast,
   buildConnectorApprovalBroadcast,
   buildConnectorCredentialRequestBroadcast,
-  buildTaskNotificationShow,
-  getTaskNotificationAvailability,
-  showTestTaskNotification
+  buildTaskNotificationShow
 } from './notifications/electron-wiring'
 import { createLogger, diagnosticErrorFields, errorLogFields } from './logger'
 import { startDiagnosticOperation, type DiagnosticOperation } from './diagnostics/operation'
@@ -176,26 +196,12 @@ import {
 } from './managed-preview-ipc'
 import { ManagedPreviewResources } from './managed-preview-resources'
 import type { PreviewProtocolRegistrar } from './managed-preview-protocol'
-import type {
-  AcquireManagedPreviewRequest,
-  ManagedPreviewSource
-} from '../shared/preview-resources'
+import type { ManagedPreviewSource } from '../shared/preview-resources'
 import { resolveEffectiveSpecialistSkills } from '../shared/specialist'
-import {
-  createOfficePreviewFrameProcessResolver,
-  createOfficePreviewProcessMemoryReader
-} from './office-preview/office-preview-electron'
-import { registerOfficePreviewIpcHandlers } from './office-preview/office-preview-ipc'
-import {
-  createOfficePreviewRuntimeUrl,
-  createReviewerPagedPreviewRuntimeUrl,
-  OFFICE_PREVIEW_RUNTIME_ORIGIN,
-  registerOfficePreviewRuntimeProtocol
-} from './office-preview/office-preview-runtime-protocol'
-import { OfficePreviewSupervisor } from './office-preview/office-preview-supervisor'
 import { registerNotebookIpcHandlers } from './notebook/ipc'
 import { registerRuntimeIpcHandlers } from './notebook/runtime-ipc'
 import { NotebookRunRepository, getRuntimeRoot } from './notebook/repository'
+import { NotebookDependencyAnalyzer } from './notebook/dependency-analysis'
 import { NotebookLocalRpcServer } from './notebook/local-rpc-server'
 import { createNotebookArtifactSourceScopeProvider } from './notebook/artifact-source-scope'
 import {
@@ -218,17 +224,17 @@ import { HostViewImageService } from './notebook/host-view-image-service'
 import { parseArtifactVersionLocator } from '../shared/artifact-provenance'
 import { PENDING_UPLOAD_SESSION_ID, parseUploadVersionReference } from '../shared/uploads'
 import { DEFAULT_ARTIFACT_PROJECT_ID } from '../shared/artifacts'
+import type {
+  ArtifactReproducibilityCheckRequest,
+  GetArtifactReproducibilityCheckLogRequest,
+  ListArtifactReproducibilityReceiptsRequest
+} from '../shared/artifact-reproducibility'
 import type { NotebookLanguage } from '../shared/notebook'
 import { MAIN_ENABLED_COMPUTE_HOSTS_LIFECYCLE_CLIENT_ID } from '../shared/lifecycle-events'
 import {
-  OFFICE_PREVIEW_STATE_CHANNEL,
-  type OfficePreviewOpenRequest
-} from '../shared/office-preview'
-import {
   createDefaultPreviewStateRepository,
   createDefaultProjectRepository,
-  createProjectHandlers,
-  registerPreviewStateIpcHandlers
+  createProjectHandlers
 } from './projects/ipc'
 import {
   createReviewerCommandOwner,
@@ -237,8 +243,7 @@ import {
 } from './reviewer/ipc'
 import { ReviewerModelRuntimeOwner } from './reviewer/model-runtime-owner'
 import { ReviewerProjectRuntimeOwner } from './reviewer/project-runtime-owner'
-import { createReviewerPagedContentResolver } from './reviewer/paged-preview-resolver'
-import { renderPdfPagePreviews } from './uploads/attachment-media'
+import { createReviewerElectronPagedContentResolver } from './reviewer/paged-preview-electron'
 import {
   canReconcileSessionAbsences,
   createDefaultReviewRepository,
@@ -246,7 +251,6 @@ import {
   createSessionPersistenceHandlersWithAttributionAuthority,
   loadSessionMetadataAfterProjectRecovery,
   recoverProjectDeletionsForSessionRead,
-  registerSessionPersistenceIpcHandlers,
   withSessionDeletionCleanup
 } from './session-persistence/ipc'
 import {
@@ -254,12 +258,9 @@ import {
   registerConversationExportIpcHandler
 } from './session-persistence/conversation-export'
 import { SessionProjectionDiagnostics } from './session-persistence/projection-diagnostics'
-import { createProjectFilesHandlers, registerProjectFilesIpcHandlers } from './project-files/ipc'
+import { createProjectFilesHandlers } from './project-files/ipc'
 import { createManagedFileIndexRepository } from './project-files/repository'
-import {
-  createManagedFileVersionHandlers,
-  registerManagedFileVersionIpcHandlers
-} from './managed-file-versions/ipc'
+import { createManagedFileVersionHandlers } from './managed-file-versions/ipc'
 import { ManagedFileVersionService } from './managed-file-versions/service'
 import {
   ProjectDeletionCoordinator,
@@ -271,7 +272,6 @@ import { getProjectDbClient } from './projects/prisma-client'
 import { seedDefaultPermissionGrants } from './permission-grants/defaults'
 import { createPermissionGrantRegistry } from './permission-grants/registry'
 import { isPermissionGrantScopeLive } from './permission-grants/scope-liveness'
-import { registerPermissionGrantIpcAdapter } from './permission-grants/ipc'
 import { createPermissionGrantProjectionController } from './permission-grants/projection-controller'
 import {
   reconcilePendingCustomServerDeletions,
@@ -302,12 +302,24 @@ import { LiteratureDocumentReader } from './literature/document-reader'
 import { SessionDeletionOwner } from './session-deletion/owner'
 import { buildSessionDetailsUserPrompt, createSessionDetailsOwner } from './session-details/owner'
 import { tryDecryptKey } from './settings/crypto'
-import { SETTINGS_INSTALL_LOG_CHANNEL, registerSettingsIpcHandlers } from './settings/ipc'
-import { registerLocalFsIpcHandlers } from './local-fs/ipc'
+import { SETTINGS_INSTALL_LOG_CHANNEL } from './settings/ipc'
+import { createCoreElectronSurfaces } from './ipc-surfaces/core'
+import { createElectronSurfaceAdapter } from './ipc-surfaces/adapter'
 import { GrantedLocalRootsRepository } from './local-fs/granted-roots-repository'
 import { LocalFsService } from './local-fs/service'
 import { SettingsService } from './settings/service'
+import { SettingsInstallCoordinator } from './settings/settings-install-coordinator'
 import { SettingsRepository } from './settings/repository'
+import { WslSetupOwner } from './wsl/wsl-setup-owner'
+import { WslSetupSessionOwner } from './wsl/wsl-setup-session-owner'
+import { openWslSetupPowerShellTerminal } from './wsl/wsl-setup-terminal'
+import { FileWslSetupOperationJournal } from './wsl/wsl-setup-operation-journal'
+import { initializeWsl2BashPreview, wsl2BashPreviewStatus } from './wsl/wsl2-preview-gate'
+import { runPackagedWsl2RestartCertification } from './wsl/wsl2-packaged-restart-certification'
+import { certifyNativeShell } from './notebook/native-shell-certification'
+import { resolveAvailableShellRuntimeBinding } from './notebook/configured-shell-runtime'
+import type { WslSetupStatus } from '../shared/wsl-setup'
+import { probeWindowsVolume } from './wsl/windows-volume-probe'
 import { SettingsSnapshotCommitOwner } from './settings/settings-snapshot-commit-owner'
 import type { SettingsDocumentStore } from './settings/document-store'
 import { NetworkProxyRuntime } from './settings/network-proxy-runtime'
@@ -322,7 +334,6 @@ import {
 } from './delegation/execution-port'
 import { createDelegationSettlementContinuationDispatch } from './delegation/settlement-continuation-dispatch'
 import { createSettingsWorkflows } from './settings/workflows'
-import { showSettingsSaveDialog } from './settings/save-dialog'
 import { SpecialistService } from './specialist/service'
 import { SpecialistRepository } from './specialist/repository'
 import { BuiltinSpecialistRegistry } from './specialist/builtin-registry'
@@ -332,14 +343,8 @@ import { OFFICIAL_MARKETPLACE_SOURCE } from './specialist/marketplace/official-s
 import { MarketplaceRepository } from './specialist/marketplace/repository'
 import { MarketplaceService } from './specialist/marketplace/service'
 import { MarketplaceOperationCoordinator } from './specialist/marketplace/operation-coordinator'
-import {
-  saveSpecialistExport,
-  saveSpecialistPackageReport,
-  selectSpecialistArchive
-} from './specialist/package/electron-adapter'
 import { UserSkillSpecialistPackageAdapter } from './skills/specialist-package-adapter'
-import { saveSkillExport } from './skills/export'
-import { netFetchStandard } from './skills/net-fetch'
+import { netFetchStandard, netFetchWithManualRedirect } from './skills/net-fetch'
 import { AgentsService } from './agents/agents-service'
 import {
   CompletionGateCoordinator,
@@ -363,11 +368,7 @@ import { installCompletionGateDiagnostics } from './agents/completion-gate-diagn
 import { PendingSessionSpecialistBindings } from './agents/pending-session-specialist-bindings'
 import { createCodexCompletionGateRuntime } from './acp/codex-completion-handoff'
 import { createOpenCodeImmediateHandoffRuntime } from './acp/opencode-immediate-handoff'
-import { registerSpecialistIpcHandlers } from './specialist/ipc'
-import {
-  createContributionTemplateExporter,
-  resolveContributionTemplateReadmePath
-} from './specialist/package/contribution-template'
+import { createSpecialistElectronSurface } from './ipc-surfaces/specialist'
 import { SessionBindingService } from './specialist/session-binding'
 import {
   SessionSpecialistReconfiguration,
@@ -375,10 +376,8 @@ import {
 } from './specialist/session-reconfiguration'
 import { SPECIALIST_IPC } from '../shared/specialist'
 import {
-  CONNECTOR_TEMPLATE_MAX_BYTES,
   type AppIconPreview,
   type AppIconVariant,
-  type RespondApprovalRequest,
   type SessionAgentConfiguration
 } from '../shared/settings'
 import type { AcpSessionAgentTarget } from '../shared/acp'
@@ -388,6 +387,8 @@ import type {
   SessionSummary
 } from '../shared/session-persistence'
 import { registerStorageIpcHandlers } from './storage/ipc'
+import { createLocalModelOwner } from './local-models/owner'
+import { registerLocalModelIpcHandlers } from './local-models/ipc'
 import { createStorageCommandOwner } from './storage/command-owner'
 import {
   initializeDataRootWriteAvailability,
@@ -397,6 +398,11 @@ import {
   withDataRootWrite
 } from './storage/migration-state'
 import { isDataRootMissing } from './storage/path-presence'
+import { SessionPackageService } from './session-package/service'
+import createInspectionWorker from './session-package/inspection-worker-entry?nodeWorker'
+import { createPackageInspector } from './session-package/inspection-worker'
+import { createSessionPackageDesktop } from './session-package/desktop-composition'
+import { installSessionPackageQuitGuard } from './session-package/quit-guard'
 import { normalizeLegacyDataPaths } from './storage/normalize-legacy-paths'
 import { createDataRootSourceCleanup, DataRootCleanupJournal } from './storage/data-root-cleanup'
 import {
@@ -426,7 +432,8 @@ import {
 } from './update/strategy'
 import type { UpdateBlocker } from '../shared/update'
 import { startUpdateScheduler } from './update/scheduler'
-import { createDefaultUploadRepository, registerUploadIpcHandlers } from './uploads/ipc'
+import { createDefaultUploadRepository } from './uploads/ipc'
+import { createUploadElectronSurface } from './ipc-surfaces/uploads'
 import { createUploadCommandOwner } from './uploads/command-owner'
 import { ContentRepository } from './storage/content-repository'
 import { broadcastToRenderers, installRendererBroadcastEventHub } from './renderer-broadcast'
@@ -437,7 +444,6 @@ import {
 } from './runtime-electron-wiring'
 import { HostSkillsService, type HostSkillsCatalog } from './skills/host-skills-service'
 import { UserSkillCatalogObserver } from './skills/user-skill-catalog-observer'
-import type { ConversationSkillImportApprovalResponse } from '../shared/settings'
 import type { TaskControlPorts } from './tasks/task-control-ports'
 import type { TaskAgentPort } from './tasks/task-runner'
 import { englishNativeTranslator, type NativeTranslator } from './locale/main-process-messages'
@@ -472,6 +478,7 @@ type IpcRegistrationOptions = {
 }
 
 export type ApplicationRuntimeInterfaces = {
+  openSessionPackageFile: (path: string | null) => void
   applicationCommands: Pick<ApplicationCommandComposition, 'localWeb' | 'remoteWeb' | 'task'>
   applicationEvents: ApplicationEventSource
   permissionApprovalPresence: PermissionApprovalPresence
@@ -531,19 +538,7 @@ const createApplicationModules = async (
   const afterAcpAdapters: NamedElectronSurfaceAdapter[] = []
   let surfaceAdapters = beforeComputeAdapters
   const declareElectronAdapter = (name: string, install: () => void | (() => void)): void => {
-    surfaceAdapters.push({
-      name,
-      install: () => {
-        const scope = createIpcHandlerInstallationScope()
-        try {
-          const cleanup = install()
-          return scope.complete(typeof cleanup === 'function' ? cleanup : undefined)
-        } catch (error) {
-          scope.rollback()
-          throw error
-        }
-      }
-    })
+    surfaceAdapters.push(createElectronSurfaceAdapter(name, install))
   }
   const applicationEvents = await modules.add(
     installRendererBroadcastEventHub,
@@ -560,6 +555,53 @@ const createApplicationModules = async (
     settingsStore ?? resolveConfigRoot(),
     (operation) => specialistPackageSkillAdapter.runMutationExclusive(operation)
   )
+  await initializeDataLocation(settingsRepository)
+  initializeWsl2BashPreview({
+    platform: process.platform,
+    arch: process.arch,
+    packaged: app.isPackaged,
+    resourcesPath: process.resourcesPath
+  })
+  const settingsInstallCoordinator = new SettingsInstallCoordinator()
+  const wslSetupSessions = new WslSetupSessionOwner(resolveConfigRoot())
+  const wslRuntimeReconciliation: { current?: (status: WslSetupStatus) => void } = {}
+  const wslSetup = new WslSetupOwner({
+    // Managed workspaces, handoff data, and caches live below this local NTFS mount root. The
+    // execution adapter will still validate each invocation's concrete authorized paths.
+    workspacePath: resolveDataRoot,
+    volumeProbe: probeWindowsVolume,
+    readSelection: async () => (await settingsRepository.getSettings()).wslSelection,
+    readActivation: async () => {
+      const settings = await settingsRepository.getSettings()
+      return {
+        runtime: settings.localShellRuntime,
+        selection: settings.activatedWslSelection
+      }
+    },
+    writeSelection: (selection) => settingsRepository.setWslSelection(selection),
+    installCoordinator: settingsInstallCoordinator,
+    operationJournal: new FileWslSetupOperationJournal(resolveConfigRoot()),
+    previewStatus: wsl2BashPreviewStatus,
+    onStatusChanged: (status) => {
+      applicationEvents.publish('settings:wsl-setup-changed', status)
+      wslRuntimeReconciliation.current?.(status)
+    }
+  })
+  const getAvailableShellRuntimeBinding = async (): Promise<
+    Awaited<ReturnType<typeof resolveAvailableShellRuntimeBinding>>
+  > =>
+    resolveAvailableShellRuntimeBinding(
+      await settingsRepository.getSettings(),
+      async (selection) => {
+        if (!wsl2BashPreviewStatus().available) return false
+        const snapshot = await wslSetup.probe(selection)
+        return (
+          snapshot.state === 'ready' &&
+          snapshot.selection?.distro === selection.distro &&
+          snapshot.selection?.user === selection.user
+        )
+      }
+    )
   const networkProxyRuntime = new NetworkProxyRuntime({
     setProxy: (config) => session.defaultSession.setProxy(config)
   })
@@ -591,9 +633,14 @@ const createApplicationModules = async (
   }
   const notebookNetworkSandbox = await modules.add(undefined, () => {
     const capability = new NotebookNetworkSandboxOwner({
+      packaged: app.isPackaged,
+      allowRuntimeAccessPrompt: !headless,
       resourceRoot: app.isPackaged
         ? join(process.resourcesPath, 'notebook-network-sandbox')
         : join(app.getAppPath(), 'packages', 'notebook-network-sandbox', 'vendor'),
+      // R rejects a TEMP path containing spaces. Electron's product-named userData directory
+      // includes them in both production and development; keep command temp under the fixed config root.
+      temporaryRoot: join(resolveConfigRoot(), 'notebook-command-temp'),
       getSettings: async () => {
         const service = settingsServiceRef.current
         if (!service) throw new Error('Settings are not ready.')
@@ -610,7 +657,15 @@ const createApplicationModules = async (
         if (!service) throw new Error('Settings are not ready.')
         return service.allowNotebookNetworkDomain(hostname)
       },
-      requestDecision: async ({ sessionId, hostname, port, runtime, reason, signal }) => {
+      requestDecision: async ({
+        sessionId,
+        hostname,
+        port,
+        runtime,
+        reason,
+        allowOnce,
+        signal
+      }) => {
         if (headless && !permissionApprovalPresence.isAvailable()) return 'unavailable'
         const coordinator = runtimeRef.current
         if (!coordinator || signal.aborted) return 'deny'
@@ -627,7 +682,16 @@ const createApplicationModules = async (
               }
             },
             options: [
-              { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once', scope: 'once' },
+              ...(allowOnce
+                ? [
+                    {
+                      optionId: 'allow-once',
+                      name: 'Allow once',
+                      kind: 'allow_once' as const,
+                      scope: 'once' as const
+                    }
+                  ]
+                : []),
               {
                 optionId: 'always-allow',
                 name: 'Global',
@@ -665,12 +729,25 @@ const createApplicationModules = async (
   const settingsService = await modules.add(undefined, () => {
     const capability = new SettingsService({
       repository: settingsRepository,
+      onProviderHealthChanged: async () => {
+        await settingsSnapshotCommits.projectAfter(Promise.resolve())
+      },
+      installCoordinator: settingsInstallCoordinator,
       skillRuntimeMcpEntryPath: mainEntryPath,
       openAlexFetch: netFetchStandard,
       applyNetworkProxy: async (settings) => {
         await networkProxyRuntime.apply(settings)
         await notebookNetworkSandbox.updateParentProxy()
       },
+      readMarketplaceSpecialists: async (): Promise<
+        import('../shared/specialist').SpecialistListItem[]
+      > => {
+        const snapshot = await specialistService.listForSettingsSnapshot()
+        if (snapshot.integrity.status !== 'ok')
+          throw new Error('Specialist impact inspection is unavailable.')
+        return snapshot.items
+      },
+      withMarketplaceImpactLock: (operation) => specialistRepository.withReadLock(operation),
       withUserSkillRecoveryBarrier: (operation) =>
         specialistPackageRecovery.current?.(operation) ?? operation(),
       applyNotebookNetwork: async (settings) => notebookNetworkSandbox.applySettings(settings),
@@ -684,6 +761,13 @@ const createApplicationModules = async (
       getNotebookNetworkStatus: () => notebookNetworkSandbox.status(),
       installNotebookNetwork: () => notebookNetworkSandbox.installWindows(),
       removeNotebookNetwork: () => notebookNetworkSandbox.removeWindows(),
+      wslSetup,
+      wslSetupSessions,
+      ensureDefaultWslSetupWorkspace: async () => {
+        const settings = await settingsRepository.getSettings()
+        if (!settings.dataRoot && settings.onboardingCompletedAt === undefined)
+          await mkdir(resolveDataRoot(), { recursive: true })
+      },
       resolveCodexProxyEnvironment: () =>
         Promise.resolve(networkProxyRuntime.getChildProcessProxyEnvironment())
     })
@@ -714,11 +798,29 @@ const createApplicationModules = async (
   const storedSettings = await settingsService.getStoredSettings()
   const storageLog = createLogger('storage')
   await networkProxyRuntime.apply(storedSettings.networkProxy)
+  await certifyNativeShell({
+    appPackaged: app.isPackaged,
+    headless,
+    storageRoot: resolveConfigRoot(),
+    environment: process.env,
+    processSandbox: notebookNetworkSandbox
+  })
+  await runPackagedWsl2RestartCertification({
+    appPackaged: app.isPackaged,
+    headless,
+    platform: process.platform,
+    arch: process.arch,
+    previewAvailable: wsl2BashPreviewStatus().available,
+    storageRoot: resolveConfigRoot(),
+    environment: process.env,
+    processSandbox: notebookNetworkSandbox
+  })
   // Prime the data-root cache from settings before any data repository is constructed below. A change
   // to this value only takes effect after a restart, so reading it once here is sufficient.
-  initDataRoot(storedSettings.dataRoot)
+  initDataRoot(storedSettings.dataRoot, storedSettings.onboardingCompletedAt)
   const configuredDataRootMissing =
-    Boolean(storedSettings.dataRoot?.trim()) && (await isDataRootMissing(resolveDataRoot()))
+    (Boolean(storedSettings.dataRoot) || storedSettings.onboardingCompletedAt !== undefined) &&
+    (await isDataRootMissing(resolveDataRoot()))
   initializeDataRootWriteAvailability(configuredDataRootMissing)
   const dataRootCleanupJournal = new DataRootCleanupJournal(resolveConfigRoot())
   const cleanupDataRootSources = createDataRootSourceCleanup((runtimeRoot) =>
@@ -1035,6 +1137,48 @@ const createApplicationModules = async (
     }
   }
   const projectRepository = createDefaultProjectRepository()
+  const sessionPackageDesktopLifecycle = {
+    close: async (): Promise<void> => undefined,
+    isActive: () => false
+  }
+  let packageHandoffHeld = false
+  // Startup package recovery precedes catalog construction. After construction every live
+  // publication must update the same owner consulted by resume/save admission.
+  const packagePublicationOwner: {
+    current?: Pick<SessionPersistenceCoordinator, 'adoptPublishedSession'>
+  } = {}
+  const sessionPackageService = await modules.add(undefined, () => {
+    const service = new SessionPackageService({
+      getDefaultPermissionProfile: async () =>
+        getDefaultPermissionProfile(await settingsRepository.getSettings()),
+      onSessionPublished: async ({ projectId, sessionId }) => {
+        await packagePublicationOwner.current?.adoptPublishedSession(projectId, sessionId)
+      },
+      inspectPackage: createPackageInspector(createInspectionWorker),
+      configRoot: resolveConfigRoot(),
+      storageRoot: resolveDataRoot(),
+      getClient: () => getProjectDbClient(resolveConfigRoot()),
+      isSessionActive: (projectId, sessionId) =>
+        detectSessionExportBlockingSessions().some(
+          (item) => item.projectId === projectId && item.sessionId === sessionId
+        )
+    })
+    return {
+      name: 'session-package',
+      capability: service,
+      dispose: async () => {
+        await Promise.all([service.close(), sessionPackageDesktopLifecycle.close()])
+      }
+    }
+  })
+  // Finish or roll back private imports before any renderer or background owner hydrates catalogs.
+  let beforePackageHydration = true
+  await runDataRootStartupRecovery(() =>
+    sessionPackageService.recover({ collectDeletedPackages: beforePackageHydration })
+  )
+  // Reconnecting a missing data root can replay this callback after runtimes exist. Import
+  // recovery still runs behind its write gate, but package collection waits for the next launch.
+  beforePackageHydration = false
   const previewStateRepository = createDefaultPreviewStateRepository()
 
   // One-time conversion of any legacy absolute data-root paths on disk (pre-$DATA-sentinel installs)
@@ -1071,6 +1215,11 @@ const createApplicationModules = async (
   const artifactRepository = createDefaultArtifactRepository((path) =>
     managedFileVersionService.assertArtifactPathVisible(path)
   )
+  const notebookRepository = new NotebookRunRepository(resolveDataRoot())
+  const notebookDependencyAnalyzer = new NotebookDependencyAnalyzer({
+    storageRoot: resolveDataRoot(),
+    repository: notebookRepository
+  })
   const immutableInputAuthority = new ImmutableInputAuthority({
     storageRoot: resolveDataRoot(),
     managedFileVersions: managedFileVersionService
@@ -1081,6 +1230,8 @@ const createApplicationModules = async (
     inputAuthority: immutableInputAuthority,
     managedFileVersions: managedFileVersionService,
     compatibilityRepository: artifactRepository,
+    notebookRepository,
+    dependencyAnalyzer: notebookDependencyAnalyzer,
     loadSession: (projectId, appSessionId) => sessionRepository.loadSession(projectId, appSessionId)
   })
   const contentRepository = new ContentRepository({
@@ -1089,12 +1240,18 @@ const createApplicationModules = async (
   })
   const literatureAttachmentAuthority = new LiteratureAttachmentAuthority({
     getClient: () => getProjectDbClient(resolveConfigRoot()),
-    content: contentRepository
+    content: contentRepository,
+    packages: new PackageLiteratureReader({
+      storageRoot: resolveDataRoot(),
+      getClient: () => getProjectDbClient(resolveConfigRoot()),
+      files: managedFileVersionService
+    })
   })
   const sessionPdfSourceResolver = new SessionPdfSourceResolver({
     inputs: immutableInputAuthority,
     literature: literatureAttachmentAuthority
   })
+  const bookmarkRepository = new BookmarkRepository(() => getProjectDbClient(resolveConfigRoot()))
   const provenanceMessageSnapshots = new ProvenanceMessageSnapshotRepository({
     storageRoot: resolveDataRoot(),
     getClient: () => getProjectDbClient(resolveConfigRoot())
@@ -1238,6 +1395,9 @@ const createApplicationModules = async (
     }
   } = {}
   const projectRuntimeQuiescenceRef: { current?: ProjectRuntimeQuiescenceOwner } = {}
+  const artifactReproducibilityAttemptOwnerRef: {
+    current?: ArtifactReproducibilityAttemptOwner
+  } = {}
   const computeJobDeletionPort = {
     restoreProjectJobDeletion: (projectId: string): Promise<void> => {
       if (!computeJobDeletionRef.current) {
@@ -1289,6 +1449,9 @@ const createApplicationModules = async (
   const delegatedActivity = createDelegatedActivityProjection()
   const getActiveDelegatedSessions = (): { projectId: string; sessionId: string }[] =>
     delegatedActivity.getActiveDelegatedSessions()
+  // Side Chat prompts remain activity for disruptive archive, migration and shutdown operations.
+  // Package export uses a narrower projection because auxiliary transcripts are excluded; delivered
+  // relays already live in the main conversation graph independently of this activity projection.
   const getActiveSideChatSessions = (): { projectId: string; sessionId: string }[] =>
     (sideChatOwnerRef.current?.list().chats ?? [])
       .filter((chat) => chat.running)
@@ -1338,8 +1501,29 @@ const createApplicationModules = async (
       restoreProjectActive: restoreManagedProjectWorkspacesActive,
       markRetained: markManagedWorkspaceRetained,
       restoreActive: restoreManagedWorkspaceActive
-    }
+    },
+    (session) => sessionPackageService.prepareSessionDeletion(session)
   )
+  packagePublicationOwner.current = sessionPersistenceCoordinator
+  const bookmarkService = new BookmarkService({
+    repository: bookmarkRepository,
+    sessions: sessionRepository,
+    pdfVersions: sessionPdfSourceResolver,
+    runWithSessionAuthority: (projectId, sessionId, operation) =>
+      sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, operation),
+    validateProjectFile: async (source, owningSession) => {
+      if (source.kind !== 'project-file' || source.sessionId !== owningSession.id) return false
+      try {
+        const [canonicalRoot, canonicalSource] = await Promise.all([
+          realpath(owningSession.cwd),
+          realpath(source.path)
+        ])
+        return isPathInsideWorkspace(canonicalRoot, canonicalSource)
+      } catch {
+        return false
+      }
+    }
+  })
   const sessionPdfContextOwner = new SessionPdfContextOwner({
     sources: sessionPdfSourceResolver,
     pendingUploads: {
@@ -1366,6 +1550,44 @@ const createApplicationModules = async (
     },
     dispose: () => stopLiteratureIndexRetention?.()
   }))
+  const localModelOwner = createLocalModelOwner()
+  await modules.add({ localModelOwner }, ({ localModelOwner: owner }) => ({
+    name: 'local-models',
+    capability: undefined,
+    dispose: async () => {
+      await owner.close()
+    }
+  }))
+  declareElectronAdapter('local-models', () => registerLocalModelIpcHandlers(localModelOwner))
+  const pdfStructureSources = new PdfStructureSourceAuthority({
+    literature: literatureAttachmentAuthority,
+    sources: sessionPdfSourceResolver,
+    sessions: sessionPersistenceCoordinator
+  })
+  const pdfStructureOwner = createPdfStructureOwner({
+    models: localModelOwner,
+    sources: pdfStructureSources,
+    engine: createPdfStructureEngine(
+      join(
+        app.getAppPath().replace(/app\.asar$/, 'app.asar.unpacked'),
+        'resources',
+        'pdf-structure'
+      )
+    )
+  })
+  const pdfStructureReader = new PdfStructureReader(pdfStructureOwner)
+  await modules.add({ pdfStructureOwner }, ({ pdfStructureOwner: owner }) => ({
+    name: 'pdf-structure',
+    capability: undefined,
+    dispose: () => owner.close()
+  }))
+
+  const pdfElementReader = new PdfElementAgentReader({
+    owner: pdfStructureOwner,
+    sources: pdfStructureSources,
+    sessions: sessionPersistenceCoordinator
+  })
+
   const literatureDocumentReader = new LiteratureDocumentReader({
     storageRoot: resolveDataRoot(),
     sources: sessionPdfSourceResolver,
@@ -1377,11 +1599,7 @@ const createApplicationModules = async (
       if (!runtime) return 'completed'
       const snapshot = runtime.getSnapshot()
       if (snapshot.promptInFlightSessionIds.includes(parentSessionId)) {
-        return snapshot.pendingPermissions.some(
-          (permission) => permission.sessionId === parentSessionId
-        )
-          ? 'waiting'
-          : 'running'
+        return runtime.hasPendingSideChatInteraction(parentSessionId) ? 'waiting' : 'running'
       }
       return runtime.liveSessionProjectId(parentSessionId) ? 'idle' : 'completed'
     },
@@ -1430,6 +1648,7 @@ const createApplicationModules = async (
         if (!owner) throw new Error('Project runtime cleanup is not initialized.')
         await archiveCoordinator.withProjectDeletion(projectId, async () => {
           notebookService.beginProjectDeletion(projectId)
+          await artifactReproducibilityAttemptOwnerRef.current?.cancelProject(projectId)
           await owner.quiesceProject(projectId)
         })
       },
@@ -1464,18 +1683,26 @@ const createApplicationModules = async (
     },
     applicationEvents
   )
-  const detectArchiveBlockingSessions = (): ReturnType<typeof detectActiveSessions> =>
+  const detectBlockingSessions = (
+    includeSideChat: boolean
+  ): ReturnType<typeof detectActiveSessions> =>
     detectActiveSessions({
       runtime: {
         getActivePromptSessions: () => runtimeRef.current?.getActivePromptSessions() ?? []
       },
-      sideChat: { getActivePromptSessions: getActiveSideChatSessions },
+      sideChat: {
+        getActivePromptSessions: () => (includeSideChat ? getActiveSideChatSessions() : [])
+      },
       delegated: { getActiveDelegatedSessions },
       notebook: {
         getActiveNotebookSessions: () =>
           notebookActivityRef.current?.getActiveNotebookSessions() ?? []
       }
     })
+  const detectArchiveBlockingSessions = (): ReturnType<typeof detectActiveSessions> =>
+    detectBlockingSessions(true)
+  const detectSessionExportBlockingSessions = (): ReturnType<typeof detectActiveSessions> =>
+    detectBlockingSessions(false)
   const archiveCoordinator = new ArchiveCoordinator(
     projectRepository,
     sessionPersistenceCoordinator,
@@ -1493,6 +1720,17 @@ const createApplicationModules = async (
           )
         )
       },
+      isSessionExportBusy: async (projectId, sessionId) => {
+        const computeJobs = computeJobActivityRef.current
+        if (!computeJobs) throw new Error('Compute Job activity is not initialized.')
+        const jobs = await computeJobs.countNonTerminalBySession(sessionId)
+        return (
+          jobs > 0 ||
+          detectSessionExportBlockingSessions().some(
+            (session) => session.projectId === projectId && session.sessionId === sessionId
+          )
+        )
+      },
       isProjectBusy: async (projectId) => {
         if (
           reviewerProjectRuntime.isProjectBusy(projectId) ||
@@ -1505,6 +1743,12 @@ const createApplicationModules = async (
         return (await computeJobs.findNonTerminal()).some((job) => job.project_id === projectId)
       },
       liveSessionProjectId: (sessionId) => runtimeRef.current?.liveSessionProjectId(sessionId)
+    },
+    {
+      cancelProject: async (projectId) =>
+        artifactReproducibilityAttemptOwnerRef.current?.cancelProject(projectId),
+      cancelSession: async (projectId, sessionId) =>
+        artifactReproducibilityAttemptOwnerRef.current?.cancelSession(projectId, sessionId)
     }
   )
   notificationInbox.setSessionAvailability((sessionId) =>
@@ -1524,7 +1768,8 @@ const createApplicationModules = async (
       await Promise.all([
         sessionEnabledComputeHostsOwnerRef.current?.clear(sessionIds),
         sideChatOwnerRef.current?.invalidateParents(sessionIds),
-        visionEvidenceRepository.deleteSessions(sessionIds)
+        visionEvidenceRepository.deleteSessions(sessionIds),
+        bookmarkRepository.deleteSessions(sessionIds)
       ])
     },
     onSessionsReconciled: async (sessionIds) => {
@@ -1567,7 +1812,16 @@ const createApplicationModules = async (
           await lease.close()
         }
       }
-    }
+    },
+    (file) =>
+      managedFileVersionService.openVersion(
+        {
+          source: file.source,
+          projectId: file.projectId,
+          fileId: file.sourceFileId
+        },
+        file.sourceVersionId
+      )
   )
   const managedFileVersionHandlers = createManagedFileVersionHandlers(managedFileVersionService, {
     withDataRootWrite,
@@ -1589,6 +1843,18 @@ const createApplicationModules = async (
   })
   const loadAllSessions = (): Promise<LoadAllSessionsResult> => sessionCatalogHydration.loadAll()
   const sessionProjectionDiagnostics = new SessionProjectionDiagnostics()
+  let wslSetupSessionsReconciliation: Promise<void> | undefined
+  const reconcileWslSetupSessions = async (sessions: readonly SessionSummary[]): Promise<void> => {
+    wslSetupSessionsReconciliation ??= wslSetupSessions.reconcileBoundSessions(
+      new Set(sessions.map((session) => session.id))
+    )
+    try {
+      await wslSetupSessionsReconciliation
+    } catch (error) {
+      wslSetupSessionsReconciliation = undefined
+      throw error
+    }
+  }
   const ensureSessionProjection = async (): Promise<{
     result?: LoadAllSessionsResult
     sessions: SessionSummary[]
@@ -1601,15 +1867,18 @@ const createApplicationModules = async (
       const result = recovery.result
       const sessions = await sessionRepository.summarizeReadOnlyAuthority(result)
       await sessionPersistenceCoordinator.replaceSessionMetadata(sessions, false)
-      return { result, sessions }
+      return { result, sessions: await wslSetupSessions.projectSessionSummaries(sessions) }
     }
     const projection = await sessionRepository.ensureSessionProjection(loadAllSessions)
     const result = projection.result
-    await sessionPersistenceCoordinator.replaceSessionMetadata(
-      projection.sessions,
-      result ? canReconcileSessionAbsences(result) : true
-    )
-    return { ...projection, result }
+    const catalogComplete = result ? canReconcileSessionAbsences(result) : true
+    await sessionPersistenceCoordinator.replaceSessionMetadata(projection.sessions, catalogComplete)
+    if (catalogComplete) await reconcileWslSetupSessions(projection.sessions)
+    return {
+      ...projection,
+      result,
+      sessions: await wslSetupSessions.projectSessionSummaries(projection.sessions)
+    }
   }
   const uncoordinatedSessionPersistenceBackend: SessionPersistenceBackend = {
     loadAll: loadAllSessions,
@@ -1695,6 +1964,8 @@ const createApplicationModules = async (
   // One runner owns Windows integrity/preflight/fallback state for every production micromamba
   // consumer in this main-process generation. Each consumer receives only its narrow resolve seam.
   const micromambaRunner = createProductionMicromambaRunner({
+    packaged: app.isPackaged,
+    configHome: app.getPath('home'),
     home: dirname(dirname(provisioningRoot)),
     resourcesPath: process.resourcesPath
   })
@@ -1720,10 +1991,13 @@ const createApplicationModules = async (
   }
   const notebookApplication = await modules.add(
     {
+      admitSessionWork: (projectId: string, sessionId: string) =>
+        archiveCoordinator.admitSessionWork(projectId, sessionId),
       configRoot: resolveConfigRoot(),
       dataRoot: resolveDataRoot(),
       projectId: DEFAULT_ARTIFACT_PROJECT_ID,
-      repository: new NotebookRunRepository(resolveDataRoot()),
+      repository: notebookRepository,
+      dependencyAnalyzer: notebookDependencyAnalyzer,
       getPackageMirror: () => settingsService.getPackageMirror(),
       getAgentEnvironmentCreationEnabled: () =>
         settingsService.getAgentEnvironmentCreationEnabled(),
@@ -1751,7 +2025,11 @@ const createApplicationModules = async (
     localRpc: notebookLocalRpc
   } = notebookApplication
   notebookPolicyLifecycle.current = notebookService
-  notebookActivityRef.current = notebookService
+  const notebookLifecycle = withReproducibilityNotebookLifecycle(
+    notebookService,
+    () => artifactReproducibilityAttemptOwnerRef.current
+  )
+  notebookActivityRef.current = notebookLifecycle
   composition.phase('notebook-runtime')
 
   // Builtins are validated once at startup from read-only repository resources. Package imports use
@@ -1946,6 +2224,7 @@ const createApplicationModules = async (
       }
     },
     skillPort: specialistPackageSkillAdapter,
+    skillSettings: settingsRepository,
     marketplaceOperationCoordinator,
     onSpecialistDeleted: (specialistId) =>
       marketplaceRepository.removeInstallationsForSpecialist(specialistId),
@@ -1966,7 +2245,7 @@ const createApplicationModules = async (
       ]),
     onCommitted: () => {
       broadcastToRenderers(SPECIALIST_IPC.CATALOG_CHANGED, undefined)
-      void runtime.requestSkillsReload()
+      requestSkillCatalogRefresh()
     }
   })
   specialistPackageRecovery.current = (operation) =>
@@ -1977,10 +2256,8 @@ const createApplicationModules = async (
     repository: marketplaceRepository,
     operationCoordinator: marketplaceOperationCoordinator,
     packages: specialistPackageService,
-    fetch: netFetchStandard,
+    fetch: netFetchWithManualRedirect,
     officialSource: OFFICIAL_MARKETPLACE_SOURCE,
-    getDisabledSkillIds: async () =>
-      (await settingsRepository.getSettings()).disabledSkillIds ?? [],
     getInstalledSpecialists: async () =>
       (await specialistService.list()).map((profile) => ({
         id: profile.id,
@@ -2012,8 +2289,12 @@ const createApplicationModules = async (
     )
   }
   composition.phase('marketplace-recover')
-  settingsService.setSkillDeletionGuard((skillId) =>
-    specialistPackageService.assertSkillDeletionAllowed(skillId)
+  settingsService.setSkillDeletionGuard((request) =>
+    specialistPackageService.assertSkillDeletionAllowed(
+      request.id,
+      request.source,
+      request.directoryName
+    )
   )
   // Per-session specialist binding store. Shared between the SET_SESSION_SPECIALIST barrier
   // (validate + record) and the runtime switch so a hot-switch lands on the same source of truth.
@@ -2142,26 +2423,13 @@ const createApplicationModules = async (
     onInboxError: (error) =>
       notificationsLog.warn('message center recording failed', errorLogFields(error))
   })
-  // The renderer peeks once sessions are hydrated, then conditionally consumes the same target.
-  // This lets partial recovery open an already-loaded conversation while retaining an omitted one
-  // for retry, without an older IPC round trip clearing a newer click target.
-  declareElectronAdapter('task-notifications', () => {
-    registerNotificationInboxIpcAdapter(notificationInbox)
-    ipcMainHandle('notifications:get-desktop-availability', () =>
-      getTaskNotificationAvailability(taskNotificationDeliveryDeps)
+  surfaceAdapters.push(
+    createNotificationElectronSurface(
+      notificationInbox,
+      taskNotifications,
+      taskNotificationDeliveryDeps
     )
-    ipcMainHandle('notifications:send-test', () =>
-      showTestTaskNotification(taskNotificationDeliveryDeps)
-    )
-    ipcMainHandle('notifications:peek-pending-open-session', () =>
-      taskNotifications.peekPendingOpenSession()
-    )
-    ipcMainHandle('notifications:take-pending-open-session', (_event, expectedToken: unknown) =>
-      typeof expectedToken === 'number' && Number.isSafeInteger(expectedToken) && expectedToken > 0
-        ? taskNotifications.takePendingOpenSession(expectedToken)
-        : null
-    )
-  })
+  )
   // The connector application owns MCP, connector/skill approval, runtime projection, and service
   // construction. Late-bound local tools remain composition-root dependencies and are passed in.
   const moleculePreviewHandler = createMoleculePreviewHandler({
@@ -2255,17 +2523,8 @@ const createApplicationModules = async (
     (path) => managedFileVersionService.assertArtifactPathVisible(path)
   )
   const sessionLimitPersistence = {
-    load: async (): Promise<readonly (readonly [string, number])[]> => {
-      const catalog = await loadAllSessions()
-      if (!canReconcileSessionAbsences(catalog)) {
-        throw new Error('Session concurrency limits could not be restored authoritatively.')
-      }
-      return catalog.sessions.flatMap((session) =>
-        session.computeConcurrencyLimit === undefined
-          ? []
-          : [[session.id, session.computeConcurrencyLimit] as const]
-      )
-    },
+    resolve: (sessionId: string, expectedProjectId?: string) =>
+      sessionRepository.loadComputePolicy(expectedProjectId, sessionId),
     save: async (sessionId: string, limit: number): Promise<void> => {
       const session = await withDataRootWrite(async () => {
         const projectId = await sessionPersistenceCoordinator.sessionProjectId(sessionId)
@@ -2314,6 +2573,7 @@ const createApplicationModules = async (
     },
     sessionLimitPersistence,
     computeJobResultDelivery,
+    (projectId, sessionId) => archiveCoordinator.admitSessionWork(projectId, sessionId),
     (path) => managedFileVersionService.assertArtifactPathVisible(path)
   )
   surfaceAdapters = beforeAcpAdapters
@@ -2480,7 +2740,8 @@ const createApplicationModules = async (
       settingsService,
       permissionGrantRegistry,
       specialistService,
-      sessionPersistenceCoordinator
+      sessionPersistenceCoordinator,
+      getShellRuntimeBinding: getAvailableShellRuntimeBinding
     },
     notebookRpcServer: requireNotebookRpcServer,
     readSession: ({ projectId, sessionId }) => sessionRepository.loadSession(projectId, sessionId),
@@ -2646,7 +2907,8 @@ const createApplicationModules = async (
                   `Attempt ${delivery.sourceAttemptId}]\n\n${delivery.text}`,
                 suppressUserMessage: true,
                 provenanceContext: {
-                  promptMessageId: delivery.rootPromptMessageId,
+                  // Suppressed continuations create no user node; replies retain the durable origin.
+                  promptMessageId: delivery.originMessageId,
                   originMessageId: delivery.originMessageId,
                   rootFrameId: graph.rootFrameId,
                   agentFrameId: graph.rootFrameId,
@@ -2842,6 +3104,8 @@ const createApplicationModules = async (
         return runtime.requestUserInput(request)
       },
       artifactProvenance: {
+        saveVersion: (request, sourceScope, signal, onMetadataBytes) =>
+          artifactProvenanceRepository.saveVersion(request, sourceScope, signal, onMetadataBytes),
         reserveWrite: (request) => artifactProvenanceRepository.reserveWrite(request),
         releaseWriteReservation: (request) =>
           artifactProvenanceRepository.releaseWriteReservation(request),
@@ -2896,7 +3160,11 @@ const createApplicationModules = async (
       delegatedWorkService: delegatedWork.host,
       skillsService: hostSkillsService,
       hostModel: hostModelService,
-      hostViewImage: hostViewImageService
+      hostViewImage: hostViewImageService,
+      wslSetup,
+      wslSetupSessions,
+      wslSetupPreviewAvailable: () => wsl2BashPreviewStatus().available,
+      openWslSetupPowerShellTerminal
     }),
     createNotebookLocalRpcModule
   )
@@ -2958,33 +3226,13 @@ const createApplicationModules = async (
         executionCwd
       )
   )
-  // The renderer's approval card responds here; the broker resolves the held connector call.
-  declareElectronAdapter('connector-approvals', () => {
-    ipcMainHandle('connectors:approval-respond', (_event, request: RespondApprovalRequest) => {
-      approvalBroker.respond(request.id, request.decision)
-    })
-    ipcMainHandle('connectors:approval-replay', (_event, id: unknown) =>
-      typeof id === 'string' ? approvalBroker.getPending(id) : null
+  surfaceAdapters.push(
+    createConnectorApprovalElectronSurface(
+      approvalBroker,
+      credentialRequestBroker,
+      skillImportApprovalBroker
     )
-    ipcMainHandle('connectors:approval-replay-pending', () => approvalBroker.replayPending())
-    ipcMainHandle(
-      'connectors:credential-respond',
-      (_event, request: { id: string; configured: boolean }) =>
-        credentialRequestBroker.respond(request.id, request.configured)
-    )
-    ipcMainHandle('connectors:credential-replay-pending', () =>
-      credentialRequestBroker.replayPending()
-    )
-    ipcMainHandle(
-      'skills:conversation-import-respond',
-      (_event, response: ConversationSkillImportApprovalResponse) => {
-        skillImportApprovalBroker.respond(response)
-      }
-    )
-    ipcMainHandle('skills:conversation-import-replay-pending', () => {
-      skillImportApprovalBroker.replayPending()
-    })
-  })
+  )
 
   const recoverPendingCustomServerDeletions = async (): Promise<void> => {
     const pendingCustomServerDeletionIds =
@@ -3044,27 +3292,22 @@ const createApplicationModules = async (
   await cliCommandOwner.ensureCurrent()
   const githubCommandOwner = createGithubCommandOwner({ fetch: netFetchStandard })
   const logsCommandOwner = createLogsCommandOwner()
-  declareElectronAdapter('desktop-utilities', () => {
-    registerFileSaveHandlers({
+  surfaceAdapters.push(
+    createDesktopUtilitiesElectronSurface({
       resolveManagedFilePath,
+      managedFileVersions: managedFileVersionService,
+      notebookInputs: notebookInputRegistry,
+      translate,
+      logs: logsCommandOwner,
+      github: githubCommandOwner,
+      cli: cliCommandOwner,
       openHiddenArtifactVersion: (request) =>
-        managedFileVersionService.openHiddenArtifactVersion(request, request.versionId),
-      openLatestManagedFile: (source, request) =>
-        managedFileVersionService.openLatest({ source, ...request }),
-      openManagedFileVersion: (source, request) =>
-        managedFileVersionService.openVersion(
-          { source, projectId: request.projectId, fileId: request.fileId },
+        managedFileVersionService.openHiddenArtifactVersion(
+          { projectId: request.projectId, fileId: request.fileId },
           request.versionId
-        ),
-      openNotebookInput: (request) => notebookInputRegistry.openPreviewKey(request.path),
-      translate
+        )
     })
-    registerLogsIpcHandlers(logsCommandOwner)
-    registerGithubIpcHandlers({}, githubCommandOwner)
-    registerCliInstallIpcHandlers(cliCommandOwner)
-    registerWindowIpcHandlers()
-    registerWindowFindIpcHandlers()
-  })
+  )
   // ACP identity resolution and the Specialist settings IPC must use the same service instance.
   // Creating it only for settings leaves create-session unable to resolve a selected UUID.
   const approvalSessionLifecycle = bindComputeApprovalSessionLifecycle(
@@ -3091,6 +3334,8 @@ const createApplicationModules = async (
       managedFileVersions: managedFileVersionService,
       uploadRepository,
       notebookRpcServer,
+      wslSetupSessions,
+      getShellRuntimeBinding: getAvailableShellRuntimeBinding,
       peekNotebookHandoffContext: (sessionId) => notebookService.peekHandoffContext(sessionId),
       authorizeSkillImportReferencedUploads: (projectId, sessionId, paths) =>
         conversationSkillImporter.authorizeReferencedUploads(projectId, sessionId, paths),
@@ -3113,8 +3358,13 @@ const createApplicationModules = async (
       beforeSessionDelete: async (sessionId) => {
         await sideChatOwnerRef.current?.invalidateParents([sessionId])
         const projectId = await sessionPersistenceCoordinator.sessionProjectId(sessionId)
-        await notebookService.shutdownSession(sessionId)
-        if (projectId) await notebookService.deleteSessionInputs(projectId, sessionId)
+        const operation = async (): Promise<void> => {
+          await notebookService.shutdownSession(sessionId)
+          if (projectId) await notebookService.deleteSessionInputs(projectId, sessionId)
+        }
+        const owner = artifactReproducibilityAttemptOwnerRef.current
+        if (projectId && owner) await owner.withSessionStopped(projectId, sessionId, operation)
+        else await operation()
       },
       afterSessionDelete: (sessionId, retained) =>
         computeIpcModule.handlers.approvalFinishSessionDeletion(sessionId, retained),
@@ -3122,11 +3372,14 @@ const createApplicationModules = async (
       specialistService,
       sessionPersistenceCoordinator,
       literatureReader: literatureDocumentReader,
+      pdfElementReader,
       literatureAttachments: literatureAttachmentAuthority,
       literatureCatalog,
       literaturePdfAcquisition,
       delegatedWork: delegatedWork.root,
       sideChatRelays: mainPromptSideChatRelay,
+      hasPendingCredentialRequest: (sessionId) =>
+        credentialRequestBroker.hasPendingForSession(sessionId),
       imageInputCompatibility,
       memory: memoryService,
       auxiliaryUsage: {
@@ -3192,7 +3445,18 @@ const createApplicationModules = async (
     {
       appVersion: app.getVersion(),
       configRoot,
-      captureTarget: () => settingsService.captureActiveExplicitAgentBackendTarget(),
+      captureTarget: async (selection) => {
+        if (!selection) return settingsService.captureActiveExplicitAgentBackendTarget()
+        const { frameworkId } = await settingsService.captureActiveAgentBackendSelection()
+        return {
+          frameworkId,
+          providerId: selection.providerId,
+          model: selection.model
+            ? { kind: 'required', id: selection.model }
+            : { kind: 'provider-default' },
+          reasoningEffort: selection.reasoningEffort ?? 'default'
+        }
+      },
       resolveTarget: (target, context) =>
         settingsService.resolveExplicitAgentBackend(target, context),
       relay: sideChatRelay,
@@ -3213,16 +3477,7 @@ const createApplicationModules = async (
           })
       },
       recordUsage: recordAuxiliaryUsage,
-      onEvent: (event) => broadcastToRenderers('side-chat:event', event),
-      setParentInteractionsPaused: (sessionId, paused) => {
-        if (paused) {
-          approvalBroker.pauseSession(sessionId)
-          computeIpcModule.handlers.approvalPauseSession(sessionId)
-          return
-        }
-        approvalBroker.resumeSession(sessionId)
-        computeIpcModule.handlers.approvalResumeSession(sessionId)
-      }
+      onEvent: (event) => broadcastToRenderers('side-chat:event', event)
     } satisfies ConstructorParameters<typeof SideChatRuntimeOwner>[0],
     (options) => {
       const owner = new SideChatRuntimeOwner(options)
@@ -3367,7 +3622,17 @@ const createApplicationModules = async (
           } finally {
             markComputeResultAuthorityReady()
           }
-          await jobPoller.start()
+          // Catalog hydration also restores non-Compute projections and enabled Host selections.
+          // Keep those startup effects, but never make dispatch depend on catalog completeness.
+          await Promise.all([
+            jobPoller.start(),
+            loadAllSessions().catch((error) => {
+              createLogger('session-persistence').warn(
+                'Startup Session hydration failed',
+                errorLogFields(error)
+              )
+            })
+          ])
         },
         disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS,
         dispose: () => jobPoller.stop()
@@ -3426,12 +3691,9 @@ const createApplicationModules = async (
     if (!(await completionHandoffLifecycle.canStartUserPrompt(sessionId))) {
       throw new Error('The approved Specialist handoff must finish or be cancelled before sending.')
     }
-    if (sideChatRuntime.hasForParent(sessionId)) {
-      throw new Error('Close Side chat before sending a message to Main.')
-    }
   })
-  runtime.setPromptDispatchAdmissionGuard((sessionId, dispatch) =>
-    archiveCoordinator.withSessionDeletionAdmissionById(sessionId, dispatch)
+  runtime.setPromptDispatchAdmissionGuard((sessionId, dispatch, requireAvailable) =>
+    archiveCoordinator.withSessionDeletionAdmissionById(sessionId, dispatch, requireAvailable)
   )
   const codeReconstructionLog = createLogger('artifacts:code-reconstruction')
   const codeReconstructionRunner = await modules.add(
@@ -3609,7 +3871,7 @@ const createApplicationModules = async (
         return { reaped: main.reaped && reviewer.reaped }
       }
     },
-    notebook: notebookService,
+    notebook: notebookLifecycle,
     sideChat: {
       shutdown: () => sideChatRuntime.shutdown(),
       suspendAll: (options) => sideChatRuntime.suspendAll(options)
@@ -3617,9 +3879,10 @@ const createApplicationModules = async (
     log: createLogger('shutdown')
   })
   const durableBackendHandoffGate = createDurableInstallGate(
-    () =>
+    (options) =>
       shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS, {
-        holdSideChatAdmission: true
+        holdSideChatAdmission: true,
+        legacyShellRecoveryToken: options?.legacyShellRecoveryToken
       }),
     () => confirmRendererDurability()
   )
@@ -3628,7 +3891,7 @@ const createApplicationModules = async (
       runtime: { getActivePromptSessions: () => runtime.getQuitBlockingPromptSessions() },
       sideChat: { getActivePromptSessions: getActiveSideChatSessions },
       delegated: { getActiveDelegatedSessions },
-      notebook: notebookService
+      notebook: notebookLifecycle
     }).map((session) => session.kind)
     if (reviewerModelRuntimeShutdown?.hasActiveWork()) blockers.push('reviewer')
     if (settingsService.hasActiveInstall()) blockers.push('settings-install')
@@ -3662,6 +3925,7 @@ const createApplicationModules = async (
   // quit the running app to install.
   let releaseSettingsInstallAdmission: (() => void) | undefined
   const abortUpdateHandoff = (): void => {
+    packageHandoffHeld = false
     const releaseAdmission = releaseSettingsInstallAdmission
     releaseSettingsInstallAdmission = undefined
     releaseAdmission?.()
@@ -3678,9 +3942,12 @@ const createApplicationModules = async (
   )
   const updateStrategy = createUpdateStrategy(process.platform, {
     translate,
-    installGate: async () => {
+    installGate: async (options) => {
+      packageHandoffHeld = true
+      if (sessionPackageDesktopLifecycle.isActive())
+        throw new Error('Wait for the Session package operation to finish before updating.')
       releaseSettingsInstallAdmission = settingsService.holdInstallAdmission()
-      return updateInstallGate()
+      return updateInstallGate(options)
     },
     releaseInstallHandoff: abortUpdateHandoff
   })
@@ -3744,6 +4011,9 @@ const createApplicationModules = async (
         void sideChatRuntime.requestProviderReconnect()
       }
     },
+    localShell: {
+      requestShellRuntimeRefresh: () => runtime.requestShellCapabilityRefresh()
+    },
     skills: {
       requestSkillsReload: () => void runtime.requestSkillsReload(),
       notifySkillCatalogChanged: requestSkillCatalogRefresh,
@@ -3768,54 +4038,30 @@ const createApplicationModules = async (
     },
     appearance: { applyAppIconVariant: onAppIconVariantChanged ?? (() => undefined) }
   })
-  declareElectronAdapter('settings', () =>
-    registerSettingsIpcHandlers({
+  wslRuntimeReconciliation.current = (status) => {
+    if (!status.snapshot || status.operation.state === 'running') return
+    void settingsWorkflows.localShell
+      .fallbackAfterWslProbe(status.snapshot, async () => {
+        // Discard an observation superseded while the serialized Shell switch was queued.
+        if (wslSetup.getStatus().revision !== status.revision) return {}
+        return settingsRepository.getSettings()
+      })
+      .then(async (changed) => {
+        if (changed) {
+          await settingsSnapshotCommits.currentSnapshotAfter(Promise.resolve())
+          await wslSetup.probe()
+        }
+      })
+      .catch((error) => createLogger('wsl-setup').warn('PowerShell fallback failed', { error }))
+  }
+  wslRuntimeReconciliation.current(wslSetup.getStatus())
+  surfaceAdapters.push(
+    createSettingsElectronSurface({
       service: settingsService,
       workflows: settingsWorkflows,
       snapshotCommits: settingsSnapshotCommits,
       listAppIconPreviews,
-      connectorTemplateFiles: {
-        select: async () => {
-          const selected = await dialog.showOpenDialog({
-            title: translate('Import Connector configuration'),
-            properties: ['openFile'],
-            filters: [{ name: translate('Connector configuration'), extensions: ['json'] }]
-          })
-          const filePath = selected.filePaths[0]
-          if (selected.canceled || !filePath) return { cancelled: true as const }
-          if ((await stat(filePath)).size > CONNECTOR_TEMPLATE_MAX_BYTES) {
-            throw new Error('Connector configuration files must be 256 KiB or smaller')
-          }
-          return {
-            cancelled: false as const,
-            fileName: basename(filePath),
-            contents: await readFile(filePath, 'utf8')
-          }
-        },
-        save: async (suggestedFileName, contents, sender) => {
-          const selected = await showSettingsSaveDialog(sender, {
-            title: translate('Export Connector configuration'),
-            defaultPath: suggestedFileName,
-            filters: [{ name: translate('Connector configuration'), extensions: ['json'] }]
-          })
-          if (selected.canceled || !selected.filePath) return false
-          await publishUserFile(selected.filePath, (temporaryPath) =>
-            writeFile(temporaryPath, contents, 'utf8')
-          )
-          return true
-        }
-      },
-      skillExportFiles: {
-        save: (archive, sender) =>
-          saveSkillExport(
-            {
-              showSaveDialog: (options) => showSettingsSaveDialog(sender, options),
-              writeFile: (filePath, bytes) => writeFile(filePath, bytes)
-            },
-            archive,
-            translate
-          )
-      }
+      translate
     })
   )
   declareElectronAdapter('notebook', () => registerNotebookIpcHandlers(notebookCommands))
@@ -3824,17 +4070,25 @@ const createApplicationModules = async (
       resolveSources: resolveDeliverySources
     })
   )
-  // Wire session deletion to the binding store so stale in-memory bindings do not accumulate.
+  // Wire Session deletion to the binding stores so stale capabilities cannot reappear on restart.
   // The renderer calls sessions:delete-session (via sessionPersistenceBackend) and acp:delete-session
   // separately; both paths should clear the binding. Override the backend deleteSession callback here
   // so all durable-path deletions — regardless of whether the ACP session was attached — clear the
   // binding in one place.
   const originalDeleteSession =
     sessionPersistenceBackend.deleteSession.bind(sessionPersistenceBackend)
-  sessionPersistenceBackend.deleteSession = withSessionDeletionCleanup(
-    originalDeleteSession,
-    (_projectId, sessionId) => sessionSpecialistReconfiguration.clearSession(sessionId)
+  const deleteSessionWithCleanup = withSessionDeletionCleanup(
+    withSessionDeletionCleanup(originalDeleteSession, (_projectId, sessionId) =>
+      sessionSpecialistReconfiguration.clearSession(sessionId)
+    ),
+    (_projectId, sessionId) => wslSetupSessions.forget(sessionId)
   )
+  sessionPersistenceBackend.deleteSession = async (projectId, sessionId) => {
+    const owner = artifactReproducibilityAttemptOwnerRef.current
+    const operation = (): Promise<void> => deleteSessionWithCleanup(projectId, sessionId)
+    if (owner) await owner.withSessionStopped(projectId, sessionId, operation)
+    else await operation()
+  }
   const sessionPersistenceHandlers = createSessionPersistenceHandlersWithAttributionAuthority(
     sessionPersistenceBackend,
     reviewRepository,
@@ -3958,55 +4212,17 @@ const createApplicationModules = async (
   specialistService.subscribe(() =>
     applicationEvents.publish('specialist:catalog-changed', undefined)
   )
-  declareElectronAdapter('specialist', () =>
-    registerSpecialistIpcHandlers(
+  surfaceAdapters.push(
+    createSpecialistElectronSurface({
       specialistService,
       sessionBindingService,
       sessionSpecialistReconfiguration,
-      // A specialist capability edit (skills/connectors/enabled) must reach live sessions on the next
-      // turn: reconnect so the agent respawns (re-provisioning skills) and resumes with the updated
-      // specialist whitelist in the session _meta.
-      () => void runtime.requestSkillsReload(),
-      createContributionTemplateExporter({
-        appVersion: app.getVersion(),
-        translate,
-        showSaveDialog: (options) => dialog.showSaveDialog(options),
-        readReadme: () => readFile(resolveContributionTemplateReadmePath(app.getAppPath()), 'utf8'),
-        writeFile: (filePath, bytes) => writeFile(filePath, bytes)
-      }),
-      {
-        service: specialistPackageService,
-        selectArchive: () =>
-          selectSpecialistArchive(
-            {
-              showOpenDialog: (options) => dialog.showOpenDialog(options),
-              readFile,
-              getFileSize: async (filePath) => (await stat(filePath)).size
-            },
-            translate
-          ),
-        saveReport: (report) =>
-          saveSpecialistPackageReport(
-            {
-              showSaveDialog: (options) => dialog.showSaveDialog(options),
-              writeFile: (filePath, contents) => writeFile(filePath, contents, 'utf8')
-            },
-            report,
-            translate
-          ),
-        saveExport: (archive) =>
-          saveSpecialistExport(
-            {
-              showSaveDialog: (options) => dialog.showSaveDialog(options),
-              writeFile: (filePath, bytes) => writeFile(filePath, bytes)
-            },
-            archive,
-            translate
-          )
-      },
+      onProfilesChanged: () => void runtime.requestSkillsReload(),
+      specialistPackageService,
       marketplaceService,
-      specialistApplicationOwner
-    )
+      specialistApplicationOwner,
+      translate
+    })
   )
   // Runtime Settings UI: discover managed/external environments and pick an interpreter file. The
   // runtime root MUST match the executor/service's
@@ -4039,46 +4255,11 @@ const createApplicationModules = async (
       managedPreviewOwners
     )
   )
-  declareElectronAdapter('office-preview-runtime', () =>
-    registerOfficePreviewRuntimeProtocol(
-      {
-        runtimeHtmlPath: join(__dirname, '../renderer/office-preview.html'),
-        devServerUrl: process.env['ELECTRON_RENDERER_URL'],
-        fetchRuntime: (targetUrl, request) =>
-          net.fetch(targetUrl, {
-            // Runtime assets are public application files. Forwarding custom-protocol headers or its
-            // abort signal makes Chromium treat the local fetch as a cross-site renderer request.
-            method: request.method
-          })
-      },
-      protocol
-    )
-  )
-  const toManagedPreviewRequest = (
-    request: OfficePreviewOpenRequest
-  ): AcquireManagedPreviewRequest =>
-    request.source === 'notebook-input'
-      ? { source: request.source, path: request.path }
-      : {
-          source: request.source,
-          projectId: request.projectId,
-          fileId: request.fileId,
-          ...(request.versionId ? { versionId: request.versionId } : {})
-        }
-  const officePreviewSupervisor = new OfficePreviewSupervisor({
-    inspectResource: (request) => previewResources.inspect(toManagedPreviewRequest(request)),
-    acquireResource: (ownerId, request, snapshot, maxBytes) =>
-      previewResources.acquire(ownerId, toManagedPreviewRequest(request), { snapshot, maxBytes }),
-    releaseResource: (ownerId, resourceId) => previewResources.release(ownerId, { resourceId }),
-    createSessionId: randomUUID,
-    createRuntimeUrl: createOfficePreviewRuntimeUrl,
-    resolveFrameProcess: createOfficePreviewFrameProcessResolver(webContents),
-    getProcessMemoryUsageBytes: createOfficePreviewProcessMemoryReader(app),
-    publishState: (ownerId, state) =>
-      webContents.fromId(ownerId)?.send(OFFICE_PREVIEW_STATE_CHANNEL, state)
-  })
-  declareElectronAdapter('office-preview', () =>
-    registerOfficePreviewIpcHandlers(officePreviewSupervisor)
+  surfaceAdapters.push(
+    ...createOfficePreviewElectronSurfaces({
+      previewResources,
+      runtimeHtmlPath: join(__dirname, '../renderer/office-preview.html')
+    })
   )
 
   // Resolve the shared conda base under the app data root (relocatable, where the runtime install
@@ -4106,7 +4287,11 @@ const createApplicationModules = async (
         // Mirror probing never changes the configured enterprise CA bundle, so it is safe to pass
         // through synchronously while channel selection warms in the background.
         caBundle: configuredMirror?.caBundle,
-        micromamba: { resourcesPath: process.resourcesPath },
+        micromamba: {
+          resourcesPath: process.resourcesPath,
+          packaged: app.isPackaged,
+          configHome: app.getPath('home')
+        },
         // Self-guard the provisioner's prefix writes (startup restore/upgrade/repair, named create, lazy
         // materialize) against a prefix crash-recovery could not confirm free of a live orphan — closes
         // the startup-gate path the UI-only assertProvisionAllowed guard did not cover. Reads the live
@@ -4177,13 +4362,13 @@ const createApplicationModules = async (
     }
   )
   const waitForRecovery = (): Promise<void> => notebookService.ensureRecovered()
-  // Lets UI provision/repair refuse when recovery left the default env's prefix blocked (an
-  // unknown-liveness orphan may still be writing it) — throws with an actionable message.
+  // Recovery can retain a target for worker uncertainty, cache publication, or journal failure.
+  // A block alone does not identify its cause; detailed reasons are available in Runtimes.
   const assertProvisionAllowed = (language: NotebookLanguage): void => {
     if (notebookService.isDefaultEnvRecoveryBlocked(language)) {
       throw new Error(
-        `The ${language} runtime is recovering from an interrupted operation whose process could not be ` +
-          'confirmed stopped. Restart the app to re-check and recover it before setting it up again.'
+        `RUNTIME_RECOVERY_BLOCKED: recovery of a previous operation on the ${language} runtime has not completed. ` +
+          'Use Recheck in Settings → Runtimes to retry safe recovery and review the remaining recovery requirements.'
       )
     }
   }
@@ -4193,6 +4378,7 @@ const createApplicationModules = async (
     root: provisioningRoot,
     projectProgress: broadcastNotebookEnvProgress,
     waitForRecovery,
+    recoveryStatus: () => notebookService.recoveryStatus(),
     assertProvisionAllowed,
     onRepairStarting: (language, target) => notebookService.prepareRuntimeRepair(language, target),
     revokeRuntimeAccess: async (language) => {
@@ -4229,9 +4415,11 @@ const createApplicationModules = async (
     releaseDataRootInstallAdmission = undefined
     releaseAdmission?.()
   }
+
   const storageCommandOwner = createStorageCommandOwner({
+    hasActivePackageOperation: () => sessionPackageDesktopLifecycle.isActive(),
     runtime,
-    notebook: notebookService,
+    notebook: notebookLifecycle,
     getActivePromptSessions: () => runtime.getActivePromptSessions(),
     getActiveSideChatSessions,
     getActiveDelegatedSessions,
@@ -4272,7 +4460,7 @@ const createApplicationModules = async (
     registerStorageIpcHandlers(
       {
         runtime,
-        notebook: notebookService,
+        notebook: notebookLifecycle,
         getActivePromptSessions: () => runtime.getActivePromptSessions(),
         getActiveSideChatSessions,
         getActiveDelegatedSessions,
@@ -4302,29 +4490,20 @@ const createApplicationModules = async (
       sessionPersistenceCoordinator.retryArtifactFinalization(request)
   })
   artifactHandlersRef.current = artifactHandlers
-  declareElectronAdapter('artifacts', () =>
-    registerArtifactIpcHandlers(
+  surfaceAdapters.push(
+    createArtifactElectronSurface({
       artifactRepository,
       artifactRunRegistry,
       artifactProvenanceRepository,
-      (projectId, sessionId, mutation) =>
-        sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, mutation),
-      artifactHandlers
-    )
-  )
-  declareElectronAdapter('uploads', () =>
-    registerUploadIpcHandlers(uploadCommandOwner, {
-      // Standalone "Save as artifact" uploads have no session mutation to piggyback on, so the
-      // Files panel only learns about them through this broadcast.
-      onStandaloneUploadSaved: (projectId, sessionId) =>
-        broadcastToRenderers('project-files:changed', {
-          projectId,
-          sessionId,
-          sources: ['upload'],
-          kind: 'upsert'
-        })
+      artifactHandlers,
+      artifactReproducibilityAttemptOwnerRef,
+      archiveCoordinator,
+      sessionPersistenceCoordinator,
+      notebookService,
+      translate
     })
   )
+  surfaceAdapters.push(createUploadElectronSurface(uploadCommandOwner))
   declareElectronAdapter('notebook-input-preview', () => {
     ipcMainHandle('notebook:read-input-preview', (_event, request) =>
       notebookInputRegistry.readPreview(request)
@@ -4333,6 +4512,14 @@ const createApplicationModules = async (
   const sessionDeletionOwner = new SessionDeletionOwner({
     runtime,
     backgroundResults: backgroundResultDelivery,
+    withStoppedWork: (request, operation) => {
+      const owner = artifactReproducibilityAttemptOwnerRef.current
+      return owner
+        ? owner.withSessionStopped(request.projectId, request.sessionId, operation)
+        : operation()
+    },
+    withAdmission: (request, work) =>
+      archiveCoordinator.withSessionDeletionAdmissionById(request.sessionId, work),
     persistence: {
       deleteSession: (request) =>
         withDataRootWrite(() =>
@@ -4340,28 +4527,16 @@ const createApplicationModules = async (
         )
     }
   })
-  declareElectronAdapter('session-persistence', () => {
-    registerSessionPersistenceIpcHandlers(
+  surfaceAdapters.push(
+    createSessionPersistenceElectronSurface({
       sessionPersistenceBackend,
       reviewRepository,
       sessionPersistenceHandlers,
-      async (session) => {
-        sessionDetailsOwner.afterSessionSaved(session)
-        try {
-          await delegatedWork.root.wakeMessages?.(session.id)
-        } catch (error) {
-          createLogger('delegation:messages').warn(
-            'message wake after Session activation failed',
-            diagnosticErrorFields(error)
-          )
-        }
-      },
-      async (request) => {
-        const error = await shell.openPath(sessionRepository.recoveryFolderPath(request.projectId))
-        if (error) throw new Error('Session recovery folder could not be opened.')
-      }
-    )
-  })
+      sessionDetailsOwner,
+      delegatedWork,
+      sessionRepository
+    })
+  )
   const conversationExportService = createConversationExportService({
     translate,
     loadSession: (projectId, sessionId) => sessionRepository.loadSession(projectId, sessionId),
@@ -4376,26 +4551,49 @@ const createApplicationModules = async (
   declareElectronAdapter('conversation-export', () =>
     registerConversationExportIpcHandler(conversationExportService)
   )
-  declareElectronAdapter('permission-grants', () =>
-    registerPermissionGrantIpcAdapter(permissionGrantProjection)
+  const sessionPackageDesktop = createSessionPackageDesktop({
+    sessionPackageService,
+    translate,
+    archiveCoordinator,
+    sessionPersistenceCoordinator,
+    applicationEvents,
+    projectRepository,
+    sessionRepository,
+    isPackageHandoffHeld: () => packageHandoffHeld
+  })
+  sessionPackageDesktopLifecycle.isActive = () => sessionPackageDesktop.operations.active
+  const removePackageQuitGuard = installSessionPackageQuitGuard(
+    app,
+    () => sessionPackageDesktop.hasActiveTransfer(),
+    () => {
+      dialog.showMessageBoxSync({
+        type: 'info',
+        title: translate('Session package operation in progress'),
+        message: translate(
+          'Wait for the package operation to finish, or cancel it from the progress window before quitting.'
+        ),
+        buttons: [translate('OK')]
+      })
+    }
   )
-  declareElectronAdapter('project-files', () =>
-    registerProjectFilesIpcHandlers(
-      projectFilesRepository,
-      sessionPersistenceCoordinator,
-      projectDeletionCoordinator,
-      projectFilesHandlers
-    )
+  sessionPackageDesktopLifecycle.close = async () => {
+    removePackageQuitGuard()
+    await sessionPackageDesktop.close()
+  }
+  surfaceAdapters.push(
+    ...createCoreElectronSurfaces({
+      permissionGrantProjection,
+      projectFiles: [
+        projectFilesRepository,
+        sessionPersistenceCoordinator,
+        projectDeletionCoordinator,
+        projectFilesHandlers
+      ],
+      managedFileVersionHandlers,
+      localFsService,
+      previewStateRepository
+    })
   )
-  declareElectronAdapter('managed-file-versions', () =>
-    registerManagedFileVersionIpcHandlers(managedFileVersionHandlers)
-  )
-  // Backs the "This computer" browser; shares localFsService with the managed-preview resolver.
-  declareElectronAdapter('local-fs', () => registerLocalFsIpcHandlers(localFsService))
-  declareElectronAdapter('preview-state', () =>
-    registerPreviewStateIpcHandlers(previewStateRepository)
-  )
-  declareElectronAdapter('lifecycle', () => registerLifecycleIpcHandlers())
   // Compute IPC handlers are registered earlier (before the notebook RPC server) so computeService
   // can be injected into the RPC server for the computeCall route. See above.
   // Wire the reviewer backend into the app lifecycle: installs ipcMainHandle('reviewer:run', ...)
@@ -4430,6 +4628,8 @@ const createApplicationModules = async (
     }
   )
   const reviewerOptions = {
+    admitSessionWork: (projectId: string, sessionId: string) =>
+      archiveCoordinator.admitSessionWork(projectId, sessionId),
     acpRuntime: runtime,
     modelRuntime: reviewerModelRuntime,
     projectRuntime: reviewerProjectRuntime,
@@ -4439,59 +4639,7 @@ const createApplicationModules = async (
     managedFileVersions: managedFileVersionService,
     artifactCatalog: projectFilesRepository,
     artifactProvenanceRepository,
-    pagedContentResolver: createReviewerPagedContentResolver({
-      createWindow: () => {
-        const previewWindow = new BrowserWindow({
-          show: false,
-          width: 1_024,
-          height: 1_280,
-          webPreferences: {
-            contextIsolation: true,
-            nodeIntegration: false,
-            sandbox: true,
-            backgroundThrottling: false,
-            partition: 'reviewer-paged-preview'
-          }
-        })
-        previewWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
-        previewWindow.webContents.on('will-navigate', (event, url) => {
-          const target = new URL(url)
-          const runtime = new URL(OFFICE_PREVIEW_RUNTIME_ORIGIN)
-          if (target.protocol !== runtime.protocol || target.hostname !== runtime.hostname) {
-            event.preventDefault()
-          }
-        })
-        previewWindow.webContents.session.setPermissionRequestHandler(
-          (_contents, _permission, callback) => callback(false)
-        )
-        return previewWindow
-      },
-      createSessionId: randomUUID,
-      createRuntimeUrl: createReviewerPagedPreviewRuntimeUrl,
-      acquireResource: (
-        ownerId,
-        resolvedPath,
-        filename,
-        verifiedObservation,
-        verifiedChecksum,
-        maxBytes
-      ) =>
-        previewResources.acquireResolvedFile(
-          ownerId,
-          {
-            path: resolvedPath,
-            mimeType: filename.endsWith('.docx')
-              ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-              : 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-            verifiedObservation,
-            verifiedChecksum
-          },
-          maxBytes
-        ),
-      releaseResource: (ownerId, resourceId) => previewResources.release(ownerId, { resourceId }),
-      renderPdfPages: renderPdfPagePreviews,
-      getProcessMemoryUsageBytes: createOfficePreviewProcessMemoryReader(app)
-    }),
+    pagedContentResolver: createReviewerElectronPagedContentResolver(previewResources),
     resolveSessionAgentTarget,
     saveSessionAgentConfiguration: (
       session: PersistedChatSession,
@@ -4527,6 +4675,7 @@ const createApplicationModules = async (
   }
   const applicationCommandDependencies: ApplicationCommandCompositionDependencies = {
     specialist: specialistApplicationOwner,
+    bookmarks: bookmarkService,
     acp: {
       runtime,
       workflows: acpHandlerWorkflows,
@@ -4554,6 +4703,7 @@ const createApplicationModules = async (
       runtime: settingsWorkflows.runtime,
       service: settingsService,
       appearance: settingsWorkflows.appearance,
+      localShell: settingsWorkflows.localShell,
       snapshotCommits: settingsSnapshotCommits,
       emitInstallEvent: (event) => broadcastToRenderers(SETTINGS_INSTALL_LOG_CHANNEL, event),
       listAppIconPreviews
@@ -4745,6 +4895,25 @@ const createApplicationModules = async (
     dataContent: {
       artifacts: artifactHandlers,
       electron: {
+        sessionPackageOperation: async (invocation) =>
+          sessionPackageDesktop.respond(invocation.args[0]),
+        forkSession: (invocation) =>
+          sessionPackageDesktop.fork(
+            invocation.args[0],
+            invocation.callerContext.lifecycleClientId
+          ),
+        exportSessionPackage: (invocation) =>
+          sessionPackageDesktop.export(
+            invocation.args[0],
+            BrowserWindow.fromWebContents(electronSenderFor(invocation)) ?? undefined
+          ),
+        importSessionPackage: (invocation) =>
+          sessionPackageDesktop.import(
+            BrowserWindow.fromWebContents(electronSenderFor(invocation)) ?? undefined,
+            invocation.callerContext.lifecycleClientId,
+            invocation.args[0],
+            invocation.args[1]
+          ),
         exportConversationFromInvokingWindow: (invocation) => {
           const sender = electronSenderFor(invocation)
           return conversationExportService.exportConversation(
@@ -4813,6 +4982,8 @@ const createApplicationModules = async (
           return context
         },
         editDetails: (request) => sessionDetailsOwner.edit(request),
+        bindTaskSession: (request) => sessionPersistenceCoordinator.bindTaskSession(request),
+        admitTaskTurn: (request) => sessionPersistenceCoordinator.admitTaskTurn(request),
         stageTaskCompletion: (request) =>
           sessionPersistenceCoordinator.stageTaskCompletion(request),
         settleTaskCompletion: (request) =>
@@ -4833,6 +5004,8 @@ const createApplicationModules = async (
       withDataRootWrite
     },
     host: {
+      localModels: localModelOwner,
+      pdfStructure: pdfStructureReader,
       cli: cliCommandOwner,
       github: githubCommandOwner,
       localFs: localFsService,
@@ -4863,6 +5036,53 @@ const createApplicationModules = async (
     dispose: async () => BackendShutdownOutcomeError.assertClean(await coordinator.runForQuit())
   }))
   backendTeardownOwnedByCoordinator = true
+  artifactReproducibilityAttemptOwnerRef.current = await modules.add(
+    {
+      storageRoot: resolveDataRoot(),
+      processSandbox: notebookNetworkSandbox,
+      retainOutput: (request: ArtifactReproducibilityCheckRequest, bytes: Buffer) =>
+        retainArtifactReproducibilityOutput(artifactProvenanceRepository, request, bytes),
+      pruneOutputs: (request: ArtifactReproducibilityCheckRequest) =>
+        pruneArtifactReproducibilityOutputs(artifactProvenanceRepository, request),
+      loadExecution: (request: ArtifactReproducibilityCheckRequest) =>
+        readArtifactReproducibilityExecutionEvidence(artifactProvenanceRepository, request),
+      persistReceipt: (
+        request: ArtifactReproducibilityCheckRequest,
+        receipt: ArtifactReproducibilityReceiptDraft,
+        checkLog: ArtifactReproducibilityCheckLogDraft
+      ) =>
+        appendArtifactReproducibilityReceipt(
+          artifactProvenanceRepository,
+          request,
+          receipt,
+          checkLog
+        ),
+      persistFailure: (
+        request: ArtifactReproducibilityCheckRequest,
+        attempt: ArtifactReproducibilityFailedAttemptDraft,
+        checkLog: ArtifactReproducibilityCheckLogDraft
+      ) =>
+        recordFailedArtifactReproducibilityAttempt(
+          artifactProvenanceRepository,
+          request,
+          attempt,
+          checkLog
+        ),
+      listReceipts: (request: ListArtifactReproducibilityReceiptsRequest) =>
+        listArtifactReproducibilityReceipts(artifactProvenanceRepository, request),
+      getCheckLog: (request: GetArtifactReproducibilityCheckLogRequest) =>
+        getArtifactReproducibilityCheckLog(artifactProvenanceRepository, request),
+      withStorageLease: withDataRootWrite
+    },
+    (dependencies) => {
+      const owner = new ArtifactReproducibilityAttemptOwner(dependencies)
+      return {
+        name: 'artifact-reproducibility-lifecycle',
+        capability: owner,
+        dispose: () => owner.dispose()
+      }
+    }
+  )
   const applicationCommandComposition = await modules.add(
     applicationCommandDependencies,
     (dependencies) => {
@@ -4880,6 +5100,10 @@ const createApplicationModules = async (
   composition.phase('commands')
 
   return {
+    openSessionPackageFile: (path) => {
+      if (path === null) sessionPackageDesktop.reportOpenOverflow()
+      else sessionPackageDesktop.enqueueFile(path)
+    },
     applicationCommands: {
       localWeb: applicationCommandComposition.localWeb,
       remoteWeb: applicationCommandComposition.remoteWeb,
@@ -4910,7 +5134,7 @@ const createApplicationModules = async (
         runtime: { getActivePromptSessions: () => runtime.getQuitBlockingPromptSessions() },
         sideChat: { getActivePromptSessions: getActiveSideChatSessions },
         delegated: { getActiveDelegatedSessions },
-        notebook: notebookService
+        notebook: notebookLifecycle
       }),
     hasActiveReviewerWork: () => reviewerModelRuntimeShutdown?.hasActiveWork() ?? false,
     getActiveSettingsInstallId: () => settingsService.getActiveInstallId(),
@@ -4944,6 +5168,7 @@ const createApplicationModules = async (
 }
 
 const registerIpcHandlers = async (options: IpcRegistrationOptions): Promise<IpcRegistration> => {
+  performance.mark('open-science:ipc-registration-start')
   const composition = startDiagnosticOperation(createLogger('startup'), {
     operation: 'application-composition',
     cpuUsage: process.cpuUsage
@@ -4955,6 +5180,12 @@ const registerIpcHandlers = async (options: IpcRegistrationOptions): Promise<Ipc
     )
     composition.phase('ipc-adapters')
     composition.complete()
+    performance.mark('open-science:ipc-registration-complete')
+    performance.measure(
+      'open-science:ipc-registration',
+      'open-science:ipc-registration-start',
+      'open-science:ipc-registration-complete'
+    )
     return {
       ...applicationRuntime.interfaces,
       dispose: applicationRuntime.dispose

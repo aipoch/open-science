@@ -177,7 +177,6 @@ const options = (
       ensureSessionReady: vi.fn(() => Promise.resolve())
     },
     sideChatOpen: false,
-    setAutoReviewEnabled: vi.fn(),
     resetNewConversationSettings: vi.fn(),
     abortFixLoop: vi.fn(() => Promise.resolve()),
     getSession: (sessionId) => (sessionId === 'session-a' ? session() : undefined),
@@ -710,7 +709,7 @@ describe('workspace conversation controller', () => {
     expect(input.runtime.resendEditedMessage).not.toHaveBeenCalled()
   })
 
-  it('keeps send and message branching available while history replay is pending', () => {
+  it('keeps send and message branching available while history replay is pending', async () => {
     const replaySession = session({ pendingHistoryReplay: { kind: 'all' } })
     const startSideChat = vi.fn(async () => true)
     const input = options({
@@ -726,14 +725,14 @@ describe('workspace conversation controller', () => {
       branch: true
     })
     act(() => hook.result.current.actions.branch('agent-message-a'))
-    act(() => hook.result.current.actions.sideChat.start())
+    await act(async () => hook.result.current.actions.sideChat.start())
     expect(input.runtime.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         branchSourceSessionId: 'session-a',
         branchSourceMessageId: 'agent-message-a'
       })
     )
-    expect(startSideChat).not.toHaveBeenCalled()
+    expect(startSideChat).toHaveBeenCalledOnce()
 
     vi.mocked(input.runtime.sendMessage).mockClear()
     act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
@@ -988,6 +987,23 @@ describe('workspace conversation controller', () => {
     expect(input.composer.lifecycle.clearDraft).toHaveBeenCalledWith('session-a', 7)
   })
 
+  it('uses independent Side chat admission when the main model and main preparation are unavailable', async () => {
+    const input = options({
+      agentConfigurationReady: false,
+      sendPreparationInFlightSessionIds: ['session-a'],
+      sideChat: { start: vi.fn(async () => true) }
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+    await act(async () => hook.result.current.actions.sideChat.start())
+    expect(input.sideChat?.start).toHaveBeenCalledOnce()
+    expect(input.composer.lifecycle.clearDraft).toHaveBeenCalledWith(
+      'session-a',
+      expect.any(Number)
+    )
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+  })
+
   it('starts Side chat from an annotation-only captured draft', async () => {
     const annotation = quotedAnnotation()
     const input = options({ sideChat: { start: vi.fn(async () => true) } })
@@ -1040,6 +1056,25 @@ describe('workspace conversation controller', () => {
     expect(input.composer.lifecycle.clearDraft).not.toHaveBeenCalled()
   })
 
+  it('starts a captured draft only once while Side chat admission is pending', async () => {
+    let resolveAdmission!: (admitted: boolean) => void
+    const admission = new Promise<boolean>((resolve) => {
+      resolveAdmission = resolve
+    })
+    const input = options({ sideChat: { start: vi.fn(() => admission) } })
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    act(() => {
+      hook.result.current.actions.sideChat.start()
+      hook.result.current.actions.sideChat.start()
+    })
+
+    expect(input.sideChat?.start).toHaveBeenCalledOnce()
+    await act(async () => resolveAdmission(true))
+    expect(input.composer.lifecycle.clearDraft).toHaveBeenCalledOnce()
+  })
+
   it('does not start Side chat for a Session without a prior main user message', () => {
     const input = options({
       activeSession: session({ messages: [] }),
@@ -1055,7 +1090,7 @@ describe('workspace conversation controller', () => {
   })
 
   it.each(['waiting-for-user', 'waiting-permission', 'waiting-plan-approval'] as const)(
-    'does not start Side chat while the main Session is %s',
+    'starts Side chat while the main Session is %s',
     (status) => {
       const input = options({
         activeSession: session({ status }),
@@ -1066,12 +1101,12 @@ describe('workspace conversation controller', () => {
 
       act(() => hook.result.current.actions.sideChat.start())
 
-      expect(input.sideChat?.start).not.toHaveBeenCalled()
+      expect(input.sideChat?.start).toHaveBeenCalledOnce()
       expect(input.composer.lifecycle.clearDraft).not.toHaveBeenCalled()
     }
   )
 
-  it('blocks main submit, revise, resume, and cancel while Side chat owns the Session', async () => {
+  it('allows main submit, revise, resume, and cancel while Side chat is open', async () => {
     const input = options({ sideChatOpen: true })
     const hook = renderController(input)
     mounted.push(hook)
@@ -1084,14 +1119,14 @@ describe('workspace conversation controller', () => {
     await act(async () => hook.result.current.actions.cancel())
 
     expect(hook.result.current.availability).toMatchObject({
-      submit: false,
-      revise: false,
-      resume: false
+      submit: true,
+      revise: true,
+      resume: true
     })
-    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
-    expect(input.runtime.resendEditedMessage).not.toHaveBeenCalled()
-    expect(input.runtime.resumeInterruptedSession).not.toHaveBeenCalled()
-    expect(input.runtime.cancelRun).not.toHaveBeenCalled()
+    expect(input.runtime.sendMessage).toHaveBeenCalled()
+    expect(input.runtime.resendEditedMessage).toHaveBeenCalled()
+    expect(input.runtime.resumeInterruptedSession).toHaveBeenCalled()
+    expect(input.runtime.cancelRun).toHaveBeenCalled()
   })
 
   it('orders Specialist preparation before draft clear and runtime submit', async () => {
@@ -1212,7 +1247,7 @@ describe('workspace conversation controller', () => {
     expect(hook.result.current.optimisticMessage).toBeUndefined()
   })
 
-  it('includes new-Session Memory and Compute intent and stamps Review after submit succeeds', async () => {
+  it('includes new-Session Review, Memory and Compute intent in the initial send', async () => {
     const input = options({
       activeSession: undefined,
       currentDraftKey: 'new:project-a',
@@ -1238,17 +1273,39 @@ describe('workspace conversation controller', () => {
     act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
     await vi.waitFor(() => expect(input.resetNewConversationSettings).toHaveBeenCalled())
 
-    expect(input.setAutoReviewEnabled).toHaveBeenCalledWith('pending-session', true)
     expect(input.runtime.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         agentConfiguration: input.agentConfiguration,
         memoryEnabled: false,
+        autoReviewEnabled: true,
         delegationPolicy: 'deny',
         enabledComputeHosts: ['ssh:lab', 'ssh:available'],
         selectedComputeHosts: ['ssh:lab']
       })
     )
     expect(input.session.actions.resetNewConversationSpecialist).toHaveBeenCalledOnce()
+  })
+
+  it('sends an explicit disabled Review setting for a new conversation', async () => {
+    const input = options({ activeSession: undefined, newConversationAutoReviewEnabled: false })
+    const hook = renderController(input)
+    mounted.push(hook)
+    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+    await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalled())
+    expect(input.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ autoReviewEnabled: false })
+    )
+  })
+
+  it('does not apply the new-conversation Review preference to an existing Session', async () => {
+    const input = options({ newConversationAutoReviewEnabled: true })
+    const hook = renderController(input)
+    mounted.push(hook)
+    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+    await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalled())
+    expect(vi.mocked(input.runtime.sendMessage).mock.calls[0][0]).not.toHaveProperty(
+      'autoReviewEnabled'
+    )
   })
 
   it('keeps revise stable while applying the latest gate and runtime mapping', async () => {

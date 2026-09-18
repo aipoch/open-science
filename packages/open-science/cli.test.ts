@@ -16,6 +16,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { PUBLIC_TERMINAL_FIXTURE } from '../../test/fixtures/renderer-contract-certification'
 import {
   CliUsageError,
+  initCommand,
   parseCliArgs,
   reportCliError,
   rollbackCommand,
@@ -29,6 +30,180 @@ const listProjects = async (): Promise<Array<{ id: string; name: string }>> => [
 ]
 
 describe('task CLI', () => {
+  it('prepares Codex through the public task client', async () => {
+    const bootstrap = vi.fn().mockResolvedValue({ ok: true })
+    await runTaskCommand(parseCliArgs(['runtime', 'install', 'codex', '--json']), {
+      connect: async () => ({ bootstrap }),
+      log: vi.fn()
+    })
+    expect(bootstrap).toHaveBeenCalledWith({ action: 'runtime' }, { timeoutMs: 600_000 })
+  })
+
+  it('reads only the named API credential environment variable and does not print it', async () => {
+    const bootstrap = vi.fn().mockResolvedValue({ ok: true, providerId: 'cli-openai' })
+    const log = vi.fn()
+    await runTaskCommand(
+      parseCliArgs([
+        'provider',
+        'add',
+        '--type',
+        'official',
+        '--vendor',
+        'openai',
+        '--model',
+        'gpt-test',
+        '--api-key-env',
+        'LAB_KEY',
+        '--json'
+      ]),
+      {
+        connect: async () => ({ bootstrap }),
+        env: { LAB_KEY: 'synthetic-secret', OTHER_KEY: 'ambient' },
+        log
+      }
+    )
+    expect(bootstrap).toHaveBeenCalledWith(
+      { action: 'provider', key: 'synthetic-secret', model: 'gpt-test' },
+      expect.any(Object)
+    )
+    expect(JSON.stringify(log.mock.calls)).not.toContain('synthetic-secret')
+    expect(() => parseCliArgs(['provider', 'add', '--api-key', 'secret'])).toThrow()
+  })
+  it('accepts --profile as the forward-compatible profile spelling', () => {
+    expect(parseCliArgs(['init', '--profile', '/tmp/open-science-profile']).options).toMatchObject({
+      configRoot: '/tmp/open-science-profile'
+    })
+  })
+
+  it('initializes a config root without starting the desktop app', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-cli-init-'))
+    const log = vi.fn()
+    await expect(
+      initCommand(
+        { configRoot: root, json: true },
+        { log, locateApp: vi.fn().mockResolvedValue({ packaged: false }) }
+      )
+    ).resolves.toEqual({
+      configRoot: root,
+      initialized: true
+    })
+    expect(log).toHaveBeenCalledWith(JSON.stringify({ configRoot: root, initialized: true }))
+    await expect(stat(root)).resolves.toMatchObject({ isDirectory: expect.any(Function) })
+    await rm(root, { recursive: true, force: true })
+  })
+
+  it('rejects profile overrides for packaged initialization', async () => {
+    await expect(
+      initCommand(
+        { configRoot: '/tmp/profile', json: true },
+        { log: vi.fn(), locateApp: vi.fn().mockResolvedValue({ packaged: true }) }
+      )
+    ).rejects.toThrow('--config-root is only supported for development builds.')
+  })
+
+  it('requires JSON output for doctor', () => {
+    expect(() => parseCliArgs(['doctor'])).toThrow('doctor requires --json.')
+  })
+
+  it('prints the doctor readiness contract as valid JSON', async () => {
+    const report = {
+      ready: false,
+      checks: {
+        daemon: { status: 'ready' },
+        runtime: { status: 'missing', framework: 'codex' },
+        provider: { status: 'not_ready', reason: 'credential_invalid' },
+        skills: { status: 'ready', enabled: ['literature-review'] }
+      },
+      next: [{ code: 'runtime_missing' }, { code: 'provider_not_ready' }]
+    }
+    const log = vi.fn()
+
+    await runTaskCommand(parseCliArgs(['doctor', '--json']), {
+      connect: vi.fn().mockResolvedValue({ doctor: vi.fn().mockResolvedValue(report) }),
+      log,
+      stdinIsTTY: true
+    })
+
+    expect(JSON.parse(log.mock.calls[0][0])).toEqual(report)
+  })
+
+  it('reports a concrete startup command when doctor cannot reach a daemon', async () => {
+    const log = vi.fn()
+    const setExitCode = vi.fn()
+    await runTaskCommand(parseCliArgs(['doctor', '--json']), {
+      connect: vi
+        .fn()
+        .mockRejectedValue(Object.assign(new Error('unavailable'), { code: 'daemon_unavailable' })),
+      log,
+      setExitCode
+    })
+    expect(JSON.parse(log.mock.calls[0][0])).toEqual({
+      ready: false,
+      checks: { daemon: { status: 'missing' } },
+      next: [{ code: 'daemon_unavailable', argv: ['start', '--no-open'] }]
+    })
+    expect(setExitCode).toHaveBeenCalledWith(3)
+  })
+
+  it.each([401, 403, 500])(
+    'does not describe an HTTP %s health rejection as a missing daemon',
+    async (status) => {
+      const log = vi.fn()
+      const error = Object.assign(new Error('health rejected'), {
+        code: 'daemon_unavailable',
+        status
+      })
+      await expect(
+        runTaskCommand(parseCliArgs(['doctor', '--json']), {
+          connect: vi.fn().mockRejectedValue(error),
+          log
+        })
+      ).rejects.toBe(error)
+      expect(log).not.toHaveBeenCalled()
+    }
+  )
+
+  it('parses runtime list', () => {
+    expect(parseCliArgs(['runtime', 'list'])).toMatchObject({
+      command: 'runtime',
+      subcommand: 'list',
+      options: { json: false }
+    })
+    expect(parseCliArgs(['runtime', 'list', '--json'])).toMatchObject({
+      command: 'runtime',
+      subcommand: 'list',
+      options: { json: true }
+    })
+  })
+
+  it('prints runtime list in human-readable and JSON forms', async () => {
+    const runtimes = [
+      { framework: 'claude-code', status: 'ready', version: '2.1.0', source: 'managed' },
+      { framework: 'codex', status: 'missing' }
+    ]
+    const listRuntimes = vi.fn().mockResolvedValue(runtimes)
+    const humanLog = vi.fn()
+    const jsonLog = vi.fn()
+
+    await runTaskCommand(parseCliArgs(['runtime', 'list']), {
+      connect: vi.fn().mockResolvedValue({ listRuntimes }),
+      log: humanLog,
+      stdinIsTTY: true
+    })
+    await runTaskCommand(parseCliArgs(['runtime', 'list', '--json']), {
+      connect: vi.fn().mockResolvedValue({ listRuntimes }),
+      log: jsonLog,
+      stdinIsTTY: true
+    })
+
+    expect(humanLog.mock.calls.map(([line]) => line)).toEqual([
+      'FRAMEWORK\tSTATUS\tVERSION\tSOURCE',
+      'claude-code\tready\t2.1.0\tmanaged',
+      'codex\tmissing\t-\t-'
+    ])
+    expect(JSON.parse(jsonLog.mock.calls[0][0])).toEqual(runtimes)
+  })
+
   it('rejects ports that are not complete decimal values', () => {
     expect(() => parseCliArgs(['start', '--port', '44100xyz'])).toThrow('Invalid port: 44100xyz')
     expect(() => parseCliArgs(['start', '--port', '0'])).toThrow('Invalid port: 0')
@@ -1404,8 +1579,8 @@ describe('task CLI', () => {
 
     expect(client.waitForRun).toHaveBeenCalledWith('run-1', { timeoutMs: 60_000 })
     expect(warn.mock.calls.map(([message]) => message)).toEqual([
-      'Run event history could not be fully replayed. Final Run state will still be read from Open Science.',
-      'Run is waiting for approval. Approve the request in Open Science Desktop or the Web UI.'
+      'Run event history could not be fully replayed. Final Run state will still be read from Open-Science.',
+      'Run is waiting for approval. Approve the request in Open-Science Desktop or the Web UI.'
     ])
   })
 
@@ -1528,7 +1703,7 @@ describe('task CLI', () => {
 
   it('keeps the authoritative Run result when the event stream times out mid-run', async () => {
     const streamFailure = Object.assign(
-      new Error('Open Science event stream timed out after 30000 milliseconds.'),
+      new Error('Open-Science event stream timed out after 30000 milliseconds.'),
       { code: 'timeout' }
     )
     const events = (): {
@@ -1598,7 +1773,7 @@ describe('task CLI', () => {
 
     expect(client.waitForRun).toHaveBeenCalledWith('run-1')
     expect(warn).toHaveBeenCalledWith(
-      'Run event stream stopped: Open Science event stream timed out after 30000 milliseconds. Final Run state will still be read from Open Science.'
+      'Run event stream stopped: Open-Science event stream timed out after 30000 milliseconds. Final Run state will still be read from Open-Science.'
     )
     expect(log).toHaveBeenCalledWith('Done')
     expect(setExitCode).not.toHaveBeenCalled()
@@ -1606,7 +1781,7 @@ describe('task CLI', () => {
 
   it('keeps the authoritative Run failure in JSONL when the event stream times out', async () => {
     const streamFailure = Object.assign(
-      new Error('Open Science event stream timed out after 30000 milliseconds.'),
+      new Error('Open-Science event stream timed out after 30000 milliseconds.'),
       { code: 'timeout' }
     )
     const events = (): {
@@ -1675,7 +1850,7 @@ describe('task CLI', () => {
     )
 
     expect(warn).toHaveBeenCalledWith(
-      'Run event stream stopped: Open Science event stream timed out after 30000 milliseconds. Final Run state will still be read from Open Science.'
+      'Run event stream stopped: Open-Science event stream timed out after 30000 milliseconds. Final Run state will still be read from Open-Science.'
     )
     expect(JSON.parse(log.mock.calls[0][0])).toMatchObject({
       id: 'run-1',
@@ -1773,8 +1948,7 @@ describe('task CLI', () => {
       'compute',
       'notebook',
       'notebook-env',
-      'reviewer',
-      'runtime'
+      'reviewer'
     ]) {
       await expect(runCli([command])).rejects.toThrow(`Unknown command: ${command}`)
     }
@@ -2010,7 +2184,7 @@ describe('task CLI', () => {
     expect(stopService).not.toHaveBeenCalled()
     expect(result).toMatchObject({
       installerPath,
-      nextAction: expect.stringContaining('Quit the running Open Science app')
+      nextAction: expect.stringContaining('Quit the running Open-Science app')
     })
   })
 

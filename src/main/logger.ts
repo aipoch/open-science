@@ -718,7 +718,9 @@ const repairLogTail = async (path: string): Promise<{ size: number; discarded: n
     throw error
   }
   try {
-    const { size } = await file.stat()
+    const info = await file.stat()
+    if (info.isDirectory()) throw new Error('Log path is a directory')
+    const { size } = info
     const buffer = Buffer.alloc(Math.min(size, 64 * 1024))
     let end = size
     let boundary = 0

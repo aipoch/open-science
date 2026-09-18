@@ -482,6 +482,40 @@ describe('workspace session controller', () => {
     })
   })
 
+  it.each(['inline rename', 'Edit dialog'] as const)(
+    'does not restore a deleted Session when an earlier %s receipt arrives',
+    async (entry) => {
+      const active = session({ revision: 2, description: 'Keep me' })
+      const receipt = deferred<PersistedChatSession>()
+      const editDetails = vi.fn().mockReturnValue(receipt.promise)
+      window.api = { sessions: { editDetails } } as unknown as Window['api']
+      useSessionStore.getState().hydrateSessions([active])
+      const hook = renderController({ activeSession: active })
+      mounted.push(hook)
+      let rename: Promise<boolean> | undefined
+      if (entry === 'inline rename') {
+        act(() => {
+          rename = hook.result.current.actions.renameTitle(active, 'Renamed')
+        })
+      } else {
+        act(() => hook.result.current.actions.openEdit(active))
+        act(() => hook.result.current.actions.changeEditTitleDraft('Renamed'))
+        act(() => hook.result.current.actions.confirmEdit({ preventDefault: vi.fn() } as never))
+      }
+      expect(editDetails).toHaveBeenCalledOnce()
+      // Another client's deletion notification uses this same public store action.
+      act(() => useSessionStore.getState().deleteSession(active.id))
+      expect(useSessionStore.getState().sessions).toEqual([])
+      await act(async () => {
+        receipt.resolve({ ...active, title: 'Renamed', revision: 3, updatedAt: 3 })
+        await receipt.promise
+        await rename
+      })
+      expect(useSessionStore.getState().sessions).toEqual([])
+      expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
+    }
+  )
+
   it('ignores blank or unchanged inline rename titles', () => {
     const active = session()
     const editDetails = vi.fn()

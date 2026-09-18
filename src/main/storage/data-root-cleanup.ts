@@ -23,7 +23,8 @@ const ALLOWED_CLEANUP_DIRS = new Set([
   'runtime',
   join('runtime', 'pkgs'),
   join('runtime', '.repair-required.json'),
-  join('runtime', 'provenance', 'environment-manifests')
+  join('runtime', 'provenance', 'environment-manifests'),
+  join('runtime', 'provenance', 'environment-locks')
 ])
 
 type CleanupInventory = Awaited<ReturnType<typeof scanInventory>>

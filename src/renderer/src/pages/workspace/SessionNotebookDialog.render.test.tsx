@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { i18next } from '@/i18n'
 
-import { SessionNotebookContent } from './SessionNotebookDialog'
+import { NotebookDialogCell, SessionNotebookContent } from './SessionNotebookDialog'
 import {
   createNotebookFrameFilterOptions,
   notebookFrameLabels,
@@ -162,7 +162,7 @@ describe('SessionNotebookContent', () => {
               sizeBytes: 42,
               checksum: 'a'.repeat(64),
               storageKey: 'internal-only',
-              association: 'turn-attached'
+              association: 'resolver-accessed'
             }
           ]
         })
@@ -387,4 +387,19 @@ describe('SessionNotebookContent per-kernel tabs', () => {
     expect(html).not.toContain('data-testid="session-notebook-tab-repl"')
     expect(html).not.toContain('data-testid="session-notebook-tab-bash"')
   })
+})
+
+it('keeps execution evidence enabled for ordinary Notebook cells', () => {
+  const html = renderToStaticMarkup(
+    <NotebookDialogCell
+      run={makeRun({
+        environmentCapture: { state: 'available', manifestChecksum: 'a'.repeat(64) },
+        environmentManifestChecksum: 'a'.repeat(64)
+      })}
+      index={0}
+    />
+  )
+  expect(html).toContain('data-testid="notebook-run-evidence"')
+  expect(html).toContain('a'.repeat(64))
+  expect(html).not.toContain('Current packages cannot fill historical gaps.')
 })

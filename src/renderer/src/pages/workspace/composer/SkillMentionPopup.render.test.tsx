@@ -56,6 +56,7 @@ afterEach(() => {
   container.remove()
   document.body.innerHTML = ''
   vi.restoreAllMocks()
+  delete (window as unknown as { api?: unknown }).api
 })
 
 const options = (): HTMLElement[] =>
@@ -75,6 +76,67 @@ const pressKey = (key: string, init: KeyboardEventInit = {}): KeyboardEvent => {
 }
 
 describe('SkillMentionPopup', () => {
+  it('offers the Windows WSL setup command after Skills using the same row treatment', async () => {
+    const onSelectWslSetup = vi.fn()
+    ;(window as unknown as { api: unknown }).api = {
+      platform: 'win32',
+      settings: {
+        getWsl2BashPreviewStatus: vi.fn().mockResolvedValue({
+          available: true,
+          reason: 'available'
+        })
+      }
+    }
+
+    await act(async () => {
+      root.render(
+        <SkillMentionPopup
+          query=""
+          onSelect={vi.fn()}
+          onSelectWslSetup={onSelectWslSetup}
+          onClose={vi.fn()}
+        />
+      )
+    })
+
+    const command = document.body.querySelector<HTMLElement>(
+      '[data-testid="product-command-setup-wsl"]'
+    )
+    expect(command?.textContent).toContain('/setup-wsl')
+    expect(command?.textContent).not.toContain('Open-Science')
+    expect(options().at(-1)).toBe(command)
+    expect(command?.querySelector('svg')).not.toBeNull()
+    act(() => command?.click())
+    expect(onSelectWslSetup).toHaveBeenCalledOnce()
+  })
+
+  it.each(['darwin', 'linux'])('does not offer the WSL setup command on %s', async (platform) => {
+    const getStatus = vi.fn().mockResolvedValue({
+      available: false,
+      reason: 'unsupported-platform'
+    })
+    ;(window as unknown as { api: unknown }).api = {
+      platform,
+      settings: {
+        getWsl2BashPreviewStatus: getStatus
+      }
+    }
+
+    await act(async () => {
+      root.render(
+        <SkillMentionPopup
+          query="setup"
+          onSelect={vi.fn()}
+          onSelectWslSetup={vi.fn()}
+          onClose={vi.fn()}
+        />
+      )
+    })
+
+    expect(document.body.querySelector('[data-testid="product-command-setup-wsl"]')).toBeNull()
+    expect(getStatus).not.toHaveBeenCalled()
+  })
+
   it('shows the exact Specialist scope and only Main-enabled Skills for Main', () => {
     act(() => {
       root.render(
