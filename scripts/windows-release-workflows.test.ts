@@ -397,7 +397,7 @@ describe('post-merge Windows validation', () => {
     expect(p0Regression.if).toBe(
       "needs.source.outputs.available == 'true' && inputs.suite != 'visual'"
     )
-    expect(p0Regression['continue-on-error']).toBe('${{ inputs.allow_failure }}')
+    expect(p0Regression['continue-on-error']).toBe('${{ inputs.allow_failure == true }}')
     expect(findStep(p0Regression, 'Download macOS ARM64 package').with?.name).toBe('macos-arm64')
     expect(findStep(p0Regression, 'Download macOS ARM64 package').with?.['run-id']).toBe(
       '${{ needs.source.outputs.run_id }}'
@@ -414,7 +414,7 @@ describe('post-merge Windows validation', () => {
     expect(visualRegression.if).toBe(
       "needs.source.outputs.available == 'true' && inputs.suite != 'p0'"
     )
-    expect(visualRegression['continue-on-error']).toBe('${{ inputs.allow_failure }}')
+    expect(visualRegression['continue-on-error']).toBe('${{ inputs.allow_failure == true }}')
     expect(findStep(visualRegression, 'Build Electron application').run).toBe('npm run build:e2e')
     expect(findStep(visualRegression, 'Run visual stability regression')).toMatchObject({
       run: 'npm run test:e2e:visual -- --fail-on-flaky-tests'
@@ -474,7 +474,7 @@ describe('post-merge Windows validation', () => {
       )
     }
     expect(regression.on).toHaveProperty('workflow_call')
-    expect(regression.jobs.source['continue-on-error']).toBe('${{ inputs.allow_failure }}')
+    expect(regression.jobs.source['continue-on-error']).toBe('${{ inputs.allow_failure == true }}')
     expect(findStep(regression.jobs.source, 'Resolve source run').run).toContain(
       '.name == "macos-arm64" and (.expired | not)'
     )

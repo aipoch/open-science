@@ -36,7 +36,7 @@ permissions:
 jobs:
   source:
     name: Resolve source build
-    continue-on-error: ${{ inputs.allow_failure }}
+    continue-on-error: ${{ inputs.allow_failure == true }}
     runs-on: ubuntu-latest
     outputs:
       available: ${{ steps.resolve.outputs.available }}
@@ -76,7 +76,7 @@ jobs:
     name: p0 (macos-arm64 artifact)
     needs: source
     if: needs.source.outputs.available == 'true' && inputs.suite != 'visual'
-    continue-on-error: ${{ inputs.allow_failure }}
+    continue-on-error: ${{ inputs.allow_failure == true }}
     runs-on: macos-26
     timeout-minutes: 15
     steps:
@@ -139,7 +139,7 @@ jobs:
     name: visual (canonical macos-14 source build)
     needs: source
     if: needs.source.outputs.available == 'true' && inputs.suite != 'p0'
-    continue-on-error: ${{ inputs.allow_failure }}
+    continue-on-error: ${{ inputs.allow_failure == true }}
     runs-on: macos-14
     timeout-minutes: 15
     steps:
