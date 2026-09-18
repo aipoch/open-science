@@ -5,8 +5,7 @@
 The `AI PR Review (Single)` workflow supports API-key and Codex subscription authentication.
 Subscription auth is the default for every allowed automatic or manually dispatched pull request
 review. Invalid or missing subscription credentials fall back to API-key auth. API-key auth also
-remains available as an explicit override. The workflow replaces the disabled dual-review workflow
-with one combined Codex review per run.
+remains available as an explicit override. The workflow runs one combined Codex review per run.
 
 ## API-key mode
 

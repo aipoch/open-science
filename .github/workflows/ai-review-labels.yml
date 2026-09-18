@@ -58,7 +58,7 @@ jobs:
         with:
           github-token: ${{ github.token }}
           script: |
-            // Keep the allowed types in sync with commit-message-check.yml and CONTRIBUTING.md.
+            // Keep the allowed types in sync with scripts/ci/check-pr-policy.mjs and CONTRIBUTING.md.
             const typePattern = '(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)';
             const pullRequest = context.payload.pull_request;
             const type =
