@@ -52,6 +52,29 @@ const rootBranchId = (session: PersistedChatSession): string =>
     .activeBranchId
 
 describe('Session conversation commands', () => {
+  it.each(['prompt-1', 'older-prompt'])(
+    'retains recovery only for the prepared prompt: %s',
+    (recoveryPromptId) => {
+      const initial = fixture()
+      initial.resumeRecovery = {
+        kind: 'resume-required',
+        cause: 'cancelled',
+        promptMessageId: recoveryPromptId
+      }
+      const prepared = applySessionConversationCommands(initial, [
+        {
+          id: 'resume-run',
+          kind: 'start-run',
+          timestamp: 10,
+          run: { promptMessageId: 'prompt-1', startedAt: 10 }
+        }
+      ])
+      expect(prepared.resumeRecovery).toEqual(
+        recoveryPromptId === 'prompt-1' ? initial.resumeRecovery : undefined
+      )
+    }
+  )
+
   it('applies append, fork, select, segment, and run intents and replays them idempotently', () => {
     const initial = fixture()
     const firstBranch = rootBranchId(initial)

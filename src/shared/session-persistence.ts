@@ -2997,6 +2997,7 @@ const isPermissionAuthorityBoundToActivePrompt = (
 type RestorablePermissionToolAuthority = Readonly<{
   permission: SessionPermissionRuntimeContext
   activity: PersistedBranchActivity
+  flatActivity: PersistedToolActivity
 }>
 
 const resolveRestorablePermissionToolAuthority = (
@@ -3025,13 +3026,14 @@ const resolveRestorablePermissionToolAuthority = (
     !flatActivity ||
     !visibleActivity ||
     activity.promptMessageId !== permission.originatingPromptMessageId ||
-    flatActivity.promptMessageId !== permission.originatingPromptMessageId ||
+    (flatActivity.promptMessageId !== permission.originatingPromptMessageId &&
+      !(session.runtimeTranscriptOwner === 'main' && flatActivity.promptMessageId === undefined)) ||
     (activity.status !== 'pending' && activity.status !== 'in_progress') ||
     (flatActivity.status !== 'pending' && flatActivity.status !== 'in_progress')
   ) {
     return undefined
   }
-  return { permission, activity }
+  return { permission, activity, flatActivity }
 }
 
 const hasRestorablePermissionWait = (session: PersistedChatSession): boolean =>
@@ -3516,8 +3518,10 @@ const normalizeActivityAfterRestore = (
   const closesOpenActivity =
     (activity.status === 'pending' || activity.status === 'in_progress') &&
     !activity.elicitation?.durable &&
-    (activity.id !== permissionAuthority?.activity.id ||
-      activity.promptMessageId !== permissionAuthority.permission.originatingPromptMessageId)
+    // The resolver already validated these exact graph/flat projections. Main intentionally
+    // omits the graph-owned prompt identity from its flat presentation.
+    activity !== permissionAuthority?.activity &&
+    activity !== permissionAuthority?.flatActivity
   const closesOpenNotebookActivity = closesOpenActivity && isPersistedNotebookRunActivity(activity)
   const normalized: PersistedToolActivity = {
     ...activity,

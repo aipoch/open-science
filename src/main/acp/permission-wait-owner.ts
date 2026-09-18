@@ -62,7 +62,10 @@ const requestForPersistence = (request: AcpPermissionRequest): AcpPermissionRequ
 class AcpPermissionWaitOwner {
   constructor(
     private readonly sessions?: PermissionWaitSessions,
-    private readonly publishSessionUpdated?: PublishPermissionWaitSession
+    private readonly publishSessionUpdated?: PublishPermissionWaitSession,
+    private readonly prepareRuntimeTranscript?: (
+      candidate: DurablePermissionWaitCandidate
+    ) => Promise<unknown>
   ) {}
 
   async persist(candidate: DurablePermissionWaitCandidate): Promise<boolean> {
@@ -87,6 +90,10 @@ class AcpPermissionWaitOwner {
       createdAt: Date.now()
     })
     if (!permission) throw new Error('Permission request could not be persisted safely.')
+
+    // Commit the exact tool witness before exposing durable approval authority. Reuse the
+    // reviewed persistence preview so a delayed provider notification cannot bypass its limits.
+    await this.prepareRuntimeTranscript?.({ ...candidate, request: permission.request })
 
     await this.patch(
       candidate.projectId,

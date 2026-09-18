@@ -3506,6 +3506,47 @@ describe('normalizeSessionFile with activities', () => {
     }
   )
 
+  it.each([
+    'valid-main',
+    'legacy',
+    'conflicting-prompt',
+    'hidden-branch',
+    'non-mcp',
+    'duplicate-flat'
+  ] as const)(
+    'validates graph-owned permission correlation without redundant flat identity: %s',
+    (scenario) => {
+      const persisted = createContinuingPermissionFile([createOpenToolActivity()])
+      persisted.session.runtimeTranscriptOwner = scenario === 'legacy' ? undefined : 'main'
+      persisted.session.activities = persisted.session.activities!.map((activity) => ({
+        ...activity,
+        promptMessageId: scenario === 'conflicting-prompt' ? 'another-prompt' : undefined
+      }))
+      if (scenario === 'hidden-branch') {
+        persisted.session.conversationGraph = forkConversationAfterActivity(
+          persisted.session.conversationGraph!,
+          'prompt-1',
+          'tool-1',
+          'revised-branch',
+          3
+        )
+      }
+      if (scenario === 'non-mcp')
+        persisted.session.runtimeContext!.permission!.request.isMcp = false
+      if (scenario === 'duplicate-flat')
+        persisted.session.activities.push({ ...persisted.session.activities[0] })
+      const restored = normalizeSessionFile(persisted)!
+      if (scenario === 'valid-main') {
+        expect(restored.status).toBe('waiting-permission')
+        expect(restored.runtimeContext?.permission?.state).toBe('pending')
+        expect(restored.activities?.[0].status).toBe('in_progress')
+      } else {
+        expect(restored.status).toBe('error')
+        expect(restored.runtimeContext?.permission).toBeUndefined()
+      }
+    }
+  )
+
   it('fails a permission tool activity hidden by the active conversation branch', () => {
     const persisted = createContinuingPermissionFile([createOpenToolActivity()])
     expect(persisted.session.conversationGraph).toBeDefined()

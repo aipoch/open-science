@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 
+import { AcpPermissionWaitOwner } from '../acp/permission-wait-owner'
+import { continueInterruptedTurn } from '../acp/interrupted-turn-continuation'
 import type { AcpRuntimeEvent } from '../../shared/acp'
 import type { ArtifactFile } from '../../shared/artifacts'
+import { applySessionConversationCommands } from '../../shared/session-conversation-command'
 import { normalizeSessionFile, type PersistedChatSession } from '../../shared/session-persistence'
 import {
   RuntimeSessionArtifactPublicationError,
@@ -600,26 +603,207 @@ describe('RuntimeSessionOwner', () => {
     ).rejects.toThrow('superseded Runtime Session execution')
   })
 
-  it('leaves recoverable errors to their continuation owner', async () => {
-    const turn = scope()
-    const { owner, mutateSession, sessions } = harness()
-    await owner.begin(turn)
-    owner.accept({
-      id: 'overflow',
-      timestamp: 5,
-      kind: 'error',
-      level: 'error',
-      sessionId: turn.sessionId,
-      promptMessageId: turn.promptMessageId,
-      title: 'Prompt failed',
+  it.each([
+    {
+      recoverable: 'context-overflow' as const,
       text: 'request too large',
-      recoverable: 'context-overflow'
-    })
+      providerError: false,
+      contextReset: false
+    },
+    {
+      recoverable: undefined,
+      text: 'API Error: Connection closed mid-response',
+      providerError: true,
+      contextReset: false
+    },
+    {
+      recoverable: undefined,
+      text: 'API Error: Connection closed mid-response',
+      providerError: true,
+      contextReset: true
+    }
+  ])(
+    'persists a recoverable attempt before admitting its retry: $text reset=$contextReset',
+    async (failure) => {
+      const turn = scope()
+      const { owner, sessions } = harness()
+      await owner.begin(turn)
+      owner.accept(messageEvent(turn, 'partial', 'partial output'))
+      owner.accept({
+        id: 'recoverable-failure',
+        timestamp: 5,
+        kind: 'error',
+        level: 'error',
+        sessionId: turn.sessionId,
+        promptMessageId: turn.promptMessageId,
+        title: 'Prompt failed',
+        ...failure
+      })
+      await owner.flush(turn.sessionId, turn.promptMessageId)
+      const interrupted = sessions.get(turn.sessionId)!
+      expect(interrupted.activeRun).toBeUndefined()
+      expect(interrupted.messages.at(-1)?.status).toBe('error')
+      if (failure.providerError) {
+        expect(interrupted.resumeRecovery).toEqual({
+          kind: 'resume-required',
+          cause: 'connection-lost',
+          promptMessageId: turn.promptMessageId
+        })
+      }
+      const withSegment = failure.contextReset
+        ? applySessionConversationCommands(interrupted, [
+            {
+              id: 'replacement-segment',
+              kind: 'open-segment',
+              timestamp: 9,
+              segment: { id: 'segment-replacement', frameworkId: 'codex', startedAt: 9 }
+            }
+          ])
+        : interrupted
+      const prepared = applySessionConversationCommands(withSegment, [
+        {
+          id: 'retry-command',
+          kind: 'start-run',
+          timestamp: 10,
+          run: { promptMessageId: turn.promptMessageId, startedAt: 10 }
+        }
+      ])
+      if (failure.providerError) expect(prepared.resumeRecovery).toEqual(interrupted.resumeRecovery)
+      sessions.set(turn.sessionId, prepared)
+      const admitRetry = async (): Promise<void> => {
+        await owner.begin({
+          ...turn,
+          runtimeSegmentId: failure.contextReset ? 'segment-replacement' : turn.runtimeSegmentId,
+          executionId: 'retry-execution'
+        })
+      }
+      if (failure.providerError) {
+        await continueInterruptedTurn(
+          {
+            loadSession: async () => structuredClone(sessions.get(turn.sessionId)),
+            runtime: {
+              getState: () => ({
+                status: 'connected',
+                cwd: '/workspace',
+                sessionIds: [turn.sessionId],
+                pendingPermissions: [],
+                permissionProfiles: {},
+                permissionGrants: {},
+                contextUsageBySession: {},
+                promptInFlight: false,
+                promptInFlightSessionIds: []
+              }),
+              getLatestUserPrompt: () => undefined,
+              startContinuation: admitRetry
+            },
+            startDispatchAdmittedContinuation: async (_request, validate) => {
+              await validate()
+              await admitRetry()
+            }
+          },
+          {
+            sessionId: turn.sessionId,
+            projectId: turn.projectId,
+            promptMessageId: turn.promptMessageId,
+            ...(failure.contextReset
+              ? {
+                  contextReset: {
+                    runtimeSegmentId: 'segment-replacement',
+                    historyReplayTarget: 'codex-response' as const
+                  }
+                }
+              : {})
+          }
+        )
+      } else {
+        await admitRetry()
+      }
+      if (failure.contextReset) {
+        const receipt = await owner.publish({
+          appSessionId: turn.sessionId,
+          promptMessageId: turn.promptMessageId,
+          artifactClaimId: 'resumed-claim',
+          runId: 'resumed-run',
+          executionId: 'retry-execution',
+          artifacts: [artifact()]
+        })
+        const graph = sessions.get(turn.sessionId)!.conversationGraph!
+        expect(graph.messages.find(({ id }) => id === receipt.messageId)?.runtimeSegmentId).toBe(
+          'segment-replacement'
+        )
+        expect(graph.messages.find(({ id }) => id === turn.promptMessageId)?.runtimeSegmentId).toBe(
+          turn.runtimeSegmentId
+        )
+      }
+      owner.accept({ ...messageEvent(turn, 'late-old-output', 'stale'), timestamp: 4 })
+      owner.accept({
+        ...messageEvent(turn, 'retry-output', 'recovered'),
+        messageId: 'retry-stream',
+        timestamp: 11
+      })
+      await owner.flush(turn.sessionId, turn.promptMessageId)
+      expect(sessions.get(turn.sessionId)?.messages.at(-1)?.content).toBe('recovered')
+      expect(
+        sessions.get(turn.sessionId)?.messages.some(({ content }) => content.includes('stale'))
+      ).toBe(false)
+      expect(sessions.get(turn.sessionId)?.resumeRecovery).toBeUndefined()
+      await expect(
+        owner.publish({
+          appSessionId: turn.sessionId,
+          promptMessageId: turn.promptMessageId,
+          artifactClaimId: 'old-claim',
+          runId: 'old-run',
+          executionId: turn.executionId,
+          artifacts: [artifact()]
+        })
+      ).rejects.toThrow('superseded Runtime Session execution')
+    }
+  )
 
-    await expect(owner.flush(turn.sessionId, turn.promptMessageId)).resolves.toBeUndefined()
-    expect(mutateSession).toHaveBeenCalledOnce()
-    expect(sessions.get(turn.sessionId)?.activeRun?.promptMessageId).toBe(turn.promptMessageId)
-  })
+  it.each(['missing-marker', 'old-segment', 'different-branch'])(
+    'rejects an unauthorized recovery Segment: %s',
+    async (invalid) => {
+      const turn = scope()
+      const durable = session(turn)
+      durable.resumeRecovery = {
+        kind: 'resume-required',
+        cause: 'connection-lost',
+        promptMessageId: turn.promptMessageId
+      }
+      durable.conversationGraph!.runtimeSegments.push(
+        {
+          id: 'older-replacement',
+          agentFrameId: turn.agentFrameId,
+          frameworkId: 'codex',
+          startedAt: 5,
+          endedAt: 9
+        },
+        {
+          id: 'current-replacement',
+          agentFrameId: turn.agentFrameId,
+          frameworkId: 'codex',
+          startedAt: 9
+        }
+      )
+      if (invalid === 'missing-marker') delete durable.resumeRecovery
+      if (invalid === 'different-branch') {
+        durable.conversationGraph!.branches.push({
+          id: 'other-branch',
+          agentFrameId: turn.agentFrameId,
+          createdAt: 9,
+          updatedAt: 9
+        })
+        durable.conversationGraph!.frames[0].activeBranchId = 'other-branch'
+      }
+      const { owner } = harness([durable])
+      await expect(
+        owner.begin({
+          ...turn,
+          runtimeSegmentId: invalid === 'old-segment' ? 'older-replacement' : 'current-replacement'
+        })
+      ).rejects.toThrow('no durable recovery Segment binding')
+    }
+  )
 
   it('flushes late chunks after terminal commit without reopening the run', async () => {
     const turn = scope()
@@ -861,6 +1045,232 @@ describe('RuntimeSessionOwner', () => {
       expect(sessions.get(turn.sessionId)?.messages.at(-1)?.content).toBe('Continuing after review')
     }
   )
+
+  it.each([
+    'shutdown',
+    'end_turn',
+    'cancelled',
+    'flush-failure',
+    'permission-before-tool',
+    'credential-preview',
+    'oversized-preview'
+  ] as const)('restores a Main-projected pending MCP permission after %s', async (terminal) => {
+    const turn = scope()
+    const initial = session(turn)
+    initial.runtimeTranscriptOwner = 'main'
+    const { owner, sessions, mutateSession } = harness([initial])
+    await owner.begin(turn)
+    if (!['permission-before-tool', 'credential-preview', 'oversized-preview'].includes(terminal))
+      owner.accept({
+        id: 'permission-tool',
+        kind: 'tool',
+        level: 'info',
+        timestamp: 2,
+        sessionId: turn.sessionId,
+        promptMessageId: turn.promptMessageId,
+        toolCallId: 'permission-tool-call',
+        title: 'Run command',
+        providerToolName: 'Bash',
+        status: 'in_progress',
+        rawInput: { command: 'echo permission' }
+      })
+    owner.accept({
+      id: 'unrelated-tool',
+      kind: 'tool',
+      level: 'info',
+      timestamp: 2,
+      sessionId: turn.sessionId,
+      promptMessageId: turn.promptMessageId,
+      toolCallId: 'unrelated-tool-call',
+      title: 'Read file',
+      status: 'in_progress'
+    })
+    // The batching timer has deliberately not run when permission admission starts.
+    expect(sessions.get(turn.sessionId)?.activities).toBeUndefined()
+    const publish = vi.fn()
+    const permissionOwner = new AcpPermissionWaitOwner(
+      {
+        containsMessageOnActiveBranch: async () => true,
+        loadSessionForContinuation: async () => structuredClone(sessions.get(turn.sessionId)!),
+        readSessionRuntimeContext: async () =>
+          sessions.get(turn.sessionId)!.runtimeContext ?? { version: 1, revision: 0 },
+        patchSessionRuntimeContext: async (command) => {
+          const latest = sessions.get(turn.sessionId)!
+          const context = {
+            ...latest.runtimeContext,
+            version: 1 as const,
+            revision: (latest.runtimeContext?.revision ?? 0) + 1,
+            ...command.patch
+          }
+          sessions.set(turn.sessionId, {
+            ...latest,
+            status: command.sessionStatus ?? latest.status,
+            runtimeContext: context
+          })
+          return context
+        }
+      },
+      publish,
+      (candidate) =>
+        owner.preparePermissionTranscript(candidate.request, candidate.promptMessageId!)
+    )
+    if (terminal === 'flush-failure')
+      mutateSession.mockRejectedValueOnce(new Error('transcript unavailable'))
+    const persistence = permissionOwner.persist({
+      projectId: turn.projectId,
+      promptMessageId: turn.promptMessageId,
+      fingerprint: 'a'.repeat(64),
+      request: {
+        requestId: 'permission-request',
+        sessionId: turn.sessionId,
+        toolCallId: 'permission-tool-call',
+        title: 'Run command',
+        isMcp: true,
+        providerToolName: 'Bash',
+        rawInput:
+          terminal === 'credential-preview'
+            ? { query: 'safe input', connection: { password: 'test-password-secret' } }
+            : terminal === 'oversized-preview'
+              ? { content: 'x'.repeat(9_000) }
+              : { command: 'echo permission' },
+        options: [{ optionId: 'allow', name: 'Allow once', kind: 'allow_once', scope: 'once' }]
+      }
+    })
+    if (terminal === 'flush-failure') {
+      await expect(persistence).rejects.toThrow('transcript unavailable')
+      expect(sessions.get(turn.sessionId)?.runtimeContext?.permission).toBeUndefined()
+      expect(publish).not.toHaveBeenCalled()
+      return
+    }
+    await expect(persistence).resolves.toBe(true)
+    const waiting = sessions.get(turn.sessionId)!
+    expect(publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        activities: expect.arrayContaining([
+          expect.objectContaining({ id: 'permission-tool-call', status: 'in_progress' })
+        ])
+      })
+    )
+    const witness = waiting.conversationGraph!.activities.find(
+      ({ id }) => id === 'permission-tool-call'
+    )!
+    if (terminal === 'credential-preview') {
+      expect(witness.rawInput).toEqual({
+        query: 'safe input',
+        connection: { password: '[redacted]' }
+      })
+      expect(JSON.stringify(witness)).not.toContain('test-password-secret')
+    }
+    if (terminal === 'oversized-preview') expect(witness.rawInput).toBeUndefined()
+    expect(waiting.runtimeContext?.permission?.fingerprint).toBe('a'.repeat(64))
+    expect(waiting.activities?.[0].promptMessageId).toBeUndefined()
+    if (terminal === 'end_turn' || terminal === 'cancelled') {
+      owner.accept({ ...stopEvent(turn, 4), text: terminal })
+      await owner.flush(turn.sessionId, turn.promptMessageId)
+    }
+    const stored = sessions.get(turn.sessionId)!
+    expect(
+      stored.conversationGraph?.activities.find(({ id }) => id === 'permission-tool-call')?.status
+    ).toBe('in_progress')
+    const restored = normalizeSessionFile(JSON.parse(JSON.stringify(stored)))!
+    expect(restored.status).toBe('waiting-permission')
+    expect(restored.runtimeContext?.permission?.state).toBe('pending')
+    expect(restored.activities?.find(({ id }) => id === 'permission-tool-call')?.status).toBe(
+      'in_progress'
+    )
+    if (terminal === 'permission-before-tool') {
+      owner.accept({
+        id: 'delayed-permission-tool',
+        kind: 'tool',
+        level: 'info',
+        timestamp: 11,
+        sessionId: turn.sessionId,
+        promptMessageId: turn.promptMessageId,
+        toolCallId: 'permission-tool-call',
+        title: 'Run command',
+        status: 'pending',
+        rawInput: { command: 'echo permission' }
+      })
+      await owner.flush(turn.sessionId, turn.promptMessageId)
+      expect(
+        sessions
+          .get(turn.sessionId)
+          ?.conversationGraph?.activities.filter(({ id }) => id === 'permission-tool-call')
+      ).toHaveLength(1)
+    }
+    expect(restored.resumeRecovery).toBeUndefined()
+    expect(restored.activities?.find(({ id }) => id === 'unrelated-tool-call')?.status).toBe(
+      terminal === 'end_turn' ? 'completed' : 'failed'
+    )
+  })
+
+  it.each([
+    'terminal',
+    'other-prompt',
+    'other-branch',
+    'superseded-run',
+    'missing-execution'
+  ] as const)(
+    'refuses to create permission authority over a conflicting tool witness: %s',
+    async (conflict) => {
+      const turn = scope()
+      const { owner, sessions } = harness()
+      if (conflict !== 'missing-execution') {
+        await owner.begin(turn)
+        owner.accept({
+          id: 'existing-tool',
+          kind: 'tool',
+          level: 'info',
+          timestamp: 2,
+          sessionId: turn.sessionId,
+          promptMessageId: turn.promptMessageId,
+          toolCallId: 'tool-1',
+          title: 'Existing call',
+          status: 'in_progress'
+        })
+        await owner.flush(turn.sessionId, turn.promptMessageId)
+        const durable = sessions.get(turn.sessionId)!
+        const activity = durable.conversationGraph!.activities[0]
+        if (conflict === 'terminal') activity.status = 'completed'
+        if (conflict === 'other-prompt') activity.promptMessageId = 'other-prompt'
+        if (conflict === 'other-branch') activity.messageBranchId = 'other-branch'
+        if (conflict === 'superseded-run') durable.activeRun!.startedAt += 1
+      }
+      const before = structuredClone(sessions.get(turn.sessionId))
+      await expect(
+        owner.preparePermissionTranscript(
+          {
+            requestId: 'permission-1',
+            sessionId: turn.sessionId,
+            toolCallId: 'tool-1',
+            title: 'Permission',
+            isMcp: true,
+            options: []
+          },
+          turn.promptMessageId
+        )
+      ).rejects.toThrow(/conflicts|superseded|no registered/)
+      expect(sessions.get(turn.sessionId)).toEqual(before)
+    }
+  )
+
+  it('does not create a restorable MCP tool witness for a non-MCP request', async () => {
+    const turn = scope()
+    const { owner, sessions } = harness()
+    await owner.begin(turn)
+    await owner.preparePermissionTranscript(
+      {
+        requestId: 'non-mcp',
+        sessionId: turn.sessionId,
+        toolCallId: 'tool-1',
+        title: 'Native permission',
+        isMcp: false,
+        options: []
+      },
+      turn.promptMessageId
+    )
+    expect(sessions.get(turn.sessionId)?.conversationGraph?.activities).toEqual([])
+  })
 
   it('admits a restored permission continuation only for the turn that owns the approval', async () => {
     const turn = scope()

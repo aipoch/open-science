@@ -1,3 +1,8 @@
+import { RuntimeSessionOwner } from '../../../../main/session-persistence/runtime-session-owner'
+import { applySessionConversationCommands } from '../../../../shared/session-conversation-command'
+import type { RuntimeSessionScope } from '../../../../shared/runtime-session-projection'
+import type { SaveSessionOptions } from '../../../../shared/session-persistence'
+import { resetSessionConversationIntentsForTests } from '../../stores/session-conversation-intents'
 import type { ArtifactReference } from '../../../../shared/artifacts'
 import { SessionPdfContextOwner } from '../../../../main/session-persistence/pdf-context-owner'
 import { inspectPdfPageCount } from '../../../../main/uploads/attachment-media'
@@ -10627,6 +10632,73 @@ describe('recovering from a request-size overflow', () => {
       turnIntent: 'save-as-skill'
     })
   })
+
+  it.each([true, false])(
+    'persists the Main-owned overflow retry before dispatch (native=%s)',
+    async (native) => {
+      seedOverflowedConversation()
+      resetSessionConversationIntentsForTests()
+      useSessionStore.setState((state) => ({
+        sessions: state.sessions.map((session) => ({
+          ...session,
+          runtimeTranscriptOwner: 'main' as const
+        }))
+      }))
+      let durable = toPersistedSession(useSessionStore.getState().sessions[0])
+      const originalSegmentIds = durable.conversationGraph!.runtimeSegments.map(({ id }) => id)
+      const gate = createDeferred<void>()
+      const saveSession = vi.fn(
+        async (_submitted: PersistedChatSession, options?: SaveSessionOptions) => {
+          await gate.promise
+          durable = applySessionConversationCommands(durable, options?.conversationCommands ?? [])
+          return structuredClone(durable)
+        }
+      )
+      vi.stubGlobal('window', { api: { sessions: { saveSession } } })
+      const owner = new RuntimeSessionOwner({
+        loadSession: async () => structuredClone(durable),
+        mutateSession: async (_scope, mutate) => (durable = mutate(durable)),
+        finalizeArtifacts: async () => []
+      })
+      let admitted = false
+      const runtime = {
+        state: {
+          ...createSnapshot(['session-1']),
+          ...(native ? { nativeContextCompactionSessionIds: ['session-1'] } : {})
+        },
+        createSession: vi.fn(),
+        resumeSession: vi.fn(),
+        resetSessionContext: vi.fn().mockResolvedValue({ sessionId: 'session-1' }),
+        compactSession: vi.fn().mockResolvedValue(createSnapshot(['session-1'])),
+        sendPrompt: vi.fn(async (...args: unknown[]) => {
+          const provenance = args[9] as RuntimeSessionScope
+          await owner.begin({
+            ...provenance,
+            sessionId: 'session-1',
+            projectId: durable.projectId,
+            executionId: 'retry'
+          })
+          admitted = true
+          return createSnapshot(['session-1'])
+        })
+      }
+      const pending = recoverContextOverflowWorkspaceSession(runtime, 'session-1')
+      try {
+        await vi.waitFor(() => expect(saveSession).toHaveBeenCalledOnce())
+        expect(runtime.sendPrompt).not.toHaveBeenCalled()
+      } finally {
+        gate.resolve()
+      }
+      expect(await pending).toBe(true)
+      await vi.waitFor(() => expect(admitted).toBe(true))
+      expect(durable.conversationGraph!.runtimeSegments.map(({ id }) => id)).toEqual(
+        originalSegmentIds
+      )
+      expect((runtime.sendPrompt.mock.calls[0][9] as RuntimeSessionScope).runtimeSegmentId).toBe(
+        originalSegmentIds.at(-1)
+      )
+    }
+  )
 
   it('uses native framework compaction and retries without replaying app-owned history', async () => {
     seedOverflowedConversation()

@@ -160,7 +160,14 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
   )
   const permissionWaitOwner = new AcpPermissionWaitOwner(
     options.permissionWait?.sessions,
-    options.permissionWait?.onSessionUpdated
+    options.permissionWait?.onSessionUpdated,
+    options.runtimeSessions
+      ? (candidate) =>
+          options.runtimeSessions!.preparePermissionTranscript(
+            candidate.request,
+            candidate.promptMessageId!
+          )
+      : undefined
   )
   const permissionContext = new AcpPermissionContext({
     emitPermissionRequest: (request) => publication.publishPermissionRequest(request),

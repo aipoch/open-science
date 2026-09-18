@@ -330,7 +330,12 @@ export const applySessionConversationCommands = (
           status: 'running',
           error: undefined,
           errorReportable: undefined,
-          resumeRecovery: undefined
+          // Resume validates this durable marker after the renderer has prepared its run.
+          // Runtime admission consumes it; a different prompt must never inherit it.
+          resumeRecovery:
+            result.resumeRecovery?.promptMessageId === command.run.promptMessageId
+              ? result.resumeRecovery
+              : undefined
         }
         break
       }

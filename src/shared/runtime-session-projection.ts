@@ -30,6 +30,7 @@ import {
   type PersistedChatSession,
   type PersistedToolActivityStatus
 } from './session-persistence'
+import { isClaudeApiResponseInterruption } from './run-error-classification'
 import { createRuntimeAgentMessageId } from './runtime-message-identity'
 
 export type RuntimeSessionScope = {
@@ -171,6 +172,10 @@ const terminalize = (
 ): void => {
   const graph = session.conversationGraph!
   const cancelled = event.kind === 'stop' && event.text === 'cancelled'
+  const connectionLost =
+    event.kind === 'error' &&
+    event.providerError === true &&
+    isClaudeApiResponseInterruption(event.text)
   const failed = event.kind === 'error' || cancelled
   const responses = graph.messages.filter(
     (message) =>
@@ -206,7 +211,8 @@ const terminalize = (
     prompt.contextWindowSamples = [...(prompt.contextWindowSamples ?? []), sample]
     prompt.updatedAt = Math.max(prompt.updatedAt, event.timestamp)
   }
-  if (cancelled && prompt) prompt.interrupted = true
+  if ((cancelled || connectionLost) && prompt) prompt.interrupted = true
+  const pendingPermission = session.runtimeContext?.permission
   for (const activity of graph.activities) {
     if (
       activity.agentFrameId === scope.agentFrameId &&
@@ -214,6 +220,16 @@ const terminalize = (
       activity.promptMessageId === scope.promptMessageId &&
       !isTerminal(activity.status)
     ) {
+      // A durable MCP approval still owns this invocation after the provider Attempt ends.
+      // Its decision/continuation, rather than an old stop, settles the tool activity.
+      if (
+        pendingPermission?.state === 'pending' &&
+        pendingPermission.request.isMcp === true &&
+        pendingPermission.request.sessionId === session.id &&
+        pendingPermission.originatingPromptMessageId === scope.promptMessageId &&
+        pendingPermission.request.toolCallId === activity.id
+      )
+        continue
       activity.status = failed ? 'failed' : 'completed'
       activity.updatedAt = event.timestamp
       activity.eventIds = retainRecentSessionEventIds(activity.eventIds)
@@ -250,8 +266,12 @@ const terminalize = (
         : undefined
     session.errorReportable = event.kind === 'error' && !blocked ? !event.providerError : undefined
     session.resumeRecovery =
-      cancelled && !blocked
-        ? { kind: 'resume-required', cause: 'cancelled', promptMessageId: scope.promptMessageId }
+      (cancelled || connectionLost) && !blocked
+        ? {
+            kind: 'resume-required',
+            cause: cancelled ? 'cancelled' : 'connection-lost',
+            promptMessageId: scope.promptMessageId
+          }
         : undefined
   }
 }
@@ -276,7 +296,8 @@ export const attachRuntimeSessionArtifacts = (
           message.agentFrameId === scope.agentFrameId &&
           message.introducedOnBranchId === scope.messageBranchId &&
           message.role === 'agent' &&
-          message.responseToMessageId === scope.promptMessageId
+          message.responseToMessageId === scope.promptMessageId &&
+          message.runtimeSegmentId === scope.runtimeSegmentId
       )
     : undefined
   if (input.messageId && !owner) {
@@ -288,6 +309,7 @@ export const attachRuntimeSessionArtifacts = (
       message.introducedOnBranchId === scope.messageBranchId &&
       message.role === 'agent' &&
       message.responseToMessageId === scope.promptMessageId &&
+      message.runtimeSegmentId === scope.runtimeSegmentId &&
       (message.streamId === input.runId || !input.messageId)
   )
   if (!owner) {

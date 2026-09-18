@@ -1,9 +1,8 @@
-import type { AcpRuntimeEvent } from '../../shared/acp'
+import type { AcpPermissionRequest, AcpRuntimeEvent } from '../../shared/acp'
 import type { ArtifactFile } from '../../shared/artifacts'
 import { resolveActiveConversationActivities } from '../../shared/conversation-graph'
 import type { PersistedActiveRun, PersistedChatSession } from '../../shared/session-persistence'
 import type { AgentFrameworkId } from '../../shared/settings'
-import { isClaudeApiResponseInterruption } from '../../shared/run-error-classification'
 import {
   applyRuntimeSessionEvents,
   attachRuntimeSessionArtifacts,
@@ -85,6 +84,7 @@ type RuntimeSessionOwnerDependencies = {
 type Turn = {
   scope: RuntimeSessionTurnScope
   runStartedAt: number
+  promptRuntimeSegmentId: string
   pending: AcpRuntimeEvent[]
   acceptedEventIds: Set<string>
   terminalEventIds: Set<string>
@@ -156,7 +156,8 @@ const defaultScheduleFlush = (flush: () => void, delayMs: number): (() => void) 
 const assertScopeMatchesSession = (
   scope: RuntimeSessionTurnScope,
   session: PersistedChatSession,
-  requireActiveRun = false
+  requireActiveRun = false,
+  promptRuntimeSegmentId = scope.runtimeSegmentId
 ): void => {
   if (session.id !== scope.sessionId || session.projectId !== scope.projectId) {
     throw new Error('Runtime Session scope does not match the durable Session owner.')
@@ -185,10 +186,40 @@ const assertScopeMatchesSession = (
     prompt.role !== 'user' ||
     prompt.agentFrameId !== frame.id ||
     prompt.introducedOnBranchId !== branch.id ||
-    prompt.runtimeSegmentId !== segment.id
+    prompt.runtimeSegmentId !== promptRuntimeSegmentId
   ) {
     throw new Error('Runtime Session turn has no durable prompt path.')
   }
+}
+
+// A restored provider context starts a new Runtime Segment without rewriting the original
+// user Message's provenance. Only a durable Resume for the selected path authorizes that binding.
+const resolvePromptRuntimeSegmentId = (
+  session: PersistedChatSession,
+  scope: RuntimeSessionTurnScope
+): string => {
+  const graph = session.conversationGraph
+  const prompt = graph?.messages.find(({ id }) => id === scope.promptMessageId)
+  if (!prompt?.runtimeSegmentId || prompt.runtimeSegmentId === scope.runtimeSegmentId)
+    return scope.runtimeSegmentId
+  const frame = graph?.frames.find(({ id }) => id === scope.agentFrameId)
+  const segment = graph?.runtimeSegments
+    .filter(({ agentFrameId }) => agentFrameId === scope.agentFrameId)
+    .at(-1)
+  const originalSegment = graph?.runtimeSegments.find(({ id }) => id === prompt.runtimeSegmentId)
+  if (
+    session.resumeRecovery?.kind !== 'resume-required' ||
+    session.resumeRecovery.promptMessageId !== scope.promptMessageId ||
+    graph?.activeFrameId !== scope.agentFrameId ||
+    frame?.activeBranchId !== scope.messageBranchId ||
+    segment?.id !== scope.runtimeSegmentId ||
+    segment.endedAt !== undefined ||
+    !originalSegment ||
+    originalSegment.agentFrameId !== scope.agentFrameId ||
+    segment.startedAt <= originalSegment.startedAt
+  )
+    throw new Error('Runtime Session continuation has no durable recovery Segment binding.')
+  return prompt.runtimeSegmentId
 }
 
 // A Conversation Turn can end its provider Attempt while a durable interaction still owns the
@@ -297,7 +328,14 @@ export class RuntimeSessionOwner {
       this.now(),
       admission.planDeliveryCommandId
     )
-    assertScopeMatchesSession(scope, loaded, continuationRun === undefined)
+    const promptRuntimeSegmentId =
+      previousTurn?.scope.executionId === scope.executionId &&
+      previousTurn.scope.agentFrameId === scope.agentFrameId &&
+      previousTurn.scope.messageBranchId === scope.messageBranchId &&
+      previousTurn.scope.runtimeSegmentId === scope.runtimeSegmentId
+        ? previousTurn.promptRuntimeSegmentId
+        : resolvePromptRuntimeSegmentId(loaded, scope)
+    assertScopeMatchesSession(scope, loaded, continuationRun === undefined, promptRuntimeSegmentId)
     const admittedRun = loaded.activeRun ?? continuationRun
 
     const key = turnKey(scope.sessionId, scope.promptMessageId)
@@ -339,7 +377,9 @@ export class RuntimeSessionOwner {
         this.now(),
         admission.planDeliveryCommandId
       )
-      assertScopeMatchesSession(scope, latest, resumedRun === undefined)
+      if (resolvePromptRuntimeSegmentId(latest, scope) !== promptRuntimeSegmentId)
+        throw new Error('Runtime Session prompt Segment changed before admission.')
+      assertScopeMatchesSession(scope, latest, resumedRun === undefined, promptRuntimeSegmentId)
       const {
         reviewOwner = 'renderer',
         planDeliveryCommandId: _planDeliveryCommandId,
@@ -365,6 +405,7 @@ export class RuntimeSessionOwner {
       scope: { ...scope },
       // Admission guarantees a run: the turn already owns one, or its continuation re-armed it.
       runStartedAt: session.activeRun!.startedAt,
+      promptRuntimeSegmentId,
       pending: [],
       acceptedEventIds: new Set(),
       terminalEventIds: new Set(),
@@ -385,6 +426,65 @@ export class RuntimeSessionOwner {
     return session
   }
 
+  async preparePermissionTranscript(
+    request: AcpPermissionRequest,
+    promptMessageId: string
+  ): Promise<PersistedChatSession | undefined> {
+    const key = turnKey(request.sessionId, promptMessageId)
+    const turn = this.turns.get(key)
+    const flushed = await this.flush(request.sessionId, promptMessageId)
+    if (request.isMcp !== true) return flushed
+    if (!turn) throw new Error('Permission request has no registered Runtime Session execution.')
+    // The ACP permission RPC contains the actual tool call. Its preceding notification can still
+    // be suspended behind provider-acceptance persistence, so flushing that lane alone is not proof.
+    const committed = await this.dependencies.mutateSession(turn.scope, (latest) => {
+      assertScopeMatchesSession(turn.scope, latest, true, turn.promptRuntimeSegmentId)
+      const graph = latest.conversationGraph!
+      const frame = graph.frames.find(({ id }) => id === turn.scope.agentFrameId)
+      if (
+        this.turns.get(key) !== turn ||
+        turn.terminalObserved ||
+        latest.activeRun?.startedAt !== turn.runStartedAt ||
+        graph.activeFrameId !== turn.scope.agentFrameId ||
+        frame?.activeBranchId !== turn.scope.messageBranchId
+      )
+        throw new Error('Permission request belongs to a superseded Runtime Session execution.')
+      const existing = graph.activities.find(({ id }) => id === request.toolCallId)
+      if (existing) {
+        if (
+          existing.promptMessageId !== promptMessageId ||
+          existing.agentFrameId !== turn.scope.agentFrameId ||
+          existing.messageBranchId !== turn.scope.messageBranchId ||
+          existing.runtimeSegmentId !== turn.scope.runtimeSegmentId ||
+          (existing.status !== 'pending' && existing.status !== 'in_progress')
+        )
+          throw new Error('Permission tool call conflicts with its durable activity identity.')
+        return latest
+      }
+      if (request.status && request.status !== 'pending' && request.status !== 'in_progress')
+        throw new Error('Permission request cannot reopen a terminal tool call.')
+      return applyRuntimeSessionEvents(latest, turn.scope, [
+        {
+          id: `permission-tool:${request.requestId}`,
+          kind: 'tool',
+          level: 'info',
+          timestamp: Math.max(this.now(), turn.runStartedAt),
+          sessionId: request.sessionId,
+          promptMessageId,
+          toolCallId: request.toolCallId,
+          title: request.title,
+          providerToolName: request.providerToolName ?? request.mcpIdentity,
+          toolKind: request.toolKind,
+          toolLocations: request.toolLocations,
+          rawInput: request.rawInput,
+          status: request.status ?? 'in_progress'
+        }
+      ])
+    })
+    this.notifyCommitted(committed)
+    return committed
+  }
+
   async consumeReplay(
     sessionId: string,
     promptMessageId: string
@@ -397,14 +497,6 @@ export class RuntimeSessionOwner {
 
   accept(event: AcpRuntimeEvent): void {
     if (!event.sessionId || !event.promptMessageId || event.publicationOwner === 'main') return
-    // These errors hand ownership to a recovery flow. Persisting them as terminal here would clear
-    // activeRun before compaction/Resume can continue the same logical turn.
-    if (
-      event.kind === 'error' &&
-      (event.recoverable === 'context-overflow' || isClaudeApiResponseInterruption(event.text))
-    ) {
-      return
-    }
     const turn = this.turns.get(turnKey(event.sessionId, event.promptMessageId))
     if (
       !turn ||
@@ -450,7 +542,7 @@ export class RuntimeSessionOwner {
       const batch = turn.pending.slice()
       const consumeReplay = turn.replayConsumptionPending
       committed = await this.dependencies.mutateSession(turn.scope, (latest) => {
-        assertScopeMatchesSession(turn.scope, latest)
+        assertScopeMatchesSession(turn.scope, latest, false, turn.promptRuntimeSegmentId)
         const next = applyRuntimeSessionEvents(latest, turn.scope, batch)
         if (consumeReplay) {
           delete next.pendingHistoryReplay
@@ -542,7 +634,7 @@ export class RuntimeSessionOwner {
     if (!attempt.messageId) {
       let stagedMessageId: string | undefined
       const staged = await this.dependencies.mutateSession(turn.scope, (latest) => {
-        assertScopeMatchesSession(turn.scope, latest)
+        assertScopeMatchesSession(turn.scope, latest, false, turn.promptRuntimeSegmentId)
         const attached = attachRuntimeSessionArtifacts(latest, turn.scope, {
           // This durable marker proves which claim was attached before irreversible finalization.
           // The actual runtime event id is attached with the finalized descriptors below.
@@ -578,7 +670,7 @@ export class RuntimeSessionOwner {
     }
     try {
       const session = await this.dependencies.mutateSession(turn.scope, (latest) => {
-        assertScopeMatchesSession(turn.scope, latest)
+        assertScopeMatchesSession(turn.scope, latest, false, turn.promptRuntimeSegmentId)
         return attachRuntimeSessionArtifacts(latest, turn.scope, {
           messageId: attempt.messageId,
           eventId: attempt.eventId,
