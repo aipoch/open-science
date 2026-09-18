@@ -564,7 +564,7 @@ describe('AcpProviderPromptExecutor', () => {
   })
 
   it.each(['text', 'tool', 'stop'] as const)(
-    'drops a first %s superseded during acceptance without disturbing the new interaction',
+    'drops a delayed old %s when a same-prompt resume owns the interaction',
     async (firstKind) => {
       const response: PromptResponse = { stopReason: 'cancelled' }
       const toolNotification: SessionNotification = {
@@ -604,7 +604,8 @@ describe('AcpProviderPromptExecutor', () => {
       expect(old.routeNotification).not.toHaveBeenCalled()
       expect(old.captureStop).not.toHaveBeenCalled()
 
-      // Replace ownership while acceptance is suspended, not before dispatch or after routing.
+      // A Resume reuses the durable prompt Message but owns a new interaction/turn token. Replace
+      // that ownership while acceptance is suspended, before the old provider update can route.
       owner = newOwner
       const nextResponse: PromptResponse = { stopReason: 'end_turn' }
       const next = setup([update(), stop(nextResponse)])

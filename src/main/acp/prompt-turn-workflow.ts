@@ -47,7 +47,11 @@ import {
 const log = createLogger('acp-prompt-turn-workflow')
 
 type AcpPromptTurnMode =
-  | Readonly<{ kind: 'user'; promptAttemptId?: string }>
+  | Readonly<{
+      kind: 'user'
+      promptAttemptId?: string
+      runtimeReviewOwner?: 'task' | 'renderer'
+    }>
   | Readonly<{
       kind: 'application'
       attribution: MessageAttribution
@@ -94,6 +98,7 @@ type AcpPromptTurnEnvironment = Readonly<{
   ) => void
   onSkillImportAttachmentEligible?: (sessionId: string, turnToken: string, uri: string) => void
   onProviderPromptAccepted?: (sessionId: string, promptAttemptId?: string) => void
+  onRuntimeSessionProviderAccepted?: (sessionId: string, promptMessageId: string) => Promise<void>
   sideChatRelays?: Readonly<{
     claim: (parentSessionId: string) =>
       | Readonly<{
@@ -172,6 +177,7 @@ type AcpPromptTurnFinalization = Readonly<{
   errorMessage: AcpPromptFinalizationHandles['errorMessage']
   errorKind: AcpPromptFinalizationHandles['errorKind']
   pushEvent: AcpPromptFinalizationHandles['pushEvent']
+  commitTerminal?: AcpPromptFinalizationHandles['commitTerminal']
   onPromptEnded: (sessionId: string, turnToken: string) => void
   generationActivityChanged: () => void
   autoCompact: (
@@ -221,6 +227,11 @@ type AcpPromptTurnWorkflowOptions = Readonly<{
     permissionProfile: PermissionProfileId
   }) => Promise<{ contextReset?: boolean }>
   recordAdmittedPrompt: (request: AcpPromptRequest) => void
+  beginRuntimeSessionTurn?: (
+    request: AcpPromptRequest,
+    executionId: string,
+    reviewOwner: 'task' | 'renderer'
+  ) => Promise<void>
   onPromptStarted: (sessionId: string, turnToken: string, promptAttemptId?: string) => void
   emitState: () => void
 }>
@@ -334,6 +345,13 @@ class AcpPromptTurnWorkflow {
       if (admittedProvenanceContext) {
         this.options.interactions.updatePromptProvenance(interaction, admittedProvenanceContext)
         admittedRequest = { ...request, provenanceContext: admittedProvenanceContext }
+      }
+      if (this.options.beginRuntimeSessionTurn) {
+        await this.options.beginRuntimeSessionTurn(
+          admittedRequest,
+          interaction.turnToken,
+          mode.kind === 'user' ? (mode.runtimeReviewOwner ?? 'renderer') : 'renderer'
+        )
       }
       this.options.registry.select(admittedRequest.sessionId)
       this.options.recordAdmittedPrompt(admittedRequest)
@@ -552,6 +570,12 @@ class AcpPromptTurnWorkflow {
             // Receipts describe provider acceptance and keep their durable notifications. Only
             // the current turn may publish live acceptance and Skill completion after those waits.
             if (!this.isCurrent(turn)) return
+            if (request.provenanceContext?.promptMessageId) {
+              await env.onRuntimeSessionProviderAccepted?.(
+                sessionId,
+                request.provenanceContext.promptMessageId
+              )
+            }
             this.safeCallback('provider-prompt-accepted callback failed', () =>
               env.onProviderPromptAccepted?.(sessionId, turn.mode.promptAttemptId)
             )
@@ -667,6 +691,7 @@ class AcpPromptTurnWorkflow {
         errorMessage: finalization.errorMessage,
         errorKind: finalization.errorKind,
         pushEvent: finalization.pushEvent,
+        ...(finalization.commitTerminal ? { commitTerminal: finalization.commitTerminal } : {}),
         emitState: this.options.emitState,
         onPromptEnded: () => finalization.onPromptEnded(sessionId, turnToken),
         generationActivityChanged: finalization.generationActivityChanged,

@@ -838,7 +838,7 @@ const createProvenanceArtifact = async (sessionId) => {
       'bash_execute',
       await client.callTool({
         name: 'bash_execute',
-        arguments: { command: "printf 'artifact-provenance-e2e\\n'" }
+        arguments: { command: "echo 'artifact-provenance-e2e'" }
       })
     )
     const state = toolResult(

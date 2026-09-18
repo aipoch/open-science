@@ -46,7 +46,10 @@ import type { ReviewWithChecks } from '../../shared/reviewer'
 import type { DelegatedWorkRecordCommands } from './session-records'
 import { projectRootArtifactVisibility } from '../../shared/artifact-visibility'
 import { normalizeSessionFile } from '../../shared/session-persistence'
-import { finalizeDelegatedArtifactPublication } from './delegated-artifact-publication'
+import {
+  DelegatedArtifactPublicationError,
+  finalizeDelegatedArtifactPublication
+} from './delegated-artifact-publication'
 import { createProductionDelegatedFrameworks } from './production-frameworks'
 import type { AcpDelegateExecutionCallbacks, AcpDelegateRuntime } from './acp-execution'
 import type { DelegateExecutionInput } from './execution-port'
@@ -2845,6 +2848,69 @@ describe('production delegated-work composition', () => {
     expect(graph.messages.find(({ id }) => id === 'child-answer')?.artifactIds).toBeUndefined()
     expect(durable.artifacts).toBeUndefined()
     expect(projectRootArtifactVisibility(durable, rootBranch.id)).toMatchObject({ placements: [] })
+  })
+
+  it('preserves finalized delegated Artifact facts when Session attachment is unconfirmed', async () => {
+    const artifact: ArtifactFile = {
+      id: 'version-committed',
+      versionId: 'version-committed',
+      artifactId: 'artifact-committed',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      runId: 'run-1',
+      messageId: 'message-1',
+      name: 'result.txt',
+      path: '/managed/result.txt',
+      fileUrl: 'file:///managed/result.txt',
+      size: 1,
+      mtimeMs: 1
+    }
+    const failure = await finalizeDelegatedArtifactPublication({
+      publication: {
+        appSessionId: 'session-1',
+        artifactStorageSessionId: 'session-1',
+        runId: 'run-1',
+        promptMessageId: 'prompt-1',
+        artifactClaimId: 'claim-1',
+        artifacts: [artifact]
+      },
+      terminalMessageId: 'message-1',
+      scope: {
+        session: { projectId: 'project-1', sessionId: 'session-1' },
+        executionId: 'attempt-1',
+        attemptId: 'attempt-1',
+        rootFrameId: 'root-frame',
+        agentFrameId: 'agent-frame',
+        messageBranchId: 'branch-1',
+        runtimeSegmentId: 'runtime-1',
+        promptMessageId: 'prompt-1',
+        agentName: 'delegate'
+      },
+      commands: {
+        attachDelegatedMessageArtifacts: async () => {
+          throw new Error('SECRET_TOKEN=attachment-secret')
+        }
+      } as unknown as DelegatedWorkRecordCommands,
+      handlers: { finalizeRunArtifacts: async () => [artifact] }
+    }).then(
+      () => undefined,
+      (error: unknown) => error
+    )
+
+    expect(failure).toBeInstanceOf(DelegatedArtifactPublicationError)
+    expect(failure).toMatchObject({
+      committed: {
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        runId: 'run-1',
+        messageId: 'message-1',
+        artifactVersionIds: ['version-committed'],
+        artifactFinalization: 'committed',
+        sessionAttachment: 'unconfirmed',
+        artifacts: [artifact]
+      }
+    })
+    expect((failure as Error).message).not.toContain('attachment-secret')
   })
 
   it('publishes a child frame Notebook file through the Artifact write boundary and projects its Version', async () => {

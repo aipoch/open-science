@@ -6,7 +6,7 @@ import {
   type ApplicationInvocation
 } from './application-command-router'
 import type { ApplicationEventMap, ApplicationEventPublisher } from './application-events'
-import type { ArtifactHandlers } from './artifacts/ipc'
+import { artifactFinalizationFailureResult, type ArtifactHandlers } from './artifacts/ipc'
 import {
   ArtifactFinalizationProofError,
   ArtifactOwnershipPersistenceRaceError
@@ -627,6 +627,8 @@ const registerDataContentApplicationCommands = (
             artifacts: await dependencies.artifacts.finalizeRunArtifacts(args[0])
           }
         } catch (error) {
+          const executionFailure = artifactFinalizationFailureResult(error)
+          if (executionFailure) return executionFailure
           if (error instanceof ArtifactOwnershipPersistenceRaceError) {
             return {
               ok: false as const,

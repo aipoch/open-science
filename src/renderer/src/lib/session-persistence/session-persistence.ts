@@ -50,6 +50,10 @@ import type {
   StreamingMessageContentByMessageId
 } from '../../stores/session-store'
 import { projectRendererFailure } from '../../renderer-diagnostics'
+import {
+  acknowledgeSessionConversationCommands,
+  pendingSessionConversationCommands
+} from '../../stores/session-conversation-intents'
 
 type SessionPersistenceApi = {
   list?: () => Promise<ListSessionSummariesResult>
@@ -767,8 +771,27 @@ const mergeSaveSessionOptions = (
   const conflictRebaseFields = [
     ...new Set([...(previous?.conflictRebaseFields ?? []), ...(next?.conflictRebaseFields ?? [])])
   ]
-  return conflictRebaseFields.length > 0 ? { conflictRebaseFields } : undefined
+  const conversationCommands = [
+    ...(previous?.conversationCommands ?? []),
+    ...(next?.conversationCommands ?? [])
+  ].filter(
+    (command, index, commands) => commands.findIndex(({ id }) => id === command.id) === index
+  )
+  return conflictRebaseFields.length > 0 || conversationCommands.length > 0
+    ? {
+        ...(conflictRebaseFields.length > 0 ? { conflictRebaseFields } : {}),
+        ...(conversationCommands.length > 0 ? { conversationCommands } : {})
+      }
+    : undefined
 }
+
+const withPendingConversationCommands = (
+  session: PersistedChatSession,
+  options: SaveSessionOptions | undefined
+): SaveSessionOptions | undefined =>
+  mergeSaveSessionOptions(options, {
+    conversationCommands: pendingSessionConversationCommands(session.id)
+  })
 
 const LATEST_SESSION_SAVE_INTERVAL_MS = 500
 // While a turn is streaming, intermediate flushes only bound crash loss and the terminal commit
@@ -966,6 +989,7 @@ const createOrderedSessionPersistence = (
       ? await api.saveSession(submitted, options)
       : await api.saveSession(submitted)
     acknowledgeSession(durable)
+    acknowledgeSessionConversationCommands(durable)
     return durable
   }
 
@@ -1043,21 +1067,32 @@ const createOrderedSessionPersistence = (
     },
     clearWriteFailure: (target) => failedWritesByTarget.delete(target),
     clearWriteFailures: () => failedWritesByTarget.clear(),
-    saveSession: (session, options) =>
-      enqueue(`session:${session.id}`, () => saveSubmittedSession(session, options)),
-    saveSessionWithRecovery: (session, options, recover) =>
-      enqueue(`session:${session.id}`, async () => {
+    saveSession: (session, options) => {
+      // Commands must be paired with the snapshot visible when the save is admitted. Reading the
+      // pending buffer after an older save waits in the queue can attach a newer Message command.
+      const submittedOptions = withPendingConversationCommands(session, options)
+      return enqueue(`session:${session.id}`, () => saveSubmittedSession(session, submittedOptions))
+    },
+    saveSessionWithRecovery: (session, options, recover) => {
+      const submittedOptions = withPendingConversationCommands(session, options)
+      return enqueue(`session:${session.id}`, async () => {
         const submitted = structuredClone(session)
         submitted.revision = Math.max(
           sessionRevision(submitted),
           acknowledgedRevisions.get(submitted.id) ?? 0
         )
         try {
-          return await saveSubmittedSession(submitted, options)
+          return await saveSubmittedSession(submitted, submittedOptions)
         } catch (error) {
-          return recover(error, submitted, saveSubmittedSession)
+          return recover(error, submitted, (retrySession, retryOptions) =>
+            saveSubmittedSession(
+              retrySession,
+              mergeSaveSessionOptions(submittedOptions, retryOptions)
+            )
+          )
         }
-      }),
+      })
+    },
     saveManifest: (request) => enqueue('manifest', () => api.saveManifest(request)),
     flush: async () => {
       // Runtime/store updates can admit new snapshots while earlier writes are in flight.
@@ -1099,13 +1134,15 @@ const resetSessionPersistenceWriteFailuresForTests = (): void => {
 const saveSessionInOrder = async (
   session: PersistedChatSession,
   persistence: OrderedSessionPersistence = liveSessionPersistence,
-  api: SessionReadApi = window.api.sessions
+  api: SessionReadApi = window.api.sessions,
+  options?: SaveSessionOptions
 ): Promise<PersistedChatSession> => {
   const target = `session:${session.id}`
   try {
+    const saveOptions = withPendingConversationCommands(session, options)
     const durable = await persistence.saveSessionWithRecovery(
       session,
-      undefined,
+      saveOptions,
       async (error, submitted, retry) => {
         if (!isSessionRevisionConflictError(error)) throw error
         const base = persistence.getAcknowledgedSession(submitted.id)
@@ -1126,6 +1163,7 @@ const saveSessionInOrder = async (
         )
       }
     )
+    acknowledgeSessionConversationCommands(durable)
     unresolvedSessionRevisionConflictTargets.delete(target)
     return durable
   } catch (error) {
@@ -1133,6 +1171,14 @@ const saveSessionInOrder = async (
     throw error
   }
 }
+
+const saveSessionFieldsInOrder = (
+  session: PersistedChatSession,
+  conflictRebaseFields: readonly SessionConflictRebaseField[]
+): Promise<PersistedChatSession> =>
+  saveSessionInOrder(session, liveSessionPersistence, window.api.sessions, {
+    conflictRebaseFields: [...conflictRebaseFields]
+  })
 
 const confirmPendingDelegationPolicyAuthority = async (
   session: ChatSession
@@ -1752,7 +1798,14 @@ const createStoreSaver = (
         ].filter((field): field is 'title' | 'pinned' => field === 'title' || field === 'pinned')
         // Catalog hydration changes object identity without introducing a local metadata edit.
         if (!isForced && conflictRebaseFields.length === 0) continue
-        const saveOptions = conflictRebaseFields.length > 0 ? { conflictRebaseFields } : undefined
+        const conversationCommands = pendingSessionConversationCommands(session.id)
+        const saveOptions =
+          conflictRebaseFields.length > 0 || conversationCommands.length > 0
+            ? {
+                ...(conflictRebaseFields.length > 0 ? { conflictRebaseFields } : {}),
+                ...(conversationCommands.length > 0 ? { conversationCommands } : {})
+              }
+            : undefined
         tasks.push({
           target,
           failureContext: { conflictRebaseFields },
@@ -1880,7 +1933,10 @@ const createStoreSaver = (
           ])
         ]
 
-        const saveOptions = conflictRebaseFields.length > 0 ? { conflictRebaseFields } : undefined
+        const saveOptions = mergeSaveSessionOptions(
+          conflictRebaseFields.length > 0 ? { conflictRebaseFields } : undefined,
+          { conversationCommands: pendingSessionConversationCommands(session.id) }
+        )
         const sourceAuthority = acknowledgedSessions.get(session.id)
         let submittedAuthority = sourceAuthority
         let rebasedBeforeSave = false
@@ -2015,6 +2071,7 @@ const createStoreSaver = (
                 }
                 acknowledgedRevisions.set(session.id, sessionRevision(durableSession))
                 acknowledgedSessions.set(session.id, durableSession)
+                acknowledgeSessionConversationCommands(durableSession)
                 observePersistencePhase('session-apply-durable', () =>
                   applyDurableSession(durableSession, saveOptions, recoveredRevisionConflict)
                 )
@@ -2049,6 +2106,7 @@ const createStoreSaver = (
                     }
                     acknowledgedRevisions.set(session.id, sessionRevision(durableSession))
                     acknowledgedSessions.set(session.id, durableSession)
+                    acknowledgeSessionConversationCommands(durableSession)
                     observePersistencePhase('session-apply-durable', () =>
                       applyDurableSession(
                         durableSession,
@@ -2620,6 +2678,7 @@ export {
   deriveSessionCatalogRecovery,
   deleteSession,
   saveSessionInOrder,
+  saveSessionFieldsInOrder,
   setDelegationPolicyAuthority,
   toPersistedSessionForAuthorityMaterialization,
   useSessionPersistence

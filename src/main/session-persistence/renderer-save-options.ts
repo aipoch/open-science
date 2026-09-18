@@ -1,7 +1,9 @@
 import type {
+  PersistedChatSession,
   SaveSessionOptions,
   SessionConflictRebaseField
 } from '../../shared/session-persistence'
+import { sanitizeSessionConversationCommands } from '../../shared/session-conversation-command'
 
 const RENDERER_SESSION_CONFLICT_REBASE_FIELDS = new Set<SessionConflictRebaseField>([
   'title',
@@ -16,11 +18,16 @@ const COMMAND_OWNED_SESSION_FIELDS = new Set(['enabledComputeHosts', 'selectedCo
 // Electron IPC arguments are runtime values even when the preload contract is typed. Project only
 // renderer-owned rebase authority before the request reaches Main's Session persistence owner.
 export const sanitizeRendererSaveSessionOptions = (
-  options: unknown
+  options: unknown,
+  session?: PersistedChatSession
 ): SaveSessionOptions | undefined => {
   if (typeof options !== 'object' || options === null) return undefined
-  const candidate = Reflect.get(options, 'conflictRebaseFields')
-  if (!Array.isArray(candidate)) return undefined
+  const fields = Reflect.get(options, 'conflictRebaseFields')
+  const candidate = Array.isArray(fields) ? fields : []
+  const conversationCommands = sanitizeSessionConversationCommands(
+    Reflect.get(options, 'conversationCommands'),
+    session
+  )
   if (candidate.some((field) => COMMAND_OWNED_SESSION_FIELDS.has(field))) {
     throw new Error('Compute Host settings cannot be replayed through Session saves.')
   }
@@ -33,5 +40,10 @@ export const sanitizeRendererSaveSessionOptions = (
       )
     )
   ]
-  return conflictRebaseFields.length > 0 ? { conflictRebaseFields } : undefined
+  return conflictRebaseFields.length > 0 || conversationCommands.length > 0
+    ? {
+        ...(conflictRebaseFields.length ? { conflictRebaseFields } : {}),
+        ...(conversationCommands.length ? { conversationCommands } : {})
+      }
+    : undefined
 }

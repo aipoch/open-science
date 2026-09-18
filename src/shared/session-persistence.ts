@@ -883,6 +883,15 @@ export type PersistedChatSession = {
   // Main-owned witness for the latest terminal Task Run whose Session projection was committed.
   // Historical files omit it; Task Run recovery then fails closed.
   taskRunCommitId?: string
+  // Once adopted, runtime transcript/Artifact writes belong to Main. Renderer saves carry only
+  // preferences and explicit user commands; this marker is never caller-authoritative.
+  runtimeTranscriptOwner?: 'main'
+  runtimeTranscriptReviewOwner?: {
+    promptMessageId: string
+    owner: 'task' | 'renderer'
+  }
+  runtimeTranscriptLastRun?: PersistedActiveRun
+  runtimeConversationCommandIds?: string[]
   // Survives renderer/app restarts so a failed Resume remains retryable without reconstructing the
   // state from an error string or re-sending the interrupted prompt.
   resumeRecovery?: PersistedSessionResumeRecovery
@@ -1017,6 +1026,7 @@ export type SessionConflictRebaseField =
 
 export type SaveSessionOptions = {
   conflictRebaseFields?: SessionConflictRebaseField[]
+  conversationCommands?: import('./session-conversation-command').SessionConversationCommand[]
 }
 
 export const MAX_PERSISTED_SESSION_BYTES = 256 * 1024 * 1024
@@ -4476,6 +4486,28 @@ const sanitizeSession = (
 
   if (activeRun) sanitized.activeRun = activeRun
   if (taskRunCommitId) sanitized.taskRunCommitId = taskRunCommitId
+  if (session.runtimeTranscriptOwner === 'main') {
+    sanitized.runtimeTranscriptOwner = 'main'
+    const reviewOwner = session.runtimeTranscriptReviewOwner
+    if (
+      isRecord(reviewOwner) &&
+      typeof reviewOwner.promptMessageId === 'string' &&
+      reviewOwner.promptMessageId.length > 0 &&
+      reviewOwner.promptMessageId.length <= 256 &&
+      (reviewOwner.owner === 'task' || reviewOwner.owner === 'renderer')
+    ) {
+      sanitized.runtimeTranscriptReviewOwner = {
+        promptMessageId: reviewOwner.promptMessageId,
+        owner: reviewOwner.owner
+      }
+    }
+    sanitized.runtimeTranscriptLastRun = sanitizeActiveRun(session.runtimeTranscriptLastRun)
+    if (Array.isArray(session.runtimeConversationCommandIds)) {
+      sanitized.runtimeConversationCommandIds = session.runtimeConversationCommandIds
+        .filter((id): id is string => typeof id === 'string' && id.length > 0 && id.length <= 256)
+        .slice(-256)
+    }
+  }
   if (resumeRecovery) sanitized.resumeRecovery = resumeRecovery
   if (branchSource) sanitized.branchSource = branchSource
   if (session.packageOrigin !== undefined) {

@@ -1031,12 +1031,16 @@ describe('Session Store architecture', () => {
         'src/renderer/src/stores/session-job-store.test.ts',
         'src/renderer/src/stores/session-store.architecture.test.ts',
         'src/renderer/src/stores/session-store.archive-order.test.ts',
-        'src/renderer/src/stores/session-store.test.ts'
+        'src/renderer/src/stores/session-store.test.ts',
+        'src/renderer/src/stores/session-conversation-intents.test.ts',
+        'src/renderer/src/stores/session-conversation-intents.ts',
+        'src/renderer/src/stores/session-store-conversation-intents.test.ts'
       ],
       interfacePaths: [
         'src/renderer/src/stores/session-store.ts',
         'src/renderer/src/stores/session-job-store.ts',
-        'src/renderer/src/stores/session-store-run-activity-helpers.ts'
+        'src/renderer/src/stores/session-store-run-activity-helpers.ts',
+        'src/renderer/src/stores/session-conversation-intents.ts'
       ],
       consumerModules: [
         'workspace_runtime',
@@ -1049,7 +1053,9 @@ describe('Session Store architecture', () => {
           'src/renderer/src/stores/session-store.test.ts',
           'src/renderer/src/stores/session-store.archive-order.test.ts',
           'src/renderer/src/stores/session-store.architecture.test.ts',
-          'src/renderer/src/stores/session-job-store.test.ts'
+          'src/renderer/src/stores/session-job-store.test.ts',
+          'src/renderer/src/stores/session-conversation-intents.test.ts',
+          'src/renderer/src/stores/session-store-conversation-intents.test.ts'
         ],
         contract: ['src/shared/session-persistence.test.ts'],
         consumer: [

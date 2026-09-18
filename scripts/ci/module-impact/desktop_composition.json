@@ -1062,7 +1062,8 @@
       "src/main/session-plan/plan-legacy-compatibility.test.ts",
       "src/main/settings/responses-bridge.plan-tools.test.ts",
       "src/main/settings/provider-runtime-health-owner.test.ts",
-      "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts"
+      "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
+      "src/main/session-persistence/runtime-authority.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

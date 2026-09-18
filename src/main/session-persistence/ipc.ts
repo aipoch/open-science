@@ -360,7 +360,7 @@ const registerSessionPersistenceIpcHandlers = (
       let durable: PersistedChatSession
       try {
         durable = await withDataRootWrite(async () => {
-          const rendererOptions = sanitizeRendererSaveSessionOptions(options)
+          const rendererOptions = sanitizeRendererSaveSessionOptions(options, session)
           const result = rendererOptions
             ? await handlers.saveSession(session, rendererOptions)
             : await handlers.saveSession(session)

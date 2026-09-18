@@ -1100,7 +1100,8 @@ describe('Compute service architecture', () => {
       'src/main/storage/brand-location.test.ts',
       'src/main/storage/migration-target-race.test.ts',
       'src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx',
-      'src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts'
+      'src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts',
+      'src/main/session-persistence/runtime-authority.test.ts'
     ])
   })
 

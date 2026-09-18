@@ -113,13 +113,33 @@ export type FinalizeRunArtifactsRequest = {
 // renderer can keep that terminal failure from offering a manual retry; operational failures reject.
 export const ARTIFACT_OWNERSHIP_PERSISTENCE_RACE = 'ownership-persistence-race' as const
 export const ARTIFACT_FINALIZATION_INVALID_PROOF = 'invalid-proof' as const
+export const ARTIFACT_FINALIZATION_OPERATIONAL_FAILURE = 'operational-failure' as const
 
 export type ArtifactFinalizationErrorCode =
-  typeof ARTIFACT_OWNERSHIP_PERSISTENCE_RACE | typeof ARTIFACT_FINALIZATION_INVALID_PROOF
+  | typeof ARTIFACT_OWNERSHIP_PERSISTENCE_RACE
+  | typeof ARTIFACT_FINALIZATION_INVALID_PROOF
+  | typeof ARTIFACT_FINALIZATION_OPERATIONAL_FAILURE
+
+export type ArtifactFinalizationExecutionState = Readonly<{
+  stage: 'durable-finalization' | 'compatibility-publication' | 'activation'
+  projectId: string
+  sessionId: string
+  runId: string
+  messageId: string
+  artifactVersionIds: string[]
+  durableFinalizationCompleted: boolean
+  compatibilityPublicationCompleted: boolean
+  activationCompleted: boolean
+}>
 
 export type FinalizeRunArtifactsResult =
   | { ok: true; artifacts: ArtifactFile[] }
-  | { ok: false; code: ArtifactFinalizationErrorCode; message: string }
+  | {
+      ok: false
+      code: ArtifactFinalizationErrorCode
+      message: string
+      execution?: ArtifactFinalizationExecutionState
+    }
 
 // Renderer request to open one managed artifact through main-process path validation.
 export type OpenArtifactFileRequest = {
