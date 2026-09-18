@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import {
   constants,
@@ -20,6 +20,7 @@ import type { AgentProcessSpawner } from '../agent-framework/types'
 import {
   capturePosixProcessTreeIdentity,
   createPosixProcessTreeOwnership,
+  proveRecordedPosixLeaderGone,
   registerProcessTreeOwnership,
   terminateProcessTree,
   trackOwnedPosixProcessTree
@@ -46,7 +47,9 @@ type Receipt = ProcessScope & {
     leader?: { pid: number; birthToken?: string }
   }
 }
-const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/u
+// UUID shapes: Linux boot_id is lowercase; macOS kern.bootsessionuuid is uppercase.
+const uuidLower = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/u
+const uuidCased = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu
 const segment = (value: string): string => {
   if (
     !value ||
@@ -65,14 +68,44 @@ const matches = (receipt: Receipt, scope: Selection): boolean =>
     ([key, value]) => value === undefined || receipt[key as keyof Receipt] === value
   )
 const missing = (error: unknown): boolean => (error as NodeJS.ErrnoException).code === 'ENOENT'
-const bootId = (): string | undefined => {
-  if (process.platform !== 'linux') return undefined
+// OS-level sidecar files that Finder/Explorer create in any directory they browse. Harmless but
+// must be skipped rather than rejected, matching the repo-wide convention in data-root-selection.
+const osArtifact = (name: string): boolean => name === '.DS_Store' || name === 'desktop.ini'
+// Per-boot random UUID: Linux /proc/sys/kernel/random/boot_id (lowercase), macOS kern.bootsessionuuid
+// (uppercase, generated via uuid_generate on every boot by IOPMrootDomain). Intentionally cased:
+// we compare the stored value against a fresh read as raw strings; normalising case would mask
+// same-boot-different-case corruption as a spurious reboot.
+const bootSessionId = (): string | undefined => {
   try {
-    const value = readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim()
-    return uuid.test(value) ? value : undefined
+    if (process.platform === 'linux') {
+      const value = readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim()
+      return uuidLower.test(value) ? value : undefined
+    }
+    if (process.platform === 'darwin') {
+      const result = spawnSync('/usr/sbin/sysctl', ['-n', 'kern.bootsessionuuid'], {
+        encoding: 'utf8',
+        timeout: 2000
+      })
+      if (result.status !== 0 || !result.stdout) return undefined
+      const value = result.stdout.trim()
+      // macOS emits uppercase; store as-is and compare case-sensitively.
+      return uuidCased.test(value) ? value : undefined
+    }
   } catch {
-    return undefined
+    // Unreadable boot identity is treated as absent, not as proof of a reboot.
   }
+  return undefined
+}
+// Whether `current` proves the machine rebooted since `recorded`. Both values must be present and
+// match the expected shape for their platform; missing or malformed either side → false (fail closed).
+const bootSessionProvesDifferentBoot = (
+  platform: 'linux' | 'darwin' | 'win32' | undefined,
+  recorded: string | undefined,
+  current: string | undefined
+): boolean => {
+  if (!recorded || !current || platform === 'win32') return false
+  const validShape = platform === 'linux' ? uuidLower : uuidCased
+  return validShape.test(recorded) && validShape.test(current) && recorded !== current
 }
 const parse = (value: unknown): Receipt => {
   if (!value || typeof value !== 'object' || Array.isArray(value))
@@ -93,7 +126,7 @@ const parse = (value: unknown): Receipt => {
   if (
     Object.keys(receipt).some((key) => !fields.has(key)) ||
     receipt.version !== 1 ||
-    !uuid.test(receipt.receiptId) ||
+    !uuidLower.test(receipt.receiptId) ||
     !['starting', 'owned', 'cleanup-pending'].includes(receipt.phase) ||
     !Number.isFinite(receipt.createdAt)
   )
@@ -112,9 +145,12 @@ const parse = (value: unknown): Receipt => {
         (key) => !['platform', 'token', 'bootId', 'leader'].includes(key)
       ) ||
       !['linux', 'darwin', 'win32'].includes(ownership.platform) ||
-      !uuid.test(ownership.token) ||
+      !uuidLower.test(ownership.token) ||
       (ownership.bootId !== undefined &&
-        (ownership.platform !== 'linux' || !uuid.test(ownership.bootId)))
+        // linux emits lowercase; darwin emits uppercase; both are valid per-boot UUIDs.
+        !(ownership.platform === 'linux'
+          ? uuidLower.test(ownership.bootId)
+          : uuidCased.test(ownership.bootId)))
     )
       throw new Error('Invalid process identity')
     if (ownership.leader !== undefined) {
@@ -259,13 +295,19 @@ export class DelegatedProcessOwnership {
       if (!this.directory(this.root)) return []
       const receipts: Receipt[] = []
       for (const projectId of scope.projectId ? [scope.projectId] : readdirSync(this.root)) {
+        if (osArtifact(projectId)) continue
         const project = join(this.root, segment(projectId))
         if (!this.directory(project)) continue
         for (const sessionId of scope.sessionId ? [scope.sessionId] : readdirSync(project)) {
+          if (osArtifact(sessionId)) continue
           const directory = this.sessionDirectory({ projectId, sessionId })
           if (!directory) continue
           for (const file of readdirSync(directory)) {
-            if (!file.endsWith('.json') || !uuid.test(file.slice(0, -5)))
+            if (osArtifact(file)) continue
+            // A .pending file is a torn write left by a crash between write and rename; skip it
+            // rather than throwing so one interrupted write does not block the whole scope.
+            if (file.endsWith('.json.pending')) continue
+            if (!file.endsWith('.json') || !uuidLower.test(file.slice(0, -5)))
               throw new Error('Incomplete process receipt')
             const path = join(directory, file)
             const stat = lstatSync(path)
@@ -322,10 +364,11 @@ export class DelegatedProcessOwnership {
     )
       throw new Error('Unsupported delegated process ownership platform')
     const ownership = createPosixProcessTreeOwnership(options.env)
+    const currentBootSession = bootSessionId()
     receipt.ownership = {
       platform: process.platform,
       token: ownership.token ?? randomUUID(),
-      ...(bootId() ? { bootId: bootId() } : {})
+      ...(currentBootSession ? { bootId: currentBootSession } : {})
     }
     this.write(receipt, true)
     // Retain intent on native launch errors: creation may have reached the kernel before failing.
@@ -384,13 +427,20 @@ export class DelegatedProcessOwnership {
     }
     // An execution adapter may fail before returning a physical handle. Preserve that explicit
     // cleanup failure without manufacturing a PID or backfilling historical terminal Attempts.
+    // Record the boot session so a proven reboot can clear this receipt automatically.
+    const currentBootSession = bootSessionId()
     this.write(
       {
         ...scope,
         version: 1,
         receiptId: randomUUID(),
         phase: 'cleanup-pending',
-        createdAt: Date.now()
+        createdAt: Date.now(),
+        ownership: {
+          platform: process.platform as 'linux' | 'darwin' | 'win32',
+          token: randomUUID(),
+          ...(currentBootSession ? { bootId: currentBootSession } : {})
+        }
       },
       true
     )
@@ -398,6 +448,7 @@ export class DelegatedProcessOwnership {
 
   async recover(scope: Selection = {}, stopLive = false): Promise<void> {
     const failures: unknown[] = []
+    const currentBootSession = bootSessionId()
     await Promise.all(
       this.receipts(scope).map(async (receipt) => {
         const child = this.live.get(receipt.receiptId)
@@ -409,19 +460,34 @@ export class DelegatedProcessOwnership {
               if ((await terminateProcessTree(child)).reaped) return
             } else if (receipt.ownership?.platform === process.platform) {
               const ownership = receipt.ownership
-              const currentBoot = bootId()
-              const rebooted =
-                ownership.platform === 'linux' &&
-                ownership.bootId &&
-                currentBoot &&
-                ownership.bootId !== currentBoot
+              // Proven reboot: no process from the recorded boot can still be alive.
+              // Linux: boot_id changes; macOS: kern.bootsessionuuid changes.
               if (
-                rebooted ||
-                (ownership.platform === 'win32' &&
-                  (await reapWindowsOwnedJob(`Local\\OpenScience.Delegation.${ownership.token}`)))
+                bootSessionProvesDifferentBoot(
+                  ownership.platform,
+                  ownership.bootId,
+                  currentBootSession
+                )
               ) {
                 this.remove(receipt)
                 return
+              }
+              // Windows: the named Job is the authoritative lifecycle owner.
+              if (
+                ownership.platform === 'win32' &&
+                (await reapWindowsOwnedJob(`Local\\OpenScience.Delegation.${ownership.token}`))
+              ) {
+                this.remove(receipt)
+                return
+              }
+              // POSIX: if we recorded a leader identity, try to prove the recorded tree gone
+              // by checking whether the pid still exists with the same birth token.
+              if (ownership.platform !== 'win32' && ownership.leader?.birthToken !== undefined) {
+                const outcome = await proveRecordedPosixLeaderGone(ownership.leader)
+                if (outcome === 'gone') {
+                  this.remove(receipt)
+                  return
+                }
               }
             }
             // POSIX observation was interrupted at application exit. A missing/reused leader or no

@@ -37,6 +37,7 @@ import {
   type RootDelegatePermissionEvent,
   type RootDelegatePermissionRequest
 } from './durable-delegated-work'
+import { DelegateExecutionCleanupError } from './execution-port'
 
 import { createProductionFrameWorkspace, type ResolvedImmutableInput } from './frame-workspace'
 import { createSessionDelegatedWorkRecords } from './session-record-adapter'
@@ -467,10 +468,25 @@ const createProductionDelegatedWorkComposition = (
     }
   })
 
-  const stopScopedWork = async (): Promise<void> => {
+  const stopScopedWork = async (log?: { warn(msg: string, err: unknown): void }): Promise<void> => {
     const scoped = await Promise.all([...works.values()])
     const results = await Promise.allSettled(scoped.map(({ key, work }) => work.stopSession(key)))
-    await ownership.recover({}, true)
+    // Recover ownership receipts for all live scoped work. A blocked receipt (process cleanup
+    // unconfirmed) is intentionally NOT propagated into the shutdown aggregate: one unprovable
+    // workspace must not silently block the global quit/update reaping gate. Workspace files remain
+    // protected — deletion and prepare still block until recovery succeeds.
+    try {
+      await ownership.recover({}, true)
+    } catch (error) {
+      if (error instanceof DelegateExecutionCleanupError) {
+        log?.warn(
+          'Delegated process cleanup is unconfirmed; affected workspace remains protected.',
+          error
+        )
+      } else {
+        throw error
+      }
+    }
     const failures = results.flatMap((result) =>
       result.status === 'rejected' ? [result.reason] : []
     )
@@ -551,7 +567,13 @@ const createProductionDelegatedWorkComposition = (
       settlementWake?.invalidateSession(sessionId)
       const scoped = await worksForSession(sessionId)
       const results = await Promise.allSettled(scoped.map(({ key, work }) => work.stopSession(key)))
-      await ownership.recover({ sessionId }, true)
+      // Blocked receipts for this session must not propagate into the shutdown/update-gate aggregate.
+      // Workspace files for the session remain protected; deletion and prepare still block.
+      try {
+        await ownership.recover({ sessionId }, true)
+      } catch (error) {
+        if (!(error instanceof DelegateExecutionCleanupError)) throw error
+      }
       const failures = results.flatMap((result) =>
         result.status === 'rejected' ? [result.reason] : []
       )

@@ -233,10 +233,24 @@ or inaccessible ownership remains blocked. The atomic-assignment rationale follo
 
 POSIX launches use the existing live process-tree tracker, a random inherited marker, and captured
 kernel leader identity. After an application crash, interrupted observation cannot rule out escaped
-or environment-scrubbed descendants. Such receipts remain protected: PID absence/reuse and marker
-absence are not cleanup proof. A different verified Linux kernel boot ID can clear old ownership.
-No corresponding reboot proof is claimed on macOS; ambiguous macOS receipts can remain blocked
-indefinitely. Normal live whole-tree teardown clears its receipt before releasing files.
+or environment-scrubbed descendants. On cold recovery (a new application instance reading receipts
+from a prior crash), ownership is cleared in three provable cases:
+
+- The recorded leader pid is absent from a complete process snapshot, or its birth token no longer
+  matches (PID reuse) — the recorded tree is demonstrably gone.
+- A proven reboot: the recorded per-boot session id (`ownership.bootId`) differs from the one
+  currently read from the kernel. On Linux this is `/proc/sys/kernel/random/boot_id` (lowercase
+  UUID); on macOS this is `kern.bootsessionuuid` (uppercase UUID, generated fresh on every boot
+  by `IOPMrootDomain::initializeBootSessionUUID()`). Both change on a true reboot and are stable
+  across sleep and hibernation.
+- The live ChildProcess handle is reaped by the same instance that holds it.
+
+When none of the above applies — an incomplete process snapshot, a leader with no recorded birth
+token, or an unresolvable ambiguous case — the receipt stays blocked: the affected workspace
+cannot be deleted or reused. A blocked receipt is not propagated into the global quit/update
+reaping gate; it only protects the specific workspace. `recordFailure` receipts also carry an
+ownership block with the platform and boot session id so they can be cleared after a proven
+reboot. Normal live whole-tree teardown clears its receipt before releasing files.
 
 This format protects newly launched executions only. It does not backfill historical Attempts or
 infer old orphan ownership from paths, process names, or terminal history. Older application versions

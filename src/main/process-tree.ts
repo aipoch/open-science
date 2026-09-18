@@ -1026,6 +1026,62 @@ export const terminateOwnedPosixProcessGroupById = (
         log
       )
     : Promise.resolve({ reaped: false })
+
+// Outcome of proving a persisted POSIX leader receipt from a later application instance:
+// 'gone' is positive proof that the recorded tree no longer exists, 'blocked' retains ownership.
+export type PosixLeaderRecoveryOutcome = 'gone' | 'blocked'
+
+// Cold recovery for a leader recorded by a previous, crashed application instance. There is no
+// ChildProcess handle and no live tracker, so the only admissible evidence is the kernel's own
+// birth identity for the recorded pid, read from a COMPLETE process snapshot.
+//
+// 'gone' is returned in exactly two provable cases:
+//   - the recorded pid is absent from a complete snapshot, or
+//   - the pid is present but its birth token differs, i.e. the pid was reused by an unrelated
+//     process. We must never signal that replacement.
+// Everything else — an incomplete snapshot, a missing recorded birth token, a live exact match
+// that will not die — stays 'blocked' so the caller keeps protecting the workspace. Liveness is
+// judged only from the snapshot; a bare kill(pid, 0) cannot distinguish PID reuse.
+export const proveRecordedPosixLeaderGone = async (
+  leader: { pid: number; birthToken?: string },
+  signal?: NodeJS.Signals,
+  log?: ProcessTreeLogger
+): Promise<PosixLeaderRecoveryOutcome> => {
+  if (process.platform !== 'linux' && process.platform !== 'darwin') return 'blocked'
+  if (!Number.isSafeInteger(leader.pid) || leader.pid <= 0) return 'blocked'
+  // Without a recorded birth token any pid match would be a guess, and pid absence alone cannot
+  // rule out a descendant that outlived the leader. Retain the receipt instead.
+  if (leader.birthToken === undefined) return 'blocked'
+  const recorded: PosixProcessIdentity = {
+    pid: leader.pid,
+    ppid: 0,
+    pgid: leader.pid,
+    sid: leader.pid,
+    birthToken: leader.birthToken,
+    parentBirthToken: undefined,
+    birthOrder: undefined
+  }
+  const snapshot = await collectPosixProcessTable()
+  // An incomplete snapshot cannot prove absence: the recorded leader may simply be unreadable.
+  if (!snapshot.complete) return 'blocked'
+  if (!samePosixIdentity(recorded, snapshot.processes.get(leader.pid))) {
+    // Either the pid is absent, or it now names a different process epoch. The recorded tree is
+    // gone; its numeric group id may already belong to a stranger, so nothing is signaled.
+    return 'gone'
+  }
+  // The exact recorded leader is still alive. Its detached group is still addressable by the
+  // persisted id, so terminate it and require confirmed exit before releasing ownership.
+  const result = await terminateOwnedPosixProcessGroup(
+    { kind: 'owned-posix-process-group', id: leader.pid },
+    signal,
+    log
+  )
+  if (!result.reaped) return 'blocked'
+  const confirmation = await collectPosixProcessTable()
+  if (!confirmation.complete) return 'blocked'
+  return samePosixIdentity(recorded, confirmation.processes.get(leader.pid)) ? 'blocked' : 'gone'
+}
+
 const terminateTrackedPosixProcessTree = async (
   child: ChildProcess,
   tracker: PosixProcessTracker,
