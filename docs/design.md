@@ -822,6 +822,12 @@ Active-dialog menus and other foreground child layers retain their own ordering.
   the existing most-recent-activity ordering.
 - Project description: explain that the optional description is shown in the Project list for the
   user's reference and is not included in the agent prompt.
+- Recent sessions: keep up to five Session rows in a stable order for each Home visit, while titles
+  and update times remain live. Initialize by most recent activity with Session ID as the tie-breaker.
+  Remove ineligible Sessions and append the newest eligible replacements to vacancies; background
+  additions do not evict a full list. Partial catalogs retain remembered IDs and a stable provisional
+  order; the first complete catalog establishes the final visit order. Leaving and returning Home
+  starts a new ranking. This display order is local to Home and is not persisted.
 - Session updates: show a responsive card grid above the Project/Recent columns for
   every non-archived Session that is `running`, `waiting-permission`, `waiting-plan-approval`, or has
   an unread `task.completed` notification while idle. Cards occupy one column on compact screens and
