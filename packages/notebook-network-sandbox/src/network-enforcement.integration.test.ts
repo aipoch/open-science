@@ -35,6 +35,23 @@ const run = (
     child.on('close', (code) => resolveRun({ code, stderr, stdout }))
   })
 
+// Release the command before any assertion runs. `run` settles only after the child closed, so
+// termination evidence exists here; a command left behind makes `dispose` fail without termination
+// evidence, which keeps the process-wide owner held and fails every later test in this file.
+const runAndCleanup = async (
+  wrapped: NotebookSandboxedProcess,
+  cwd: string
+): Promise<Awaited<ReturnType<typeof run>> & { annotatedStderr: string }> => {
+  const result = await run(wrapped, cwd)
+  const annotatedStderr = wrapped.annotateStderr(result.stderr)
+  expect(await wrapped.cleanup('exit', { processesTerminated: true })).toEqual({
+    processesTerminated: true,
+    networkClosed: true,
+    temporaryResourcesRemoved: true
+  })
+  return { ...result, annotatedStderr }
+}
+
 const platformSupported = process.platform === 'darwin' || process.platform === 'linux'
 
 describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => {
@@ -207,17 +224,21 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
         onNetworkAccessRequest: async () => false
       })
       bundlePath = wrapped.env.SSL_CERT_FILE
-      expect(bundlePath).toBeTruthy()
       wrapped.setExecutionActive(true)
       const result = await run(wrapped, directory)
       wrapped.setExecutionActive(false)
+      // Capture the bundle before cleanup removes it; assertions run only after the release.
+      const bundle = bundlePath
+        ? await Promise.all([readFile(bundlePath, 'utf8'), stat(bundlePath)]).catch(() => undefined)
+        : undefined
+      await wrapped.cleanup('exit', { processesTerminated: true })
       expect(result.stdout).toContain('BEGIN CERTIFICATE')
       expect(result.stdout).not.toContain('PRIVATE KEY')
       expect(result.stdout).not.toContain('MUTATED')
       expect(result.stdout).not.toContain('REMOVED')
-      expect(await readFile(bundlePath!, 'utf8')).toBe(result.stdout)
-      expect((await stat(bundlePath!)).mode & 0o222).toBe(0)
-      await wrapped.cleanup('exit', { processesTerminated: true })
+      expect(bundle).toBeDefined()
+      expect(bundle![0]).toBe(result.stdout)
+      expect(bundle![1].mode & 0o222).toBe(0)
     } finally {
       await sandbox.dispose()
       await rm(directory, { recursive: true, force: true })
@@ -247,8 +268,7 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
         },
         onNetworkAccessRequest: async () => false
       })
-      const result = await run(wrapped, directory)
-      await wrapped.cleanup('exit', { processesTerminated: true })
+      const result = await runAndCleanup(wrapped, directory)
       expect(result).toMatchObject({ code: 0, stdout: 'repl-ok' })
     } finally {
       await sandbox.dispose()
@@ -343,8 +363,7 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
         localRpcSocketPath: socketPath,
         onNetworkAccessRequest: async () => false
       })
-      const result = await run(wrapped, cwd)
-      await wrapped.cleanup('exit', { processesTerminated: true })
+      const result = await runAndCleanup(wrapped, cwd)
       expect(result).toMatchObject({ code: 0, stdout: 'rpc-ok' })
 
       const blocked = await sandbox.wrap({
@@ -354,8 +373,7 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
         localRpcSocketPath: socketPath,
         onNetworkAccessRequest: async () => true
       })
-      const blockedResult = await run(blocked, cwd)
-      await blocked.cleanup('exit', { processesTerminated: true })
+      const blockedResult = await runAndCleanup(blocked, cwd)
       expect(blockedResult.code).not.toBe(0)
     } finally {
       await sandbox.dispose()
@@ -389,19 +407,6 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
     const dnsFixture = vi
       .mocked<(hostname: string, options: LookupAllOptions) => Promise<LookupAddress[]>>(lookup)
       .mockResolvedValue([{ address: '93.184.216.34', family: 4 }])
-    const runAndCleanup = async (
-      wrapped: NotebookSandboxedProcess
-    ): Promise<Awaited<ReturnType<typeof run>> & { annotatedStderr: string }> => {
-      const result = await run(wrapped, cwd)
-      const annotatedStderr = wrapped.annotateStderr(result.stderr)
-      // run resolves only after close, so cleanup has termination evidence even if an assertion fails.
-      expect(await wrapped.cleanup('exit', { processesTerminated: true })).toEqual({
-        processesTerminated: true,
-        networkClosed: true,
-        temporaryResourcesRemoved: true
-      })
-      return { ...result, annotatedStderr }
-    }
 
     try {
       await sandbox.initialize()
@@ -410,7 +415,7 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
         cwd,
         onNetworkAccessRequest: async () => false
       })
-      const allowed = await runAndCleanup(allowedProcess)
+      const allowed = await runAndCleanup(allowedProcess, cwd)
       expect(allowed, allowed.stderr).toMatchObject({ code: 0, stdout: 'sandbox-ok' })
 
       sandbox.updatePolicy({ allowedDomains: [], deniedDomains: [] })
@@ -419,7 +424,7 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
         cwd,
         onNetworkAccessRequest: async () => false
       })
-      const denied = await runAndCleanup(deniedProcess)
+      const denied = await runAndCleanup(deniedProcess, cwd)
       expect(denied.code, denied.annotatedStderr).toBe(22)
       expect(denied.stdout).not.toContain('OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED')
       expect(denied.annotatedStderr).toContain('OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED')
@@ -436,7 +441,7 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
         cwd,
         onNetworkAccessRequest: hardDeniedDecision
       })
-      const hardDenied = await runAndCleanup(hardDeniedProcess)
+      const hardDenied = await runAndCleanup(hardDeniedProcess, cwd)
       expect(hardDenied.code, hardDenied.annotatedStderr).toBe(22)
       expect(hardDenied.stdout).toContain('OPEN_SCIENCE_NETWORK_POLICY_BLOCKED')
       expect(hardDenied.annotatedStderr).toContain('destination is explicitly blocked')
@@ -448,7 +453,7 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
         cwd,
         onNetworkAccessRequest: privateDecision
       })
-      const privateResult = await runAndCleanup(privateProcess)
+      const privateResult = await runAndCleanup(privateProcess, cwd)
       expect(privateResult.code, privateResult.annotatedStderr).toBe(22)
       expect(privateResult.stdout).toContain('OPEN_SCIENCE_NETWORK_POLICY_BLOCKED')
       expect(privateResult.annotatedStderr).toContain(
@@ -506,9 +511,10 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
         })
       ])
 
-      const [firstResult, secondResult] = await Promise.all([run(first, cwd), run(second, cwd)])
-      await first.cleanup('exit', { processesTerminated: true })
-      await second.cleanup('exit', { processesTerminated: true })
+      const [firstResult, secondResult] = await Promise.all([
+        runAndCleanup(first, cwd),
+        runAndCleanup(second, cwd)
+      ])
 
       expect(firstResult).toMatchObject({ code: 0, stdout: 'approved' })
       expect(secondResult).toMatchObject({ code: 0, stdout: 'approved' })
@@ -550,8 +556,7 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
         cwd,
         onNetworkAccessRequest: async () => true
       })
-      const result = await run(wrapped, cwd)
-      await wrapped.cleanup('exit', { processesTerminated: true })
+      const result = await runAndCleanup(wrapped, cwd)
       expect(result.code).not.toBe(0)
     } finally {
       await sandbox.dispose()
