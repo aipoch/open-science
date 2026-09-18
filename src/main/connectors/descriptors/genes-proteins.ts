@@ -42,9 +42,9 @@ function chunkAccessions(accessions: string[]): string[][] {
   return chunks
 }
 
-// Builds the batched OR filter, e.g. (accession:P04637)OR(accession:P38398).
+// Builds the batched active-record filter, e.g. ((accession:P04637)OR(sec_acc:P04637))OR(...).
 function orQuery(chunk: string[]): string {
-  return chunk.map((a) => `(accession:${a})`).join('OR')
+  return `(${chunk.map((a) => `((accession:${a})OR(sec_acc:${a}))`).join('OR')}) AND active:true`
 }
 
 // Parses a UniProt TSV payload into column->value objects keyed by the header row (skips the header
@@ -112,6 +112,39 @@ function mapEntries(
     const hit = entries.find((e) => e.accessions.some((a) => a.toUpperCase() === upper))
     if (hit) records[acc] = hit.text
     else missing.push(acc)
+  }
+  return { records, missing }
+}
+
+// The direct endpoint uses 400 for malformed/unknown accession path segments and 404 for absent
+// records. Preserve the connector convention of reporting those as missing while propagating
+// transport and server failures.
+function isMissingDirectEntryError(err: unknown): boolean {
+  return err instanceof Error && /HTTP (?:400|404)\b/.test(err.message)
+}
+
+// A FASTA header carries only the primary accession. Resolve any requested accession that the
+// batched search could not map through UniProt's direct endpoint, which follows secondary-
+// accession redirects to the current primary record. TXT responses include AC lines and therefore
+// retain the full alias set when parsed below.
+async function fetchDirectEntries(
+  ctx: ToolContext,
+  accessions: string[],
+  format: 'fasta' | 'txt'
+): Promise<{ records: Record<string, string>; missing: string[] }> {
+  const records: Record<string, string> = {}
+  const missing: string[] = []
+  for (const accession of accessions) {
+    try {
+      const payload = await ctx.fetchText(`${UNIPROT}/${encodeURIComponent(accession)}.${format}`)
+      const entries = format === 'txt' ? parseFlatFile(payload) : parseFasta(payload)
+      const first = entries[0]
+      if (first?.text && first.accessions.length > 0) records[accession] = first.text
+      else missing.push(accession)
+    } catch (err) {
+      if (isMissingDirectEntryError(err)) missing.push(accession)
+      else throw err
+    }
   }
   return { records, missing }
 }
@@ -187,7 +220,7 @@ export const GENES_PROTEINS_TOOLS: ToolDescriptor[] = [
     id: 'get_uniprot_entries',
     connector: 'genes',
     description:
-      'Fetch UniProtKB records for a list of accessions (batched OR-queries, not per-accession). Three modes: `fields` given → token-lean tabular retrieval of just those UniProt fields (e.g. ["accession","id","protein_name","gene_names","organism_name","length","sequence"]); `format` is ignored. format="fasta" → per-accession FASTA sequences. format="txt" → per-accession full UniProt flat-file text (complete annotation; can be very large — prefer `fields`). Args: accessions (e.g. ["P04637","P38398"]); format ("fasta"/"txt", ignored when `fields` given); fields (optional UniProt REST field names for tabular mode). Returns: fields mode {accessions, fields, n_records, records:[{<column>:value}]}; fasta/txt mode {accessions, format, n_found, missing, records:{accession:text}} — `missing` lists accessions UniProt returned no record for.',
+      'Fetch UniProtKB records for a list of primary or secondary accessions (batched OR-queries first; unresolved aliases use a direct per-accession fallback). Three modes: `fields` given → token-lean tabular retrieval of just those UniProt fields (e.g. ["accession","id","protein_name","gene_names","organism_name","length","sequence"]); `format` is ignored. format="fasta" → per-accession FASTA sequences. format="txt" → per-accession full UniProt flat-file text (complete annotation; can be very large — prefer `fields`). Args: accessions (e.g. ["P04637","P38398"]); format ("fasta"/"txt", ignored when `fields` given); fields (optional UniProt REST field names for tabular mode). Returns: fields mode {accessions, fields, n_records, records:[{<column>:value}]}; fasta/txt mode {accessions, format, n_found, missing, records:{accession:text}} — `missing` lists accessions UniProt returned no record for.',
     input: {
       type: 'object',
       properties: {
@@ -231,7 +264,12 @@ export const GENES_PROTEINS_TOOLS: ToolDescriptor[] = [
         combined += await ctx.fetchText(url)
       }
       const entries = format === 'txt' ? parseFlatFile(combined) : parseFasta(combined)
-      const { records, missing } = mapEntries(accessions, entries)
+      const mapped = mapEntries(accessions, entries)
+      const direct = mapped.missing.length
+        ? await fetchDirectEntries(ctx, mapped.missing, format)
+        : { records: {}, missing: [] }
+      const records = { ...mapped.records, ...direct.records }
+      const missing = direct.missing
       return {
         accessions,
         format,

@@ -6,6 +6,7 @@ const jsonRes = (body: unknown): Response =>
   ({ ok: true, status: 200, json: async () => body }) as Response
 const textRes = (body: string): Response =>
   ({ ok: true, status: 200, text: async () => body }) as Response
+const statusRes = (status: number): Response => ({ ok: false, status }) as Response
 
 const tool = (id: string): (typeof GENES_PROTEINS_TOOLS)[number] => {
   const t = GENES_PROTEINS_TOOLS.find((x) => x.id === id)
@@ -105,7 +106,11 @@ describe('get_uniprot_entries', () => {
     )) as { n_records: number; records: Array<Record<string, string>> }
     const url = String(fetchImpl.mock.calls[0][0])
     expect(url).toContain('/uniprotkb/search?query=')
-    expect(url).toContain(encodeURIComponent('(accession:P04637)OR(accession:P38398)'))
+    expect(url).toContain(
+      encodeURIComponent(
+        '(((accession:P04637)OR(sec_acc:P04637))OR((accession:P38398)OR(sec_acc:P38398))) AND active:true'
+      )
+    )
     expect(url).toContain('fields=accession,id')
     expect(url).toContain('format=tsv')
     expect(out.n_records).toBe(2)
@@ -113,11 +118,28 @@ describe('get_uniprot_entries', () => {
     expect(out.records[1]).toEqual({ Entry: 'P38398', 'Entry Name': 'BRCA1_HUMAN' })
   })
 
+  it('fields mode: queries active records through secondary accessions', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(textRes('Entry\tEntry Name\nP04637\tP53_HUMAN\n'))
+    const out = (await run(
+      'get_uniprot_entries',
+      { accessions: ['Q15086'], fields: ['accession', 'id'] },
+      fetchImpl
+    )) as { n_records: number; records: Array<Record<string, string>> }
+    const url = String(fetchImpl.mock.calls[0][0])
+    expect(url).toContain(
+      encodeURIComponent('(((accession:Q15086)OR(sec_acc:Q15086))) AND active:true')
+    )
+    expect(out.n_records).toBe(1)
+    expect(out.records[0]).toEqual({ Entry: 'P04637', 'Entry Name': 'P53_HUMAN' })
+  })
+
   it('fasta mode (default when no fields/format): per-accession map + missing', async () => {
     const fasta =
       '>sp|P04637|P53_HUMAN Cellular tumor antigen p53 OS=Homo sapiens\nMEEPQSD\nAAAA\n' +
       '>sp|P38398|BRCA1_HUMAN Breast cancer type 1 OS=Homo sapiens\nMDLSAL\n'
-    const fetchImpl = vi.fn().mockResolvedValueOnce(textRes(fasta))
+    const fetchImpl = vi.fn().mockResolvedValueOnce(textRes(fasta)).mockResolvedValue(textRes(''))
     const out = (await run(
       'get_uniprot_entries',
       { accessions: ['P04637', 'P38398', 'P99999'] },
@@ -133,13 +155,36 @@ describe('get_uniprot_entries', () => {
     expect(out.records.P99999).toBeUndefined()
   })
 
+  it('fasta mode: resolves a secondary accession through the direct endpoint', async () => {
+    const fasta = '>sp|P04637|P53_HUMAN Cellular tumor antigen p53 OS=Homo sapiens\nMEEPQSD\n'
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(textRes(fasta))
+      .mockResolvedValueOnce(textRes(fasta))
+    const out = (await run('get_uniprot_entries', { accessions: ['Q15086'] }, fetchImpl)) as {
+      n_found: number
+      missing: string[]
+      records: Record<string, string>
+    }
+    const searchUrl = String(fetchImpl.mock.calls[0][0])
+    expect(searchUrl).toContain(
+      encodeURIComponent('(((accession:Q15086)OR(sec_acc:Q15086))) AND active:true')
+    )
+    expect(String(fetchImpl.mock.calls[1][0])).toBe(
+      'https://rest.uniprot.org/uniprotkb/Q15086.fasta'
+    )
+    expect(out.n_found).toBe(1)
+    expect(out.missing).toEqual([])
+    expect(out.records.Q15086).toContain('>sp|P04637|P53_HUMAN')
+  })
+
   it('txt mode: flat-file split on // and secondary accessions from AC lines both map', async () => {
     const txt =
       'ID   BRCA1_HUMAN             Reviewed;        1863 AA.\n' +
       'AC   P38398; E9PFZ0; O15129;\n' +
       'DE   RecName: Full=Breast cancer;\n' +
       '//\n'
-    const fetchImpl = vi.fn().mockResolvedValueOnce(textRes(txt))
+    const fetchImpl = vi.fn().mockResolvedValueOnce(textRes(txt)).mockResolvedValue(textRes(''))
     const out = (await run(
       'get_uniprot_entries',
       { accessions: ['P38398', 'O15129', 'P00000'], format: 'txt' },
@@ -152,6 +197,43 @@ describe('get_uniprot_entries', () => {
     expect(out.records.O15129).toBe(out.records.P38398)
     expect(out.n_found).toBe(2)
     expect(out.missing).toEqual(['P00000'])
+  })
+
+  it('txt mode: resolves a secondary-only accession through the direct endpoint', async () => {
+    const txt =
+      'ID   P53_HUMAN               Reviewed;         393 AA.\n' + 'AC   P04637; Q15086;\n' + '//\n'
+    const fetchImpl = vi.fn().mockResolvedValueOnce(textRes('')).mockResolvedValueOnce(textRes(txt))
+    const out = (await run(
+      'get_uniprot_entries',
+      { accessions: ['Q15086'], format: 'txt' },
+      fetchImpl
+    )) as { n_found: number; missing: string[]; records: Record<string, string> }
+    expect(String(fetchImpl.mock.calls[1][0])).toBe('https://rest.uniprot.org/uniprotkb/Q15086.txt')
+    expect(out.n_found).toBe(1)
+    expect(out.missing).toEqual([])
+    expect(out.records.Q15086).toContain('AC   P04637; Q15086;')
+  })
+
+  it('direct fallback reports 400/404 as missing but propagates server failures', async () => {
+    const missingFetch = vi
+      .fn()
+      .mockResolvedValueOnce(textRes(''))
+      .mockResolvedValueOnce(statusRes(400))
+    const missing = (await run(
+      'get_uniprot_entries',
+      { accessions: ['Q0Q0Q0Q0Q0'] },
+      missingFetch
+    )) as { n_found: number; missing: string[] }
+    expect(missing.n_found).toBe(0)
+    expect(missing.missing).toEqual(['Q0Q0Q0Q0Q0'])
+
+    const failingFetch = vi
+      .fn()
+      .mockResolvedValueOnce(textRes(''))
+      .mockResolvedValue(statusRes(500))
+    await expect(
+      run('get_uniprot_entries', { accessions: ['Q15086'] }, failingFetch)
+    ).rejects.toThrow('HTTP 500')
   })
 
   it('chunks large accession lists across multiple requests', async () => {
