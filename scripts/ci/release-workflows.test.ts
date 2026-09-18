@@ -120,6 +120,13 @@ describe('release and scheduled workflow topology', () => {
     expect(regressions.run).toContain('--testNamePattern="$TEST_NAME_PATTERN"')
     expect(regressions.run).toContain('--maxWorkers=1 --testTimeout=60000 --hookTimeout=60000')
     for (const file of [
+      'cli/locate-app.test.ts',
+      'scripts/credential-helper-signing.test.ts',
+      'src/main/credential-identity/sqlite-snapshot.test.ts',
+      'src/main/local-models/owner.test.ts',
+      'src/main/notebook/input-registry.test.ts',
+      'src/main/session-package/literature.test.ts',
+      'src/main/session-plan/plan-context-file.test.ts',
       'vitest.config.test.ts',
       'scripts/ci/release-workflows.test.ts',
       'scripts/windows-release-workflows.test.ts',
