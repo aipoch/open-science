@@ -464,6 +464,18 @@ describe('clinical-genomics — Open Targets', () => {
     expect(out.attempts).toBe(1)
   })
 
+  it('open_targets_graphql preserves partial data and errors in the raw envelope', async () => {
+    const errors = [{ message: 'field failed', path: ['target', 'associatedDiseases'] }]
+    const data = { target: { approvedSymbol: 'TP53', associatedDiseases: null } }
+    const fetchImpl = vi.fn().mockResolvedValue(jsonRes({ data, errors }))
+    const out = (await new ParserEngine({ fetchImpl }).call(
+      tool('open_targets_graphql'),
+      { query: '{ target { approvedSymbol associatedDiseases { count } } }' },
+      {}
+    )) as { data: unknown; attempts: number; errors?: unknown }
+    expect(out).toEqual({ data, attempts: 1, errors })
+  })
+
   it('open_targets_graphql retries the transient HTTP-200 internal-server error', async () => {
     const fetchImpl = vi
       .fn()
@@ -503,6 +515,26 @@ describe('clinical-genomics — Open Targets', () => {
     expect(bodyOf(fetchImpl).variables).toEqual({ id: 'MONDO_0004992', size: 3 })
     expect(out.id).toBe('MONDO_0004992')
     expect((out.associatedTargets as { count: number }).count).toBe(22581)
+  })
+
+  it('open_targets_disease_targets does not hide errors alongside partial data', async () => {
+    const errors = [
+      { message: 'associatedTargets resolver failed', path: ['disease', 'associatedTargets'] }
+    ]
+    const fetchImpl = vi.fn().mockResolvedValue(
+      jsonRes({
+        data: { disease: { id: 'E', name: 'e', associatedTargets: null } },
+        errors
+      })
+    )
+    const out = (await new ParserEngine({ fetchImpl }).call(
+      tool('open_targets_disease_targets'),
+      { efo_id: 'E', size: 25 },
+      {}
+    )) as { errors: unknown; id?: unknown; associatedTargets?: unknown }
+    expect(out).toEqual({ errors })
+    expect(out.id).toBeUndefined()
+    expect(out.associatedTargets).toBeUndefined()
   })
 
   it('open_targets_disease_drugs slices rows to size', async () => {

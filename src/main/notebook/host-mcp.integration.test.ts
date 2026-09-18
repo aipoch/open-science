@@ -226,6 +226,60 @@ describe('clinical trial host.mcp regression', () => {
   })
 })
 
+// Exercise the full Open Targets path: mocked GraphQL response -> connector parser -> ConnectorService
+// -> notebook RPC -> shipped REPL host.mcp, preserving partial-response errors at the call boundary.
+describe('Open Targets host.mcp regression', () => {
+  it('does not turn partial GraphQL data into a successful empty result', async () => {
+    const errors = [
+      { message: 'associatedTargets resolver failed', path: ['disease', 'associatedTargets'] }
+    ]
+    const connectorService = new ConnectorService({
+      getConnectors: () => ({
+        enabledIds: ['clinical-genomics'],
+        autoAllowIds: ['clinical-genomics']
+      }),
+      resolveApiKey: () => undefined,
+      engine: new ParserEngine({
+        retries: 0,
+        fetchImpl: async () =>
+          Response.json({
+            data: { disease: { id: 'E', name: 'e', associatedTargets: null } },
+            errors
+          })
+      })
+    })
+    const rpcServer = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      connectorService
+    })
+    const connection = await rpcServer.issueControlConnection(
+      'session-42',
+      'project-1',
+      'root-frame-session-42'
+    )
+    const exec = makeExecutor()
+    try {
+      const execution = await exec.execute(
+        baseRequest({
+          code: `const result = await host.mcp('clinical-genomics', 'open_targets_disease_targets', {
+            efo_id: 'E', size: 25
+          }); console.log(JSON.stringify(result))`,
+          mcpRpcEndpoint: connection.endpoint,
+          mcpRpcSocketPath: connection.socketPath,
+          mcpRpcToken: connection.token,
+          sessionId: 'session-42',
+          projectId: 'project-1'
+        })
+      )
+      expect(execution.status).toBe('completed')
+      expect(JSON.parse(execution.stdout.trim())).toEqual({ errors })
+    } finally {
+      await exec.shutdown()
+      connection.release()
+      await rpcServer.close()
+    }
+  })
+})
+
 // Exercise the shipped REPL and RPC path so callers cannot mistake request failures for absence.
 describe('Ensembl sequence host.mcp regression', () => {
   it('keeps multiple-sequence and incompatible-type errors distinct from a missing ID', async () => {
