@@ -101,6 +101,7 @@
     "src/main/notebook/external-r-library.test.ts",
     "src/main/notebook/external-r-library.ts",
     "src/main/notebook/failure-diagnostic.ts",
+    "src/main/notebook/fixtures/windows-exiting-repl-loop.cjs",
     "src/main/notebook/fixtures/windows-interrupted-shell-launch.ts",
     "src/main/notebook/full-stack.smoke.test.ts",
     "src/main/notebook/heatmap-loop.integration.test.ts",

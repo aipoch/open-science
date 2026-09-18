@@ -434,6 +434,55 @@ it('executes an x64-only managed R through the public kernel boundary', async ()
   }
 })
 
+it.each([
+  { name: 'Python', request: { language: 'python' as const } },
+  { name: 'R', request: { language: 'r' as const } },
+  { name: 'REPL', request: { language: 'python' as const, kind: 'repl' as const } }
+])(
+  'requests Windows process-tree supervision for every persistent $name kernel',
+  async ({ request: kernelRequest }) => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-windows-supervision-'))
+    const request = baseRequest(cwdDir)
+    const python = pythonBin(envPrefix(request.runtimeRoot, DEFAULT_PY_ENV, 'win32'), 'win32')
+    const rscript = join(
+      envPrefix(request.runtimeRoot, DEFAULT_R_ENV, 'win32'),
+      'Lib',
+      'R',
+      'bin',
+      'x64',
+      'Rscript.exe'
+    )
+    const r = join(dirname(rscript), 'R.exe')
+    await mkdir(dirname(python), { recursive: true })
+    await mkdir(dirname(rscript), { recursive: true })
+    await writeFile(python, 'fixture')
+    await writeFile(r, 'fixture')
+    await writeFile(rscript, 'fixture')
+
+    const wrap = vi.fn<NotebookProcessSandbox['wrap']>(async () => {
+      throw new Error('sandbox invocation captured')
+    })
+    const executor = new NotebookKernelExecutor({
+      platform: 'win32',
+      processSandbox: { wrap }
+    })
+    try {
+      await expect(
+        executor.execute({
+          ...request,
+          ...kernelRequest,
+          code: '1',
+          sessionId: 'windows-supervision',
+          projectId: 'windows-supervision'
+        })
+      ).resolves.toMatchObject({ status: 'failed', stderr: 'sandbox invocation captured' })
+      expect(wrap).toHaveBeenCalledWith(expect.objectContaining({ superviseProcessTree: true }))
+    } finally {
+      await executor.shutdown()
+    }
+  }
+)
+
 describe.skipIf(process.platform === 'win32')('managed R kernel isolation', () => {
   it('ignores user startup files and uses only the managed environment library', async () => {
     cwdDir = await mkdtemp(join(tmpdir(), 'os-managed-r-kernel-home-'))

@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { beforeEach, expect, it, vi } from 'vitest'
@@ -6,7 +6,7 @@ import { windowsSupervisedLaunch } from '../../../packages/notebook-network-sand
 import type { NotebookNetworkRuntime } from '../../../packages/notebook-network-sandbox/runtime/src/index'
 
 const backend = vi.hoisted(() => ({
-  initialize: vi.fn(async () => {}),
+  initialize: vi.fn<typeof NotebookNetworkRuntime.initialize>(async () => {}),
   wrap: vi.fn<typeof NotebookNetworkRuntime.wrap>(),
   updateConfig: vi.fn(),
   annotateStderr: vi.fn((_id: string, text: string) => text),
@@ -34,7 +34,144 @@ import { KernelProcessLifecycleOwner } from './kernel-process-lifecycle.windows-
 import type { NotebookProcessSandbox } from './process-sandbox'
 import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
 
+it.skipIf(process.platform !== 'win32')(
+  'uses the production standard launcher to prove a naturally exiting REPL',
+  async () => {
+    const actual = await vi.importActual<
+      typeof import('../../../packages/notebook-network-sandbox/runtime/src/index.js')
+    >('../../../packages/notebook-network-sandbox/runtime/src/index.js')
+    await actual.NotebookNetworkRuntime.reset()
+    backend.initialize.mockImplementation(actual.NotebookNetworkRuntime.initialize)
+    backend.wrap.mockImplementation(actual.NotebookNetworkRuntime.wrap)
+    backend.updateConfig.mockImplementation(actual.NotebookNetworkRuntime.updateConfig)
+    backend.annotateStderr.mockImplementation(actual.NotebookNetworkRuntime.annotateStderr)
+    backend.resetCommandConnections.mockImplementation(
+      actual.NotebookNetworkRuntime.resetCommandConnections
+    )
+    backend.setCommandExecutionActive.mockImplementation(
+      actual.NotebookNetworkRuntime.setCommandExecutionActive
+    )
+    backend.cleanupAfterCommand.mockImplementation(
+      actual.NotebookNetworkRuntime.cleanupAfterCommand
+    )
+    backend.reset.mockImplementation(actual.NotebookNetworkRuntime.reset)
+    const root = await mkdtemp(join(tmpdir(), 'os-repl-standard-exit-'))
+    vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', root)
+    const sandbox = new NotebookNetworkSandbox({
+      resources: { root: resolve('packages/notebook-network-sandbox/vendor') },
+      policy: { allowedDomains: [], deniedDomains: [] }
+    })
+    const launchModes: string[] = []
+    const port: NotebookProcessSandbox = {
+      wrap: async (invocation) => {
+        await sandbox.initialize()
+        const wrapped = await sandbox.wrap({
+          command: '',
+          executable: invocation.executable,
+          args: invocation.args,
+          cwd: invocation.cwd,
+          env: invocation.env,
+          superviseProcessTree: invocation.superviseProcessTree,
+          filesystem: invocation.filesystem,
+          onNetworkAccessRequest: async () => false
+        })
+        launchModes.push(wrapped.argv[1])
+        return {
+          executable: wrapped.argv[0],
+          args: wrapped.argv.slice(1),
+          env: wrapped.env,
+          confirmProcessTreeTermination: wrapped.confirmProcessTreeTermination,
+          beginSpawn: wrapped.beginSpawn,
+          annotateStderr: wrapped.annotateStderr,
+          cleanup: wrapped.cleanup
+        }
+      }
+    }
+    const lifecycle = new KernelProcessLifecycleOwner({ storageRoot: root })
+    await lifecycle.ensureReady()
+    const executor = new NotebookKernelExecutor({
+      replLoopPath: resolve('src/main/notebook/fixtures/windows-exiting-repl-loop.cjs'),
+      processHostPath: resolve('resources/notebook/kernel_process_host.js'),
+      processSandbox: port,
+      processLifecycle: lifecycle,
+      laneKey: '["standard-exit","standard-exit","root",null,null]'
+    })
+    try {
+      await expect(
+        executor.execute({
+          language: 'python',
+          kind: 'repl',
+          code: 'unused',
+          cwd: root,
+          notebookSessionRoot: root,
+          dataRoot: root,
+          runtimeRoot: '',
+          sessionId: 'standard-exit',
+          projectId: 'standard-exit',
+          timeoutMs: 10_000
+        })
+      ).resolves.toMatchObject({
+        status: 'failed',
+        stderr: expect.stringContaining('Notebook kernel process exited with exit code 23.')
+      })
+      await expect(readFile(join(root, 'fixture-started'), 'utf8')).resolves.toBe('started')
+      expect(launchModes).toEqual(['supervise'])
+      const descendantPid = Number(await readFile(join(root, 'descendant.pid'), 'utf8'))
+      expect(() => process.kill(descendantPid, 0)).toThrow(
+        expect.objectContaining({ code: 'ESRCH' })
+      )
+      expect(await readdir(join(root, 'runtime', 'kernel-processes'))).toEqual([])
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (attempt === 1) await expect(executor.restart()).resolves.toBeUndefined()
+        if (attempt === 2) await expect(executor.shutdown()).resolves.toEqual({ reaped: true })
+        await expect(
+          executor.execute({
+            language: 'python',
+            kind: 'repl',
+            code: "console.log('REPL_RESTARTED')",
+            cwd: root,
+            notebookSessionRoot: root,
+            dataRoot: root,
+            runtimeRoot: '',
+            sessionId: 'standard-exit',
+            projectId: 'standard-exit',
+            timeoutMs: 10_000
+          })
+        ).resolves.toMatchObject({
+          status: 'completed',
+          stdout: expect.stringContaining('REPL_RESTARTED')
+        })
+      }
+      await expect(executor.shutdown()).resolves.toEqual({ reaped: true })
+      expect(await readdir(join(root, 'runtime', 'kernel-processes'))).toEqual([])
+    } finally {
+      await executor.shutdown().catch(() => undefined)
+      // A red run without process-tree supervision can leave this fixture's child alive.
+      const pid = await readFile(join(root, 'descendant.pid'), 'utf8').catch(() => undefined)
+      if (pid) {
+        try {
+          process.kill(Number(pid))
+        } catch {
+          /* Already reaped by the native supervisor. */
+        }
+      }
+      await sandbox.dispose().catch(() => undefined)
+      await actual.NotebookNetworkRuntime.reset().catch(() => undefined)
+      vi.unstubAllEnvs()
+      await rm(root, { recursive: true, force: true })
+    }
+  },
+  30_000
+)
+
 beforeEach(() => {
+  backend.initialize.mockReset().mockResolvedValue(undefined)
+  backend.wrap.mockReset()
+  backend.updateConfig.mockReset()
+  backend.annotateStderr.mockReset().mockImplementation((_id, text) => text)
+  backend.resetCommandConnections.mockReset()
+  backend.setCommandExecutionActive.mockReset()
+  backend.reset.mockReset().mockResolvedValue(undefined)
   backend.cleanupAfterCommand.mockReset().mockImplementation(async (...[, , outcome]) => ({
     processesTerminated: outcome.processesTerminated,
     networkClosed: true,
