@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 
 import { spawn } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 import { access, mkdir, mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
@@ -107,6 +108,45 @@ const terminateSpawnedProcessGroup = (child) => {
     process.kill(-child.pid, 'SIGKILL')
   } catch {
     // ESRCH means every process in the private group has already exited.
+  }
+}
+
+// Hosted runners can have a locked login keychain. Exercise the real credential backend with a
+// test-owned keychain, shared by every DMG/ZIP launch, without touching existing keys or passwords.
+const prepareSmokeKeychain = async (root, run = runProcess) => {
+  const security = (args) => run('/usr/bin/security', args)
+  const parsePaths = (output) =>
+    output
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line.trim()))
+  const originalSearch = parsePaths((await security(['list-keychains', '-d', 'user'])).stdout)
+  const [originalDefault] = parsePaths((await security(['default-keychain', '-d', 'user'])).stdout)
+  if (!originalDefault) throw new Error('Cannot snapshot the default keychain for package smoke.')
+  const keychain = join(root, 'package-smoke.keychain-db')
+  const password = randomBytes(32).toString('hex')
+  const restore = async () => {
+    try {
+      await security(['default-keychain', '-d', 'user', '-s', originalDefault])
+    } finally {
+      try {
+        await security(['list-keychains', '-d', 'user', '-s', ...originalSearch])
+      } finally {
+        await security(['delete-keychain', keychain])
+      }
+    }
+  }
+  await security(['create-keychain', '-p', password, keychain])
+  try {
+    await security(['set-keychain-settings', '-lut', '21600', keychain])
+    await security(['unlock-keychain', '-p', password, keychain])
+    await security(['list-keychains', '-d', 'user', '-s', keychain])
+    await security(['default-keychain', '-d', 'user', '-s', keychain])
+    return restore
+  } catch (error) {
+    await restore()
+    throw error
   }
 }
 
@@ -317,7 +357,9 @@ const main = async () => {
     OPEN_SCIENCE_E2E_STORAGE_ROOT: storageRoot
   }
 
+  let restoreKeychain
   try {
+    restoreKeychain = await prepareSmokeKeychain(root)
     const sqliteVersions = []
     await Promise.all([mkdir(mount), mkdir(extracted), mkdir(storageRoot), mkdir(freshStorageRoot)])
     await seedLegacyDatabase(storageRoot)
@@ -395,7 +437,11 @@ const main = async () => {
     })
     console.log('macOS DMG and ZIP launch smoke completed successfully.')
   } finally {
-    await rm(root, { force: true, maxRetries: 5, recursive: true, retryDelay: 200 })
+    try {
+      await restoreKeychain?.()
+    } finally {
+      await rm(root, { force: true, maxRetries: 5, recursive: true, retryDelay: 200 })
+    }
   }
 }
 
@@ -424,5 +470,6 @@ export {
   launchAndProbe,
   packagedLaunchArguments,
   parseArguments,
-  parsePackagedAppEndpoint
+  parsePackagedAppEndpoint,
+  prepareSmokeKeychain
 }
