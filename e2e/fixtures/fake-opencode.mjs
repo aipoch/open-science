@@ -1131,35 +1131,62 @@ if (process.argv.includes('--version')) {
         ) {
           reply = 'Restart verification: Question answer delivered.'
         } else if (prompt.includes('Create a restart verification Plan.')) {
-          await withMcpClient(context.params.sessionId, 'open-science-plan', async (client) =>
-            toolResult(
-              'generate_plan',
-              await client.callTool({
-                name: 'generate_plan',
-                arguments: {
-                  task_summary: 'Restart verification Plan',
-                  phases: [
-                    {
-                      name: 'Analysis',
-                      delegations: [
-                        {
-                          name: 'Main',
-                          steps: [
-                            {
-                              title: 'Verify delivery',
-                              description: 'Produce one confirmation and verify its persistence.'
-                            }
-                          ]
-                        }
-                      ]
-                    }
-                  ],
-                  desired_outputs: ['Delivery confirmation'],
-                  feasibility: { confidence: 'high', rationale: 'Deterministic local fixture.' }
-                }
-              })
-            )
-          )
+          const argumentsForPlan = {
+            task_summary: 'Restart verification Plan',
+            phases: [
+              {
+                name: 'Analysis',
+                delegations: [
+                  {
+                    name: 'Main',
+                    steps: [
+                      {
+                        title: 'Verify delivery',
+                        description: 'Produce one confirmation and verify its persistence.'
+                      }
+                    ]
+                  }
+                ]
+              }
+            ],
+            desired_outputs: ['Delivery confirmation'],
+            feasibility: { confidence: 'high', rationale: 'Deterministic local fixture.' }
+          }
+          const toolCallId = 'e2e-restart-plan-generation'
+          // Real providers publish the tool activity before the MCP call waits for approval.
+          // Keep that transcript witness so restart tests also exercise Plan history rendering.
+          await context.client.notify(acp.methods.client.session.update, {
+            sessionId: context.params.sessionId,
+            update: {
+              sessionUpdate: 'tool_call',
+              toolCallId,
+              title: 'open_science_plan_generate_plan',
+              kind: 'other',
+              status: 'in_progress',
+              rawInput: argumentsForPlan
+            }
+          })
+          const outcome = await Promise.race([
+            withMcpClient(context.params.sessionId, 'open-science-plan', async (client) =>
+              toolResult(
+                'generate_plan',
+                await client.callTool({ name: 'generate_plan', arguments: argumentsForPlan })
+              )
+            ).then(() => 'reviewed'),
+            waitForSessionCancellation(context.params.sessionId).then(() => 'cancelled')
+          ])
+          sessionCancellationResolvers.delete(context.params.sessionId)
+          if (outcome === 'cancelled') {
+            await context.client.notify(acp.methods.client.session.update, {
+              sessionId: context.params.sessionId,
+              update: { sessionUpdate: 'tool_call_update', toolCallId, status: 'failed' }
+            })
+            return { stopReason: 'cancelled' }
+          }
+          await context.client.notify(acp.methods.client.session.update, {
+            sessionId: context.params.sessionId,
+            update: { sessionUpdate: 'tool_call_update', toolCallId, status: 'completed' }
+          })
           reply = 'Restart verification: Plan review returned.'
         } else if (prompt.includes('Ask a restart verification question.')) {
           await withMcpClient(context.params.sessionId, 'open-science-notebook', async (client) =>

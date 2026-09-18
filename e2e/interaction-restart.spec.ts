@@ -70,6 +70,20 @@ for (const { action, restart } of scenarios) {
         .getByRole('button', { name: prompt })
         .click()
     }
+    if (action === 'approve' || action === 'dismiss' || action === 'comment') {
+      const stoppedPlan = await page.evaluate(async () => {
+        const session = (await window.api.sessions.loadAll()).sessions[0]
+        return {
+          owner: session.runtimeTranscriptOwner,
+          status: session.activities?.find(({ id }) => id === 'e2e-restart-plan-generation')?.status
+        }
+      })
+      expect(stoppedPlan).toEqual({ owner: 'main', status: 'failed' })
+      await expect(page.getByText('Created execution Plan', { exact: true })).toBeVisible()
+      await expect(page.getByText('Failed to create execution Plan', { exact: true })).toHaveCount(
+        0
+      )
+    }
     if (permission) {
       await testInfo.attach('permission-after', {
         body: JSON.stringify(

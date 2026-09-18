@@ -1,10 +1,14 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { JSX, PropsWithChildren } from 'react'
 import type { ChatMessage, ChatSession, ToolActivity } from '@/stores/session-store'
+import { hydrateToolActivity } from '@/stores/session-store-persistence-owner'
 import type { UploadedAttachment } from '../../../../shared/uploads'
 import type { JobSummary } from '../../../../shared/compute'
 import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
-import { createLinearConversationGraph } from '../../../../shared/conversation-graph'
+import {
+  createLinearConversationGraph,
+  resolveActiveConversationActivities
+} from '../../../../shared/conversation-graph'
 import type {
   HandoffLifecycleEvent,
   HandoffLifecycleEventSource
@@ -524,7 +528,85 @@ const createGeneratePlanActivity = (
     ...overrides
   })
 
+const createMainPlanAuthoritySession = (): ChatSession => {
+  const session = createPlanAuthoritySession(
+    [
+      createGeneratePlanActivity('failed', { id: 'original-plan-call' }),
+      createGeneratePlanActivity('failed', {
+        id: 'later-plan-retry',
+        createdAt: 1710000000200,
+        updatedAt: 1710000000200
+      })
+    ],
+    { messages: [createMessage({ id: 'prompt-plan' })], runtimeTranscriptOwner: 'main' }
+  )
+  const graph = createLinearConversationGraph({
+    sessionId: session.id,
+    messages: session.messages,
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt
+  })
+  graph.activities = session.activities!.map((activity) => ({
+    ...activity,
+    agentFrameId: graph.activeFrameId,
+    messageBranchId: graph.frames[0].activeBranchId,
+    runtimeSegmentId: graph.runtimeSegments[0].id,
+    promptMessageId: 'prompt-plan'
+  }))
+  return {
+    ...session,
+    conversationGraph: graph,
+    activities: resolveActiveConversationActivities(graph).activities.map(hydrateToolActivity)
+  }
+}
+
 describe('WorkspaceMessageScroller durable Plan activity render', () => {
+  it.each(['pending', 'approved', 'rejected'] as const)(
+    'uses canonical Main Plan ownership after restart with %s approval while retaining a failed retry',
+    async (approval) => {
+      const session = createMainPlanAuthoritySession()
+      session.activePlanProjection = { ...session.activePlanProjection!, approval }
+      expect(session.activities![0].promptMessageId).toBeUndefined()
+      const html = await renderScroller(session)
+      expect(html.match(/Created execution Plan/gu)).toHaveLength(1)
+      expect(html.match(/Failed to create execution Plan/gu)).toHaveLength(1)
+      expect(session.activities![0].status).toBe('failed')
+    }
+  )
+
+  it.each([
+    'prompt-conflict',
+    'document-conflict',
+    'tool-conflict',
+    'hidden-branch',
+    'duplicate-identity'
+  ] as const)('does not grant Main Plan display authority for %s', async (conflict) => {
+    const session = createMainPlanAuthoritySession()
+    const graph = session.conversationGraph!
+    if (conflict === 'prompt-conflict') session.activities![0].promptMessageId = 'other-prompt'
+    if (conflict === 'document-conflict') {
+      session.activities![0].rawInput = { ...planDocument, task_summary: 'A different Plan' }
+    }
+    if (conflict === 'tool-conflict') {
+      graph.activities[0].providerToolName = 'notebook_execute'
+      graph.activities[0].title = 'notebook_execute'
+    }
+    if (conflict === 'duplicate-identity') graph.activities.push({ ...graph.activities[0] })
+    if (conflict === 'hidden-branch') {
+      graph.branches.push({
+        ...graph.branches[0],
+        id: 'hidden-branch',
+        parentBranchId: graph.branches[0].id,
+        forkMessageId: 'prompt-plan',
+        forkActivityId: 'original-plan-call'
+      })
+      graph.activities[0].messageBranchId = 'hidden-branch'
+    }
+    const html = await renderScroller(session)
+    expect(html).not.toContain('Created execution Plan')
+    expect(html.match(/Failed to create execution Plan/gu)).toHaveLength(2)
+  })
+
   it.each(['in_progress', 'failed'] as const)(
     'renders a %s generation call as created once its matching Plan authority exists',
     async (status) => {
