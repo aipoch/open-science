@@ -402,12 +402,12 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
         onNetworkAccessRequest: async () => false
       })
       const denied = await run(deniedProcess, cwd)
-      expect(denied.code).not.toBe(0)
-      expect(denied.stdout).not.toContain('OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED')
-      const annotatedDeniedStderr = deniedProcess.annotateStderr(denied.stderr)
-      expect(annotatedDeniedStderr).toContain('OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED')
-      expect(annotatedDeniedStderr).toContain('deny network-outbound example.com:80')
+      const deniedStderr = deniedProcess.annotateStderr(denied.stderr)
       await deniedProcess.cleanup('exit', { processesTerminated: true })
+      expect(denied.code, deniedStderr).toBe(22)
+      expect(denied.stdout).not.toContain('OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED')
+      expect(deniedStderr).toContain('OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED')
+      expect(deniedStderr).toContain('deny network-outbound example.com:80')
 
       sandbox.updatePolicy({
         allowedDomains: [],
@@ -421,13 +421,12 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
         onNetworkAccessRequest: hardDeniedDecision
       })
       const hardDenied = await run(hardDeniedProcess, cwd)
-      expect(hardDenied.code).not.toBe(0)
-      expect(hardDenied.stdout).toContain('OPEN_SCIENCE_NETWORK_POLICY_BLOCKED')
-      expect(hardDeniedProcess.annotateStderr(hardDenied.stderr)).toContain(
-        'destination is explicitly blocked'
-      )
-      expect(hardDeniedDecision).not.toHaveBeenCalled()
+      const hardDeniedStderr = hardDeniedProcess.annotateStderr(hardDenied.stderr)
       await hardDeniedProcess.cleanup('exit', { processesTerminated: true })
+      expect(hardDenied.code, hardDeniedStderr).toBe(22)
+      expect(hardDenied.stdout).toContain('OPEN_SCIENCE_NETWORK_POLICY_BLOCKED')
+      expect(hardDeniedStderr).toContain('destination is explicitly blocked')
+      expect(hardDeniedDecision).not.toHaveBeenCalled()
 
       const privateDecision = vi.fn(async () => true)
       const privateProcess = await sandbox.wrap({
@@ -436,13 +435,12 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
         onNetworkAccessRequest: privateDecision
       })
       const privateResult = await run(privateProcess, cwd)
-      expect(privateResult.code).not.toBe(0)
-      expect(privateResult.stdout).toContain('OPEN_SCIENCE_NETWORK_POLICY_BLOCKED')
-      expect(privateProcess.annotateStderr(privateResult.stderr)).toContain(
-        'destination resolves to a non-public network address'
-      )
-      expect(privateDecision).not.toHaveBeenCalled()
+      const privateStderr = privateProcess.annotateStderr(privateResult.stderr)
       await privateProcess.cleanup('exit', { processesTerminated: true })
+      expect(privateResult.code, privateStderr).toBe(22)
+      expect(privateResult.stdout).toContain('OPEN_SCIENCE_NETWORK_POLICY_BLOCKED')
+      expect(privateStderr).toContain('destination resolves to a non-public network address')
+      expect(privateDecision).not.toHaveBeenCalled()
     } finally {
       await sandbox.dispose()
       await new Promise<void>((resolveClose, reject) =>
