@@ -92,7 +92,8 @@ const expectStableScreenshot = async (
   await page.evaluate(() => {
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
   })
-  await expect(page).toHaveScreenshot(name, {
+  // Collect every visual mismatch in the journey while keeping the test failure blocking.
+  await expect.soft(page).toHaveScreenshot(name, {
     animations: 'disabled',
     caret: 'hide',
     maxDiffPixelRatio: process.platform === 'darwin' ? maxDiffPixelRatio : 0.035

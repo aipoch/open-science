@@ -468,11 +468,22 @@ describe('post-merge Windows validation', () => {
     expect(regression.on.workflow_dispatch).toMatchObject({
       inputs: { suite: { default: 'all', options: ['all', 'p0', 'visual'] } }
     })
-    for (const job of [regression.jobs.p0, regression.jobs.visual]) {
-      expect(findStep(job, 'Checkout source revision').with?.ref).toBe(
-        "${{ github.event_name == 'workflow_dispatch' && github.sha || needs.source.outputs.sha }}"
-      )
-    }
+    expect(findStep(regression.jobs.p0, 'Checkout source revision').with?.ref).toBe(
+      '${{ needs.source.outputs.sha }}'
+    )
+    expect(findStep(regression.jobs.p0, 'Checkout manual launch tooling')).toMatchObject({
+      if: "github.event_name == 'workflow_dispatch'",
+      with: { ref: '${{ github.sha }}', 'persist-credentials': false }
+    })
+    expect(
+      findStep(regression.jobs.p0, 'Apply manual launch tooling').run?.trim().split('\n')
+    ).toEqual([
+      'cp .regression-tooling/e2e/fixtures/electron-app.ts e2e/fixtures/electron-app.ts',
+      'cp .regression-tooling/scripts/ci/run-macos-packaged-e2e.sh scripts/ci/run-macos-packaged-e2e.sh'
+    ])
+    expect(findStep(regression.jobs.visual, 'Checkout source revision').with?.ref).toBe(
+      "${{ github.event_name == 'workflow_dispatch' && github.sha || needs.source.outputs.sha }}"
+    )
     expect(regression.on).toHaveProperty('workflow_call')
     expect(regression.jobs.source['continue-on-error']).toBe('${{ inputs.allow_failure == true }}')
     expect(findStep(regression.jobs.source, 'Resolve source run').run).toContain(

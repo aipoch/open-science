@@ -83,8 +83,27 @@ jobs:
       - name: Checkout source revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          # Manual diagnosis tests the selected branch; callers retain the package's source revision.
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.sha || needs.source.outputs.sha }}
+          ref: ${{ needs.source.outputs.sha }}
+
+      # Keep business assertions and fake-Agent behavior matched to the immutable package. Only
+      # overlay the launch fixture and Keychain runner being diagnosed from the selected branch.
+      - name: Checkout manual launch tooling
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          path: .regression-tooling
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            e2e/fixtures/electron-app.ts
+            scripts/ci/run-macos-packaged-e2e.sh
+
+      - name: Apply manual launch tooling
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          cp .regression-tooling/e2e/fixtures/electron-app.ts e2e/fixtures/electron-app.ts
+          cp .regression-tooling/scripts/ci/run-macos-packaged-e2e.sh scripts/ci/run-macos-packaged-e2e.sh
 
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
