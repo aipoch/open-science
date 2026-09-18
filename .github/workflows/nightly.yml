@@ -66,14 +66,16 @@ jobs:
       skip_verify: ${{ inputs.dry_run == 'macos-x64' || inputs.dry_run == 'linux-cli' }}
       platform_name: ${{ inputs.dry_run == 'macos-x64' && 'macos-x64' || inputs.dry_run == 'linux-cli' && 'linux-x64' || '' }}
 
-  # Scheduled coverage remains advisory during burn-in and is deliberately absent from prepare.needs.
-  # A manual `runtime-source` dispatch runs this exact reusable job as a blocking focused dry-run while
-  # build/package/publish preparation stay skipped.
+  # Scheduled coverage is advisory for the build only: it stays absent from prepare.needs so artifacts
+  # and evidence remain diagnosable, but nightly-publish.yml refuses to roll the tag unless every
+  # runtime-certification job succeeded. A manual `runtime-source` dispatch runs this exact reusable
+  # job as a blocking focused dry-run while build/package/publish preparation stay skipped.
   runtime-certification:
     needs: plan
     if: needs.plan.outputs.should_build == 'true' && inputs.dry_run != 'macos-x64' && inputs.dry_run != 'linux-cli'
     uses: ./.github/workflows/runtime-certification.yml
     with:
+      # Scheduled failures keep the build green so prepare still runs; publication gates on them.
       allow_failure: ${{ github.event_name != 'workflow_dispatch' }}
 
   package-smoke:
@@ -83,13 +85,15 @@ jobs:
     with:
       platform_name: ${{ inputs.dry_run == 'linux-cli' && 'linux-x64' || '' }}
 
-  # Run advisory desktop behavior checks inside the same read-only Nightly run. Failures remain
-  # visible and independently rerunnable, but do not gate preparation or publication.
+  # Run desktop behavior checks inside the same read-only Nightly run. Failures keep the build green
+  # and independently rerunnable so artifacts stay diagnosable, but nightly-publish.yml refuses to
+  # roll the tag unless every regression job succeeded.
   regression:
     needs: [build, package-smoke]
     if: inputs.dry_run != 'linux-cli'
     uses: ./.github/workflows/desktop-regression.yml
     with:
+      # Advisory for the build only; publication gates on the real job conclusions.
       allow_failure: true
 
   # Aggregate and checksum on the low-privilege build run. A manual Nightly stops here, making this

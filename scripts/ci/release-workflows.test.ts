@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 type Step = {
   'continue-on-error'?: boolean
   env?: Record<string, string>
+  id?: string
   if?: string
   name?: string
   run?: string
@@ -312,7 +313,30 @@ describe('release and scheduled workflow topology', () => {
     expect(plan.if).toContain("github.event.workflow_run.conclusion == 'success'")
     expect(plan.if).toContain("github.event.workflow_run.event == 'schedule'")
     expect(plan.if).toContain("github.event.workflow_run.head_branch == 'main'")
-    const publicationPlan = step(plan, 'Check for an unpublished build').run
+    const checkout = step(plan, 'Checkout trusted gate code')
+    expect(checkout.uses).toMatch(/^actions\/checkout@[0-9a-f]{40}/)
+    expect(checkout.with).toEqual({
+      ref: 'refs/heads/main',
+      'persist-credentials': false,
+      'sparse-checkout': 'scripts/ci/nightly-publish-gates.mjs',
+      'sparse-checkout-cone-mode': false
+    })
+    const gates = step(plan, 'Require advisory certification and regression jobs to have passed')
+    expect(gates.id).toBe('gates')
+    expect(gates.run).toContain('repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/jobs')
+    expect(gates.run).toContain('--paginate')
+    expect(gates.run).toContain('{name, conclusion}')
+    expect(gates.run).toContain('node scripts/ci/nightly-publish-gates.mjs --jobs')
+    expect(gates.run).not.toContain('workflow_run.head')
+    expect(plan.steps?.some(({ run }) => run?.includes('npm '))).toBe(false)
+    const decide = step(plan, 'Check for an unpublished build')
+    expect(decide.env).toMatchObject({ GATES_OK: '${{ steps.gates.outputs.ok }}' })
+    const publicationPlan = decide.run
+    expect(publicationPlan).toContain('if [ "$GATES_OK" != "true" ]')
+    expect(publicationPlan).toContain('blocked publication gates')
+    const planSteps = plan.steps ?? []
+    expect(planSteps.indexOf(checkout)).toBeLessThan(planSteps.indexOf(gates))
+    expect(planSteps.indexOf(gates)).toBeLessThan(planSteps.indexOf(decide))
     expect(publicationPlan).toContain('repos/$GITHUB_REPOSITORY/commits/nightly')
     expect(publicationPlan).toContain('repos/$GITHUB_REPOSITORY/compare/$published...$SOURCE_SHA')
     expect(publicationPlan).toContain("grep -Eq 'HTTP (404|422)'")

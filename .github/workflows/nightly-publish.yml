@@ -1,7 +1,8 @@
 name: Nightly Publish
 
-# Publish only after a successful scheduled Nightly on main. The low-privilege triggering workflow
-# prepares all metadata; this privileged workflow never checks out or executes triggering-run code.
+# Publish only after a successful scheduled Nightly on main whose advisory certification and
+# regression jobs also passed. The low-privilege triggering workflow prepares all metadata; this
+# privileged workflow only checks out trusted gate code from main and never executes triggering-run code.
 on:
   workflow_run:
     workflows:
@@ -31,13 +32,43 @@ jobs:
     outputs:
       should_publish: ${{ steps.decide.outputs.should_publish }}
     env:
+      SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
       SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
     steps:
+      # Trusted gate code comes from main, never from the triggering revision.
+      - name: Checkout trusted gate code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: refs/heads/main
+          persist-credentials: false
+          sparse-checkout: scripts/ci/nightly-publish-gates.mjs
+          sparse-checkout-cone-mode: false
+
+      # runtime-certification and regression are continue-on-error in Nightly so the build and its
+      # artifacts stay diagnosable, which means the run concludes `success` even when they failed.
+      # The jobs API still reports each job's real conclusion, so gate publication on it here.
+      - name: Require advisory certification and regression jobs to have passed
+        id: gates
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          jobs_file="$RUNNER_TEMP/nightly-jobs.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/jobs" --paginate \
+            --jq '.jobs[] | {name, conclusion}' | jq -s . > "$jobs_file"
+          node scripts/ci/nightly-publish-gates.mjs --jobs "$jobs_file"
+
       - name: Check for an unpublished build
         id: decide
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GATES_OK: ${{ steps.gates.outputs.ok }}
         run: |
+          if [ "$GATES_OK" != "true" ]; then
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+            echo "Nightly $SOURCE_RUN_ID has blocked publication gates; skipping publication of $SOURCE_SHA."
+            exit 0
+          fi
+
           error_file="$RUNNER_TEMP/nightly-published-error.log"
           if ! published=$(gh api "repos/$GITHUB_REPOSITORY/commits/nightly" --jq .sha 2>"$error_file"); then
             if grep -Eq 'HTTP (404|422)' "$error_file"; then
