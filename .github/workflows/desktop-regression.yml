@@ -20,8 +20,8 @@ on:
   workflow_dispatch:
     inputs:
       run_id:
-        description: 'Release or Nightly workflow run ID whose macos-arm64 artifact should be tested'
-        required: true
+        description: 'Release or Nightly run ID; required for all/p0, unused for visual'
+        required: false
         type: string
       suite:
         description: 'Focused regression to run without building or publishing a release'
@@ -36,6 +36,7 @@ permissions:
 jobs:
   source:
     name: Resolve source build
+    if: inputs.suite != 'visual'
     continue-on-error: ${{ inputs.allow_failure == true }}
     runs-on: ubuntu-latest
     outputs:
@@ -157,7 +158,8 @@ jobs:
   visual:
     name: visual (canonical macos-14 source build)
     needs: source
-    if: needs.source.outputs.available == 'true' && inputs.suite != 'p0'
+    # An explicit status check allows visual-only runs after source is skipped.
+    if: ${{ !cancelled() && inputs.suite != 'p0' && (inputs.suite == 'visual' || needs.source.outputs.available == 'true') }}
     continue-on-error: ${{ inputs.allow_failure == true }}
     runs-on: macos-14
     timeout-minutes: 15
@@ -189,7 +191,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: desktop-regression-visual-${{ needs.source.outputs.run_id }}
+          name: desktop-regression-visual-${{ needs.source.outputs.run_id || github.run_id }}
           retention-days: 7
           path: |
             test-results/

@@ -412,7 +412,7 @@ describe('post-merge Windows validation', () => {
     expect(findStep(p0Regression, 'Upload P0 diagnostics').if).toBe('always()')
     expect(visualRegression).toMatchObject({ needs: 'source', 'runs-on': 'macos-14' })
     expect(visualRegression.if).toBe(
-      "needs.source.outputs.available == 'true' && inputs.suite != 'p0'"
+      "${{ !cancelled() && inputs.suite != 'p0' && (inputs.suite == 'visual' || needs.source.outputs.available == 'true') }}"
     )
     expect(visualRegression['continue-on-error']).toBe('${{ inputs.allow_failure == true }}')
     expect(findStep(visualRegression, 'Build Electron application').run).toBe('npm run build:e2e')
@@ -466,8 +466,15 @@ describe('post-merge Windows validation', () => {
     expect(regression.on).not.toHaveProperty('workflow_run')
     expect(regression.on).toHaveProperty('workflow_dispatch')
     expect(regression.on.workflow_dispatch).toMatchObject({
-      inputs: { suite: { default: 'all', options: ['all', 'p0', 'visual'] } }
+      inputs: {
+        run_id: { required: false },
+        suite: { default: 'all', options: ['all', 'p0', 'visual'] }
+      }
     })
+    expect(regression.jobs.source.if).toBe("inputs.suite != 'visual'")
+    expect(findStep(regression.jobs.visual, 'Upload visual diagnostics').with?.name).toBe(
+      'desktop-regression-visual-${{ needs.source.outputs.run_id || github.run_id }}'
+    )
     expect(findStep(regression.jobs.p0, 'Checkout source revision').with?.ref).toBe(
       '${{ needs.source.outputs.sha }}'
     )
