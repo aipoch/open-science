@@ -298,6 +298,7 @@
       "src/renderer/src/pages/workspace/ReportErrorDialog.interaction.test.tsx",
       "src/renderer/src/pages/workspace/SessionBackgroundActivity.test.tsx",
       "src/renderer/src/pages/workspace/SessionHoverPreview.test.tsx",
+      "src/renderer/src/pages/workspace/SessionInfoPopover.test.tsx",
       "src/renderer/src/pages/workspace/SessionInterruptedBanner.test.tsx",
       "src/renderer/src/pages/workspace/SessionMessageMarkdown.image-loading.test.tsx",
       "src/renderer/src/pages/workspace/SessionMessageMarkdown.integration.test.tsx",
