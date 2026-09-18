@@ -566,10 +566,11 @@ Active-dialog menus and other foreground child layers retain their own ordering.
 
 ### Session information
 
-The upper-right pin toggles the owning project through the existing project update flow. Its pressed state follows the project store; saving disables repeat clicks and failures remain visible in the card.
+The upper-right pin toggles the current Session through the shared Session controller, moving it into or out of the sidebar’s pinned section. Its pressed state follows the Session store; it stays disabled until Session persistence is ready.
 
 - The conversation header's Session number and title open a click- and keyboard-accessible,
-  non-modal information Popover. Show the current Session number at the right of the card title,
+  non-modal information Popover. Limit the header trigger to 320px (or the available width),
+  truncate its title on one line, and expose the full title on hover. Show the current Session number at the right of the card title,
   keeping the number fully visible. Keep the title on one line with ellipsis and the description
   to at most two lines. Use the shared semantic surface, rounded-xl and shadow-menu, with a
   viewport-bounded width of 360px.

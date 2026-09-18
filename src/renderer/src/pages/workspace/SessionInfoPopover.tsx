@@ -2,7 +2,7 @@
  * pre-emit critique: P5 H5 E4 S5 R5 V4
  */
 import { useId, useRef, useState } from 'react'
-import { ChevronDown, GitBranch, Loader2, Pencil, Pin } from 'lucide-react'
+import { ChevronDown, GitBranch, Pencil, Pin } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -10,13 +10,8 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import type { ChatSession } from '@/stores/session-store'
 import { isHiddenControlMessage } from '../../../../shared/session-persistence'
 
-export type SessionInfoProjectPin = {
-  pinned: boolean
-  toggle: () => Promise<void>
-}
-
 type SessionInfoPopoverProps = {
-  projectPin?: SessionInfoProjectPin
+  onTogglePin?: (session: ChatSession) => void
   session: ChatSession
   sourceSession?: Pick<ChatSession, 'id' | 'title' | 'number'>
   onOpenSession?: (sessionId: string) => void
@@ -28,12 +23,10 @@ const SessionInfoPopover = ({
   sourceSession,
   onOpenSession,
   onEdit,
-  projectPin
+  onTogglePin
 }: SessionInfoPopoverProps): React.JSX.Element => {
   const { t, i18n } = useTranslation()
   const [open, setOpen] = useState(false)
-  const [pinning, setPinning] = useState(false)
-  const [pinError, setPinError] = useState(false)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const handingOffFocus = useRef(false)
   const headingId = useId()
@@ -54,13 +47,15 @@ const SessionInfoPopover = ({
         <Button
           ref={triggerRef}
           variant="ghost"
-          className="h-auto min-h-8 min-w-0 max-w-full shrink justify-start gap-2 px-2 py-1 text-[13px] font-semibold text-text-000 transition-none max-md:min-h-11"
+          className="h-auto min-h-8 min-w-0 max-w-[min(100%,20rem)] shrink justify-start gap-2 px-2 py-1 text-[13px] font-semibold text-text-000 transition-none max-md:min-h-11"
           aria-label={t('Session information: {{title}}', { title: session.title })}
         >
           {session.number !== undefined ? (
             <span className="shrink-0 font-normal text-muted-foreground">#{session.number}</span>
           ) : null}
-          <span className="truncate">{session.title}</span>
+          <span className="truncate" title={session.title}>
+            {session.title}
+          </span>
           <ChevronDown className="size-3.5 text-muted-foreground" aria-hidden="true" />
         </Button>
       </PopoverTrigger>
@@ -91,44 +86,22 @@ const SessionInfoPopover = ({
                 #{session.number}
               </span>
             ) : null}
-            {projectPin ? (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="-mr-2 size-8 shrink-0 text-muted-foreground transition-none max-md:size-11"
-                aria-label={t(projectPin.pinned ? 'Unpin project' : 'Pin project')}
-                title={t(projectPin.pinned ? 'Unpin project' : 'Pin project')}
-                aria-pressed={projectPin.pinned}
-                disabled={pinning}
-                onClick={async () => {
-                  if (pinning) return
-                  setPinning(true)
-                  setPinError(false)
-                  try {
-                    await projectPin.toggle()
-                  } catch {
-                    setPinError(true)
-                  } finally {
-                    setPinning(false)
-                  }
-                }}
-              >
-                {pinning ? (
-                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-                ) : (
-                  <Pin
-                    className={`size-4 ${projectPin.pinned ? 'fill-current text-foreground' : ''}`}
-                    aria-hidden="true"
-                  />
-                )}
-              </Button>
-            ) : null}
+            <Button
+              variant="ghost"
+              size="icon"
+              className="-mr-2 size-8 shrink-0 text-muted-foreground transition-none max-md:size-11"
+              aria-label={t(session.pinned ? 'Unpin' : 'Pin')}
+              title={t(session.pinned ? 'Unpin' : 'Pin')}
+              aria-pressed={session.pinned === true}
+              disabled={!onTogglePin || session.isPending}
+              onClick={() => onTogglePin?.(session)}
+            >
+              <Pin
+                className={`size-4 ${session.pinned ? 'fill-current text-foreground' : ''}`}
+                aria-hidden="true"
+              />
+            </Button>
           </div>
-          {pinError ? (
-            <p role="alert" className="mt-2 text-xs text-destructive">
-              {t('Could not update project pin.')}
-            </p>
-          ) : null}
           {session.description ? (
             <p className="mt-1.5 line-clamp-2 break-words text-sm leading-5 text-muted-foreground">
               {session.description}

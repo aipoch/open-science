@@ -917,7 +917,7 @@ describe('ConversationPanel header spacing', () => {
     expect(document.querySelector('[role="dialog"]')).toBeNull()
   })
 
-  it('forwards the owning project pin action through the Session information card', async () => {
+  it('forwards the current Session pin action through the information card', async () => {
     const session: ChatSession = {
       id: 'pin-info-session',
       projectId: 'project-1',
@@ -931,17 +931,15 @@ describe('ConversationPanel header spacing', () => {
     const toggle = vi.fn().mockResolvedValue(undefined)
     renderPanel({
       view: { activeSession: session },
-      sessionTools: { projectPin: { pinned: false, toggle } }
+      sessionTools: { togglePin: toggle }
     })
     act(() =>
       getConversationHeader()
         .querySelector<HTMLButtonElement>('[aria-label^="Session information:"]')!
         .click()
     )
-    await act(async () =>
-      document.querySelector<HTMLButtonElement>('[aria-label="Pin project"]')!.click()
-    )
-    expect(toggle).toHaveBeenCalledTimes(1)
+    await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="Pin"]')!.click())
+    expect(toggle).toHaveBeenCalledWith(expect.objectContaining({ id: session.id }))
     expect(document.querySelector('[role="dialog"]')).not.toBeNull()
   })
 

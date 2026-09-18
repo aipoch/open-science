@@ -1544,20 +1544,9 @@ const WorkspacePage = ({
                 }
               }}
               sessionTools={{
-                projectPin:
-                  activeProject && activeSession?.projectId === activeProject.id
-                    ? {
-                        pinned: activeProject.pinned === true,
-                        toggle: async () => {
-                          const updated = await useProjectStore.getState().updateProject({
-                            id: activeProject.id,
-                            pinned: !activeProject.pinned,
-                            expectedUpdatedAt: activeProject.updatedAt
-                          })
-                          if (!updated) throw new Error('Could not update project pin.')
-                        }
-                      }
-                    : undefined,
+                togglePin: isSessionPersistenceReady
+                  ? sessionController.actions.togglePin
+                  : undefined,
                 editSession: isSessionPersistenceReady
                   ? (session) => {
                       sessionInfoReturnFocusRef.current = document.activeElement as HTMLElement

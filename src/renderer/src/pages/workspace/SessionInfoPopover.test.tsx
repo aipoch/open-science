@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { useRef, useState } from 'react'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ChatSession } from '@/stores/session-store'
 import { createI18nTestStub } from '../../../../../test/i18n-test-stub'
@@ -93,50 +93,22 @@ describe('Session information', () => {
     expect(screen.getByRole('dialog').textContent).not.toContain('#42')
   })
 
-  it('pins the project, blocks repeat clicks while saving, and follows the saved state', async () => {
-    let finish!: () => void
-    const toggle = vi.fn(
-      () =>
-        new Promise<void>((resolve) => {
-          finish = resolve
-        })
-    )
-    const { rerender } = render(
-      <SessionInfoPopover session={session} projectPin={{ pinned: false, toggle }} />
-    )
+  it('toggles the current Session and reflects the shared pinned state', () => {
+    const toggle = vi.fn()
+    const { rerender } = render(<SessionInfoPopover session={session} onTogglePin={toggle} />)
     open()
-    const pin = screen.getByRole<HTMLButtonElement>('button', { name: 'Pin project' })
+    const pin = screen.getByRole<HTMLButtonElement>('button', { name: 'Pin' })
     expect(pin.getAttribute('aria-pressed')).toBe('false')
     fireEvent.click(pin)
-    expect(pin.disabled).toBe(true)
-    fireEvent.click(pin)
-    expect(toggle).toHaveBeenCalledTimes(1)
-    await act(async () => finish())
-    rerender(<SessionInfoPopover session={session} projectPin={{ pinned: true, toggle }} />)
-    const unpin = screen.getByRole<HTMLButtonElement>('button', { name: 'Unpin project' })
+    expect(toggle).toHaveBeenCalledWith(session)
+    const pinned = { ...session, pinned: true }
+    rerender(<SessionInfoPopover session={pinned} onTogglePin={toggle} />)
+    const unpin = screen.getByRole('button', { name: 'Unpin' })
     expect(unpin.getAttribute('aria-pressed')).toBe('true')
-    expect(unpin.disabled).toBe(false)
     fireEvent.click(unpin)
-    expect(toggle).toHaveBeenCalledTimes(2)
-    await act(async () => finish())
-  })
-
-  it('keeps the saved project pin on failure and permits retry', async () => {
-    const toggle = vi
-      .fn()
-      .mockRejectedValueOnce(new Error('Save failed'))
-      .mockResolvedValueOnce(undefined)
-    render(<SessionInfoPopover session={session} projectPin={{ pinned: false, toggle }} />)
-    open()
-    fireEvent.click(screen.getByRole('button', { name: 'Pin project' }))
-    expect((await screen.findByRole('alert')).textContent).toBe('Could not update project pin.')
-    const pin = screen.getByRole<HTMLButtonElement>('button', { name: 'Pin project' })
-    expect(pin.disabled).toBe(false)
-    expect(pin.getAttribute('aria-pressed')).toBe('false')
-    fireEvent.click(pin)
-    await waitFor(() => expect(pin.disabled).toBe(false))
-    expect(screen.queryByRole('alert')).toBeNull()
-    expect(toggle).toHaveBeenCalledTimes(2)
+    expect(toggle).toHaveBeenLastCalledWith(pinned)
+    rerender(<SessionInfoPopover session={session} />)
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Pin' }).disabled).toBe(true)
   })
 
   it('shows honest loading values until hydration and disables editing', () => {
