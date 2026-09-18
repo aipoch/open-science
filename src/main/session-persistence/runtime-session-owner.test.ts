@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { AcpRuntimeEvent } from '../../shared/acp'
 import type { ArtifactFile } from '../../shared/artifacts'
-import type { PersistedChatSession } from '../../shared/session-persistence'
+import { normalizeSessionFile, type PersistedChatSession } from '../../shared/session-persistence'
 import {
   RuntimeSessionArtifactPublicationError,
   RuntimeSessionOwner,
@@ -104,6 +104,47 @@ const messageEvent = (
   messageId: `stream-${turn.promptMessageId}`,
   role: 'assistant',
   text
+})
+
+// The app-owned `ask_user_question` activity as it reaches the runtime: pending while the card
+// waits, answered once the user submits an answer.
+const questionEvent = (
+  turn: RuntimeSessionTurnScope,
+  state: 'pending' | 'answered',
+  timestamp: number
+): AcpRuntimeEvent => ({
+  id: `question-${state}`,
+  timestamp,
+  kind: 'tool',
+  level: 'info',
+  sessionId: turn.sessionId,
+  promptMessageId: turn.promptMessageId,
+  toolCallId: 'call-ask-user-question',
+  title: 'Ask the user to choose',
+  status: state === 'pending' ? 'in_progress' : 'completed',
+  providerToolName: 'ask_user_question',
+  elicitation: {
+    state,
+    message: 'Which dataset?',
+    fields: [{ id: 'answer', label: 'Dataset', kind: 'text' }],
+    ...(state === 'answered' ? { respondedAt: timestamp } : {}),
+    durable: {
+      kind: 'agent-user-choice',
+      requestId: 'request-1',
+      promptMessageId: turn.promptMessageId
+    }
+  }
+})
+
+const stopEvent = (turn: RuntimeSessionTurnScope, timestamp: number): AcpRuntimeEvent => ({
+  id: 'question-stop',
+  timestamp,
+  kind: 'stop',
+  level: 'info',
+  sessionId: turn.sessionId,
+  promptMessageId: turn.promptMessageId,
+  title: 'Prompt stopped',
+  text: 'end_turn'
 })
 
 const artifact = (overrides: Partial<ArtifactFile> = {}): ArtifactFile => ({
@@ -601,5 +642,309 @@ describe('RuntimeSessionOwner', () => {
     expect(sessions.get(turn.sessionId)?.status).toBe('idle')
     expect(sessions.get(turn.sessionId)?.activeRun).toBeUndefined()
     expect(sessions.get(turn.sessionId)?.messages.at(-1)?.content).toBe('late')
+  })
+
+  it('admits the answer to a pending user choice as the continuation of the same turn', async () => {
+    const turn = scope()
+    const { owner, sessions } = harness([session(turn)])
+    await owner.begin(turn)
+    owner.accept(questionEvent(turn, 'pending', 2))
+    owner.accept(stopEvent(turn, 3))
+    await owner.flush(turn.sessionId, turn.promptMessageId)
+    expect(sessions.get(turn.sessionId)?.status).toBe('waiting-for-user')
+    expect(sessions.get(turn.sessionId)?.activeRun).toBeUndefined()
+
+    // The user's answer arrives as Main's own continuation prompt for the same Conversation Turn.
+    const continuation: RuntimeSessionTurnScope = {
+      ...turn,
+      executionId: 'execution-answer'
+    }
+    await owner.begin(continuation, { reviewOwner: 'renderer' })
+
+    const durable = sessions.get(turn.sessionId)!
+    expect(durable.status).toBe('running')
+    expect(durable.activeRun).toEqual({
+      promptMessageId: turn.promptMessageId,
+      startedAt: expect.any(Number)
+    })
+
+    // The admitted continuation owns the provider stream, so its output commits to the turn.
+    owner.accept({
+      id: 'continuation-chunk',
+      timestamp: 11,
+      kind: 'message',
+      level: 'info',
+      sessionId: turn.sessionId,
+      promptMessageId: turn.promptMessageId,
+      messageId: 'stream-continuation',
+      role: 'assistant',
+      text: 'Continuing with the chosen dataset.'
+    })
+    await owner.flush(turn.sessionId, turn.promptMessageId)
+    expect(sessions.get(turn.sessionId)?.messages.at(-1)?.content).toBe(
+      'Continuing with the chosen dataset.'
+    )
+  })
+
+  it('admits the answer after the question is recorded as answered', async () => {
+    const turn = scope()
+    const { owner, sessions } = harness([session(turn)])
+    await owner.begin(turn)
+    owner.accept(questionEvent(turn, 'pending', 2))
+    owner.accept(stopEvent(turn, 3))
+    await owner.flush(turn.sessionId, turn.promptMessageId)
+
+    // The answer is durable before the continuation is dispatched: Main records the decision, then
+    // restarts the turn. The parked Session therefore still waits on the user while its question is
+    // already answered.
+    owner.accept(questionEvent(turn, 'answered', 4))
+    await owner.flush(turn.sessionId, turn.promptMessageId)
+    expect(sessions.get(turn.sessionId)?.status).toBe('waiting-for-user')
+    expect(
+      sessions
+        .get(turn.sessionId)
+        ?.conversationGraph?.activities.find(({ id }) => id === 'call-ask-user-question')
+        ?.elicitation?.state
+    ).toBe('answered')
+
+    await owner.begin({ ...turn, executionId: 'execution-answer' }, { reviewOwner: 'renderer' })
+
+    expect(sessions.get(turn.sessionId)?.activeRun).toEqual({
+      promptMessageId: turn.promptMessageId,
+      startedAt: expect.any(Number)
+    })
+  })
+
+  it('flushes an answer queued after terminal settlement before admitting its continuation', async () => {
+    const turn = scope()
+    const { owner, sessions } = harness([session(turn)])
+    await owner.begin(turn)
+    owner.accept(questionEvent(turn, 'pending', 2))
+    owner.accept(stopEvent(turn, 3))
+    await owner.flush(turn.sessionId, turn.promptMessageId)
+    owner.accept(questionEvent(turn, 'answered', 4))
+
+    await owner.begin({ ...turn, executionId: 'execution-answer' })
+
+    expect(sessions.get(turn.sessionId)?.status).toBe('running')
+    expect(sessions.get(turn.sessionId)?.activities?.[0].elicitation?.state).toBe('answered')
+  })
+
+  it('settles only the answer delivered by the accepted continuation', async () => {
+    const turn = scope()
+    const { owner, sessions } = harness([{ ...session(turn), runtimeTranscriptOwner: 'main' }])
+    await owner.begin(turn)
+    owner.accept(questionEvent(turn, 'pending', 2))
+    owner.accept(stopEvent(turn, 3))
+    await owner.flush(turn.sessionId, turn.promptMessageId)
+    const answer = questionEvent(turn, 'answered', 4)
+    answer.elicitation!.continuationPending = true
+    owner.accept(answer)
+    await owner.begin({ ...turn, executionId: 'execution-answer' })
+
+    const notAccepted = normalizeSessionFile(structuredClone(sessions.get(turn.sessionId)))!
+    expect(notAccepted.status).toBe('waiting-for-user')
+    expect(notAccepted.activities?.[0].elicitation?.state).toBe('pending')
+
+    const nextAnswer = questionEvent(turn, 'answered', 11)
+    nextAnswer.id = 'next-answer'
+    nextAnswer.toolCallId = 'next-choice'
+    nextAnswer.elicitation!.continuationPending = true
+    owner.accept(nextAnswer)
+    await owner.consumeReplay(turn.sessionId, turn.promptMessageId)
+    const accepted = sessions.get(turn.sessionId)!
+    expect(
+      accepted.activities?.find(({ id }) => id === 'next-choice')?.elicitation?.continuationPending
+    ).toBe(true)
+    expect(accepted.activities?.[0].elicitation?.state).toBe('answered')
+    expect(accepted.activities?.[0].elicitation?.continuationPending).toBeUndefined()
+    expect(accepted.conversationGraph?.activities[0].elicitation).toEqual(
+      accepted.activities?.[0].elicitation
+    )
+    expect(normalizeSessionFile(accepted)?.activities?.[0].elicitation?.state).toBe('answered')
+  })
+
+  it('retains the unanswered card through disk decoding and admits its restored turn', async () => {
+    const turn = scope()
+    const { owner, sessions } = harness([session(turn)])
+    await owner.begin(turn)
+    owner.accept(questionEvent(turn, 'pending', 2))
+    owner.accept(stopEvent(turn, 3))
+    await owner.flush(turn.sessionId, turn.promptMessageId)
+    const restored = normalizeSessionFile(JSON.parse(JSON.stringify(sessions.get(turn.sessionId))))!
+    expect(restored.activities?.[0].elicitation?.state).toBe('pending')
+    expect(restored.status).toBe('waiting-for-user')
+    const restarted = harness([restored])
+    await restarted.owner.begin({ ...turn, executionId: 'restarted' })
+    expect(restarted.sessions.get(turn.sessionId)?.status).toBe('running')
+  })
+
+  it('admits a recorded answer after disk normalization clears the waiting status', async () => {
+    const turn = scope()
+    const { owner, sessions } = harness([session(turn)])
+    await owner.begin(turn)
+    owner.accept(questionEvent(turn, 'pending', 2))
+    owner.accept(stopEvent(turn, 3))
+    await owner.flush(turn.sessionId, turn.promptMessageId)
+    owner.accept(questionEvent(turn, 'answered', 4))
+    await owner.flush(turn.sessionId, turn.promptMessageId)
+    const value = sessions.get(turn.sessionId)!
+    value.runtimeTranscriptOwner = 'main'
+    value.runtimeTranscriptLastRun = { promptMessageId: turn.promptMessageId, startedAt: 1 }
+    const restored = normalizeSessionFile(JSON.parse(JSON.stringify(value)))!
+    expect(restored.status).toBe('idle')
+    const restarted = harness([restored])
+    await restarted.owner.begin({ ...turn, executionId: 'restarted' })
+    expect(restarted.sessions.get(turn.sessionId)?.status).toBe('running')
+  })
+
+  it.each([
+    ['approved-plan', 'approved'],
+    ['rejected-plan', 'rejected'],
+    ['review-feedback', 'pending']
+  ] as const)(
+    'resumes a restarted Plan %s delivery after the decision is committed',
+    async (kind, approval) => {
+      const turn = scope()
+      const restored = session(turn)
+      delete restored.activeRun
+      restored.status = approval === 'pending' ? 'waiting-plan-approval' : 'idle'
+      restored.runtimeContext = {
+        version: 1,
+        revision: 1,
+        plan: {
+          artifactId: 'plan-artifact',
+          artifactVersionId: 'plan-version',
+          artifactChecksum: 'a'.repeat(64),
+          approval,
+          originatingPromptMessageId:
+            kind === 'review-feedback' ? 'earlier-plan-prompt' : turn.promptMessageId,
+          ...(kind === 'review-feedback' ? { reviewFeedbackMessageId: turn.promptMessageId } : {}),
+          stepStatuses: {},
+          delivery: {
+            commandId: 'plan-delivery',
+            kind,
+            state: 'delivering',
+            originatingPromptMessageId: turn.promptMessageId,
+            createdAt: 3
+          }
+        }
+      }
+      for (const state of ['queued', 'accepted', 'interrupted'] as const) {
+        const stale = structuredClone(restored)
+        stale.runtimeContext = {
+          ...stale.runtimeContext!,
+          plan: {
+            ...stale.runtimeContext!.plan!,
+            delivery: { ...stale.runtimeContext!.plan!.delivery!, state }
+          }
+        }
+        await expect(
+          harness([stale]).owner.begin(turn, {
+            planDeliveryCommandId: 'plan-delivery'
+          })
+        ).rejects.toThrow('unknown or superseded')
+      }
+      await expect(
+        harness([restored]).owner.begin(turn, {
+          planDeliveryCommandId: 'another-command'
+        })
+      ).rejects.toThrow('unknown or superseded')
+      const { owner, sessions } = harness([restored])
+      await owner.begin(turn, { planDeliveryCommandId: 'plan-delivery' })
+      expect(sessions.get(turn.sessionId)?.status).toBe('running')
+      owner.accept({
+        ...messageEvent(turn, 'plan-response', 'Continuing after review'),
+        timestamp: 11
+      })
+      await owner.flush(turn.sessionId, turn.promptMessageId)
+      expect(sessions.get(turn.sessionId)?.messages.at(-1)?.content).toBe('Continuing after review')
+    }
+  )
+
+  it('admits a restored permission continuation only for the turn that owns the approval', async () => {
+    const turn = scope()
+    const continuingPermission = (
+      originatingPromptMessageId: string
+    ): NonNullable<PersistedChatSession['runtimeContext']> => ({
+      version: 1,
+      revision: 1,
+      permission: {
+        state: 'continuing',
+        request: {
+          requestId: 'permission-1',
+          sessionId: turn.sessionId,
+          toolCallId: 'tool-1',
+          title: 'Run npm test',
+          providerToolName: 'Bash',
+          rawInput: { command: 'npm test' },
+          options: [
+            { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once', scope: 'once' }
+          ]
+        },
+        originatingPromptMessageId,
+        fingerprint: 'a'.repeat(64),
+        createdAt: 2
+      }
+    })
+    const owned = session(turn)
+    // Main records the approval and reports the Session running before restarting the turn.
+    owned.status = 'running'
+    owned.activeRun = undefined
+    owned.runtimeContext = continuingPermission(turn.promptMessageId)
+    const { owner, sessions } = harness([owned])
+
+    await owner.begin({ ...turn, executionId: 'execution-continuation' })
+
+    expect(sessions.get(turn.sessionId)?.activeRun?.promptMessageId).toBe(turn.promptMessageId)
+
+    const other = session(turn)
+    other.status = 'running'
+    other.activeRun = undefined
+    other.runtimeContext = continuingPermission('prompt-other')
+    const refused = harness([other])
+
+    await expect(
+      refused.owner.begin({ ...turn, executionId: 'execution-continuation' })
+    ).rejects.toThrow('Runtime Session turn is unknown or superseded.')
+  })
+
+  it('refuses to continue a turn whose pending question is already settled', async () => {
+    const turn = scope()
+    const { owner, sessions } = harness([session(turn)])
+    await owner.begin(turn)
+    owner.accept(questionEvent(turn, 'pending', 2))
+    owner.accept(questionEvent(turn, 'answered', 3))
+    owner.accept(stopEvent(turn, 4))
+    await owner.flush(turn.sessionId, turn.promptMessageId)
+    expect(sessions.get(turn.sessionId)?.status).toBe('idle')
+
+    await expect(owner.begin({ ...turn, executionId: 'execution-answer' })).rejects.toThrow(
+      'Runtime Session turn is unknown or superseded.'
+    )
+  })
+
+  it('refuses to continue a turn while another turn owns the pending interaction', async () => {
+    const turn = scope()
+    const durable = session(turn)
+    durable.status = 'waiting-plan-approval'
+    durable.activeRun = undefined
+    durable.runtimeContext = {
+      version: 1,
+      revision: 1,
+      plan: {
+        artifactId: 'plan-artifact',
+        artifactVersionId: 'plan-version',
+        artifactChecksum: 'plan-checksum',
+        originatingPromptMessageId: 'prompt-other',
+        approval: 'pending',
+        stepStatuses: {}
+      }
+    }
+    const { owner } = harness([durable])
+
+    await expect(owner.begin({ ...turn, executionId: 'execution-answer' })).rejects.toThrow(
+      'Runtime Session turn is unknown or superseded.'
+    )
   })
 })

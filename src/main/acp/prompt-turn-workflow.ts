@@ -230,7 +230,8 @@ type AcpPromptTurnWorkflowOptions = Readonly<{
   beginRuntimeSessionTurn?: (
     request: AcpPromptRequest,
     executionId: string,
-    reviewOwner: 'task' | 'renderer'
+    reviewOwner: 'task' | 'renderer',
+    planDeliveryCommandId?: string
   ) => Promise<void>
   onPromptStarted: (sessionId: string, turnToken: string, promptAttemptId?: string) => void
   emitState: () => void
@@ -350,7 +351,8 @@ class AcpPromptTurnWorkflow {
         await this.options.beginRuntimeSessionTurn(
           admittedRequest,
           interaction.turnToken,
-          mode.kind === 'user' ? (mode.runtimeReviewOwner ?? 'renderer') : 'renderer'
+          mode.kind === 'user' ? (mode.runtimeReviewOwner ?? 'renderer') : 'renderer',
+          mode.kind === 'app-continuation' ? mode.planDelivery?.commandId : undefined
         )
       }
       this.options.registry.select(admittedRequest.sessionId)

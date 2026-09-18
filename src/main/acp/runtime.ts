@@ -2218,7 +2218,19 @@ class AcpRuntime {
       if (continuation) {
         this.appContinuations.set(resolution.request.sessionId, {
           request: continuation,
-          condition: 'always'
+          condition: 'always',
+          onUnaccepted: async () => {
+            const promptMessageId = resolution.request.durable?.promptMessageId
+            if (!promptMessageId) return
+            await this.options.runtimeSessions?.flush(resolution.request.sessionId, promptMessageId)
+            await this.durableContinuationContext.rearmElicitation({
+              projectId: this.sessionEnvironment.projectId(resolution.request.sessionId),
+              sessionId: resolution.request.sessionId,
+              promptMessageId,
+              requestId: resolution.request.requestId,
+              toolCallId: resolution.request.toolCallId
+            })
+          }
         })
         this.schedulePendingAppContinuation(resolution.request.sessionId)
       }
@@ -2266,6 +2278,12 @@ class AcpRuntime {
       })
       const appended = this.elicitationOwner.appendDetached(pendingChoice.requestId, fields)
       if (!appended) return { action: 'cancelled' }
+      if (appended.durable?.promptMessageId) {
+        await this.options.runtimeSessions?.flush(
+          request.sessionId,
+          appended.durable.promptMessageId
+        )
+      }
       return { action: 'pending' }
     }
 
@@ -2321,6 +2339,11 @@ class AcpRuntime {
     )
 
     if (!pending) return { action: 'cancelled' }
+    // The tool must not acknowledge a durable question while its only copy is in the
+    // streaming batch. A restart immediately after the tool returns must retain the card.
+    if (pending.durable?.promptMessageId) {
+      await this.options.runtimeSessions?.flush(request.sessionId, pending.durable.promptMessageId)
+    }
     const referencedSessions = this.handoffContinuity.copyReferencedSessions(request.sessionId)
     if (
       promptInteraction?.kind === 'prompt' &&
@@ -2723,6 +2746,19 @@ class AcpRuntime {
       })
       this.emitState()
     } finally {
+      if (continuation.onUnaccepted) {
+        try {
+          await continuation.onUnaccepted()
+        } catch (error) {
+          this.pushEvent({
+            kind: 'error',
+            level: 'error',
+            sessionId,
+            title: 'Could not restore the unanswered question',
+            text: errorMessage(error)
+          })
+        }
+      }
       const durablePermission = this.durablePermissionContinuations?.get(sessionId)
       const durablePlan = this.durablePlanDeliveries?.get(sessionId)
       this.permissionContext.clearRestoredDecision(sessionId)

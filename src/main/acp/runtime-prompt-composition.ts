@@ -393,7 +393,12 @@ const composeAcpRuntimePromptOwners = (
     recordAdmittedPrompt: (request) => base.handoffContinuity.recordAdmittedPrompt(request),
     ...(options.runtimeSessions
       ? {
-          beginRuntimeSessionTurn: async (request, executionId, reviewOwner) => {
+          beginRuntimeSessionTurn: async (
+            request,
+            executionId,
+            reviewOwner,
+            planDeliveryCommandId
+          ) => {
             const provenance = request.provenanceContext
             if (
               !provenance?.agentFrameId ||
@@ -426,7 +431,8 @@ const composeAcpRuntimePromptOwners = (
                 agentFrameworkId: backend.framework.id,
                 ...(backend.backendId ? { agentBackendId: backend.backendId } : {}),
                 ...(backend.session.model ? { agentModel: backend.session.model } : {}),
-                reviewOwner
+                reviewOwner,
+                ...(planDeliveryCommandId ? { planDeliveryCommandId } : {})
               }
             )
           }

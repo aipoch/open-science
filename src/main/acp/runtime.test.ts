@@ -1,3 +1,4 @@
+import { RuntimeSessionOwner } from '../session-persistence/runtime-session-owner'
 import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
 import { createFrameNotebookLane } from '../notebook/lane-identity'
 import { createArtifactSaveFixture } from '../artifacts/save-test-fixtures'
@@ -4693,7 +4694,7 @@ describe('ACP runtime session management', () => {
           ]
         : [])
     ]
-    const persistedSession: PersistedChatSession = materializeSessionConversationGraph({
+    let persistedSession: PersistedChatSession = materializeSessionConversationGraph({
       id: 'restored-plan-session',
       projectId: 'project-1',
       title: 'Restored approved Plan',
@@ -4738,13 +4739,25 @@ describe('ACP runtime session management', () => {
         mutate(structuredClone(persistedSession))
       )
     }
+    const runtimeSessions = new RuntimeSessionOwner({
+      loadSession: async () => structuredClone({ ...persistedSession, runtimeContext }),
+      mutateSession: async (_scope, mutate) => {
+        persistedSession = mutate(structuredClone({ ...persistedSession, runtimeContext }))
+        return structuredClone(persistedSession)
+      },
+      finalizeArtifacts: async () => []
+    })
     const runtime = new AcpRuntime({
+      runtimeSessions,
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
       framework: opencodeFramework,
       callbacks: {
-        onEvent: (event) => events.push(event),
+        onEvent: (event) => {
+          runtimeSessions.accept(event)
+          events.push(event)
+        },
         onPromptStarted: (_sessionId, _turnToken, promptAttemptId) =>
           promptAttempts.push(promptAttemptId)
       },
@@ -7360,6 +7373,79 @@ describe('ACP runtime session management', () => {
         })
       ])
     )
+  })
+
+  it('rearms a restored answer when continuation admission fails and accepts a retry', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['restored-choice-session'])
+    let persisted = addPendingRestoredChoice(
+      createRestoredContinuationSession('prompt-restored-1', 'restored-choice-session', 'project-1')
+    )
+    persisted.runtimeTranscriptOwner = 'main'
+    const mutateRuntimeSession: SessionPersistenceCoordinator['mutateRuntimeSession'] = async (
+      _scope,
+      mutate
+    ) => {
+      persisted = mutate(structuredClone(persisted))
+      return structuredClone(persisted)
+    }
+    const runtimeSessions = new RuntimeSessionOwner({
+      loadSession: async () => structuredClone(persisted),
+      mutateSession: mutateRuntimeSession,
+      finalizeArtifacts: async () => []
+    })
+    vi.spyOn(runtimeSessions, 'begin').mockRejectedValueOnce(
+      new Error('temporary admission failure')
+    )
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      runtimeSessions,
+      callbacks: { onEvent: (event) => runtimeSessions.accept(event) },
+      permissionWait: {
+        sessions: {
+          readSessionRuntimeContext: vi.fn(),
+          patchSessionRuntimeContext: vi.fn(),
+          containsMessageOnActiveBranch: vi.fn(),
+          loadSessionForContinuation: async () => structuredClone(persisted),
+          mutateRuntimeSession
+        }
+      }
+    })
+    await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
+    const request = {
+      requestId: 'choice-restored-1',
+      sessionId: 'restored-choice-session',
+      toolCallId: 'tool-choice-restored-1',
+      message: 'Choose an approach',
+      fields: [{ id: 'question_0', label: 'Approach', kind: 'text' as const }],
+      durable: {
+        kind: 'agent-user-choice' as const,
+        requestId: 'choice-restored-1',
+        promptMessageId: 'prompt-restored-1'
+      }
+    }
+    const response = {
+      requestId: request.requestId,
+      action: 'accept' as const,
+      answers: [{ fieldId: 'question_0', value: 'Expanded' }],
+      request
+    }
+    await runtime.respondToElicitation(response)
+    await vi.waitFor(() => {
+      expect(persisted.status).toBe('waiting-for-user')
+      expect(persisted.activities?.[0].elicitation?.state).toBe('pending')
+    })
+    expect(fakeAgent.prompts).toHaveLength(0)
+    expect(persisted.activities?.[0].elicitation?.draftAnswers).toEqual(response.answers)
+    await runtime.respondToElicitation(response)
+    await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+    await vi.waitFor(() => {
+      expect(persisted.activities?.[0].elicitation?.state).toBe('answered')
+      expect(persisted.activities?.[0].elicitation?.continuationPending).toBeUndefined()
+    })
+    expect(fakeAgent.prompts[0].text).toContain('Expanded')
   })
 
   it('validates a revised choice against the durable fork before continuing', async () => {

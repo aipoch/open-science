@@ -1,6 +1,7 @@
 import type { AcpRuntimeEvent } from '../../shared/acp'
 import type { ArtifactFile } from '../../shared/artifacts'
-import type { PersistedChatSession } from '../../shared/session-persistence'
+import { resolveActiveConversationActivities } from '../../shared/conversation-graph'
+import type { PersistedActiveRun, PersistedChatSession } from '../../shared/session-persistence'
 import type { AgentFrameworkId } from '../../shared/settings'
 import { isClaudeApiResponseInterruption } from '../../shared/run-error-classification'
 import {
@@ -8,6 +9,7 @@ import {
   attachRuntimeSessionArtifacts,
   type RuntimeSessionScope
 } from '../../shared/runtime-session-projection'
+import { matchPlanDelivery } from '../session-plan/plan-delivery'
 
 const DEFAULT_FLUSH_INTERVAL_MS = 2_000
 const MAX_RETAINED_TURNS = 500
@@ -35,6 +37,8 @@ export type RuntimeSessionAdmission = {
   agentBackendId?: string
   agentModel?: string
   reviewOwner?: 'task' | 'renderer'
+  // Supplied only by the live app continuation after claiming this durable delivery.
+  planDeliveryCommandId?: string
 }
 
 export type RuntimeSessionArtifactPublicationReceipt = {
@@ -88,6 +92,7 @@ type Turn = {
   cancelScheduledFlush?: () => void
   terminalObserved: boolean
   replayConsumptionPending: boolean
+  elicitationReceipts: Map<string, number | undefined>
 }
 
 type PublicationAttempt = {
@@ -186,6 +191,85 @@ const assertScopeMatchesSession = (
   }
 }
 
+// A Conversation Turn can end its provider Attempt while a durable interaction still owns the
+// user's decision: an app-owned question, a permission, or a Plan approval. The Session keeps that
+// turn parked on its decision, and the decision admits the next Attempt of the same turn.
+// The decision is recorded before Main restarts the turn, so the parked state already carries it:
+// an answered question stays the parked interaction of its turn, and an approved restored
+// permission advances to `continuing` while the Session reports running.
+const isParkedTurn = (
+  session: PersistedChatSession,
+  scope: RuntimeSessionTurnScope,
+  planDeliveryCommandId?: string
+): boolean => {
+  const graph = session.conversationGraph
+  const frame = graph?.frames.find(({ id }) => id === scope.agentFrameId)
+  if (
+    graph?.activeFrameId !== scope.agentFrameId ||
+    frame?.activeBranchId !== scope.messageBranchId
+  ) {
+    return false
+  }
+  // Approval has already changed (and feedback has its own prompt). The claimed command,
+  // rather than the old waiting status, identifies which continuation may re-arm the run.
+  if (planDeliveryCommandId) {
+    return Boolean(
+      matchPlanDelivery(session.runtimeContext?.plan, {
+        commandId: planDeliveryCommandId,
+        state: 'delivering',
+        originatingPromptMessageId: scope.promptMessageId
+      })
+    )
+  }
+  const permission = session.runtimeContext?.permission
+  if (permission?.state === 'continuing') {
+    return permission.originatingPromptMessageId === scope.promptMessageId
+  }
+  if (permission?.state === 'pending') {
+    return (
+      session.status.startsWith('waiting-') &&
+      permission.originatingPromptMessageId === scope.promptMessageId
+    )
+  }
+  const plan = session.runtimeContext?.plan
+  if (plan?.approval === 'pending') {
+    return (
+      session.status === 'waiting-plan-approval' &&
+      plan.originatingPromptMessageId === scope.promptMessageId
+    )
+  }
+  if (!session.status.startsWith('waiting-') && session.status !== 'idle') return false
+  return (
+    session.conversationGraph?.activities.some(
+      (activity) =>
+        activity.elicitation?.durable?.kind === 'agent-user-choice' &&
+        activity.promptMessageId === scope.promptMessageId &&
+        activity.agentFrameId === scope.agentFrameId &&
+        activity.messageBranchId === scope.messageBranchId &&
+        (session.status.startsWith('waiting-') ||
+          (session.runtimeTranscriptLastRun?.promptMessageId === scope.promptMessageId &&
+            (activity.elicitation.respondedAt ?? -1) >= session.runtimeTranscriptLastRun.startedAt))
+    ) === true
+  )
+}
+
+// The run to arm when the decision on a parked turn admits its continuation. The continued Attempt
+// must be newer than the run it replaces so run identities stay ordered for renderer commands, and
+// a turn parked on another turn's decision, or a settled one, is never re-admitted.
+const continuationRunFor = (
+  session: PersistedChatSession,
+  scope: RuntimeSessionTurnScope,
+  now: number,
+  planDeliveryCommandId?: string
+): PersistedActiveRun | undefined => {
+  if (session.activeRun) return undefined
+  if (!isParkedTurn(session, scope, planDeliveryCommandId)) return undefined
+  return {
+    promptMessageId: scope.promptMessageId,
+    startedAt: Math.max(now, (session.runtimeTranscriptLastRun?.startedAt ?? 0) + 1)
+  }
+}
+
 export class RuntimeSessionOwner {
   private readonly turns = new Map<string, Turn>()
   private readonly publications = new Map<string, PublicationAttempt>()
@@ -199,15 +283,28 @@ export class RuntimeSessionOwner {
     scope: RuntimeSessionTurnScope,
     admission: RuntimeSessionAdmission = {}
   ): Promise<PersistedChatSession> {
+    // A detached answer is emitted after the provider stop and queued by the same turn.
+    // Commit that decision before replacing its execution, rather than racing the batch timer.
+    const previousTurn = this.turns.get(turnKey(scope.sessionId, scope.promptMessageId))
+    if (previousTurn?.terminalObserved) {
+      await this.flush(scope.sessionId, scope.promptMessageId)
+    }
     const loaded = await this.dependencies.loadSession(scope)
     if (!loaded) throw new Error('Runtime Session turn is not durable.')
-    assertScopeMatchesSession(scope, loaded, true)
+    const continuationRun = continuationRunFor(
+      loaded,
+      scope,
+      this.now(),
+      admission.planDeliveryCommandId
+    )
+    assertScopeMatchesSession(scope, loaded, continuationRun === undefined)
+    const admittedRun = loaded.activeRun ?? continuationRun
 
     const key = turnKey(scope.sessionId, scope.promptMessageId)
     const existing = this.turns.get(key)
     if (existing) {
       if (existing.scope.executionId !== scope.executionId) {
-        const nextRunStartedAt = loaded.activeRun?.startedAt
+        const nextRunStartedAt = admittedRun?.startedAt
         if (
           !existing.terminalObserved ||
           existing.pending.length > 0 ||
@@ -234,10 +331,24 @@ export class RuntimeSessionOwner {
     // The coordinator stamps Main's runtime ownership in this identity mutation. Await it before
     // provider dispatch so a renderer save can never become the first durable writer for the turn.
     const session = await this.dependencies.mutateSession(scope, (latest) => {
-      assertScopeMatchesSession(scope, latest, true)
-      const { reviewOwner = 'renderer', ...runtimeBinding } = admission
+      // Re-derive against the durable record Main is about to write: only a still-parked turn may
+      // be continued, and its re-armed run has to be newer than the run it replaces.
+      const resumedRun = continuationRunFor(
+        latest,
+        scope,
+        this.now(),
+        admission.planDeliveryCommandId
+      )
+      assertScopeMatchesSession(scope, latest, resumedRun === undefined)
+      const {
+        reviewOwner = 'renderer',
+        planDeliveryCommandId: _planDeliveryCommandId,
+        ...runtimeBinding
+      } = admission
+      void _planDeliveryCommandId
       const next: PersistedChatSession = {
         ...latest,
+        ...(resumedRun ? { activeRun: resumedRun, status: 'running' as const } : {}),
         ...runtimeBinding,
         runtimeTranscriptReviewOwner: {
           promptMessageId: scope.promptMessageId,
@@ -252,12 +363,22 @@ export class RuntimeSessionOwner {
     })
     this.turns.set(key, {
       scope: { ...scope },
-      runStartedAt: loaded.activeRun!.startedAt,
+      // Admission guarantees a run: the turn already owns one, or its continuation re-armed it.
+      runStartedAt: session.activeRun!.startedAt,
       pending: [],
       acceptedEventIds: new Set(),
       terminalEventIds: new Set(),
       tail: Promise.resolve(),
       terminalObserved: false,
+      elicitationReceipts: new Map(
+        (session.conversationGraph?.activities ?? [])
+          .filter(
+            (activity) =>
+              activity.promptMessageId === scope.promptMessageId &&
+              activity.elicitation?.continuationPending
+          )
+          .map((activity) => [activity.id, activity.elicitation?.respondedAt])
+      ),
       replayConsumptionPending: false
     })
     this.trimTurns()
@@ -334,6 +455,30 @@ export class RuntimeSessionOwner {
         if (consumeReplay) {
           delete next.pendingHistoryReplay
           delete next.branchContextResetRequired
+          // Only decisions from before this Attempt were delivered by its prompt. A new question
+          // answered during this Attempt belongs to a later continuation and keeps its receipt.
+          const settle = <T extends NonNullable<PersistedChatSession['activities']>[number]>(
+            activity: T
+          ): T => {
+            if (
+              !activity.elicitation?.continuationPending ||
+              !turn.elicitationReceipts.has(activity.id) ||
+              turn.elicitationReceipts.get(activity.id) !== activity.elicitation.respondedAt
+            )
+              return activity
+            const { continuationPending: _pending, ...elicitation } = activity.elicitation
+            void _pending
+            return { ...activity, elicitation }
+          }
+          if (next.conversationGraph) {
+            next.conversationGraph = {
+              ...next.conversationGraph,
+              activities: next.conversationGraph.activities.map(settle)
+            }
+            // Flat activities intentionally omit turn identity. Derive them from the settled
+            // graph so the persisted receipt and renderer projection cannot disagree.
+            next.activities = resolveActiveConversationActivities(next.conversationGraph).activities
+          }
           next.updatedAt = Math.max(next.updatedAt, this.now())
         }
         return next

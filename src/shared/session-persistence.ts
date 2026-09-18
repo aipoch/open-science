@@ -3072,6 +3072,75 @@ const markInterruptedPrompt = (
 const latestUserMessageId = (messages: PersistedChatMessage[]): string | undefined =>
   [...messages].reverse().find((message) => message.role === 'user')?.id
 
+// An answered app-owned question is not delivered until the provider acknowledges the next
+// prompt. Keep recovery manual (as for restored permission decisions): never replay work on startup.
+export const rearmUnacceptedElicitationContinuations = (
+  session: PersistedChatSession,
+  promptMessageId?: string,
+  question?: { requestId: string; toolCallId: string }
+): PersistedChatSession => {
+  if (session.runtimeTranscriptOwner !== 'main' || !session.conversationGraph) return session
+  const graph = session.conversationGraph
+  const frame = graph.frames.find(({ id }) => id === graph.activeFrameId)
+  const promptId = promptMessageId ?? latestUserMessageId(session.messages)
+  if (!promptId || promptId !== latestUserMessageId(session.messages)) return session
+  if (session.activeRun && session.activeRun.promptMessageId !== promptId) return session
+  const recoverable = new Set(
+    graph.activities
+      .filter(
+        (activity) =>
+          activity.agentFrameId === frame?.id &&
+          activity.messageBranchId === frame?.activeBranchId &&
+          activity.promptMessageId === promptId &&
+          activity.elicitation?.durable?.kind === 'agent-user-choice' &&
+          activity.elicitation.continuationPending === true &&
+          (!question ||
+            (activity.id === question.toolCallId &&
+              activity.elicitation.durable.requestId === question.requestId))
+      )
+      .map(({ id }) => id)
+  )
+  if (recoverable.size === 0) return session
+  const rearm = <T extends PersistedToolActivity>(activity: T): T => {
+    if (!recoverable.has(activity.id) || !activity.elicitation) return activity
+    const {
+      continuationPending: _pending,
+      respondedAt: _respondedAt,
+      ...elicitation
+    } = activity.elicitation
+    void _pending
+    void _respondedAt
+    return {
+      ...activity,
+      status: 'in_progress',
+      elicitation: {
+        ...elicitation,
+        state: 'pending',
+        ...(elicitation.answers?.length ? { draftAnswers: elicitation.answers } : {})
+      }
+    }
+  }
+  return {
+    ...session,
+    status: 'waiting-for-user',
+    activeRun: undefined,
+    error: undefined,
+    errorReportable: undefined,
+    resumeRecovery: undefined,
+    messages: session.messages.map((message) =>
+      message.id === promptId ? { ...message, interrupted: undefined } : message
+    ),
+    activities: session.activities?.map(rearm),
+    conversationGraph: {
+      ...graph,
+      messages: graph.messages.map((message) =>
+        message.id === promptId ? { ...message, interrupted: undefined } : message
+      ),
+      activities: graph.activities.map(rearm)
+    }
+  }
+}
+
 // Rehydrates durable waits and converts runtime-only work into recoverable states after restart.
 const recoverInterruptedPermissionAfterRestore = (
   session: PersistedChatSession
@@ -4669,6 +4738,7 @@ const sanitizeSession = (
   // Normalize only after resolving the canonical active Branch. Recovery references and the durable
   // interrupted marker must never be inferred from an abandoned Branch.
   if (!options.preserveRuntimeState) {
+    sanitized = rearmUnacceptedElicitationContinuations(sanitized)
     sanitized = normalizeSessionAfterRestore(sanitized, { reconcileCompletedRecovery: true })
   }
   if (!options.preserveRuntimeState) {
