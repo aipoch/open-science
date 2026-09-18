@@ -4616,6 +4616,18 @@ const createApplicationModules = async (
     artifactProvenanceRepository,
     pagedContentResolver: createReviewerElectronPagedContentResolver(previewResources),
     resolveSessionAgentTarget,
+    // Reviewer reads transcripts but never owns them. Injecting the composed owner keeps those
+    // reads on its scheduler and projection instead of a second SessionRepository over the same
+    // tree, whose corrupt-file recovery would rename live files outside this write lane.
+    sessionReader: {
+      loadSession: (projectId: string, sessionId: string) =>
+        sessionPersistenceCoordinator.readSessionSnapshot(projectId, sessionId),
+      findSessionById: async (sessionId: string) => {
+        const projectId = await sessionPersistenceCoordinator.sessionProjectId(sessionId)
+        if (!projectId) return undefined
+        return sessionPersistenceCoordinator.readSessionSnapshot(projectId, sessionId)
+      }
+    },
     saveSessionAgentConfiguration: (
       session: PersistedChatSession,
       configuration: SessionAgentConfiguration

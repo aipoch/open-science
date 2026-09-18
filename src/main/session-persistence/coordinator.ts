@@ -117,7 +117,8 @@ type SessionMutationRepository = {
   }>
   loadSessionWithDiagnostics(
     projectId: string,
-    sessionId: string
+    sessionId: string,
+    options?: { mode?: 'repair' | 'read-only'; preserveRuntimeState?: boolean }
   ): Promise<
     | { status: 'found'; session: PersistedChatSession }
     | { status: 'missing' }
@@ -296,6 +297,23 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     return this.operationScheduler.runSession(projectId, sessionId, () =>
       this.stateOwner.containsMessageOnActiveBranch(projectId, sessionId, messageId)
     )
+  }
+
+  // Non-owning read for consumers that observe transcripts but must never repair them (reviewer's
+  // stale-verdict check and fix-loop refresh). `mode: 'read-only'` is required, not cosmetic:
+  // `readSessionFile` quarantines unless `quarantineInvalidFiles === false`, so a plain read would
+  // let a non-owner rename a corrupt live session file outside this coordinator's write lane.
+  // Returns undefined for missing/unreadable instead of throwing, so callers can degrade.
+  readSessionSnapshot(
+    projectId: string,
+    sessionId: string
+  ): Promise<PersistedChatSession | undefined> {
+    return this.operationScheduler.runSession(projectId, sessionId, async () => {
+      const loaded = await this.repository.loadSessionWithDiagnostics(projectId, sessionId, {
+        mode: 'read-only'
+      })
+      return loaded.status === 'found' ? structuredClone(loaded.session) : undefined
+    })
   }
 
   loadSessionForContinuation(projectId: string, sessionId: string): Promise<PersistedChatSession> {
