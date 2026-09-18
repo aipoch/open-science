@@ -1322,6 +1322,7 @@ describe('Session Store architecture', () => {
           'src/renderer/src/pages/workspace/session-plan/plan-file-projection.test.ts',
           'src/renderer/src/pages/workspace/session-plan/plan-preview-i18n.render.test.tsx',
           'src/renderer/src/pages/workspace/session-plan/respond-to-session-plan.test.ts',
+          'src/renderer/src/pages/workspace/SessionInfoPopover.test.tsx',
           'src/renderer/src/pages/workspace/side-chat-availability.test.ts',
           'src/renderer/src/pages/workspace/tool-execution-phase.test.ts',
           'src/renderer/src/pages/workspace/use-follow-scroll-bottom.test.tsx',
