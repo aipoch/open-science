@@ -142,7 +142,10 @@ const normalizedPackageName = (value: string): string =>
     .replace(/[-_.]+/gu, '-')
 
 const parseCondaEnvironmentSnapshot = (raw: string): CondaEnvironmentSnapshot => {
-  const value = JSON.parse(raw) as unknown
+  const decoded = JSON.parse(raw) as unknown
+  // Micromamba 2.9 wraps the inventory in { packages, log_history }; older versions
+  // return the package array directly. Both formats need the same archive validation.
+  const value = Array.isArray(decoded) ? decoded : recordValue(decoded)?.packages
   if (!Array.isArray(value) || value.length === 0) {
     throw new InvalidEnvironmentLockError('The micromamba package inventory is empty.')
   }
