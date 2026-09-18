@@ -133,10 +133,14 @@ const assertPackagedResources = async (
 }
 
 const launchAndProbe = async ({ executable, expectedVersion, env }) => {
-  const child = spawn(executable, ['--open-science-headless', '--serve=0', '--no-sandbox'], {
-    env,
-    stdio: ['ignore', 'pipe', 'pipe']
-  })
+  const child = spawn(
+    executable,
+    ['--open-science-headless', '--serve=0', '--no-sandbox', '--credential-store=file'],
+    {
+      env,
+      stdio: ['ignore', 'pipe', 'pipe']
+    }
+  )
   let output = ''
   child.stdout?.setEncoding('utf8')
   child.stderr?.setEncoding('utf8')
@@ -408,6 +412,7 @@ export {
   assertPackagedResources,
   findOne,
   findResourceRoot,
+  launchAndProbe,
   packagedResourcePaths,
   parseArguments,
   parsePackagedAppEndpoint,

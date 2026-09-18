@@ -6,6 +6,7 @@ name: Package Smoke
 # Manual dispatch dry-runs reuse this exact workflow:
 # - setup_only=true, platform_name=all: matrix resolution only (the Nightly unfiltered path)
 # - install_only=true, platform_name=macos-x64: matrix resolution plus npm ci, no artifacts
+# - install_only=false, artifact_run_id=<run>: existing packages, no release certification upload
 on:
   workflow_call:
     inputs:
@@ -26,6 +27,10 @@ on:
         default: ''
   workflow_dispatch:
     inputs:
+      artifact_run_id:
+        description: Existing build run to diagnose without rebuilding or publishing certification
+        type: string
+        default: ''
       setup_only:
         description: Resolve the smoke matrix and skip every smoke job
         type: boolean
@@ -46,6 +51,7 @@ on:
           - all
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -92,11 +98,20 @@ jobs:
         run: node scripts/ci/npm-ci.mjs
 
       - name: Download packaged artifacts
-        if: ${{ !inputs.install_only }}
+        if: ${{ !inputs.install_only && !inputs.artifact_run_id }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: ${{ matrix.name }}
           path: dist
+
+      - name: Download existing packages for diagnosis
+        if: ${{ !inputs.install_only && inputs.artifact_run_id }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: ${{ matrix.name }}
+          path: dist
+          run-id: ${{ inputs.artifact_run_id }}
+          github-token: ${{ github.token }}
 
       - name: Smoke test macOS packages
         if: ${{ !inputs.install_only && matrix.platform == 'mac' }}
@@ -123,7 +138,7 @@ jobs:
             --installed-cli /usr/bin/open-science
 
       - name: Record platform certification evidence
-        if: ${{ !inputs.install_only }}
+        if: ${{ !inputs.install_only && !inputs.artifact_run_id }}
         shell: bash
         run: |
           database_certification="dist/database-migration-certification-${{ matrix.name }}.json"
@@ -143,7 +158,7 @@ jobs:
             --authenticode "$authenticode"
 
       - name: Upload platform certification evidence
-        if: ${{ !inputs.install_only }}
+        if: ${{ !inputs.install_only && !inputs.artifact_run_id }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: certification-${{ matrix.name }}

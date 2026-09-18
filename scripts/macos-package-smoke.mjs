@@ -222,6 +222,10 @@ const launchAndProbe = async ({ executable, expectedVersion, env, userDataRoot }
   } catch (error) {
     child.kill('SIGKILL')
     terminateSpawnedProcessGroup(child)
+    const processOutput = output.trim()
+    if (error instanceof Error && processOutput && !error.message.includes(processOutput)) {
+      error.message += `\n${processOutput}`
+    }
     throw error
   }
 }

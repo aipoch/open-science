@@ -1,19 +1,44 @@
+import { spawn } from 'node:child_process'
+import { EventEmitter } from 'node:events'
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   authenticatePackagedAppEndpoint,
   appImageVersion,
   assertPackagedResources,
   findOne,
+  launchAndProbe,
   parseArguments,
   parsePackagedAppEndpoint
 } from './linux-package-smoke.mjs'
 
+vi.mock('node:child_process', () => ({ spawn: vi.fn() }))
+
+afterEach(() => vi.useRealTimers())
+
 describe('Linux package smoke', () => {
+  it('selects the supported file credential backend for headless package launches', async () => {
+    vi.useFakeTimers()
+    const child = Object.assign(new EventEmitter(), { kill: vi.fn() })
+    vi.mocked(spawn).mockReturnValue(child as unknown as ReturnType<typeof spawn>)
+    const probe = launchAndProbe({
+      executable: '/package/open-science',
+      expectedVersion: '0.31.0',
+      env: {}
+    })
+    child.emit('exit', 1)
+    await expect(probe).rejects.toThrow('exited before becoming healthy')
+    expect(spawn).toHaveBeenCalledWith(
+      '/package/open-science',
+      ['--open-science-headless', '--serve=0', '--no-sandbox', '--credential-store=file'],
+      expect.objectContaining({ env: {} })
+    )
+  })
+
   it('discovers one AppImage and derives stable or nightly versions', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-linux-artifacts-'))
     const appImage = join(root, 'aipoch-open-science-0.11.0-nightly.abc1234-linux-x86_64.AppImage')

@@ -1,8 +1,11 @@
+import { spawn } from 'node:child_process'
+import { EventEmitter } from 'node:events'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { PassThrough } from 'node:stream'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   authenticatePackagedAppEndpoint,
@@ -10,18 +13,42 @@ import {
   assertPackagedResources,
   findAppBundle,
   findArtifact,
+  launchAndProbe,
   packagedLaunchArguments,
   parseArguments,
   parsePackagedAppEndpoint
 } from './macos-package-smoke.mjs'
 
+vi.mock('node:child_process', () => ({ spawn: vi.fn() }))
+
 const roots: string[] = []
 
 afterEach(async () => {
+  vi.useRealTimers()
   await Promise.all(roots.splice(0).map((root) => rm(root, { force: true, recursive: true })))
 })
 
 describe('macOS package smoke', () => {
+  it('includes startup diagnostics when the app remains alive without becoming ready', async () => {
+    vi.useFakeTimers()
+    const child = Object.assign(new EventEmitter(), { stderr: new PassThrough(), kill: vi.fn() })
+    vi.mocked(spawn).mockReturnValue(child as unknown as ReturnType<typeof spawn>)
+    const probe = launchAndProbe({
+      executable: '/package/Open-Science',
+      expectedVersion: '0.31.0',
+      env: {},
+      userDataRoot: '/profile'
+    })
+    child.stderr.write('credential-identity: initialization-probe-access-blocked')
+    const failure = expect(probe).rejects.toThrow(
+      /Timed out.*\ncredential-identity: initialization-probe-access-blocked/
+    )
+    await vi.advanceTimersByTimeAsync(60_000)
+    await failure
+    expect(child.kill).toHaveBeenCalledWith('SIGKILL')
+    child.stderr.destroy()
+  })
+
   it('selects one DMG and ZIP and derives their shared version', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-macos-artifacts-'))
     roots.push(root)
