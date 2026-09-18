@@ -333,10 +333,23 @@ int main() {
   fixture.matches = 2;
   Run("error", "ambiguous-account");
 
-  // Neither a missing new identity nor a missing suffixed account is authoritative with locks.
+  // A locked later database cannot hide an acceptable identity: accepted matches must live in
+  // the unlocked first database, so absence in it stays authoritative and the fallback proceeds.
   fixture = {};
   fixture.unrelated_locked = true;
   fixture.legacy_status = errSecSuccess;
+  Run("exists");
+  Expect(fixture.accounts.size() == 2, "authoritative absence skipped the bare account fallback");
+
+  fixture = {};
+  fixture.unrelated_locked = true;
+  Run("not-found");
+  Expect(fixture.accounts.size() == 2, "a later lock suppressed the bare account fallback");
+
+  // Only a locked first database makes absence uncertain.
+  fixture = {};
+  fixture.unrelated_locked = true;
+  fixture.locked = true;
   Run("access-blocked", "keychain-locked");
   Expect(fixture.accounts.size() == 1, "uncertain absence fell back to bare account");
 

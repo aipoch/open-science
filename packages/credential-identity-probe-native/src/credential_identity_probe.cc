@@ -167,9 +167,12 @@ ProbeResult QueryAccount(const std::string& service, const std::string& account,
   auto availability = CheckStableSearch(search_list, states, api);
   if (availability.status != "ready") return availability;
   if (status == errSecItemNotFound) {
-    // SecItem's file-keychain cursor can skip inaccessible databases. Never interpret an
-    // incomplete search as absence, even if a different identity/account might be available.
-    if (HasLockedKeychain(states)) return {"access-blocked", "keychain-locked", ""};
+    // SecItem's file-keychain cursor can skip inaccessible databases, but a locked later database
+    // cannot hide an acceptable identity: an accepted match must live in the unlocked first
+    // database (the owner gate below), so absence in it is authoritative. macOS keeps the System
+    // keychain — always present and locked — in every search list; a locked FIRST database, where
+    // Electron's lookups and writes land, still fails closed.
+    if (!(states[0] & kSecUnlockStateStatus)) return {"access-blocked", "keychain-locked", ""};
     return {"not-found", "account-not-found", "", status};
   }
   if (status != errSecSuccess) return Failure("metadata-query-failed", status);
