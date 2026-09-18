@@ -176,7 +176,11 @@ const launchAndProbe = async ({ executable, expectedVersion, env, userDataRoot }
     const service = await Promise.race([
       waitFor('the packaged macOS web service', async () =>
         authenticatePackagedAppEndpoint(output, [env.OPEN_SCIENCE_E2E_STORAGE_ROOT])
-      ),
+      ).catch((error) => {
+        // Startup that neither turns healthy nor exits must still surface the captured app output
+        // so the underlying reason reaches the job log.
+        throw new Error(`${error.message}\n${output}`)
+      }),
       exit.then((code) => {
         throw new Error(`Packaged macOS app exited before becoming healthy (${code}).\n${output}`)
       })
