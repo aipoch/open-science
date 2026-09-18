@@ -50,8 +50,13 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MANUAL_RUN_ID: ${{ inputs.run_id }}
           CURRENT_RUN_ID: ${{ github.run_id }}
+          REGRESSION_SUITE: ${{ inputs.suite }}
         run: |
           set -euo pipefail
+          if [[ "$REGRESSION_SUITE" == "all" || "$REGRESSION_SUITE" == "p0" ]] && [[ -z "$MANUAL_RUN_ID" ]]; then
+            echo "run_id is required for manual all/p0 regression." >&2
+            exit 1
+          fi
           run_id="${MANUAL_RUN_ID:-$CURRENT_RUN_ID}"
           if [[ ! "$run_id" =~ ^[0-9]+$ ]]; then
             echo "Source run ID must be numeric." >&2

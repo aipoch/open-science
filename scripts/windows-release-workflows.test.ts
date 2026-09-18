@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -507,6 +508,37 @@ describe('post-merge Windows validation', () => {
       with: { allow_failure: true }
     })
   })
+
+  it.skipIf(process.platform === 'win32').each([
+    { suite: 'all', runId: '', exit: 1, message: 'run_id is required' },
+    { suite: 'p0', runId: '', exit: 1, message: 'run_id is required' },
+    { suite: 'all', runId: '456', exit: 77, message: 'actions/runs/456' },
+    { suite: 'p0', runId: '456', exit: 77, message: 'actions/runs/456' },
+    { suite: '', runId: '', exit: 77, message: 'actions/runs/123' }
+  ])(
+    'validates source run before metadata lookup for suite=$suite run_id=$runId',
+    ({ suite, runId, exit, message }) => {
+      const source = readWorkflow('desktop-regression.yml').jobs.source
+      const resolve = findStep(source, 'Resolve source run')
+      expect(resolve.env?.REGRESSION_SUITE).toBe('${{ inputs.suite }}')
+      const result = spawnSync(
+        'bash',
+        ['-c', `gh() { echo "$2" >&2; exit 77; };\n${resolve.run}`],
+        {
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            GITHUB_REPOSITORY: 'aipoch/open-science',
+            MANUAL_RUN_ID: runId,
+            CURRENT_RUN_ID: '123',
+            REGRESSION_SUITE: suite
+          }
+        }
+      )
+      expect(result.status).toBe(exit)
+      expect(result.stderr).toContain(message)
+    }
+  )
 
   it('builds every platform without repeating the verified typecheck', () => {
     const workflow = readWorkflow('build.yml')
