@@ -57,6 +57,7 @@ import {
   rScriptBin,
   resolveEnvName
 } from './runtime-paths'
+import { boundedRuntimeDiagnostic } from './runtime-diagnostics'
 import type {
   NotebookSessionNamespaceRequest,
   NotebookSessionNamespaceResult
@@ -914,7 +915,9 @@ class NotebookKernelExecutor implements NotebookExecutor {
         reason: 'exit',
         exitCode: code,
         signal,
-        ...(proc.stderrTail ? { stderr: proc.stderrTail } : {})
+        ...(proc.stderrTail
+          ? { stderr: boundedRuntimeDiagnostic(proc.annotateStderr(proc.stderrTail)).text }
+          : {})
       })
       void this.killChildTracked(proc, 'exit').then((result) => {
         this.rejectPending(

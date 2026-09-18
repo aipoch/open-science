@@ -4071,13 +4071,17 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
       const result = await executor.execute({
         ...baseRequest(cwdDir),
         kind: 'repl',
-        code: 'process.exit(23)'
+        code: "process.stderr.write('api_key=secret\\n'); process.exit(23)"
       })
 
       expect(result.status).toBe('failed')
       expect(result.stderr).toContain('Notebook kernel process exited with exit code 23.')
       expect(terminations).toHaveLength(1)
-      expect(terminations[0]).toEqual(['repl', '', { reason: 'exit', exitCode: 23, signal: null }])
+      expect(terminations[0]).toEqual([
+        'repl',
+        '',
+        { reason: 'exit', exitCode: 23, signal: null, stderr: 'api_key=[redacted]\n' }
+      ])
     } finally {
       await executor.shutdown()
     }
