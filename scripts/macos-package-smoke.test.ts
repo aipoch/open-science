@@ -38,7 +38,7 @@ describe('macOS package smoke', () => {
       const root = join(tmpdir(), 'smoke 数据')
       const keychain = join(root, 'package-smoke.keychain-db')
       const commands: string[][] = []
-    const run = async (executable: string, args: string[]): Promise<{ stdout: string }> => {
+      const run = async (executable: string, args: string[]): Promise<{ stdout: string }> => {
         expect(executable).toBe('/usr/bin/security')
         commands.push(args)
         if (args[0] === 'list-keychains' && args.length === 3)
