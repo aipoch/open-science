@@ -566,8 +566,11 @@ Active-dialog menus and other foreground child layers retain their own ordering.
 
 ### Session information
 
+The upper-right pin toggles the owning project through the existing project update flow. Its pressed state follows the project store; saving disables repeat clicks and failures remain visible in the card.
+
 - The conversation header's Session number and title open a click- and keyboard-accessible,
-  non-modal information Popover. Keep the title on one line with ellipsis and the description
+  non-modal information Popover. Show the current Session number at the right of the card title,
+  keeping the number fully visible. Keep the title on one line with ellipsis and the description
   to at most two lines. Use the shared semantic surface, rounded-xl and shadow-menu, with a
   viewport-bounded width of 360px.
 - Order the card as title/description, optional source Session, created/updated local timestamps,

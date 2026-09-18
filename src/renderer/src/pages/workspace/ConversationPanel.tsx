@@ -2,7 +2,7 @@ import { forkSession, sessionForkAvailable } from '@/lib/session-fork'
 import { sideChatBlock, sideChatBlockMessage } from './side-chat-availability'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { PackageOperationIndicator } from '@/components/SessionPackageOperation'
-import { SessionInfoPopover } from './SessionInfoPopover'
+import { SessionInfoPopover, type SessionInfoProjectPin } from './SessionInfoPopover'
 import { sessionExportLocked, usePackageOperationStore } from '@/stores/package-operation-store'
 import { AnnotationTransferSource } from './annotations/AnnotationTransferSource'
 import { useAnnotationDrop } from './annotations/use-annotation-drop'
@@ -400,6 +400,7 @@ type ConversationPanelWorkflows = {
 }
 
 type ConversationPanelSessionTools = {
+  projectPin?: SessionInfoProjectPin
   editSession?: (session: ChatSession) => void
   notebookReference: NotebookSessionReference | undefined
   openNotebook: (notebook: NotebookSessionReference, runId?: string) => void
@@ -1168,6 +1169,7 @@ const ConversationPanel = ({
                 sourceSession={sourceSession}
                 onOpenSession={sessionTools.openSession}
                 onEdit={sessionTools.editSession}
+                projectPin={sessionTools.projectPin}
               />
             ) : (
               <span className="block truncate">{t('New conversation')}</span>

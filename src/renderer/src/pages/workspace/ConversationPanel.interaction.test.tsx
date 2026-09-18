@@ -917,6 +917,34 @@ describe('ConversationPanel header spacing', () => {
     expect(document.querySelector('[role="dialog"]')).toBeNull()
   })
 
+  it('forwards the owning project pin action through the Session information card', async () => {
+    const session: ChatSession = {
+      id: 'pin-info-session',
+      projectId: 'project-1',
+      title: 'Session details',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const toggle = vi.fn().mockResolvedValue(undefined)
+    renderPanel({
+      view: { activeSession: session },
+      sessionTools: { projectPin: { pinned: false, toggle } }
+    })
+    act(() =>
+      getConversationHeader()
+        .querySelector<HTMLButtonElement>('[aria-label^="Session information:"]')!
+        .click()
+    )
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('[aria-label="Pin project"]')!.click()
+    )
+    expect(toggle).toHaveBeenCalledTimes(1)
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+  })
+
   it('closes the information card when switching Sessions', () => {
     const session: ChatSession = {
       id: 'first-info-session',

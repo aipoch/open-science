@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { useRef, useState } from 'react'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ChatSession } from '@/stores/session-store'
 import { createI18nTestStub } from '../../../../../test/i18n-test-stub'
@@ -72,6 +72,7 @@ describe('Session information', () => {
     open()
     expect(value('Messages in current branch')).toBe('21 from Assistant')
     expect(value('Artifacts')).toBe('2')
+    expect(screen.getByRole('dialog').textContent).toContain('#42')
     expect(screen.getByRole('heading', { name: session.title }).className).toContain('truncate')
     expect(screen.getByText(session.description!).className).toContain('line-clamp-2')
     expect(document.querySelectorAll('time')[0].getAttribute('datetime')).toBe(
@@ -83,12 +84,59 @@ describe('Session information', () => {
     // Switching the selected branch replaces its projection; no hidden history is added to the count.
     rerender(
       <SessionInfoPopover
-        session={{ ...session, messages: [session.messages[0]], artifacts: [] }}
+        session={{ ...session, number: undefined, messages: [session.messages[0]], artifacts: [] }}
         onEdit={vi.fn()}
       />
     )
     expect(value('Messages in current branch')).toBe('10 from Assistant')
     expect(value('Artifacts')).toBe('0')
+    expect(screen.getByRole('dialog').textContent).not.toContain('#42')
+  })
+
+  it('pins the project, blocks repeat clicks while saving, and follows the saved state', async () => {
+    let finish!: () => void
+    const toggle = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve
+        })
+    )
+    const { rerender } = render(
+      <SessionInfoPopover session={session} projectPin={{ pinned: false, toggle }} />
+    )
+    open()
+    const pin = screen.getByRole<HTMLButtonElement>('button', { name: 'Pin project' })
+    expect(pin.getAttribute('aria-pressed')).toBe('false')
+    fireEvent.click(pin)
+    expect(pin.disabled).toBe(true)
+    fireEvent.click(pin)
+    expect(toggle).toHaveBeenCalledTimes(1)
+    await act(async () => finish())
+    rerender(<SessionInfoPopover session={session} projectPin={{ pinned: true, toggle }} />)
+    const unpin = screen.getByRole<HTMLButtonElement>('button', { name: 'Unpin project' })
+    expect(unpin.getAttribute('aria-pressed')).toBe('true')
+    expect(unpin.disabled).toBe(false)
+    fireEvent.click(unpin)
+    expect(toggle).toHaveBeenCalledTimes(2)
+    await act(async () => finish())
+  })
+
+  it('keeps the saved project pin on failure and permits retry', async () => {
+    const toggle = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Save failed'))
+      .mockResolvedValueOnce(undefined)
+    render(<SessionInfoPopover session={session} projectPin={{ pinned: false, toggle }} />)
+    open()
+    fireEvent.click(screen.getByRole('button', { name: 'Pin project' }))
+    expect((await screen.findByRole('alert')).textContent).toBe('Could not update project pin.')
+    const pin = screen.getByRole<HTMLButtonElement>('button', { name: 'Pin project' })
+    expect(pin.disabled).toBe(false)
+    expect(pin.getAttribute('aria-pressed')).toBe('false')
+    fireEvent.click(pin)
+    await waitFor(() => expect(pin.disabled).toBe(false))
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(toggle).toHaveBeenCalledTimes(2)
   })
 
   it('shows honest loading values until hydration and disables editing', () => {

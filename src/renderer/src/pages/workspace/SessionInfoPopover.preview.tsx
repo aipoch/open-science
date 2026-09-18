@@ -46,6 +46,7 @@ const STATES = [
 
 const SessionInfoPopoverPreview = (): React.JSX.Element => {
   const { i18n } = useTranslation()
+  const [projectPinned, setProjectPinned] = useState(false)
   const [session, setSession] = useState(SAMPLE)
   const [editing, setEditing] = useState<ChatSession>()
   const [title, setTitle] = useState('')
@@ -73,6 +74,13 @@ const SessionInfoPopoverPreview = (): React.JSX.Element => {
       <div className="max-w-xl">
         <SessionInfoPopover
           key={session.id}
+          projectPin={{
+            pinned: projectPinned,
+            toggle: async () => {
+              if (state === 'error') throw new Error('Preview pin failure')
+              setProjectPinned((pinned) => !pinned)
+            }
+          }}
           session={{ ...session, ...(state === 'loading' ? { contentLoaded: false } : {}) }}
           sourceSession={{ id: 'source', title: '细胞培养实验 · 初步数据整理', number: 28 }}
           onOpenSession={() =>

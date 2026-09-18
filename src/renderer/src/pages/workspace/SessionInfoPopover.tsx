@@ -2,7 +2,7 @@
  * pre-emit critique: P5 H5 E4 S5 R5 V4
  */
 import { useId, useRef, useState } from 'react'
-import { ChevronDown, GitBranch, Pencil } from 'lucide-react'
+import { ChevronDown, GitBranch, Loader2, Pencil, Pin } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -10,7 +10,13 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import type { ChatSession } from '@/stores/session-store'
 import { isHiddenControlMessage } from '../../../../shared/session-persistence'
 
+export type SessionInfoProjectPin = {
+  pinned: boolean
+  toggle: () => Promise<void>
+}
+
 type SessionInfoPopoverProps = {
+  projectPin?: SessionInfoProjectPin
   session: ChatSession
   sourceSession?: Pick<ChatSession, 'id' | 'title' | 'number'>
   onOpenSession?: (sessionId: string) => void
@@ -21,10 +27,13 @@ const SessionInfoPopover = ({
   session,
   sourceSession,
   onOpenSession,
-  onEdit
+  onEdit,
+  projectPin
 }: SessionInfoPopoverProps): React.JSX.Element => {
   const { t, i18n } = useTranslation()
   const [open, setOpen] = useState(false)
+  const [pinning, setPinning] = useState(false)
+  const [pinError, setPinError] = useState(false)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const handingOffFocus = useRef(false)
   const headingId = useId()
@@ -69,9 +78,57 @@ const SessionInfoPopover = ({
         }}
       >
         <div className="px-4 pb-3 pt-4">
-          <h2 id={headingId} className="truncate text-sm font-semibold" title={session.title}>
-            {session.title}
-          </h2>
+          <div className="flex min-w-0 items-center gap-3">
+            <h2
+              id={headingId}
+              className="min-w-0 flex-1 truncate text-sm font-semibold"
+              title={session.title}
+            >
+              {session.title}
+            </h2>
+            {session.number !== undefined ? (
+              <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                #{session.number}
+              </span>
+            ) : null}
+            {projectPin ? (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="-mr-2 size-8 shrink-0 text-muted-foreground transition-none max-md:size-11"
+                aria-label={t(projectPin.pinned ? 'Unpin project' : 'Pin project')}
+                title={t(projectPin.pinned ? 'Unpin project' : 'Pin project')}
+                aria-pressed={projectPin.pinned}
+                disabled={pinning}
+                onClick={async () => {
+                  if (pinning) return
+                  setPinning(true)
+                  setPinError(false)
+                  try {
+                    await projectPin.toggle()
+                  } catch {
+                    setPinError(true)
+                  } finally {
+                    setPinning(false)
+                  }
+                }}
+              >
+                {pinning ? (
+                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                ) : (
+                  <Pin
+                    className={`size-4 ${projectPin.pinned ? 'fill-current text-foreground' : ''}`}
+                    aria-hidden="true"
+                  />
+                )}
+              </Button>
+            ) : null}
+          </div>
+          {pinError ? (
+            <p role="alert" className="mt-2 text-xs text-destructive">
+              {t('Could not update project pin.')}
+            </p>
+          ) : null}
           {session.description ? (
             <p className="mt-1.5 line-clamp-2 break-words text-sm leading-5 text-muted-foreground">
               {session.description}
