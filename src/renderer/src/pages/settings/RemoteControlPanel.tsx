@@ -609,6 +609,7 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
 
         {accessIsApp ? (
           <SettingsSection
+            data-settings-anchor="remote-control.app-access"
             contentClassName="space-y-3"
             title={t('Remote App Access')}
             action={

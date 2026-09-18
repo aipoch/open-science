@@ -297,6 +297,7 @@ const NetworkPanel = ({
             'Control which internet domains Notebook Python, R, REPL, and Bash can reach.'
           )}
           aria-label={t('Notebook network access')}
+          data-settings-anchor="network.domains"
         >
           <div className="rounded-xl border border-border p-4">
             <div className="flex items-center justify-between gap-3">
@@ -328,6 +329,7 @@ const NetworkPanel = ({
             'How Open-Science, ACP agents, notebook runtimes, and installers reach the internet.'
           )}
           aria-label={t('Proxy')}
+          data-settings-anchor="network.proxy"
         >
           <div className="rounded-xl border border-border p-4">
             <div className="flex items-center justify-between gap-3">
@@ -363,6 +365,7 @@ const NetworkPanel = ({
           'Where the notebook environment fetches conda and Python packages from when installing or updating.'
         )}
         aria-label={t('Package mirror')}
+        data-settings-anchor="network.mirror"
       >
         <div className="rounded-xl border border-border p-4">
           {!isConfiguring ? (

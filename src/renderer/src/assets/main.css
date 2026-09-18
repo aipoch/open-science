@@ -516,6 +516,27 @@
       both;
   }
 
+  /* Settings quick-search jump target: a --primary ring held off the content by an offset gap,
+     with scroll breathing room. The animation holds the ring, then fades it to transparent in the
+     last 200ms; JS only needs the removal timer afterwards. */
+  .settings-search-highlight {
+    border-radius: 8px;
+    outline: 2px solid var(--primary);
+    outline-offset: 4px;
+    scroll-margin-block: 16px;
+    animation: settings-search-highlight-out 1600ms ease-out forwards;
+  }
+
+  @keyframes settings-search-highlight-out {
+    0%,
+    87.5% {
+      outline-color: var(--primary);
+    }
+    100% {
+      outline-color: transparent;
+    }
+  }
+
   .managed-version-diff-markdown :is(li, td, th):has(> [data-managed-diff-marker='added']),
   .managed-version-diff-markdown :is(li, td, th):has(> p > [data-managed-diff-marker='added']) {
     color: var(--diff-added-foreground);

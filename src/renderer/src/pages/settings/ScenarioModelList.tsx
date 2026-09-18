@@ -360,6 +360,7 @@ const ScenarioModelList = (): React.JSX.Element => {
 
   return (
     <SettingsSection
+      data-settings-anchor="model.scenarios"
       title={t('Scenario models')}
       aria-label={t('Scenario models')}
       description={t('Models for session details, subagents, review, and image understanding.')}

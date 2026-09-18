@@ -12,6 +12,9 @@ type SettingsSearchEntry = {
   labelKey: string
   // Extra English match terms that are never displayed.
   keywords?: string
+  // Entries jump to the data-settings-anchor element named by their id. skipAnchor opts out and
+  // falls back to the panel's first content block, for targets unmounted at jump time.
+  skipAnchor?: boolean
 }
 
 // Cross-panel search index: one to three representative entries per panel, each reusing existing
@@ -72,7 +75,10 @@ const SETTINGS_SEARCH_INDEX: ReadonlyArray<SettingsSearchEntry> = [
     id: 'connectors.import',
     panel: 'connectors',
     labelKey: 'Import Connector or MCP configuration',
-    keywords: 'json claude desktop'
+    keywords: 'json claude desktop',
+    // The import action lives inside the Add connector dropdown, which is unmounted at jump
+    // time — fall back to the panel's first block immediately instead of waiting.
+    skipAnchor: true
   },
   { id: 'network.proxy', panel: 'network', labelKey: 'Proxy', keywords: 'http https' },
   {
@@ -161,54 +167,79 @@ type SettingsGlobalSearchProps = {
   onNavigate: (panel: SettingsPanelId) => void
 }
 
-// Briefly rings the first content block of the freshly navigated panel so the jump target is
-// visible. Polls until the target panel has actually rendered (lazy panels load async), so the
-// highlight never lands on the previous panel. Purely visual: inline styles over the existing
-// --primary token, no persistence. Returns a cancel function that stops polling and strips any
-// active ring — callers run it on unmount and before starting another highlight.
-const highlightNavigatedPanel = (panel: SettingsPanelId): (() => void) => {
+// Elements that can already receive keyboard focus; anything else is lent a temporary tabindex.
+const FOCUSABLE_SELECTOR = 'a[href], button, input, select, textarea, [tabindex]'
+
+const HIGHLIGHT_CLASS = 'settings-search-highlight'
+
+// Rings and focuses the search jump target once the freshly navigated panel has rendered, so the
+// user sees exactly where they landed. Entries with an anchor jump to their own setting element;
+// the anchor gets a grace period (lazy chunks, async data) before falling back to the panel's
+// first content block. Polls until the target panel has actually rendered, so the highlight never
+// lands on the previous panel. Purely visual and focus-only: no persistence. Returns a cancel
+// function that stops polling and strips any active ring — callers run it on unmount and before
+// starting another highlight.
+const highlightNavigatedPanel = (panel: SettingsPanelId, anchor?: string): (() => void) => {
   const startedAt = Date.now()
   const timers: number[] = []
   let highlighted: HTMLElement | null = null
+  let addedTabIndex = false
+
+  const stripRing = (): void => {
+    if (!highlighted) return
+    if (highlighted.isConnected) {
+      highlighted.classList.remove(HIGHLIGHT_CLASS)
+      if (addedTabIndex) highlighted.removeAttribute('tabindex')
+    }
+    highlighted = null
+    addedTabIndex = false
+  }
+
+  // Prefer the panel's first section/header; panels without section markup fall back to the
+  // panel root once the lazy chunk has had time to replace the loading boundary.
+  const fallbackTarget = (root: Element, elapsed: number): HTMLElement | null =>
+    root.querySelector<HTMLElement>('section, [data-slot="settings-panel-header"]') ??
+    (elapsed > 1200 ? root.querySelector<HTMLElement>(':scope > div > :first-child') : null)
+
   const attempt = (): void => {
     const root = document.querySelector(
       `[data-slot="settings-content-scroll"][data-settings-active-panel="${panel}"]`
     )
-    // Prefer the panel's first section/header; panels without section markup fall back to the
-    // panel root once the lazy chunk has had time to replace the loading boundary.
-    const target =
-      root?.querySelector<HTMLElement>('section, [data-slot="settings-panel-header"]') ??
-      (root && Date.now() - startedAt > 1200
-        ? root.querySelector<HTMLElement>(':scope > div > :first-child')
-        : null)
-    if (target) {
-      highlighted = target
-      target.scrollIntoView({ block: 'nearest' })
-      target.style.transition = 'box-shadow 200ms ease-out'
-      target.style.borderRadius = '8px'
-      target.style.boxShadow = '0 0 0 2px var(--primary)'
-      timers.push(
-        window.setTimeout(() => {
-          target.style.boxShadow = ''
-          target.style.borderRadius = ''
-          target.style.transition = ''
-          if (highlighted === target) highlighted = null
-        }, 1600)
-      )
+    if (!root) {
+      if (Date.now() - startedAt < 3000) timers.push(window.setTimeout(attempt, 150))
       return
     }
-    if (Date.now() - startedAt < 3000) timers.push(window.setTimeout(attempt, 150))
+    const elapsed = Date.now() - startedAt
+    let target: HTMLElement | null = null
+    if (anchor) {
+      target = root.querySelector<HTMLElement>(`[data-settings-anchor="${anchor}"]`)
+      // Anchored entries wait for their exact target instead of ringing the wrong block early.
+      if (!target && elapsed > 1200) target = fallbackTarget(root, elapsed)
+    } else {
+      target = fallbackTarget(root, elapsed)
+    }
+    if (target) {
+      highlighted = target
+      target.classList.add(HIGHLIGHT_CLASS)
+      if (!target.matches(FOCUSABLE_SELECTOR)) {
+        target.setAttribute('tabindex', '-1')
+        addedTabIndex = true
+      }
+      // Scroll first with the highlight's scroll-margin for breathing room, then move focus
+      // without scrolling again.
+      target.scrollIntoView({ block: 'nearest' })
+      target.focus({ preventScroll: true })
+      // The class's own animation fades the ring out; this timer just removes it afterwards.
+      timers.push(window.setTimeout(stripRing, 1600))
+      return
+    }
+    if (elapsed < 3000) timers.push(window.setTimeout(attempt, 150))
   }
   attempt()
 
   return () => {
     for (const timer of timers) window.clearTimeout(timer)
-    if (highlighted?.isConnected) {
-      highlighted.style.boxShadow = ''
-      highlighted.style.borderRadius = ''
-      highlighted.style.transition = ''
-    }
-    highlighted = null
+    stripRing()
   }
 }
 
@@ -258,7 +289,10 @@ const SettingsGlobalSearch = ({
     setActiveIndex(0)
     onNavigate(entry.panel)
     cancelHighlightRef.current?.()
-    cancelHighlightRef.current = highlightNavigatedPanel(entry.panel)
+    cancelHighlightRef.current = highlightNavigatedPanel(
+      entry.panel,
+      entry.skipAnchor ? undefined : entry.id
+    )
   }
 
   return (
@@ -355,5 +389,5 @@ const SettingsGlobalSearch = ({
   )
 }
 
-export { SettingsGlobalSearch }
+export { SettingsGlobalSearch, SETTINGS_SEARCH_INDEX }
 export type { SettingsGlobalSearchProps }

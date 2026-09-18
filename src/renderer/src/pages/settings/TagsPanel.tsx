@@ -728,7 +728,7 @@ const TagsList = ({
             />
           }
           action={
-            <Button type="button" size="sm" onClick={onCreate}>
+            <Button type="button" size="sm" data-settings-anchor="tags.new" onClick={onCreate}>
               <Plus className="size-4" aria-hidden="true" />
               {t('New Tag')}
             </Button>

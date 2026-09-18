@@ -317,6 +317,7 @@ const PermissionsPanel = ({
           className="pt-5"
         >
           <SettingsRow
+            data-settings-anchor="permissions.default-mode"
             label={t('Default permission mode')}
             description={t(
               'Applied only to new conversations. You can change it in Agent controls before sending the first message.'

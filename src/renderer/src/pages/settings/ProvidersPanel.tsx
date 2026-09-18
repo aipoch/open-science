@@ -494,6 +494,7 @@ const ProvidersPanel = ({
           scenario model selectors below. The Model field needs at least one provider; the effort
           control is always visible. */}
       <SettingsSection
+        data-settings-anchor="model.main"
         title={t('Main model')}
         aria-label={t('Main model')}
         description={
@@ -582,6 +583,7 @@ const ProvidersPanel = ({
             matching the Available-group placeholder treatment. */}
         <button
           type="button"
+          data-settings-anchor="model.add-provider"
           onClick={onCreateProvider}
           className="mt-2 flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-dashed border-border text-sm text-muted-foreground transition-colors duration-150 motion-reduce:transition-none hover:bg-muted/60 hover:text-foreground"
         >
