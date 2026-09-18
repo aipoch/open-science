@@ -3971,17 +3971,38 @@ describe('unreaped delegated execution lifecycle', () => {
   )
 })
 
-it.each(['deleteSession', 'deleteProject'] as const)(
-  'retains unreaped workspace evidence after reopening composition before %s',
-  async (operation) => {
+it.each(
+  (['deleteSession', 'deleteProject'] as const).flatMap((operation) =>
+    [0, 1200].map((startupDelayMs) => ({ operation, startupDelayMs }))
+  )
+)(
+  'retains unreaped workspace evidence after reopening composition before $operation (startup delay: $startupDelayMs ms)',
+  async ({ operation, startupDelayMs }) => {
     root = await mkdtemp(join(tmpdir(), 'delegated-unreaped-reopen-'))
     const harness = await createCompositionHarness(root, 'codex')
+    if (startupDelayMs > 0) {
+      // Exercise startup beyond expect.poll's default 1 s budget, as on a busy Windows runner.
+      const startAttemptRuntime = harness.commands.startAttemptRuntime.bind(harness.commands)
+      vi.spyOn(harness.commands, 'startAttemptRuntime').mockImplementation(async (...args) => {
+        await new Promise((resolve) => setTimeout(resolve, startupDelayMs))
+        return startAttemptRuntime(...args)
+      })
+    }
+    const executionStarted = Promise.withResolvers<void>()
+    const run = harness.execution.run.bind(harness.execution)
+    vi.spyOn(harness.execution, 'run').mockImplementation((...args) => {
+      const handle = run(...args)
+      executionStarted.resolve()
+      return handle
+    })
     const receipt = await harness.composition.host.delegate(
       harness.caller,
       { task: 'Retain evidence', name: 'Retain evidence' },
       { wait: false }
     )
-    await expect.poll(() => harness.execution.controls()).toHaveLength(1)
+    // Synchronize with execution readiness; the enclosing test timeout still bounds a failed start.
+    await executionStarted.promise
+    expect(harness.execution.controls()).toHaveLength(1)
     const control = harness.execution.controls()[0]
     control.accept()
     control.fail(new DelegateExecutionCleanupError('process cleanup could not be confirmed'))
