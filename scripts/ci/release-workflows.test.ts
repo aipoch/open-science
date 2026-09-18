@@ -46,7 +46,7 @@ const step = (job: Job, name: string): Step => {
 }
 
 describe('release and scheduled workflow topology', () => {
-  it('batches latest-main Windows coverage daily across five serial shards', () => {
+  it('batches latest-main Windows coverage daily across eight serial shards', () => {
     const windows = workflow('windows-full-test.yml')
     const schedule = windows.on?.schedule as Array<{ cron: string }>
     const dispatch = windows.on?.workflow_dispatch as {
@@ -60,7 +60,7 @@ describe('release and scheduled workflow topology', () => {
     const sandboxSmoke = step(sandbox, 'Test AppContainer ownership and removal lifecycle')
 
     expect(job.strategy?.matrix?.shard).toBe(
-      "${{ fromJSON(inputs.mode == 'regressions' && '[1]' || '[1,2,3,4,5]') }}"
+      "${{ fromJSON(inputs.mode == 'regressions' && '[1]' || '[1,2,3,4,5,6,7,8]') }}"
     )
     expect(dependencies).toMatchObject({
       needs: 'plan',
@@ -77,7 +77,7 @@ describe('release and scheduled workflow topology', () => {
     expect(step(windows.jobs.notebook_mutation, 'Restore dependencies').shell).toBe('bash')
     expect(step(dependencies, 'Upload dependencies').with?.['compression-level']).toBe(0)
     expect(job.env).toMatchObject({ VITEST_WINDOWS_FULL_TEST: '1' })
-    expect(test.run).toContain('--shard=${{ matrix.shard }}/5')
+    expect(test.run).toContain('--shard=${{ matrix.shard }}/8')
     expect(test.run).toContain('--maxWorkers=1')
     expect(test.run).toContain('--reporter=github-actions')
     expect(windows.on).not.toHaveProperty('push')

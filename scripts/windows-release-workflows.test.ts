@@ -133,10 +133,10 @@ describe('post-merge Windows validation', () => {
     expect(findStep(workflow.jobs.notebook_mutation, 'Restore dependencies').shell).toBe('bash')
     expect(job['continue-on-error']).toBeUndefined()
     expect(job.strategy?.matrix).toEqual({
-      shard: "${{ fromJSON(inputs.mode == 'regressions' && '[1]' || '[1,2,3,4,5]') }}"
+      shard: "${{ fromJSON(inputs.mode == 'regressions' && '[1]' || '[1,2,3,4,5,6,7,8]') }}"
     })
     expect(findStep(job, 'Test complete suite shard').run).toBe(
-      'npm test -- --shard=${{ matrix.shard }}/5 --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000 --reporter=default --reporter=github-actions'
+      'npm test -- --shard=${{ matrix.shard }}/8 --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000 --reporter=default --reporter=github-actions'
     )
     expect(findStep(job, 'Test complete suite shard').if).toBe(
       "${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' }}"
