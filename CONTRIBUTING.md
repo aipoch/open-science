@@ -327,11 +327,18 @@ ci(review): unify automated AI reviews
   the queue rollout is enabled. The queue validates the combined revision before **squash merge**;
   its squash subject must retain the PR title's Conventional Commit format. Do not update a branch
   merely because `main` advanced; update it for conflicts or a maintainer request.
-- PR commits retain policy/CI Integrity, CodeQL, AI review, static checks and portable tests on
-  Ubuntu. Desktop changes run Windows business E2E. Automatic PR checks do not allocate Mac
-  runners, including for platform-sensitive changes; Mac validation happens in merge queue.
+- PR commits retain policy/CI Integrity, CodeQL (GitHub default setup, not a repository
+  workflow), AI review, static checks and portable tests on Ubuntu. Desktop changes run Windows
+  business E2E, including the Windows renderer browser suite. Automatic PR checks do not allocate
+  Mac runners, including for platform-sensitive changes; Mac validation happens in merge queue.
+  PR and queue business E2E rely on one Playwright retry to absorb single-attempt flakes; the
+  merged E2E summary reports retry-passed tests, and scheduled Source Regression keeps
+  `--fail-on-flaky-tests`.
 - Merge queue keeps concurrency two and validates the combined revision with Linux/portable
   checks and one short Mac job (project creation/relaunch, persisted theme and window presentation).
+  Classification diffs the whole merge group against the target branch tip, so a stacked entry is
+  planned for every change it carries, not only its own pull request. CI Integrity re-validates the
+  pull request title in the queue because it becomes the squash subject.
   Platform-sensitive changes add focused Darwin sandbox, process/delegation, window/second-launch
   and Notebook checks in that same job. Selected native checks must succeed; skipped is not success.
   Queue does not repeat Windows business E2E or complete Mac business/presentation suites. Existing
@@ -345,10 +352,14 @@ ci(review): unify automated AI reviews
   (Asia/Singapore, UTC+8), including when main is unchanged. Each round uses one build and one Mac
   runner for functional/workspace journeys, browser/visual/accessibility and supplemental suites.
   Nightly packaging, Windows Full Test and Runtime Resource Soak retain their daily 23:17, 00:47
-  and 03:23 Singapore schedules and skip unchanged successful revisions. Manual runs always execute.
+  and 03:23 Singapore schedules and skip a head that the last successful scheduled run already
+  covered (shared `skip-unchanged-scheduled` action). Manual runs always execute.
   Formal release certification and post-release Windows Upgrade Smoke retain their existing gates.
   Scheduled failures cannot retroactively block an already merged PR; Mac-only failures may first
-  be discovered in queue or scheduled validation.
+  be discovered in queue or scheduled validation. A failing scheduled run opens or refreshes one
+  tracking issue labelled `ci-scheduled-failure` and closes it once a later scheduled run passes.
+  Nightly publication additionally requires the advisory runtime-certification and regression
+  jobs of the source run to have succeeded.
 
 ## Reporting Issues
 
@@ -404,7 +415,8 @@ Owner review authorizes control-plane changes; CI Integrity still validates unsa
 execution, mutable action references, expanded target-workflow permissions and spoofed or missing
 required checks. It runs for both PR admission and merge-group validation. Passing required checks
 and owner approval precede normal merge-queue admission. Never remove the Integrity `merge_group`
-trigger while its check is required.
+trigger while its check is required; the `required-check-triggers` rule rejects a PR Gate or CI
+Integrity revision that drops its `merge_group` or pull request trigger.
 
 Keep required code-owner review and stale-approval dismissal enabled while relying on this policy.
 CI Integrity checks exact module ownership under `src/` and `packages/`, covering all tracked code,
