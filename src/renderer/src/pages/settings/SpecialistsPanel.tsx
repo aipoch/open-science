@@ -1289,7 +1289,7 @@ const InstalledSpecialistsPanel = ({
                         // Bundled Skills were just installed on disk; refresh the Skill catalog so the
                         // editor recognizes them as available instead of showing "Missing · unavailable".
                         try {
-                          await useSettingsStore.getState().loadSkills()
+                          await useSettingsStore.getState().loadSkills(true)
                         } catch {
                           // Best-effort refresh; navigation proceeds so the install result is shown.
                         }
@@ -1410,7 +1410,7 @@ const InstalledSpecialistsPanel = ({
                                 // Bundled Skills were just installed on disk; refresh the Skill catalog
                                 // so the editor recognizes them as available after the overwrite.
                                 try {
-                                  await useSettingsStore.getState().loadSkills()
+                                  await useSettingsStore.getState().loadSkills(true)
                                 } catch {
                                   // Best-effort refresh; navigation proceeds so the install result is shown.
                                 }
@@ -2486,7 +2486,7 @@ const InstalledSpecialistsPanel = ({
                         [...deleteSkillIds].sort()
                       )
                       if (result.status === 'deleted') {
-                        await useSettingsStore.getState().loadSkills()
+                        await useSettingsStore.getState().loadSkills(true)
                         setDeleteBusy(false)
                         setDeletingItem(null)
                       } else {

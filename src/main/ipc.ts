@@ -2215,7 +2215,7 @@ const createApplicationModules = async (
       ]),
     onCommitted: () => {
       broadcastToRenderers(SPECIALIST_IPC.CATALOG_CHANGED, undefined)
-      void runtime.requestSkillsReload()
+      requestSkillCatalogRefresh()
     }
   })
   specialistPackageRecovery.current = (operation) =>
