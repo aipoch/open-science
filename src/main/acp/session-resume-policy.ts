@@ -317,6 +317,13 @@ class AcpSessionResumePolicy {
 
     const details = readProperty(data.value, 'details')
     if (!details.readable) return authoritativeFailure('uninspectable-error')
+    if (
+      isCodexResponsesResumeContext(context) &&
+      typeof details.value === 'string' &&
+      /\bno\s+rollout\s+found\s+for\s+thread\s+id\b/i.test(details.value)
+    ) {
+      return adoptableFailure('legacy-unresumable-details')
+    }
     if (describesUnresumableSession(details.value)) {
       return adoptableFailure('legacy-unresumable-details')
     }
