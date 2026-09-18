@@ -22,6 +22,7 @@ export default defineConfig({
   },
   reporter: process.env.CI
     ? [
+        ...(process.platform === 'win32' ? [['./e2e/windows-shard-reporter.ts'] as [string]] : []),
         ['line'],
         ['blob'],
         [
