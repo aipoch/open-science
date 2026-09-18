@@ -120,7 +120,14 @@ describe('PR Gate workflow', () => {
 
   it('replays explicit module dry-run revisions through the real revision and plan scripts', () => {
     const dir = mkdtempSync(join(tmpdir(), 'module-coverage-plan-'))
-    const base = execFileSync('git', ['rev-parse', 'HEAD^'], { encoding: 'utf8' }).trim()
+    // Mirror the revisions step fallback: shallow or single-commit checkouts have no parent, so
+    // compare HEAD against itself instead of failing the whole suite.
+    const parent = spawnSync('git', ['rev-parse', 'HEAD^'], { encoding: 'utf8' })
+    const base = (
+      parent.status === 0
+        ? parent.stdout
+        : execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' })
+    ).trim()
     const head = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
     const revisions = workflow.jobs.preflight.steps?.find(({ id }) => id === 'revisions')
     const classify = workflow.jobs.preflight.steps?.find(({ id }) => id === 'classify')
