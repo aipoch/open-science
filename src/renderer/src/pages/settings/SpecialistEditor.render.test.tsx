@@ -711,7 +711,7 @@ describe('SpecialistEditor', () => {
     expect(document.body.textContent).toContain('saved but disabled')
     await act(async () => {
       Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
-        .find((button) => button.textContent === 'Cancel')
+        .find((button) => button.textContent === 'Configure later')
         ?.click()
     })
     expect(onCancel).toHaveBeenCalledOnce()

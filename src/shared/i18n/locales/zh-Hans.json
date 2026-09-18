@@ -897,7 +897,6 @@
     "Built-in": "内置",
     "Built-in tools": "内置工具",
     "Built-in · Version {{version}}": "内置 · 版本 {{version}}",
-    "Builtin and owned Skills are selected by default. Skills copied into the ZIP are discovered automatically on import; Connector IDs are carried as selected references.": "默认选中内置和自有技能。复制到 ZIP 中的技能在导入时会自动识别；连接器 ID 以选中引用的形式保留。",
     "Bundled with the app. Refresh from the vendor to pull the latest. Choose one from the Active model selector after adding.": "随应用内置。从厂商刷新可拉取最新列表。添加后在「当前模型」选择器中选用。",
     "By default Open-Science resolves connection details by running <code>ssh -G</code> against the alias in your <path>~/.ssh/config</path>. Set these only if you need to override that.": "默认情况下，Open-Science 会对 <path>~/.ssh/config</path> 里的别名运行 <code>ssh -G</code> 来解析连接信息。只有需要覆盖时才填这些。",
     "Bypass rules": "绕过规则",
@@ -2475,7 +2474,6 @@
     "Review or dismiss the current execution Plan before submitting a revision.": "提交修订前请先审阅或忽略当前执行计划。",
     "Review or revoke approvals saved for tools, projects, and conversations.": "查看或撤销为工具、项目和对话保存的批准。",
     "Review pending": "等待审查",
-    "Review the package summary and diagnostics before continuing to setup.": "继续设置前，请查看包摘要和诊断信息。",
     "Review the portable configuration before saving it. Secret values, OAuth tokens, local permissions, and trust state are excluded.": "保存前请检查可移植配置。密钥值、OAuth 令牌、本地权限和信任状态不会包含在内。",
     "Review unavailable": "审查不可用",
     "Reviewer": "审查",
@@ -2906,7 +2904,6 @@
     "This host no longer exists.": "这台主机已不存在。",
     "This Connector no longer exists. Your draft has not been saved.": "此连接器已不存在。您的草稿尚未保存。",
     "This Provider no longer exists. Your draft has not been saved.": "此服务商已不存在。您的草稿尚未保存。",
-    "This imported Specialist is saved but disabled. Save changes to complete setup and enable it.": "这个导入的专家已保存但处于停用状态。保存更改以完成设置并启用它。",
     "This is how the agent decides when to use the skill — be specific.": "智能体依据这句话判断何时使用该技能 —— 写具体些。",
     "This machine is offline.": "此设备已离线。",
     "This model is not supported over the Codex Chat Completions bridge. Pick another model for a Codex session.": "该模型不支持通过 Codex 的 Chat Completions 桥接使用。为 Codex 会话另选一个模型。",
@@ -3825,8 +3822,6 @@
     "The description must be a non-empty string within the length limit.": "描述必须是长度限制内的非空字符串。",
     "Invalid system prompt": "无效的系统提示词",
     "The system prompt must be a non-empty string within the length limit.": "系统提示词必须是长度限制内的非空字符串。",
-    "Unbundled Skills omitted": "已省略未打包的技能",
-    "Unchecked Skills are omitted. Capabilities are selected locally after import.": "未勾选的技能会被省略。导入后需在本地选择能力。",
     "Package version unchanged": "软件包版本未变",
     "Content changed but the package version was not increased. Update the version before publishing.": "内容已更改，但软件包版本未提升。发布前请更新版本。",
     "Export validation failed": "导出验证失败",
@@ -5931,6 +5926,13 @@
     "Fork cancelled": "已取消创建副本",
     "Open forked Session": "打开会话副本",
     "Temporarily read-only during fork": "创建副本期间暂时为只读",
-    "Session storage is not ready.": "会话存储尚未就绪。"
+    "Session storage is not ready.": "会话存储尚未就绪。",
+    "Owned Skills are bundled by default. Featured Skills are referenced by name. Check other Skills to include their files.": "默认打包此专家拥有的技能。精选技能按名称引用。勾选其他技能可将其文件加入包中。",
+    "Unbundled Skills remain referenced": "未打包的技能仍保留引用",
+    "Unchecked Skills are not copied into the ZIP. Their name references are retained and must resolve on the destination.": "未勾选的技能不会复制到 ZIP 中。其名称引用会保留，且必须能在目标环境中解析。",
+    "Import saves this package before configuration. New bundled Skills stay disabled for the Main Agent; existing Skill settings are preserved.": "导入会先保存此包，再进行配置。新打包安装的技能默认不对主智能体启用；已有技能的设置保持不变。",
+    "This imported Specialist is saved but disabled. Save changes to enable it, or configure it later.": "此导入的专家已保存，但尚未启用。保存更改即可启用，也可以稍后配置。",
+    "Import and configure": "导入并配置",
+    "Configure later": "稍后配置"
   }
 }

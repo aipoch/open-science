@@ -1023,7 +1023,7 @@ describe('SpecialistsPanel', () => {
     ])
     await act(async () => {
       Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
-        .find((button) => button.textContent === 'Next')
+        .find((button) => button.textContent === 'Import and configure')
         ?.click()
     })
     expect(installPackage).toHaveBeenCalledOnce()
@@ -1099,7 +1099,7 @@ describe('SpecialistsPanel', () => {
       })
       await act(async () => {
         Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
-          .find((button) => button.textContent === 'Next')
+          .find((button) => button.textContent === 'Import and configure')
           ?.click()
       })
 

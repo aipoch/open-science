@@ -784,7 +784,6 @@
     "Built-in": "組み込み",
     "Built-in tools": "組み込みツール",
     "Built-in · Version {{version}}": "組み込み · バージョン {{version}}",
-    "Builtin and owned Skills are selected by default. Skills copied into the ZIP are discovered automatically on import; Connector IDs are carried as selected references.": "デフォルトでは、組み込みおよび所有のスキルが選択されています。ZIP にコピーされたスキルはインポート時に自動的に検出されます。コネクタ ID は、選択された参照として保持されます。",
     "Bundled with the app. Refresh from the vendor to pull the latest. Choose one from the Active model selector after adding.": "アプリにバンドルされています。ベンダーから更新して最新のものを取得します。追加後は、アクティブモデルセレクターから 1 つを選択します。",
     "Business": "ビジネス",
     "By default Open-Science resolves connection details by running <code>ssh -G</code> against the alias in your <path>~/.ssh/config</path>. Set these only if you need to override that.": "デフォルトでは、Open-Science は、<path>~/.ssh/config</path> のエイリアスに対して <code>ssh -G</code> を実行することで接続の詳細を解決します。これらをオーバーライドする必要がある場合にのみ設定してください。",
@@ -2388,7 +2387,6 @@
     "Review or dismiss the current execution Plan before submitting a revision.": "修正を送信する前に、現在の実行プランを確認または却下します。",
     "Review or revoke approvals saved for tools, projects, and conversations.": "ツール、プロジェクト、会話に対して保存された承認を確認または取り消します。",
     "Review pending": "レビュー保留中",
-    "Review the package summary and diagnostics before continuing to setup.": "セットアップを続行する前に、パッケージの概要と診断を確認してください。",
     "Review the portable configuration before saving it. Secret values, OAuth tokens, local permissions, and trust state are excluded.": "ポータブル構成を保存する前に確認してください。シークレット値、OAuth トークン、ローカル権限、および信頼状態は除外されます。",
     "Review unavailable": "レビューは利用できません",
     "Reviewer": "レビュアー",
@@ -2819,7 +2817,6 @@
     "This host no longer exists.": "このホストはもう存在しません。",
     "This Connector no longer exists. Your draft has not been saved.": "このコネクタはもう存在しません。下書きは保存されていません。",
     "This Provider no longer exists. Your draft has not been saved.": "このプロバイダーはもう存在しません。下書きは保存されていません。",
-    "This imported Specialist is saved but disabled. Save changes to complete setup and enable it.": "このインポートされたスペシャリストは保存されていますが、無効になっています。変更を保存してセットアップを完了し、有効にします。",
     "This is how the agent decides when to use the skill — be specific.": "これは、エージェントがスキルをいつ使用するかを決定する方法です。具体的に指定してください。",
     "This machine is offline.": "このマシンはオフラインです。",
     "This model is not supported over the Codex Chat Completions bridge. Pick another model for a Codex session.": "このモデルは、Codex Chat Completions ブリッジではサポートされていません。Codex セッション用に別のモデルを選択してください。",
@@ -3738,8 +3735,6 @@
     "The description must be a non-empty string within the length limit.": "説明は、長さ制限内の空でない文字列である必要があります。",
     "Invalid system prompt": "無効なシステムプロンプト",
     "The system prompt must be a non-empty string within the length limit.": "システムプロンプトは、長さ制限内の空でない文字列である必要があります。",
-    "Unbundled Skills omitted": "バンドルされていないスキルは省略されました",
-    "Unchecked Skills are omitted. Capabilities are selected locally after import.": "チェックされていないスキルは省略されます。能力はインポート後にローカルで選択します。",
     "Package version unchanged": "パッケージバージョンは変更されていません",
     "Content changed but the package version was not increased. Update the version before publishing.": "内容は変更されていますが、パッケージバージョンが上がっていません。公開する前にバージョンを更新してください。",
     "Export validation failed": "エクスポートの検証に失敗しました",
@@ -5931,6 +5926,13 @@
     "Fork cancelled": "複製をキャンセルしました",
     "Open forked Session": "複製したセッションを開く",
     "Temporarily read-only during fork": "複製中は一時的に読み取り専用です",
-    "Session storage is not ready.": "セッションストレージの準備ができていません。"
+    "Session storage is not ready.": "セッションストレージの準備ができていません。",
+    "Owned Skills are bundled by default. Featured Skills are referenced by name. Check other Skills to include their files.": "所有するスキルは既定で同梱されます。注目のスキルは名前で参照されます。その他のスキルのファイルを含めるにはチェックを入れてください。",
+    "Unbundled Skills remain referenced": "同梱しないスキルの参照は保持されます",
+    "Unchecked Skills are not copied into the ZIP. Their name references are retained and must resolve on the destination.": "チェックを外したスキルは ZIP にコピーされません。名前による参照は保持されるため、移行先で解決できる必要があります。",
+    "Import saves this package before configuration. New bundled Skills stay disabled for the Main Agent; existing Skill settings are preserved.": "インポートすると、設定前にこのパッケージが保存されます。新たに同梱インストールされるスキルはメインエージェントでは無効のままです。既存のスキル設定は保持されます。",
+    "This imported Specialist is saved but disabled. Save changes to enable it, or configure it later.": "インポートしたスペシャリストは保存済みですが、無効です。変更を保存して有効にするか、後で設定できます。",
+    "Import and configure": "インポートして設定",
+    "Configure later": "後で設定"
   }
 }

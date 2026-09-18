@@ -351,8 +351,8 @@ const MAP: Record<string, (diagnostic: PackageDiagnostic) => SpecialistDiagnosti
 
   // ---- Export preview (package/service.ts) ----
   'specialist.export-unbundled-skills': plain(
-    'Unbundled Skills omitted',
-    'Unchecked Skills are omitted. Capabilities are selected locally after import.'
+    'Unbundled Skills remain referenced',
+    'Unchecked Skills are not copied into the ZIP. Their name references are retained and must resolve on the destination.'
   ),
   'specialist.export-version-unchanged': plain(
     'Package version unchanged',

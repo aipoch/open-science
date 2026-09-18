@@ -804,7 +804,6 @@
     "Built-in": "Incorporado",
     "Built-in tools": "Herramientas integradas",
     "Built-in · Version {{version}}": "Incorporado · Versión {{version}}",
-    "Builtin and owned Skills are selected by default. Skills copied into the ZIP are discovered automatically on import; Connector IDs are carried as selected references.": "Las habilidades integradas y propias se seleccionan de forma predeterminada. Las habilidades incluidas en el ZIP se detectan automáticamente al importarlo; los ID de los conectores se conservan como referencias seleccionadas.",
     "Bundled with the app. Refresh from the vendor to pull the latest. Choose one from the Active model selector after adding.": "Estos modelos se incluyen con la aplicación. Actualice la lista desde el proveedor para obtener la lista más reciente. Después de añadir el proveedor, elija uno en el selector Modelo activo.",
     "Business": "Negocios",
     "By default Open-Science resolves connection details by running <code>ssh -G</code> against the alias in your <path>~/.ssh/config</path>. Set these only if you need to override that.": "De forma predeterminada, Open-Science obtiene los datos de conexión ejecutando <code>ssh -G</code> con el alias de <path>~/.ssh/config</path>. Defina estos valores solo si necesita reemplazar esa configuración.",
@@ -2467,7 +2466,6 @@
     "Review or dismiss the current execution Plan before submitting a revision.": "Revise o descarte el plan de ejecución actual antes de enviar una revisión.",
     "Review or revoke approvals saved for tools, projects, and conversations.": "Revise o revoque las aprobaciones guardadas para herramientas, proyectos y conversaciones.",
     "Review pending": "Revisión pendiente",
-    "Review the package summary and diagnostics before continuing to setup.": "Revise el resumen y los diagnósticos del paquete antes de continuar con la configuración.",
     "Review the portable configuration before saving it. Secret values, OAuth tokens, local permissions, and trust state are excluded.": "Revise la configuración portátil antes de guardarla. Se excluyen los valores secretos, los tokens de OAuth, los permisos locales y el estado de confianza.",
     "Review unavailable": "Revisión no disponible",
     "Reviewer": "Revisor",
@@ -2932,7 +2930,6 @@
     "This folder already contains Open-Science data. It will be <em>used as-is (not merged)</em> — <em>your current data folder is kept, so you can switch back</em>. The app will restart.": "Esta carpeta ya contiene datos de Open-Science. <em>Se usará tal cual (sin fusionarla)</em> — <em>se conservará su carpeta de datos actual, por lo que podrá volver a ella</em>. La aplicación se reiniciará.",
     "This folder may contain credentials or secrets. Open it only if you trust its contents.": "Esta carpeta puede contener credenciales o secretos. Ábrala solo si confía en su contenido.",
     "This host no longer exists.": "Este host ya no existe.",
-    "This imported Specialist is saved but disabled. Save changes to complete setup and enable it.": "Este especialista importado está guardado pero deshabilitado. Guarde los cambios para completar la configuración y habilítelo.",
     "This is how the agent decides when to use the skill — be specific.": "Así es como el agente decide cuándo usar la habilidad: sea específico.",
     "This machine is offline.": "Esta máquina está fuera de línea.",
     "This model is not supported over the Codex Chat Completions bridge. Pick another model for a Codex session.": "Este modelo no es compatible con el puente Codex Chat Completions. Elija otro modelo para una sesión de Codex.",
@@ -4015,8 +4012,6 @@
     "The description must be a non-empty string within the length limit.": "La descripción debe ser una cadena no vacía dentro del límite de longitud.",
     "Invalid system prompt": "Prompt del sistema no válido",
     "The system prompt must be a non-empty string within the length limit.": "El prompt del sistema debe ser una cadena no vacía que no supere el límite de longitud.",
-    "Unbundled Skills omitted": "Habilidades no incluidas en el paquete",
-    "Unchecked Skills are omitted. Capabilities are selected locally after import.": "Se omiten las habilidades no marcadas. Las capacidades se seleccionan localmente después de la importación.",
     "Package version unchanged": "Versión del paquete sin cambios",
     "Content changed but the package version was not increased. Update the version before publishing.": "El contenido cambió pero la versión del paquete no aumentó. Actualice la versión antes de publicar.",
     "Export validation failed": "Falló la validación de exportación",
@@ -6263,6 +6258,13 @@
     "Fork cancelled": "Bifurcación cancelada",
     "Open forked Session": "Abrir sesión bifurcada",
     "Temporarily read-only during fork": "Solo lectura temporal durante la bifurcación",
-    "Session storage is not ready.": "El almacenamiento de sesiones no está listo."
+    "Session storage is not ready.": "El almacenamiento de sesiones no está listo.",
+    "Owned Skills are bundled by default. Featured Skills are referenced by name. Check other Skills to include their files.": "Las habilidades propias se incluyen de forma predeterminada. Las habilidades destacadas se referencian por nombre. Seleccione otras habilidades para incluir sus archivos.",
+    "Unbundled Skills remain referenced": "Las habilidades no incluidas conservan sus referencias",
+    "Unchecked Skills are not copied into the ZIP. Their name references are retained and must resolve on the destination.": "Las habilidades no seleccionadas no se copian al ZIP. Se conservan sus referencias por nombre, que deben poder resolverse en el entorno de destino.",
+    "Import saves this package before configuration. New bundled Skills stay disabled for the Main Agent; existing Skill settings are preserved.": "La importación guarda este paquete antes de configurarlo. Las nuevas habilidades incluidas permanecen desactivadas para el agente principal; se conserva la configuración de las habilidades existentes.",
+    "This imported Specialist is saved but disabled. Save changes to enable it, or configure it later.": "Este especialista importado está guardado, pero desactivado. Guarde los cambios para activarlo o configúrelo más tarde.",
+    "Import and configure": "Importar y configurar",
+    "Configure later": "Configurar más tarde"
   }
 }

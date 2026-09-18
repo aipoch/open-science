@@ -2472,7 +2472,6 @@
     "Review or dismiss the current execution Plan before submitting a revision.": "提交修訂前請先審閱或忽略目前執行計劃。",
     "Review or revoke approvals saved for tools, projects, and conversations.": "檢視或撤銷為工具、專案和對話儲存的核准。",
     "Review pending": "等待審查",
-    "Review the package summary and diagnostics before continuing to setup.": "繼續設定前，請查看套件摘要和診斷資訊。",
     "Review the portable configuration before saving it. Secret values, OAuth tokens, local permissions, and trust state are excluded.": "儲存前請檢查可攜設定。密鑰值、OAuth 權杖、本機權限和信任狀態不會包含在內。",
     "Review unavailable": "審查無法使用",
     "Reviewer": "審查",
@@ -2903,7 +2902,6 @@
     "This host no longer exists.": "這台主機已不存在。",
     "This Connector no longer exists. Your draft has not been saved.": "此連接器已不存在。您的草稿尚未儲存。",
     "This Provider no longer exists. Your draft has not been saved.": "此服務商已不存在。您的草稿尚未儲存。",
-    "This imported Specialist is saved but disabled. Save changes to complete setup and enable it.": "這個匯入的專家已儲存但處於停用狀態。儲存變更以完成設定並啟用它。",
     "This is how the agent decides when to use the skill — be specific.": "智能體依據這句話判斷何時使用該技能 —— 寫具體些。",
     "This machine is offline.": "此裝置已離線。",
     "This model is not supported over the Codex Chat Completions bridge. Pick another model for a Codex session.": "該模型不支援透過 Codex 的 Chat Completions 橋接使用。為 Codex 會話另選一個模型。",
@@ -3331,7 +3329,6 @@
     "⚠ This plan has been replaced by another plan and is no longer current.": "⚠ 此計畫已被另一個計畫取代，不再是目前計畫。",
     "＋ Add a connector": "＋ 新增連接器",
     "＋ Add a skill": "＋ 新增技能",
-    "Builtin and owned Skills are selected by default. Skills copied into the ZIP are discovered automatically on import; Connector IDs are carried as selected references.": "內建和自有的技能預設已選中。複製到 ZIP 中的技能會在匯入時自動探測；連接器 ID 作為已選引用一併攜帶。",
     "Import ZIP · Preview": "匯入 ZIP · 預覽",
     "Preparing export…": "準備匯出…",
     "× Blocked": "× 已封鎖",
@@ -3825,8 +3822,6 @@
     "The description must be a non-empty string within the length limit.": "描述必須是長度限制內的非空字串。",
     "Invalid system prompt": "無效的系統提示詞",
     "The system prompt must be a non-empty string within the length limit.": "系統提示詞必須是長度限制內的非空字串。",
-    "Unbundled Skills omitted": "已省略未打包的技能",
-    "Unchecked Skills are omitted. Capabilities are selected locally after import.": "未勾選的技能會被省略。匯入後需在本機選擇能力。",
     "Package version unchanged": "套件版本未變",
     "Content changed but the package version was not increased. Update the version before publishing.": "內容已變更，但套件版本未提升。發布前請更新版本。",
     "Export validation failed": "匯出驗證失敗",
@@ -5931,6 +5926,13 @@
     "Fork cancelled": "已取消建立副本",
     "Open forked Session": "開啟工作階段副本",
     "Temporarily read-only during fork": "建立副本期間暫時為唯讀",
-    "Session storage is not ready.": "工作階段儲存尚未就緒。"
+    "Session storage is not ready.": "工作階段儲存尚未就緒。",
+    "Owned Skills are bundled by default. Featured Skills are referenced by name. Check other Skills to include their files.": "預設打包此專家擁有的技能。精選技能依名稱參照。勾選其他技能可將其檔案加入套件。",
+    "Unbundled Skills remain referenced": "未打包的技能仍保留參照",
+    "Unchecked Skills are not copied into the ZIP. Their name references are retained and must resolve on the destination.": "未勾選的技能不會複製到 ZIP 中。其名稱參照會保留，且必須能在目標環境中解析。",
+    "Import saves this package before configuration. New bundled Skills stay disabled for the Main Agent; existing Skill settings are preserved.": "匯入會先儲存此套件，再進行設定。新隨附安裝的技能預設不對主智能體啟用；既有技能的設定保持不變。",
+    "This imported Specialist is saved but disabled. Save changes to enable it, or configure it later.": "此匯入的專家已儲存，但尚未啟用。儲存變更即可啟用，也可以稍後設定。",
+    "Import and configure": "匯入並設定",
+    "Configure later": "稍後設定"
   }
 }
