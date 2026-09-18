@@ -1067,9 +1067,58 @@ if (process.argv.includes('--version')) {
         return { stopReason: 'cancelled' }
       }
 
+      if (prompt.includes('Publish then wait for cancellation.')) {
+        const publication = await createProvenanceArtifact(context.params.sessionId)
+        await context.client.notify(acp.methods.client.session.update, {
+          sessionId: context.params.sessionId,
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
+            content: {
+              type: 'text',
+              text: `${publication}\nArtifact published; waiting for cancellation.`
+            }
+          }
+        })
+        await waitForSessionCancellation(context.params.sessionId)
+        return { stopReason: 'cancelled' }
+      }
+
       let reply = 'Deterministic reply: Summarize the deterministic fixture.'
       try {
-        if (prompt.includes('The user approved the pending Session Plan.')) {
+        if (prompt.includes('Verify interaction follow-up.')) {
+          reply = 'Interaction follow-up completed.'
+        } else if (prompt.includes('Request restart verification permission.')) {
+          const toolCall = {
+            toolCallId: 'restart-permission-tool',
+            title: 'mcp__skills__load_skill',
+            kind: 'read',
+            rawInput: { skill: 'fixture-skill' }
+          }
+          await context.client.notify(acp.methods.client.session.update, {
+            sessionId: context.params.sessionId,
+            update: { sessionUpdate: 'tool_call', ...toolCall, status: 'pending' }
+          })
+          const permission = await context.client.request(
+            acp.methods.client.session.requestPermission,
+            {
+              sessionId: context.params.sessionId,
+              toolCall,
+              options: [
+                { kind: 'allow_once', name: 'Allow once', optionId: 'allow-once' },
+                { kind: 'reject_once', name: 'Deny', optionId: 'deny-once' }
+              ]
+            }
+          )
+          reply =
+            permission.outcome.optionId === 'allow-once'
+              ? 'Restart verification: Permission approval delivered.'
+              : 'Restart verification: Permission denial delivered.'
+        } else if (prompt.includes('The user approved the pending tool permission')) {
+          reply = 'Restart verification: Permission approval delivered.'
+        } else if (prompt.includes('The user explicitly denied this operation.')) {
+          reply = 'Restart verification: Permission denial delivered.'
+        } else if (prompt.includes('The user approved the pending Session Plan.')) {
           reply = 'Restart verification: Plan approval delivered.'
         } else if (prompt.includes('The user rejected the pending Session Plan.')) {
           reply = 'Restart verification: Plan dismissal delivered.'
@@ -1481,6 +1530,9 @@ if (process.argv.includes('--version')) {
         } else if (prompt.includes(NOTEBOOK_PACKAGE_CANCELLATION_PROMPT)) {
           reply = await verifyNotebookPackageCancellation(context.params.sessionId)
         } else if (prompt.includes(ARTIFACT_PROVENANCE_PROMPT)) {
+          if (prompt.includes('Observe the Task before publication.')) {
+            await new Promise((resolve) => setTimeout(resolve, 8_000))
+          }
           reply = await createProvenanceArtifact(context.params.sessionId)
         } else if (prompt.includes(PREVIEW_CONTEXT_MENU_ARTIFACTS_PROMPT)) {
           reply = await createPreviewContextMenuArtifacts(context.params.sessionId)

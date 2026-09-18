@@ -256,6 +256,7 @@
       "src/main/reviewer/reviewer-fix-loop-owner.test.ts",
       "src/main/runtime-electron-wiring.test.ts",
       "src/main/runtime-state-ownership.architecture.test.ts",
+      "src/main/session-persistence/runtime-session-owner.test.ts",
       "src/main/session-plan/plan-service.test.ts",
       "src/main/session-plan/production-plan-service.test.ts",
       "src/main/settings/agent-runtime-manager.test.ts",
