@@ -15,21 +15,28 @@ function matchesPrefix(name, prefix) {
 
 // The jobs API reports each job's actual conclusion (`failure`) even when `continue-on-error`
 // masked it at the workflow level, which is what lets a `success` Nightly still block here.
-// Publication only follows scheduled runs, where no gating job is skipped by input, so anything
-// other than `success` (including `skipped` or a missing gate) fails closed.
-export function evaluateNightlyPublishGates(jobs, prefixes = DEFAULT_GATING_PREFIXES) {
+// Publication only follows scheduled runs, where no gating job is skipped by input, so by default
+// anything other than `success` (including `skipped` or a missing gate) fails closed. Failure
+// reporting passes `requireCoverage: false` instead: a run that skipped the build legitimately has
+// nothing to report, so only an actual failed, cancelled, or timed-out job counts.
+export function evaluateNightlyPublishGates(
+  jobs,
+  prefixes = DEFAULT_GATING_PREFIXES,
+  { requireCoverage = true } = {}
+) {
   if (!Array.isArray(jobs)) throw new TypeError('jobs must be an array')
   const blocking = []
   for (const prefix of prefixes) {
     const gated = jobs.filter((job) => matchesPrefix(String(job?.name ?? ''), prefix))
     if (gated.length === 0) {
-      blocking.push({ name: prefix, conclusion: 'missing' })
+      if (requireCoverage) blocking.push({ name: prefix, conclusion: 'missing' })
       continue
     }
     for (const job of gated) {
-      if (job.conclusion !== 'success') {
-        blocking.push({ name: job.name, conclusion: job.conclusion ?? 'unknown' })
-      }
+      const conclusion = job.conclusion ?? 'unknown'
+      if (conclusion === 'success') continue
+      if (!requireCoverage && (conclusion === 'skipped' || conclusion === 'unknown')) continue
+      blocking.push({ name: job.name, conclusion })
     }
   }
   return { ok: blocking.length === 0, blocking }
@@ -44,9 +51,14 @@ export function formatNightlyPublishGates(result) {
 export function runNightlyPublishGatesCli(argv = process.argv.slice(2), environment = process.env) {
   const jobsIndex = argv.indexOf('--jobs')
   const jobsPath = jobsIndex >= 0 ? argv[jobsIndex + 1] : undefined
-  if (!jobsPath) throw new Error('Usage: nightly-publish-gates.mjs --jobs <jobs.json>')
+  if (!jobsPath) throw new Error('Usage: nightly-publish-gates.mjs --jobs <jobs.json> [--report]')
 
-  const result = evaluateNightlyPublishGates(JSON.parse(readFileSync(jobsPath, 'utf8')))
+  const requireCoverage = !argv.includes('--report')
+  const result = evaluateNightlyPublishGates(
+    JSON.parse(readFileSync(jobsPath, 'utf8')),
+    DEFAULT_GATING_PREFIXES,
+    { requireCoverage }
+  )
   process.stdout.write(formatNightlyPublishGates(result))
   if (environment.GITHUB_OUTPUT) appendFileSync(environment.GITHUB_OUTPUT, `ok=${result.ok}\n`)
   return result

@@ -119,6 +119,31 @@ describe('nightly publication gates', () => {
     }
   })
 
+  it('reports advisory failures but ignores absent or skipped gates', () => {
+    const failed = withConclusion('runtime-certification / Source runtime chain (Linux)', 'failure')
+    expect(
+      evaluateNightlyPublishGates(failed, undefined, { requireCoverage: false })
+    ).toMatchObject({
+      ok: false,
+      blocking: [{ name: 'runtime-certification / Source runtime chain (Linux)' }]
+    })
+
+    // A run that skipped the build has nothing to report, unlike publication which fails closed.
+    const skipped = [{ name: 'Check for unpublished main changes', conclusion: 'success' }]
+    expect(evaluateNightlyPublishGates(skipped, undefined, { requireCoverage: false })).toEqual({
+      ok: true,
+      blocking: []
+    })
+    expect(evaluateNightlyPublishGates(skipped)).toMatchObject({ ok: false })
+    expect(
+      evaluateNightlyPublishGates(
+        withConclusion('regression / p0 (macos-arm64 artifact)', null),
+        undefined,
+        { requireCoverage: false }
+      )
+    ).toEqual({ ok: true, blocking: [] })
+  })
+
   it('exits non-zero when the jobs file is not provided', () => {
     const run = spawnSync(process.execPath, [resolve('scripts/ci/nightly-publish-gates.mjs')], {
       encoding: 'utf8'

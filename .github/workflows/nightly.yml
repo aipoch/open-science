@@ -160,12 +160,25 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-          sparse-checkout: scripts/ci/report-scheduled-failure.mjs
+          sparse-checkout: |
+            scripts/ci/report-scheduled-failure.mjs
+            scripts/ci/nightly-publish-gates.mjs
           sparse-checkout-cone-mode: false
+      # runtime-certification and regression are advisory, so their caller results stay successful
+      # even when a child job failed. Inspect the nested conclusions so those failures are tracked.
+      - name: Detect advisory job failures
+        id: advisory
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs" --paginate \
+            --jq '.jobs[] | {name, conclusion}' | jq -s . > "$RUNNER_TEMP/nightly-jobs.json"
+          node scripts/ci/nightly-publish-gates.mjs --jobs "$RUNNER_TEMP/nightly-jobs.json" --report
       - name: Open, refresh, or close the tracking issue
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         env:
-          CONCLUSION: ${{ (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) && 'failure' || 'success' }}
+          CONCLUSION: ${{ (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || steps.advisory.outputs.ok != 'true') && 'failure' || 'success' }}
         with:
           script: |
             const { reportScheduledOutcome } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/ci/report-scheduled-failure.mjs`)

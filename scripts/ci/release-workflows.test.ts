@@ -541,13 +541,26 @@ if ($artifactSaveBase -eq $artifactSaveCommit) {
       uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
       with: {
         'persist-credentials': false,
-        'sparse-checkout': 'scripts/ci/report-scheduled-failure.mjs'
+        'sparse-checkout': expect.stringContaining('scripts/ci/report-scheduled-failure.mjs')
       }
     })
     expect(script.uses).toBe('actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3')
+    // Nightly's certification and regression callers are advisory, so their job results stay
+    // successful; the reporter inspects the nested conclusions instead.
+    const advisory = name === 'nightly.yml' ? " || steps.advisory.outputs.ok != 'true'" : ''
     expect(script.env?.CONCLUSION).toBe(
-      "${{ (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) && 'failure' || 'success' }}"
+      `\${{ (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')${advisory}) && 'failure' || 'success' }}`
     )
+    if (name === 'nightly.yml') {
+      const detect = step(report, 'Detect advisory job failures')
+      expect(detect.id).toBe('advisory')
+      expect(detect.run).toContain('actions/runs/$GITHUB_RUN_ID/jobs')
+      expect(detect.run).toContain('nightly-publish-gates.mjs --jobs')
+      expect(detect.run).toContain('--report')
+      expect(step(report, 'Checkout reporter').with?.['sparse-checkout']).toContain(
+        'scripts/ci/nightly-publish-gates.mjs'
+      )
+    }
     expect(script.with?.script).toContain(`workflowFile: '${name}'`)
     expect(script.with?.script).toContain('conclusion: process.env.CONCLUSION')
     expect(readFileSync(join(process.cwd(), '.github/workflows', name), 'utf8')).toContain(
