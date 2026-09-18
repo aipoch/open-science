@@ -49,7 +49,7 @@ AIPOCH Open-Science 是面向科學家與研究人員的 AI 研究工作台，�
 
 AIPOCH Open-Science 支援機器學習、統計學、生命科學、化學、材料科學、物理學及環境科學等領域的運算密集與資料密集研究。它涵蓋從文獻回顧、假設建立，到程式碼執行、資料分析、模擬、視覺化，以及產出可追溯研究成果的完整研究流程。
 
-> 💡 **[AIPOCH Open-Science v0.30.2 已發佈](https://github.com/aipoch/open-science/releases/latest)** _（最後更新於 2026 年 9 月）_。AIPOCH Open-Science v0.30.2 是一個穩定性版本：Windows 的 R 執行環境可靠復原（conda 啟動、可執行檔解析、核心恢復，以及已驗證的 pip 進入點），Notebook 同一輪次的輸入可正確重播，審閱者的修正也在關聯回饋之間保留上下文。文獻匯入會區分 PubMed 作者的姓氏與名字縮寫，並偵測撤稿關係；連接器收緊了 Ensembl、VEP、Reactome、UCSC 與 gnomAD 的行為；DeepSeek V4.1 Flash 也加入模型目錄。詳情請參閱[最新版本說明](https://github.com/aipoch/open-science/releases/latest)。
+> 💡 **[AIPOCH Open-Science v0.31.0 已發佈](https://github.com/aipoch/open-science/releases/latest)** _（最後更新於 2026 年 9 月）_。AIPOCH Open-Science v0.31.0 支援將工作階段派生（Fork）為攜帶完整研究歷史的可寫入副本——會話分支、Notebook 記錄、工件、文獻與書籤，匯入的工作階段仍保持唯讀。產品名稱現統一為 Open-Science，現有安裝與所有研究資料保持不變。代理程式內容重建後工作階段計畫可復原上下文，提供者連線在儲存前完成驗證，gnomAD 連接器可回報族群層面的頻率，分支工作階段會顯示指回來源的延續分隔線。Windows 下的 R 無需受保護模式設定即可在標準模式下執行，連接器、對話框與權限處理也全面收緊。工作階段資訊卡顯示工作階段的編號、標題、描述、來源、時間戳記以及訊息與工件計數並支援釘選，憑證提示現在會連結到官方 API key 頁面。詳情請參閱[最新版本說明](https://github.com/aipoch/open-science/releases/latest)。
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 首屏橫幅：Science, Open to All——開源、模型無關、可自行託管的科學 AI 研究工作台" src="../images/readme/open-science-banner.png" />

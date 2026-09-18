@@ -43,6 +43,7 @@ export type AcpPromptFinalizationHandles = Readonly<{
   errorMessage: (error: unknown) => string
   errorKind: (error: unknown) => string | undefined
   pushEvent: (event: RuntimeEventInput) => void
+  commitTerminal?: (event: RuntimeEventInput) => Promise<void>
   emitState: () => void
   beforeInteractionRelease: () => void
   afterInteractionRelease: () => Promise<void>
@@ -191,15 +192,17 @@ export class AcpPromptOutcomeFinalizer {
       await handles.emitArtifact(() => (artifactPublished = true))
       artifactPublished = true
     }
-    const retryArtifact = async (): Promise<void> => {
+    const retryArtifact = async (): Promise<boolean> => {
       artifactRetryAttempted = true
       try {
         await emitArtifact()
+        return true
       } catch (error) {
         safeLog('error', 'artifact emit after prompt failure failed', errorLogFields(error))
+        return false
       }
     }
-    const publishObservedStop = (): boolean => {
+    const publishObservedStop = async (failure?: unknown): Promise<boolean> => {
       if (!observedStop) return false
       const terminal = interactions.settle(interaction, {
         ...(observedStop.turnUsage ? { turnUsage: observedStop.turnUsage } : {}),
@@ -222,21 +225,26 @@ export class AcpPromptOutcomeFinalizer {
               ...call
             }))
           : undefined
-      handles.pushEvent({
-        kind: 'stop',
-        level: 'info',
+      const event: RuntimeEventInput = {
+        kind: failure === undefined ? 'stop' : 'error',
+        level: failure === undefined ? 'info' : 'error',
         sessionId,
         ...eventIdentity,
         timestamp: terminal.timestamp,
-        title: 'Prompt stopped',
-        text: observedStop.response.stopReason,
+        title: failure === undefined ? 'Prompt stopped' : ACP_PROMPT_FAILED_EVENT_TITLE,
+        text:
+          failure === undefined
+            ? observedStop.response.stopReason
+            : describePromptError(failure, { model: handles.model }),
         turnUsage: logicalUsage.turnUsage,
         ...(modelCallUsage ? { modelCallUsage } : {}),
         ...(observedStop.terminalContextWindow
           ? { terminalContextWindow: observedStop.terminalContextWindow }
           : {}),
-        raw: observedStop.response
-      })
+        ...(failure === undefined ? { raw: observedStop.response } : {})
+      } as RuntimeEventInput
+      if (handles.commitTerminal) await handles.commitTerminal(event)
+      else handles.pushEvent(event)
       return true
     }
     try {
@@ -262,7 +270,7 @@ export class AcpPromptOutcomeFinalizer {
         await emitArtifact()
         safeLog('info', 'prompt stopped', { stopReason: response.stopReason })
         context?.fail()
-        publishObservedStop()
+        await publishObservedStop()
         return response
       }
       const { response, facts } = outcome
@@ -300,7 +308,7 @@ export class AcpPromptOutcomeFinalizer {
       if (context?.complete()) handles.emitState()
       await emitArtifact()
       safeLog('info', 'prompt stopped', { stopReason: response.stopReason })
-      publishObservedStop()
+      await publishObservedStop()
       // Automatic compact is a follow-on provider prompt. Awaiting it here keeps the current
       // sendPrompt admission lease and `promptInFlight` until compact finishes, so a queued
       // follow-up `acp:send-prompt` never replies. Compact after the prompt interaction releases.
@@ -308,8 +316,11 @@ export class AcpPromptOutcomeFinalizer {
     } catch (error) {
       if (observedStop) {
         context?.complete()
-        if (!artifactPublished) await retryArtifact()
-        if (publishObservedStop()) {
+        if (!artifactPublished && (await retryArtifact()) && handles.commitTerminal) {
+          await publishObservedStop()
+          return observedStop.response
+        }
+        if (await publishObservedStop(handles.commitTerminal ? error : undefined)) {
           safeLog('warn', 'prompt terminal finalization failed', errorLogFields(error))
         }
         throw error
@@ -332,7 +343,7 @@ export class AcpPromptOutcomeFinalizer {
           : undefined
       const terminal = interactions.settle(interaction, {})
       if (!terminal) throw error
-      handles.pushEvent({
+      const failureEvent: RuntimeEventInput = {
         kind: 'error',
         level: 'error',
         recoverable,
@@ -350,7 +361,9 @@ export class AcpPromptOutcomeFinalizer {
               }
             }
           : {})
-      })
+      }
+      if (handles.commitTerminal) await handles.commitTerminal(failureEvent)
+      else handles.pushEvent(failureEvent)
       throw error
     } finally {
       let stopFailure: NotebookExecutionStopError | undefined

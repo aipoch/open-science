@@ -80,6 +80,7 @@ const {
   const sendAppContinuation = vi.fn().mockResolvedValue(undefined)
   const sendPrompt = vi.fn().mockResolvedValue(undefined)
   const AcpRuntimeMock = vi.fn().mockImplementation(function (options: AcpRuntimeOptions) {
+    let turnSequence = 0
     return {
       createSession,
       cancelPrompt,
@@ -102,6 +103,13 @@ const {
       sendPrompt: (request: AcpPromptRequest, promptAttemptId?: string) => {
         const prompting = sendPrompt(request, promptAttemptId)
         return Promise.resolve(prompting).then((result) => {
+          // The production runtime publishes the exact prompt start once the Session turn is
+          // admitted; interactive admission acknowledges nothing before that point.
+          options.callbacks?.onPromptStarted?.(
+            request.sessionId,
+            `turn-${++turnSequence}`,
+            promptAttemptId
+          )
           options.callbacks?.onProviderPromptAccepted?.(request.sessionId, promptAttemptId)
           return result
         })

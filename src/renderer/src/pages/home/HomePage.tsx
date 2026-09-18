@@ -64,8 +64,7 @@ import {
 
 import { DeleteProjectDialog } from './DeleteProjectDialog'
 import { ProjectFormDialog } from './ProjectFormDialog'
-
-const RECENT_SESSION_LIMIT = 5
+import { useRecentSessions } from './use-recent-sessions'
 
 // Compact labels for dense rows ("3d"), unlike the verbose wording in global search ("3 days ago").
 // The unit is a runtime value, so it maps to its English text rather than being interpolated into a
@@ -409,12 +408,9 @@ const HomePage = ({
     persistedSessions
   ])
 
-  const recentSessions = useMemo(
-    () =>
-      [...persistedSessions]
-        .sort((left, right) => right.updatedAt - left.updatedAt)
-        .slice(0, RECENT_SESSION_LIMIT),
-    [persistedSessions]
+  const recentSessions = useRecentSessions(
+    persistedSessions,
+    isProjectsLoaded && !loadError && hasCompleteSessionCatalog
   )
 
   const showArtifactCounts = hasCompleteSessionCatalog && recentSessions.length === 0

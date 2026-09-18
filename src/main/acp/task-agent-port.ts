@@ -22,7 +22,8 @@ type AcpTaskAgentRuntime = {
   sendPromptObserved(
     request: AcpPromptRequest,
     onProviderPromptAccepted: () => void,
-    onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>
+    onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>,
+    runtimeReviewOwner?: 'task' | 'renderer'
   ): Promise<unknown>
   cancelPrompt(request: { sessionId: string }): Promise<unknown>
 }
@@ -116,7 +117,8 @@ const createAcpTaskAgentPort = (
         await runtime.sendPromptObserved(
           acpRequest,
           observer.onProviderPromptAccepted ?? (() => undefined),
-          observer.onPromptAdmitted
+          observer.onPromptAdmitted,
+          'task'
         )
       } else {
         await runtime.sendPrompt(acpRequest)

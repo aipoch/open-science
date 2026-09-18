@@ -434,6 +434,55 @@ it('executes an x64-only managed R through the public kernel boundary', async ()
   }
 })
 
+it.each([
+  { name: 'Python', request: { language: 'python' as const } },
+  { name: 'R', request: { language: 'r' as const } },
+  { name: 'REPL', request: { language: 'python' as const, kind: 'repl' as const } }
+])(
+  'requests Windows process-tree supervision for every persistent $name kernel',
+  async ({ request: kernelRequest }) => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-windows-supervision-'))
+    const request = baseRequest(cwdDir)
+    const python = pythonBin(envPrefix(request.runtimeRoot, DEFAULT_PY_ENV, 'win32'), 'win32')
+    const rscript = join(
+      envPrefix(request.runtimeRoot, DEFAULT_R_ENV, 'win32'),
+      'Lib',
+      'R',
+      'bin',
+      'x64',
+      'Rscript.exe'
+    )
+    const r = join(dirname(rscript), 'R.exe')
+    await mkdir(dirname(python), { recursive: true })
+    await mkdir(dirname(rscript), { recursive: true })
+    await writeFile(python, 'fixture')
+    await writeFile(r, 'fixture')
+    await writeFile(rscript, 'fixture')
+
+    const wrap = vi.fn<NotebookProcessSandbox['wrap']>(async () => {
+      throw new Error('sandbox invocation captured')
+    })
+    const executor = new NotebookKernelExecutor({
+      platform: 'win32',
+      processSandbox: { wrap }
+    })
+    try {
+      await expect(
+        executor.execute({
+          ...request,
+          ...kernelRequest,
+          code: '1',
+          sessionId: 'windows-supervision',
+          projectId: 'windows-supervision'
+        })
+      ).resolves.toMatchObject({ status: 'failed', stderr: 'sandbox invocation captured' })
+      expect(wrap).toHaveBeenCalledWith(expect.objectContaining({ superviseProcessTree: true }))
+    } finally {
+      await executor.shutdown()
+    }
+  }
+)
+
 describe.skipIf(process.platform === 'win32')('managed R kernel isolation', () => {
   it('ignores user startup files and uses only the managed environment library', async () => {
     cwdDir = await mkdtemp(join(tmpdir(), 'os-managed-r-kernel-home-'))
@@ -4058,6 +4107,35 @@ const delayedSandboxCleanup = (
 }
 
 describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
+  it('reports diagnostics when the REPL exits before replying', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-repl-exit-diagnostic-'))
+    const terminations: unknown[][] = []
+    const executor = new NotebookKernelExecutor({
+      replLoopPath: REPL_LOOP,
+      onTerminated: (...args) => terminations.push(args),
+      terminateTree: async () => ({ reaped: true })
+    })
+
+    try {
+      const result = await executor.execute({
+        ...baseRequest(cwdDir),
+        kind: 'repl',
+        code: "process.stderr.write('api_key=secret\\n'); process.exit(23)"
+      })
+
+      expect(result.status).toBe('failed')
+      expect(result.stderr).toContain('Notebook kernel process exited with exit code 23.')
+      expect(terminations).toHaveLength(1)
+      expect(terminations[0]).toEqual([
+        'repl',
+        '',
+        { reason: 'exit', exitCode: 23, signal: null, stderr: 'api_key=[redacted]\n' }
+      ])
+    } finally {
+      await executor.shutdown()
+    }
+  })
+
   it.each(['execute', 'restart', 'shutdown'] as const)(
     'retries receipt completion through %s without terminating the same process tree twice',
     async (recovery) => {

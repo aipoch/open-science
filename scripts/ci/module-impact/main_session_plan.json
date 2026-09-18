@@ -1,5 +1,6 @@
 {
   "ownerPaths": [
+    "src/main/session-plan/adversarial-session-plan.test.ts",
     "src/main/session-plan/guidance.ts",
     "src/main/session-plan/plan-delivery.test.ts",
     "src/main/session-plan/plan-delivery.ts",
@@ -31,6 +32,7 @@
   "consumerModules": ["workspace_runtime"],
   "testFiles": {
     "owner": [
+      "src/main/session-plan/adversarial-session-plan.test.ts",
       "src/main/session-plan/plan-delivery.test.ts",
       "src/main/session-plan/plan-mcp-server.test.ts",
       "src/main/session-plan/plan-service.test.ts",
@@ -171,6 +173,7 @@
       "src/main/reviewer/reviewer-fix-loop-owner.test.ts",
       "src/main/runtime-electron-wiring.test.ts",
       "src/main/runtime-state-ownership.architecture.test.ts",
+      "src/main/session-persistence/runtime-session-owner.test.ts",
       "src/main/settings/backend-resolver.test.ts",
       "src/main/settings/bootstrap.integration.test.ts",
       "src/main/side-chat/ipc.test.ts",
@@ -182,6 +185,7 @@
       "src/main/web-service/http-server.test.ts",
       "src/main/web-service/task-api.test.ts",
       "src/main/window-find-ipc.test.ts",
+      "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.test.ts",
       "src/shared/renderer-surface-inventory.test.ts",
       "src/shared/renderer-surface-matrix.test.ts",
       "src/main/settings/skill-catalog.test.ts",

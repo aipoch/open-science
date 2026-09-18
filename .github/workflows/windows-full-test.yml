@@ -152,6 +152,13 @@ jobs:
         # unrelated shards or native sandbox. These are the suites from the recent failed batches.
         run: >-
           npm test --
+          cli/locate-app.test.ts
+          scripts/credential-helper-signing.test.ts
+          src/main/credential-identity/sqlite-snapshot.test.ts
+          src/main/local-models/owner.test.ts
+          src/main/notebook/input-registry.test.ts
+          src/main/session-package/literature.test.ts
+          src/main/session-plan/plan-context-file.test.ts
           vitest.config.test.ts
           scripts/ci/windows-test-sequencer.test.ts
           scripts/ci/release-workflows.test.ts

@@ -290,7 +290,7 @@ const SpecialistEditor = ({
               {editSpecialist.setupPending ? (
                 <p className="mt-2 text-xs text-muted-foreground">
                   {t(
-                    'This imported Specialist is saved but disabled. Save changes to complete setup and enable it.'
+                    'This imported Specialist is saved but disabled. Save changes to enable it, or configure it later.'
                   )}
                 </p>
               ) : null}
@@ -666,7 +666,7 @@ const SpecialistEditor = ({
             }}
             disabled={isSaving}
           >
-            {t('Cancel')}
+            {editSpecialist?.setupPending ? t('Configure later') : t('Cancel')}
           </Button>
           <Button
             type="button"

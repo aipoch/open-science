@@ -42,6 +42,8 @@ import {
   withDelegatedChildContext
 } from './production-framework-runtime'
 
+import { DelegatedProcessOwnership } from './process-ownership'
+
 const safeOpenCodeConfig = JSON.stringify({
   permission: { task: 'deny' },
   agent: {
@@ -387,7 +389,7 @@ describe('production delegated framework runtime bridge', () => {
           await expect(completion).resolves.toMatchObject({ status: 'completed' })
           await expect(stat(runtimeHome)).rejects.toMatchObject({ code: 'ENOENT' })
         } else {
-          await expect(completion).rejects.toThrow('process tree')
+          await expect(completion).rejects.toThrow('cleanup could not be confirmed')
           expect((await stat(runtimeHome)).isDirectory()).toBe(true)
           expect(
             await readFile(join(projection.skillsDirectory, 'research', 'SKILL.md'), 'utf8')
@@ -1363,3 +1365,221 @@ it.each([
     }
   }
 )
+it('does not retain backend leases when pending ownership rejects repeated preparation', async () => {
+  const dataRoot = await mkdtemp(join(tmpdir(), 'delegated-blocked-backend-'))
+  const durable = delegatedSession('opencode')
+  const key = { projectId: durable.projectId, sessionId: durable.id }
+  let liveLeases = 0
+  const owner = new DelegatedProcessOwnership(dataRoot)
+  owner.recordFailure({
+    ...key,
+    frameId: 'child-frame',
+    attemptId: 'old-attempt',
+    frameworkId: 'opencode'
+  })
+  const frameworks = createProductionDelegatedFrameworkRuntime({
+    capacity: 1,
+    dataRoot,
+    runtime: {
+      settingsService: {
+        async resolveAdmittedSubagentBackend() {
+          liveLeases++
+          return {
+            ...backend('opencode'),
+            providerTransportLease: {
+              setTarget: () => true,
+              release: async () => {
+                liveLeases--
+              }
+            }
+          }
+        }
+      }
+    } as never,
+    notebookRpcServer: () => {
+      throw new Error('blocked preparation must not start Notebook')
+    },
+    readSession: async () => durable
+  })
+  try {
+    const selected = await frameworks.forSession(durable, owner)
+    for (let index = 0; index < 2; index++) {
+      const reservation = await selected.execution.reserve(1)
+      const running = selected.execution.run(
+        {
+          session: key,
+          frameId: 'child-frame',
+          attemptId: `retry-${index}`,
+          runtimeSegmentId: `runtime-${index}`,
+          task: 'Investigate',
+          inputs: [],
+          workspaceCwd: dataRoot,
+          continuation: false,
+          executionModel: {
+            frameworkId: 'opencode',
+            providerId: 'provider-a',
+            backendId: 'opencode:provider-a',
+            modelRoute: 'opencode-openai',
+            model: 'model-a',
+            reasoningEffort: 'default'
+          }
+        },
+        reservation.slotIds[0]
+      )
+      await expect(running.completion).rejects.toThrow(/cleanup is unconfirmed/)
+      await reservation.releaseAll()
+    }
+    expect(liveLeases).toBe(0)
+  } finally {
+    await rm(dataRoot, { recursive: true, force: true })
+  }
+})
+
+it('settles owned CodeBuddy processes when ACP runtime construction throws', async () => {
+  const dataRoot = await mkdtemp(join(tmpdir(), 'codebuddy-construction-cleanup-'))
+  const owner = new DelegatedProcessOwnership(dataRoot)
+  const key = { projectId: 'project-1', sessionId: 'session-codebuddy' }
+  let child: ChildProcessWithoutNullStreams | undefined
+  const spawnSpy = vi.spyOn(codeBuddyFramework, 'spawn').mockImplementation((input) => {
+    child = input.spawnProcess!(process.execPath, ['-e', 'process.stdin.resume()'], {
+      stdio: 'pipe',
+      env: process.env
+    })
+    return child
+  })
+  const createRuntime = vi.spyOn(runtimeComposition, 'createAcpRuntime').mockImplementation(() => {
+    throw new Error('controlled ACP construction failure')
+  })
+  try {
+    const frameworks = createProductionDelegatedFrameworkRuntime({
+      capacity: 1,
+      dataRoot,
+      runtime: { settingsService: {} } as never,
+      notebookRpcServer: () =>
+        ({
+          issueDelegatedNotebookConnection: async () => ({
+            endpoint: 'http://127.0.0.1:1',
+            token: 'synthetic',
+            release: () => undefined,
+            revoke: async () => undefined
+          })
+        }) as never,
+      readSession: async () => delegatedSession('codebuddy')
+    })
+    const selected = await frameworks.forSession(session('codebuddy'), owner)
+    const reservation = await selected.execution.reserve(1)
+    const running = selected.execution.run(
+      {
+        session: key,
+        frameId: 'child-frame',
+        attemptId: 'failed-start',
+        runtimeSegmentId: 'runtime-1',
+        executionModel: {
+          frameworkId: 'codebuddy',
+          providerId: 'provider',
+          backendId: 'codebuddy:provider',
+          modelRoute: 'codebuddy-openai',
+          model: 'admitted-model',
+          reasoningEffort: 'default'
+        },
+        executionBackend: backend('codebuddy'),
+        task: 'Investigate',
+        inputs: [],
+        workspaceCwd: dataRoot,
+        continuation: false
+      },
+      reservation.slotIds[0]
+    )
+    await expect(running.completion).rejects.toThrow('controlled ACP construction failure')
+    expect(spawnSpy).toHaveBeenCalledOnce()
+    expect(createRuntime).toHaveBeenCalledOnce()
+    // Windows confirms the native Job is empty before its ChildProcess exit poll runs.
+    await expect.poll(() => child?.exitCode !== null || child?.signalCode !== null).toBe(true)
+    expect(owner.receipts(key)).toEqual([])
+    await expect(
+      stat(join(dataRoot, 'delegation', key.projectId, key.sessionId, 'runtime', 'failed-start'))
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+    const next = await selected.execution.reserve(1)
+    await next.releaseAll()
+  } finally {
+    await owner.recover(key, true)
+    spawnSpy.mockRestore()
+    createRuntime.mockRestore()
+    await rm(dataRoot, { recursive: true, force: true })
+  }
+})
+
+it('cleans copied read-only OpenCode Skills after successful execution without changing the source', async () => {
+  const dataRoot = await mkdtemp(join(tmpdir(), 'opencode-readonly-cleanup-'))
+  const source = join(dataRoot, 'shared-config', 'opencode', 'skills', 'os-example')
+  const runtimeHome = join(
+    dataRoot,
+    'delegation',
+    'project-1',
+    'session-opencode',
+    'runtime',
+    'readonly-attempt'
+  )
+  const copied = join(runtimeHome, 'config', 'opencode', 'skills', 'os-example')
+  const admitted = backend('opencode')
+  admitted.env.XDG_CONFIG_HOME = join(dataRoot, 'shared-config')
+  const runtime = vi.spyOn(runtimeComposition, 'createAcpRuntime').mockReturnValue({
+    createSession: async () => ({ sessionId: 'provider' }),
+    sendAppContinuation: async () => ({ stopReason: 'end_turn' }),
+    deleteSession: async () => undefined,
+    shutdownForQuit: async () => ({ reaped: true })
+  } as never)
+  try {
+    await mkdir(source, { recursive: true })
+    await writeFile(join(source, '.catalog_stamp'), 'shared evidence')
+    await chmod(source, 0o555)
+    const frameworks = createProductionDelegatedFrameworkRuntime({
+      capacity: 1,
+      dataRoot,
+      runtime: { settingsService: {} } as never,
+      notebookRpcServer: () =>
+        ({
+          issueDelegatedNotebookConnection: async () => ({
+            endpoint: 'http://127.0.0.1:1',
+            token: 'synthetic',
+            release: () => undefined,
+            revoke: async () => undefined
+          })
+        }) as never,
+      readSession: async () => delegatedSession('opencode')
+    })
+    const selected = await frameworks.forSession(session('opencode'))
+    const reservation = await selected.execution.reserve(1)
+    const running = selected.execution.run(
+      {
+        session: { projectId: 'project-1', sessionId: 'session-opencode' },
+        frameId: 'child-frame',
+        attemptId: 'readonly-attempt',
+        runtimeSegmentId: 'runtime-1',
+        executionModel: {
+          frameworkId: 'opencode',
+          providerId: 'provider',
+          backendId: 'opencode:provider',
+          modelRoute: 'opencode-openai',
+          model: 'admitted-model',
+          reasoningEffort: 'default'
+        },
+        executionBackend: admitted,
+        task: 'Investigate',
+        inputs: [],
+        workspaceCwd: dataRoot,
+        continuation: false
+      },
+      reservation.slotIds[0]
+    )
+    await expect(running.completion).resolves.toMatchObject({ status: 'completed' })
+    await expect(stat(runtimeHome)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await readFile(join(source, '.catalog_stamp'), 'utf8')).toBe('shared evidence')
+    if (process.platform !== 'win32') expect((await stat(source)).mode & 0o777).toBe(0o555)
+  } finally {
+    runtime.mockRestore()
+    await chmod(source, 0o755)
+    await chmod(copied, 0o755).catch(() => undefined)
+    await rm(dataRoot, { recursive: true, force: true })
+  }
+})

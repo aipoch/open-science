@@ -86,6 +86,31 @@ export const onProcessTreeReaped = (child: ChildProcess, callback: () => void): 
   processTreeReapCallbacks.set(child, callback)
 }
 
+// Delegated receipts must settle before physical resource owners release files or install leases.
+const processTreeOwnership = new WeakMap<
+  ChildProcess,
+  {
+    terminate?: () => Promise<ProcessTreeKillResult>
+    settled(result: ProcessTreeKillResult): void
+  }
+>()
+export const registerProcessTreeOwnership = (
+  child: ChildProcess,
+  ownership: {
+    terminate?: () => Promise<ProcessTreeKillResult>
+    settled(result: ProcessTreeKillResult): void
+  }
+): void => {
+  if (processTreeOwnership.has(child))
+    throw new Error('Process tree already has an ownership record.')
+  processTreeOwnership.set(child, ownership)
+}
+
+export const capturePosixProcessTreeIdentity = (
+  child: ChildProcess
+): PosixProcessIdentity | undefined =>
+  trackedPosixProcessTrees.get(child)?.leaderIdentity ?? undefined
+
 // Upper bound for awaiting a direct child's real exit (POSIX) or taskkill's own completion (Windows).
 // Bounded so a wedged process can never hang app teardown; the caller (before-quit) also time-bounds
 // the whole shutdown, this is a second, tighter guard scoped to a single tree.
@@ -1097,24 +1122,63 @@ const terminateTrackedPosixProcessTree = async (
 // Returns { reaped } so a caller that must guarantee released handles can tell a clean tree teardown
 // from a degraded fallback. This never rejects: any failure resolves (reaped:false) so a kill can never
 // surface into the caller (before-quit -> app.exit).
-export const terminateProcessTree = async (
+const terminateProcessTreeOnce = async (
   child: ChildProcess,
   signal?: NodeJS.Signals,
   log?: ProcessTreeLogger
 ): Promise<ProcessTreeKillResult> => {
   const trackedTree = trackedPosixProcessTrees.get(child)
   const ownedGroup = ownedPosixProcessGroups.get(child)
-  const result = await (process.platform === 'win32'
-    ? terminateWindowsTree(child, signal, log)
-    : trackedTree
-      ? terminateTrackedPosixProcessTree(child, trackedTree, signal, log)
-      : ownedGroup
-        ? terminateOwnedPosixProcessGroup(ownedGroup, signal, log)
-        : terminatePosixTree(child, signal, log))
+  const ownership = processTreeOwnership.get(child)
+  let result: ProcessTreeKillResult
+  try {
+    result = await (ownership?.terminate
+      ? ownership.terminate()
+      : process.platform === 'win32'
+        ? terminateWindowsTree(child, signal, log)
+        : trackedTree
+          ? terminateTrackedPosixProcessTree(child, trackedTree, signal, log)
+          : ownedGroup
+            ? terminateOwnedPosixProcessGroup(ownedGroup, signal, log)
+            : terminatePosixTree(child, signal, log))
+  } catch (error) {
+    log?.error('Process tree teardown failed', error)
+    result = { reaped: false }
+  }
+  try {
+    ownership?.settled(result)
+  } catch (error) {
+    log?.error('Process ownership receipt could not be settled', error)
+    return { reaped: false }
+  }
   if (result.reaped) {
+    processTreeOwnership.delete(child)
     const callback = processTreeReapCallbacks.get(child)
     processTreeReapCallbacks.delete(child)
     callback?.()
   }
   return result
+}
+
+const processTreeTerminations = new WeakMap<ChildProcess, Promise<ProcessTreeKillResult>>()
+export const terminateProcessTree = (
+  child: ChildProcess,
+  signal?: NodeJS.Signals,
+  log?: ProcessTreeLogger
+): Promise<ProcessTreeKillResult> => {
+  const existing = processTreeTerminations.get(child)
+  if (existing) return existing
+  const pending = terminateProcessTreeOnce(child, signal, log).then(
+    (result) => {
+      if (!result.reaped && processTreeTerminations.get(child) === pending)
+        processTreeTerminations.delete(child)
+      return result
+    },
+    (error: unknown) => {
+      if (processTreeTerminations.get(child) === pending) processTreeTerminations.delete(child)
+      throw error
+    }
+  )
+  processTreeTerminations.set(child, pending)
+  return pending
 }

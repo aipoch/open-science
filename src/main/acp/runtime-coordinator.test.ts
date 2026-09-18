@@ -1809,7 +1809,7 @@ describe('AcpRuntimeCoordinator', () => {
           sessionIds: ['session-1'],
           callbacks,
           skipProviderPromptAccepted: true,
-          prompt: () => Promise.reject(failure)
+          beforePromptStart: () => Promise.reject(failure)
         }).runtime
     )
     const session = await coordinator.createSession()
@@ -1817,6 +1817,133 @@ describe('AcpRuntimeCoordinator', () => {
     await expect(
       coordinator.startPrompt({ sessionId: session.sessionId, text: 'Research this.' })
     ).rejects.toBe(failure)
+  })
+
+  it('rejects a delayed runtime turn admission failure without acknowledging first', async () => {
+    const promptStart = createDeferred<void>()
+    const failure = new Error('Runtime Session turn is unknown or superseded')
+    let created!: ReturnType<typeof createFakeRuntime>
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      created = createFakeRuntime({
+        frameworkId: 'codex',
+        sessionIds: ['session-1'],
+        callbacks,
+        beforePromptStart: () => promptStart.promise
+      })
+      return created.runtime
+    })
+    const session = await coordinator.createSession()
+
+    const admission = coordinator.startPrompt({
+      sessionId: session.sessionId,
+      text: 'Research this.'
+    })
+    const outcome = Promise.race([
+      admission.then(
+        () => 'acknowledged' as const,
+        () => 'rejected' as const
+      ),
+      new Promise<'still-pending'>((resolve) => setImmediate(() => resolve('still-pending')))
+    ])
+
+    await vi.waitFor(() => expect(created.sendPrompt).toHaveBeenCalledOnce())
+    expect(await outcome).toBe('still-pending')
+
+    promptStart.reject(failure)
+    await expect(admission).rejects.toBe(failure)
+  })
+
+  it('rejects a startPrompt cancelled before its runtime turn starts', async () => {
+    const promptStart = createDeferred<void>()
+    let created!: ReturnType<typeof createFakeRuntime>
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      created = createFakeRuntime({
+        frameworkId: 'codex',
+        sessionIds: ['session-1'],
+        callbacks,
+        beforePromptStart: () => promptStart.promise
+      })
+      return created.runtime
+    })
+    const session = await coordinator.createSession()
+
+    const admission = coordinator.startPrompt({
+      sessionId: session.sessionId,
+      text: 'Research this.'
+    })
+    await vi.waitFor(() => expect(created.sendPrompt).toHaveBeenCalledOnce())
+
+    await coordinator.cancelPrompt({ sessionId: session.sessionId })
+    await expect(admission).rejects.toThrow('cancelled before runtime turn admission')
+
+    promptStart.resolve()
+    await vi.waitFor(() =>
+      expect(coordinator.getSnapshot().promptInFlightSessionIds).not.toContain(session.sessionId)
+    )
+  })
+
+  it('rejects a pending startPrompt when runtime teardown clears ownership', async () => {
+    const promptStart = createDeferred<void>()
+    let created!: ReturnType<typeof createFakeRuntime>
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      created = createFakeRuntime({
+        frameworkId: 'codex',
+        sessionIds: ['session-1'],
+        callbacks,
+        beforePromptStart: () => promptStart.promise
+      })
+      return created.runtime
+    })
+    const session = await coordinator.createSession()
+    const admission = coordinator.startPrompt({
+      sessionId: session.sessionId,
+      text: 'Research this.'
+    })
+    await vi.waitFor(() => expect(created.sendPrompt).toHaveBeenCalledOnce())
+
+    await coordinator.disconnect()
+    await expect(admission).rejects.toThrow('superseded before runtime turn admission')
+
+    promptStart.resolve()
+    await vi.waitFor(() =>
+      expect(coordinator.getSnapshot().promptInFlightSessionIds).not.toContain(session.sessionId)
+    )
+  })
+
+  it('acknowledges startPrompt only for its exact session and attempt start', async () => {
+    const promptStart = createDeferred<void>()
+    let runtimeCallbacks!: AcpRuntimeCallbacks
+    let created!: ReturnType<typeof createFakeRuntime>
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      runtimeCallbacks = callbacks
+      created = createFakeRuntime({
+        frameworkId: 'codex',
+        sessionIds: ['session-1'],
+        callbacks,
+        beforePromptStart: () => promptStart.promise
+      })
+      return created.runtime
+    })
+    const session = await coordinator.createSession()
+
+    const admission = coordinator.startPrompt({
+      sessionId: session.sessionId,
+      text: 'Research this.'
+    })
+    await vi.waitFor(() => expect(created.sendPrompt).toHaveBeenCalledOnce())
+    const attemptId = created.sendPrompt.mock.calls[0]?.[1]
+    runtimeCallbacks.onPromptStarted?.('other-session', 'turn-unrelated-session', attemptId)
+    runtimeCallbacks.onPromptStarted?.(session.sessionId, 'turn-unrelated-attempt', 'wrong-attempt')
+
+    await expect(
+      Promise.race([
+        admission.then(() => 'acknowledged' as const),
+        new Promise<'still-pending'>((resolve) => setImmediate(() => resolve('still-pending')))
+      ])
+    ).resolves.toBe('still-pending')
+
+    promptStart.resolve()
+    await expect(admission).resolves.toBeUndefined()
   })
 
   it('keeps application admission independent from a missing provider acceptance update', async () => {

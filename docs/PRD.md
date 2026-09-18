@@ -204,6 +204,45 @@ This boundary preserves the current surface asymmetry; it is not a parity roadma
 - Web and Task invoke transport-neutral application commands directly. Electron continues to use
   typed IPC adapters; no Web or Task path captures or synthesizes an Electron sender.
 
+#### Delegated provider process ownership
+
+Production delegation owns one versioned JSON receipt per provider process-tree generation under
+`<dataRoot>/delegation-process-ownership/<projectId>/<sessionId>/`. The receipt precedes physical
+launch and is outside the removable Frame/runtime workspace. Resource phases are `starting`,
+`owned`, and `cleanup-pending`; these do not add Attempt statuses or cancellation reasons.
+Receipt contents are restricted to existing Project/Session/Frame/Attempt/framework identities,
+a random generation identity, diagnostics time, and platform process ownership material. They
+contain no credentials, prompt text, full environment, or arbitrary deletion paths.
+
+Launch, workspace preparation/reuse, Session/Project removal, and quit/update teardown share the
+same owner. Corrupt, unreadable, incomplete, or symlinked receipt storage blocks the affected
+operation. Unconfirmed cleanup preserves files and capacity, including after reconstruction;
+confirmed recovery releases the receipt and retained execution resources. Terminal cleanup releases
+its model bridge/transport references even when process exit remains unconfirmed; shared transports
+stay alive while sibling references exist. Recovery runs at relevant
+explicit lifecycle boundaries, with no polling service or force-clear action. Saved result reads do
+not imply that process cleanup succeeded. Uninstall or manual data-folder removal must not treat
+terminal Attempt status as proof that external processes stopped.
+
+On Windows, the native process-tree package creates an exclusive named Job with a current-user
+DACL, non-inherited ownership handles, kill-on-close, and no breakaway flag. The process joins the
+Job through `PROC_THREAD_ATTRIBUTE_JOB_LIST` during creation. Piped ACP IO remains on Node/libuv
+streams. Recovery terminates and queries that exact Job until it has no active processes; unknown
+or inaccessible ownership remains blocked. The atomic-assignment rationale follows
+[Microsoft's process-creation guidance](https://devblogs.microsoft.com/oldnewthing/20230209-00/?p=107812).
+
+POSIX launches use the existing live process-tree tracker, a random inherited marker, and captured
+kernel leader identity. After an application crash, interrupted observation cannot rule out escaped
+or environment-scrubbed descendants. Such receipts remain protected: PID absence/reuse and marker
+absence are not cleanup proof. A different verified Linux kernel boot ID can clear old ownership.
+No corresponding reboot proof is claimed on macOS; ambiguous macOS receipts can remain blocked
+indefinitely. Normal live whole-tree teardown clears its receipt before releasing files.
+
+This format protects newly launched executions only. It does not backfill historical Attempts or
+infer old orphan ownership from paths, process names, or terminal history. Older application versions
+do not enforce these receipts, so downgrading is outside the protection guarantee. No database
+schema migration or rewriting of historical Task data is performed.
+
 ### User-attention, activity, and audit projections
 
 Application events are lifecycle facts used for in-process and cross-surface synchronization. They

@@ -33,7 +33,8 @@ import {
   suppressAutoReviewsForQuit,
   suppressNextAutoReview,
   clearSuppressNextAutoReview,
-  resetDeferredArtifactEventsForTests
+  resetDeferredArtifactEventsForTests,
+  scheduleCommittedRuntimeTranscriptAutoReview
 } from './workspace-events'
 import {
   createWorkspaceRuntimeEventProcessor,
@@ -3337,6 +3338,46 @@ describe('workspace runtime events', () => {
   })
 
   describe('auto-review gate on stop event', () => {
+    it.each([
+      ['renderer', 1, false],
+      ['task', 0, false],
+      ['renderer', 0, true]
+    ] as const)(
+      'dispatches a committed %s-owned review %i time(s), stale=%s',
+      async (owner, count, stale) => {
+        const reviewerRun = vi.fn().mockResolvedValue({ started: true })
+        const saveSession = vi.fn(async (value) => value)
+        stubReviewerApi(reviewerRun, saveSession)
+        const store = useSessionStore.getState()
+        store.setAutoReviewEnabled('transport-session-1', true)
+        store.appendAgentMessageChunk({
+          sessionId: 'transport-session-1',
+          streamId: 'stream-1',
+          eventId: 'main-answer',
+          content: 'Analysis complete'
+        })
+        const previous = store.sessions[0]
+        const run = previous.activeRun!
+        store.finishRun('transport-session-1', undefined, run.promptMessageId)
+        const committed = {
+          ...toPersistedSession(useSessionStore.getState().sessions[0]),
+          runtimeTranscriptOwner: 'main' as const,
+          runtimeTranscriptLastRun: run,
+          runtimeTranscriptReviewOwner: { promptMessageId: run.promptMessageId, owner }
+        }
+
+        scheduleCommittedRuntimeTranscriptAutoReview(
+          stale ? { ...previous, revision: (committed.revision ?? 0) + 1 } : previous,
+          committed
+        )
+        await vi.runAllTimersAsync()
+
+        expect(reviewerRun).toHaveBeenCalledTimes(count)
+        expect(saveSession).not.toHaveBeenCalled()
+        vi.unstubAllGlobals()
+      }
+    )
+
     it('does not auto-review a turn that stopped for a durable user choice', async () => {
       const reviewerRun = vi.fn().mockResolvedValue({ started: true })
       const promptMessageId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
@@ -4107,6 +4148,62 @@ describe('workspace runtime events', () => {
         .getState()
         .sessions[0].artifacts?.find(({ id }) => id === nativePendingArtifact.id)
     ).toMatchObject({ isPublished: true })
+  })
+
+  it('projects a Main-owned Artifact receipt without renderer persistence or finalization', async () => {
+    const current = useSessionStore.getState().sessions[0]
+    useSessionStore.setState({
+      sessions: [{ ...current, runtimeTranscriptOwner: 'main' }]
+    })
+    const published = createArtifactFile({
+      id: 'main-version-1',
+      artifactId: 'main-artifact-1',
+      versionId: 'main-version-1',
+      isPublished: true,
+      path: '/Users/example/.open-science/managed/main-version-1/result.txt'
+    })
+    const saveSession = vi.fn()
+    const reconcilePendingArtifacts = vi.fn()
+    const finalizeRunArtifacts = vi.fn()
+
+    await applyWorkspaceRuntimeEvent(
+      {
+        ...createEvent({
+          id: 'main-publication-event',
+          kind: 'artifact',
+          runId: 'main-run',
+          artifactClaimId: 'main-claim',
+          artifacts: [published]
+        }),
+        publicationOwner: 'main'
+      } as AcpRuntimeEvent,
+      { saveSession, reconcilePendingArtifacts, finalizeRunArtifacts }
+    )
+
+    expect(saveSession).not.toHaveBeenCalled()
+    expect(reconcilePendingArtifacts).not.toHaveBeenCalled()
+    expect(finalizeRunArtifacts).not.toHaveBeenCalled()
+    expect(
+      useSessionStore.getState().sessions[0].artifacts?.find(({ id }) => id === published.versionId)
+    ).toMatchObject({ isPublished: true })
+  })
+
+  it('waits for the Main transcript receipt before settling a Main-owned stop', async () => {
+    const current = useSessionStore.getState().sessions[0]
+    useSessionStore.setState({
+      sessions: [{ ...current, runtimeTranscriptOwner: 'main' }]
+    })
+    const saveSession = vi.fn()
+
+    await applyWorkspaceRuntimeEvent(createEvent({ id: 'main-stop', kind: 'stop' }), {
+      saveSession
+    })
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      runtimeTranscriptOwner: 'main',
+      status: 'running'
+    })
+    expect(saveSession).not.toHaveBeenCalled()
   })
 
   it('does not clear an artifact error owned by another event', async () => {

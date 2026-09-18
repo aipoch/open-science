@@ -57,6 +57,7 @@ import {
   rScriptBin,
   resolveEnvName
 } from './runtime-paths'
+import { boundedRuntimeDiagnostic } from './runtime-diagnostics'
 import type {
   NotebookSessionNamespaceRequest,
   NotebookSessionNamespaceResult
@@ -102,6 +103,20 @@ import { readProcessStartToken } from './operation-recovery'
 // kind is the language/role discriminator (spawn logic, framing, readiness gate switch on it); the
 // routing map is keyed by a finer ProcessKey so named envs of the same kind coexist as distinct procs.
 type KernelProcessKind = 'python' | 'r' | 'repl'
+
+export type NotebookKernelTerminationDiagnostic =
+  | {
+      reason: 'exit'
+      exitCode: number | null
+      signal: NodeJS.Signals | null
+      stderr?: string
+    }
+  | {
+      reason: 'error'
+      name: string
+      message: string
+      code?: string
+    }
 
 // Composite routing key for `procs`: `${kind}:${env}` for the python/r data kernels (so
 // python:default-python and python:my-analysis are separate processes/namespaces), and the bare
@@ -219,7 +234,11 @@ export type NotebookKernelExecutorOptions = {
   // must drop it because Windows cannot recoverably interrupt it or a POSIX grace period expires.
   // NOT invoked on an intentional shutdown()/restart(). Parallels onIdleShutdown so the caller can
   // persist a 'terminated' kernel status for an involuntary loss too (see NotebookRuntimeService).
-  onTerminated?: (kind: KernelProcessKind, env: string) => void
+  onTerminated?: (
+    kind: KernelProcessKind,
+    env: string,
+    diagnostic?: NotebookKernelTerminationDiagnostic
+  ) => void
   // Injectable only to exercise the Windows conda activation contract on non-Windows test hosts.
   platform?: NodeJS.Platform
   // Shared application-owned network sandbox. Omitted only by isolated executor tests.
@@ -498,7 +517,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
   private readonly scheduleIdleTimer: ScheduleIdleTimer
   private readonly cancelIdleTimer: CancelIdleTimer
   private readonly onIdleShutdown?: (kind: KernelProcessKind, env: string) => void
-  private readonly onTerminated?: (kind: KernelProcessKind, env: string) => void
+  private readonly onTerminated?: NotebookKernelExecutorOptions['onTerminated']
   private readonly cancellationGraceMs: number
   private readonly namespaceInspectionTimeoutMs: number
   private readonly platform: NodeJS.Platform
@@ -867,7 +886,14 @@ class NotebookKernelExecutor implements NotebookExecutor {
       proc.terminationError = error
       void this.killChildTracked(proc, 'spawn-failed').then((result) => {
         this.rejectPending(proc, result.reaped ? error : new NotebookExecutionStopError())
-        this.onTerminated?.(kind, env)
+        this.onTerminated?.(kind, env, {
+          reason: 'error',
+          name: error.name,
+          message: error.message,
+          ...(typeof (error as NodeJS.ErrnoException).code === 'string'
+            ? { code: (error as NodeJS.ErrnoException).code }
+            : {})
+        })
       })
     })
     // Process liveness follows exit, not close: a descendant may inherit stdio and keep those pipes
@@ -885,7 +911,14 @@ class NotebookKernelExecutor implements NotebookExecutor {
       // Publish the crash as soon as the direct child exits. Process-tree and sandbox cleanup still
       // gate settlement of any in-flight execution, but status observers should not have to wait for
       // that asynchronous cleanup to learn that the live kernel is gone.
-      this.onTerminated?.(kind, env)
+      this.onTerminated?.(kind, env, {
+        reason: 'exit',
+        exitCode: code,
+        signal,
+        ...(proc.stderrTail
+          ? { stderr: boundedRuntimeDiagnostic(proc.annotateStderr(proc.stderrTail)).text }
+          : {})
+      })
       void this.killChildTracked(proc, 'exit').then((result) => {
         this.rejectPending(
           proc,
@@ -1005,6 +1038,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
           sessionId: sessionId!,
           projectId: projectId!,
           runtime: kind,
+          ...(this.platform === 'win32' ? { superviseProcessTree: true } : {}),
           ...admission,
           ...(kind === 'repl' && request.mcpRpcSocketPath
             ? { localRpcSocketPath: request.mcpRpcSocketPath }

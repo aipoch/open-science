@@ -44,6 +44,26 @@ afterEach(() => {
 })
 
 describe('CredentialsPanel', () => {
+  it.each([
+    ['openalex', 'https://openalex.org/settings/api'],
+    ['literature', 'https://account.ncbi.nlm.nih.gov/settings/']
+  ] as const)('links to the official key page for %s', async (serviceId, href) => {
+    await act(async () =>
+      root.render(
+        <CredentialsPanel
+          view={{ kind: 'service', serviceId }}
+          onNavigate={vi.fn()}
+          onOpenConnector={vi.fn()}
+          onOpenProvider={vi.fn()}
+        />
+      )
+    )
+    const link = screen.getByRole('link', { name: 'Get an API key' })
+    expect(link.getAttribute('href')).toBe(href)
+    expect(link.getAttribute('target')).toBe('_blank')
+    expect(link.getAttribute('rel')).toBe('noreferrer')
+  })
+
   it('opens Unpaywall from Credentials and edits the same shared contact email', async () => {
     const onNavigate = vi.fn()
     const save = vi.fn().mockResolvedValue(undefined)

@@ -56,6 +56,10 @@ import {
 import { createPreviewRequestScope } from './previews/preview-file-reader'
 import { resolveLocalPath } from '../../../../shared/local-fs'
 import { resolveProjectId } from '../../../../shared/project-scope'
+import {
+  resolveActiveConversationActivities,
+  resolveActiveConversationMessages
+} from '../../../../shared/conversation-graph'
 import { useGrantedFoldersStore } from '@/stores/granted-folders-store'
 import type { JobSummary } from '../../../../shared/compute'
 import { CompletedJobCard } from '@/components/CompletedJobCard'
@@ -325,16 +329,59 @@ const findDurablePlanOwnerActivityId = (
   const planActivities = conversationItems.flatMap((item) =>
     item.type === 'plan-activity' ? [item.activity] : []
   )
+  const graph = session.conversationGraph
+  if (session.runtimeTranscriptOwner === 'main' && !graph) return undefined
+  const visibleActivityIds = graph
+    ? new Set(resolveActiveConversationActivities(graph).activities.map(({ id }) => id))
+    : undefined
+  const activePrompt = graph
+    ? resolveActiveConversationMessages(graph).find(
+        (message) => message.id === originatingPromptMessageId && message.role === 'user'
+      )
+    : undefined
   const candidates = planActivities.filter((activity) => {
-    if (
-      activity.promptMessageId !== originatingPromptMessageId ||
-      (materializedAt !== undefined && activity.createdAt > materializedAt)
-    ) {
-      return false
-    }
     const document = parseGeneratePlanDocument(activity.rawInput)
+    let promptMessageId = activity.promptMessageId
+    if (graph) {
+      // Main's flat presentation intentionally omits graph identities. Recover ownership only
+      // from the exact visible graph activity, never from the nearest prompt or Plan alone.
+      const matches = graph.activities.filter((candidate) => candidate.id === activity.id)
+      const canonical = matches.length === 1 ? matches[0] : undefined
+      const canonicalDocument = canonical && parseGeneratePlanDocument(canonical.rawInput)
+      if (
+        !canonical ||
+        !activePrompt ||
+        !visibleActivityIds?.has(activity.id) ||
+        planActivities.filter((candidate) => candidate.id === activity.id).length !== 1 ||
+        canonical.agentFrameId !== activePrompt.agentFrameId ||
+        !graph.branches.some(
+          (branch) =>
+            branch.id === canonical.messageBranchId &&
+            branch.agentFrameId === canonical.agentFrameId
+        ) ||
+        !graph.runtimeSegments.some(
+          (segment) =>
+            segment.id === canonical.runtimeSegmentId &&
+            segment.agentFrameId === canonical.agentFrameId
+        ) ||
+        (promptMessageId !== undefined && promptMessageId !== canonical.promptMessageId) ||
+        activity.providerToolName !== canonical.providerToolName ||
+        activity.title !== canonical.title ||
+        activity.createdAt !== canonical.createdAt ||
+        activity.sortIndex !== canonical.sortIndex ||
+        !document ||
+        !canonicalDocument ||
+        !structurallyMatches(document, canonicalDocument)
+      ) {
+        return false
+      }
+      promptMessageId = canonical.promptMessageId
+    }
     return Boolean(
-      document && (!projectedDocument || structurallyMatches(document, projectedDocument))
+      promptMessageId === originatingPromptMessageId &&
+      (materializedAt === undefined || activity.createdAt <= materializedAt) &&
+      document &&
+      (!projectedDocument || structurallyMatches(document, projectedDocument))
     )
   })
 

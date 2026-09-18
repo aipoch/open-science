@@ -1,6 +1,7 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
+import type { AgentProcessSpawner } from '../agent-framework/types'
 
 import { createLogger } from '../logger'
 import { augmentedPathEnv } from '../settings/shell-path'
@@ -69,6 +70,7 @@ const buildAgentSpawnEnv = (
 // detection; `envOverrides` carries the active provider's credentials/model. The app no longer ships
 // a bundled claude binary, so a missing executablePath is a hard, actionable error.
 export type SpawnClaudeAgentAcpOptions = {
+  spawnProcess?: AgentProcessSpawner
   envOverrides?: Record<string, string>
   executablePath?: string
 }
@@ -77,6 +79,7 @@ export type SpawnClaudeAgentAcpOptions = {
 // environment and pointing CLAUDE_CODE_EXECUTABLE at the detected system claude.
 const spawnClaudeAgentAcp = ({
   envOverrides = {},
+  spawnProcess = spawn as AgentProcessSpawner,
   executablePath
 }: SpawnClaudeAgentAcpOptions = {}): ChildProcessWithoutNullStreams => {
   if (!executablePath) {
@@ -141,7 +144,7 @@ const spawnClaudeAgentAcp = ({
     )
   })
 
-  const child = spawn(process.execPath, [entryPath], {
+  const child = spawnProcess(process.execPath, [entryPath], {
     env,
     stdio: 'pipe',
     windowsHide: true

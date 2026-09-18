@@ -138,6 +138,8 @@
       "src/main/uploads/attachment-media.pdf-preview.test.ts"
     ],
     "consumer": [
+      "src/main/session-persistence/runtime-session-owner.test.ts",
+      "src/main/session-plan/adversarial-session-plan.test.ts",
       "packages/open-science/cli.test.ts",
       "src/main/notebook/local-rpc-notebook-adapter.test.ts",
       "src/renderer/src/lib/acp/workspace-events.test.ts",

@@ -49,7 +49,7 @@ AIPOCH Open-Science 是面向科学家和研究人员的 AI 研究工作台，�
 
 AIPOCH Open-Science 支持机器学习、统计学、生命科学、化学、材料科学、物理学和环境科学等领域的计算密集型与数据密集型研究。它覆盖从文献综述、假设构建到代码执行、数据分析、仿真、可视化以及生成可追溯研究成果的完整研究流程。
 
-> 💡 **[AIPOCH Open-Science v0.30.2 已发布](https://github.com/aipoch/open-science/releases/latest)** _（最后更新于 2026 年 9 月）_。AIPOCH Open-Science v0.30.2 是一个以稳定性为主的版本：Windows 上的 R 运行时得以可靠恢复（conda 启动、可执行文件解析、内核恢复与已验证的 pip 入口点），Notebook 同回合输入可以正确重放，审阅者的修改在关联反馈之间保留上下文。文献导入将 PubMed 作者姓氏与名字缩写区分开并检查撤稿关系，连接器收紧了 Ensembl、VEP、Reactome、UCSC 与 gnomAD 的行为，DeepSeek V4.1 Flash 也加入了模型目录。详情请查看[最新发行说明](https://github.com/aipoch/open-science/releases/latest)。
+> 💡 **[AIPOCH Open-Science v0.31.0 已发布](https://github.com/aipoch/open-science/releases/latest)** _（最后更新于 2026 年 9 月）_。AIPOCH Open-Science v0.31.0 支持将会话派生（Fork）为携带完整研究历史的可写副本——会话分支、Notebook 记录、工件、文献与书签，导入的会话仍保持只读。产品名称现统一为 Open-Science，现有安装与全部研究数据保持不变。智能体上下文重建后会话计划可恢复上下文，提供方连接在保存前完成验证，gnomAD 连接器可返回人群层面的频率，分支会话会显示指回来源的延续分隔线。Windows 下的 R 无需受保护模式设置即可在标准模式下运行，连接器、对话框与权限处理也全面收紧。会话信息卡显示会话的编号、标题、描述、来源、时间戳以及消息与产物计数并支持置顶，凭据提示现在会链接到官方 API key 页面。详情请查看[最新发行说明](https://github.com/aipoch/open-science/releases/latest)。
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 首屏横幅：Science, Open to All——开源、模型无关、可自托管的科学 AI 研究工作台" src="../images/readme/open-science-banner.png" />

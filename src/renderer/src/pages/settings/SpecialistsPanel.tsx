@@ -616,7 +616,7 @@ const InstalledSpecialistsPanel = ({
     return (
       <div className="p-5">
         <div className="mb-5 flex items-start justify-between gap-4">
-          <div>
+          <div className="min-w-0 flex-1">
             <p className="text-xs font-semibold uppercase tracking-wide text-primary">
               {t('Export ZIP')}
             </p>
@@ -625,13 +625,13 @@ const InstalledSpecialistsPanel = ({
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
               {t(
-                'Builtin and owned Skills are selected by default. Skills copied into the ZIP are discovered automatically on import; Connector IDs are carried as selected references.'
+                'Owned Skills are bundled by default. Featured Skills are referenced by name. Check other Skills to include their files.'
               )}
             </p>
           </div>
           <span
             role="status"
-            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold ${
+            className={`inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-semibold ${
               !exportChecking && !exportValidationFailed && exportPreview?.canExport
                 ? 'bg-success-000/10 text-success-000'
                 : exportPreview
@@ -904,7 +904,7 @@ const InstalledSpecialistsPanel = ({
               {packagePreview ? (
                 <span
                   role="status"
-                  className={`ml-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold ${
+                  className={`ml-2 inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-semibold ${
                     canInstallPackage
                       ? 'bg-success-000/10 text-success-000'
                       : blocking
@@ -922,7 +922,9 @@ const InstalledSpecialistsPanel = ({
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
               {packagePreview
-                ? t('Review the package summary and diagnostics before continuing to setup.')
+                ? t(
+                    'Import saves this package before configuration. New bundled Skills stay disabled for the Main Agent; existing Skill settings are preserved.'
+                  )
                 : t('Choose one ZIP containing exactly one Specialist.')}
             </p>
           </div>
@@ -1287,7 +1289,7 @@ const InstalledSpecialistsPanel = ({
                         // Bundled Skills were just installed on disk; refresh the Skill catalog so the
                         // editor recognizes them as available instead of showing "Missing · unavailable".
                         try {
-                          await useSettingsStore.getState().loadSkills()
+                          await useSettingsStore.getState().loadSkills(true)
                         } catch {
                           // Best-effort refresh; navigation proceeds so the install result is shown.
                         }
@@ -1299,7 +1301,7 @@ const InstalledSpecialistsPanel = ({
                     .finally(() => setPackageBusy(false))
                 }}
               >
-                {packagePreview.overwrite ? t('Review overwrite') : t('Next')}
+                {packagePreview.overwrite ? t('Review overwrite') : t('Import and configure')}
               </Button>
             </div>
             {packagePreview.overwrite ? (
@@ -1408,7 +1410,7 @@ const InstalledSpecialistsPanel = ({
                                 // Bundled Skills were just installed on disk; refresh the Skill catalog
                                 // so the editor recognizes them as available after the overwrite.
                                 try {
-                                  await useSettingsStore.getState().loadSkills()
+                                  await useSettingsStore.getState().loadSkills(true)
                                 } catch {
                                   // Best-effort refresh; navigation proceeds so the install result is shown.
                                 }
@@ -2484,7 +2486,7 @@ const InstalledSpecialistsPanel = ({
                         [...deleteSkillIds].sort()
                       )
                       if (result.status === 'deleted') {
-                        await useSettingsStore.getState().loadSkills()
+                        await useSettingsStore.getState().loadSkills(true)
                         setDeleteBusy(false)
                         setDeletingItem(null)
                       } else {

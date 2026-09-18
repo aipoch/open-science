@@ -49,7 +49,7 @@ AIPOCH Open-Science は科学者と研究者のための AI 研究ワークベ�
 
 AIPOCH Open-Science は、機械学習、統計学、生命科学、化学、材料科学、物理学、環境科学など、幅広い分野の計算集約型・データ集約型研究を支援します。文献レビューと仮説構築から、コード実行、データ分析、シミュレーション、可視化、追跡可能な研究成果の作成まで、研究プロセス全体を支えます。
 
-> 💡 **[AIPOCH Open-Science v0.30.2 をリリースしました](https://github.com/aipoch/open-science/releases/latest)** _（最終更新：2026 年 9 月）_。AIPOCH Open-Science v0.30.2 は安定性を重視したリリースです。Windows の R ランタイムが確実に復旧するようになり（conda の起動、実行ファイルの解決、カーネルの復旧、検証済みの pip エントリーポイント）、Notebook の同一ターン入力が正しくリプレイされ、レビュアーの修正がリンク済みフィードバックをまたいでコンテキストを保持します。文献の取り込みでは PubMed の著者の姓とイニシャルが区別され、撤回の関係性が検出されます。コネクタでは Ensembl、VEP、Reactome、UCSC、gnomAD の挙動が厳密化され、DeepSeek V4.1 Flash がモデルカタログに加わりました。詳細は[最新リリースノート](https://github.com/aipoch/open-science/releases/latest)を参照してください。
+> 💡 **[AIPOCH Open-Science v0.31.0 をリリースしました](https://github.com/aipoch/open-science/releases/latest)** _（最終更新：2026 年 9 月）_。AIPOCH Open-Science v0.31.0 では、会話の分岐、Notebook レコード、アーティファクト、文献、ブックマークを含む完全な研究履歴を引き継いで書き込み可能なセッションをフォークできるようになり、インポート済みセッションは引き続き読み取り専用です。製品名は Open-Science に統一され、既存のインストールとすべての研究データはそのまま保持されます。エージェントのコンテキスト再構築後もセッションプランがコンテキストを復元し、プロバイダー接続は保存前に検証され、gnomAD コネクタは集団レベルの頻度を返せるようになり、分岐したセッションにはソースへ戻る継続ディバイダーが表示されます。Windows の R は保護モードの設定なしで標準モードで実行できるようになり、コネクタ、ダイアログ、権限の処理も全体的に厳密化されています。セッション情報カードにはセッションの番号、タイトル、説明、ソース、タイムスタンプ、メッセージ数とアーティファクト数が表示され、ピン留めもできます。また、認証情報のプロンプトが公式 API キーページへリンクするようになりました。詳細は[最新リリースノート](https://github.com/aipoch/open-science/releases/latest)を参照してください。
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science のヒーローバナー：Science, Open to All — オープンソース、モデル非依存、セルフホスト対応の科学 AI 研究ワークベンチ" src="../images/readme/open-science-banner.png" />

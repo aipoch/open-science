@@ -40,6 +40,8 @@ enum class ProcessReadStatus { kIncluded, kSafelyIgnored, kIncomplete };
 enum class EnvironmentReadStatus { kFound, kAbsent, kIncomplete };
 #endif
 
+void RegisterWindowsOwnedProcess(napi_env env, napi_value exports);
+
 namespace {
 
 napi_value Null(napi_env env) {
@@ -283,6 +285,7 @@ napi_value ListDarwinProcesses(napi_env env, napi_callback_info info) {
 }
 
 napi_value Init(napi_env env, napi_value exports) {
+  RegisterWindowsOwnedProcess(env, exports);
   napi_value get_process;
   napi_create_function(
       env, "getDarwinProcess", NAPI_AUTO_LENGTH, GetDarwinProcess, nullptr, &get_process);

@@ -28,6 +28,7 @@ import {
 } from './plan-context-guidance'
 
 const roots: string[] = []
+const hostPlatform = process.platform
 
 const temporaryRoot = async (): Promise<string> => {
   const root = await mkdtemp(join(tmpdir(), 'plan-context-file-'))
@@ -84,7 +85,7 @@ const readJson = async (path: string): Promise<Record<string, unknown>> =>
   JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>
 
 describe('PlanContextFileStore', () => {
-  it('writes the complete selected projection as pretty, read-only JSON', async () => {
+  it('writes the complete selected projection as pretty JSON with platform publication permissions', async () => {
     const root = await temporaryRoot()
     const current = projection()
     const store = new PlanContextFileStore({ storageRoot: root, readCurrent: async () => current })
@@ -110,8 +111,13 @@ describe('PlanContextFileStore', () => {
       document: current.document,
       stepStates: current.stepStates
     })
-    expect((await stat(path)).mode & 0o777).toBe(0o444)
-    expect((await stat(dirname(path))).mode & 0o777).toBe(0o700)
+    if (hostPlatform === 'win32') {
+      // Windows exposes the writable attribute, not separate owner/group/other modes.
+      expect((await stat(path)).mode & 0o200).toBe(0o200)
+    } else {
+      expect((await stat(path)).mode & 0o777).toBe(0o444)
+      expect((await stat(dirname(path))).mode & 0o777).toBe(0o700)
+    }
   })
 
   it('marks a blocked Plan active while a started peer delegation still has work', async () => {
@@ -323,7 +329,8 @@ describe('PlanContextFileStore', () => {
         revision: 2
       })
 
-      expect((await stat(first!.path)).mode & 0o777).toBe(0o600)
+      const modeMask = hostPlatform === 'win32' ? 0o600 : 0o777
+      expect((await stat(first!.path)).mode & modeMask).toBe(0o600)
       expect(await readJson(first!.path)).toMatchObject({ revision: 2 })
     } finally {
       platform.mockRestore()

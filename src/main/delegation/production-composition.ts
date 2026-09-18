@@ -1,4 +1,5 @@
 import { join } from 'node:path'
+import { DelegatedProcessOwnership } from './process-ownership'
 
 import type {
   AcpAgentRuntimeUpdate,
@@ -60,7 +61,10 @@ type ProductionDelegatedWorkOptions = Readonly<{
   }>
   resolveInput(identity: string, session: SessionKey): Promise<ResolvedImmutableInput>
   frameworks: Readonly<{
-    forSession(session: PersistedChatSession): Promise<CertifiedSessionFramework>
+    forSession(
+      session: PersistedChatSession,
+      ownership?: DelegatedProcessOwnership
+    ): Promise<CertifiedSessionFramework>
   }>
   resolveSpecialist?(
     profileId: string
@@ -211,7 +215,9 @@ const settlementSnapshot = (
 const createProductionDelegatedWorkComposition = (
   options: ProductionDelegatedWorkOptions
 ): ProductionDelegatedWorkComposition => {
+  const ownership = new DelegatedProcessOwnership(options.dataRoot)
   const workspace = createProductionFrameWorkspace({
+    ownership,
     root: join(options.dataRoot, 'delegation'),
     resolveInput: options.resolveInput
   })
@@ -283,7 +289,7 @@ const createProductionDelegatedWorkComposition = (
     if (!session.agentFrameworkId) {
       throw new Error('Delegated Work requires a durable Session framework identity.')
     }
-    const framework = await options.frameworks.forSession(session)
+    const framework = await options.frameworks.forSession(session, ownership)
     if (framework.frameworkId !== session.agentFrameworkId) {
       throw new Error('Delegated Work framework composition does not match the durable Session.')
     }
@@ -300,7 +306,7 @@ const createProductionDelegatedWorkComposition = (
       key
     )
     const work = createDurableDelegatedWork({
-      execution: framework.execution,
+      execution: ownership.protectExecution(framework.execution, key, framework.frameworkId),
       records,
       resolveExecutionModel: async () => {
         try {
@@ -463,7 +469,12 @@ const createProductionDelegatedWorkComposition = (
 
   const stopScopedWork = async (): Promise<void> => {
     const scoped = await Promise.all([...works.values()])
-    await Promise.all(scoped.map(({ key, work }) => work.stopSession(key)))
+    const results = await Promise.allSettled(scoped.map(({ key, work }) => work.stopSession(key)))
+    await ownership.recover({}, true)
+    const failures = results.flatMap((result) =>
+      result.status === 'rejected' ? [result.reason] : []
+    )
+    if (failures.length) throw new AggregateError(failures, 'Delegated work shutdown failed.')
   }
 
   const root: RootDelegatedWorkControl = Object.freeze({
@@ -539,7 +550,12 @@ const createProductionDelegatedWorkComposition = (
     async stopSession(sessionId) {
       settlementWake?.invalidateSession(sessionId)
       const scoped = await worksForSession(sessionId)
-      await Promise.all(scoped.map(({ key, work }) => work.stopSession(key)))
+      const results = await Promise.allSettled(scoped.map(({ key, work }) => work.stopSession(key)))
+      await ownership.recover({ sessionId }, true)
+      const failures = results.flatMap((result) =>
+        result.status === 'rejected' ? [result.reason] : []
+      )
+      if (failures.length) throw new AggregateError(failures, 'Delegated Session stop failed.')
     },
     async respondQuestion(input) {
       const key = { projectId: input.projectId, sessionId: input.sessionId }
@@ -613,9 +629,14 @@ const createProductionDelegatedWorkComposition = (
       const workDeletion = await Promise.allSettled(
         scoped.map(({ key, work }) => work.deleteSession(key))
       )
-      // Workspace deletion is an independent durable cleanup boundary. Repeat it for every Session
-      // identity so a restart (with an empty work cache) and a failed work teardown both remove the
-      // stable Frame subtree.
+      const workFailures = workDeletion.flatMap((result) =>
+        result.status === 'rejected' ? [result.reason] : []
+      )
+      if (workFailures.length > 0) {
+        throw new AggregateError(workFailures, `Delegated Session cleanup failed: ${sessionId}`)
+      }
+      // Cover dormant workspaces only after every live owner has stopped successfully.
+      // Retain failed owners so a retry cannot forget an unconfirmed process teardown.
       const workspaceDeletion = await Promise.allSettled(
         [...keys.values()].map((key) => workspace.deleteSession(key))
       )
@@ -637,6 +658,12 @@ const createProductionDelegatedWorkComposition = (
       const workDeletion = await Promise.allSettled(
         scoped.map(({ key, work }) => work.deleteSession(key))
       )
+      const workFailures = workDeletion.flatMap((result) =>
+        result.status === 'rejected' ? [result.reason] : []
+      )
+      if (workFailures.length > 0) {
+        throw new AggregateError(workFailures, `Delegated Project cleanup failed: ${projectId}`)
+      }
       // The stable Project directory is authoritative for dormant workspaces. Removing it directly
       // covers Sessions that have no in-memory work after restart as well as every cached Session
       // settled above.

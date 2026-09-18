@@ -4,6 +4,7 @@ import type { AcpAgentRuntimeUpdate } from '../../shared/acp'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import {
   DelegateExecutionError,
+  DelegateExecutionCleanupError,
   DelegateMessagePreAcceptanceError,
   type DelegateCapacityReservation,
   type DelegateExecutionBackendClaim,
@@ -73,6 +74,8 @@ const createDurableDelegatedWork = (
   const createId = options.createId ?? ((kind: string) => `${kind}-${randomUUID()}`)
   const invocationOutcomes = new Map<string, Promise<DurableDelegateOutcome>>()
   const stoppingSessions = new Set<string>()
+  // Terminal history does not prove that the process owning its workspace exited.
+  const cleanupFailures = new Map<string, DelegateExecutionCleanupError>()
   // A completed Stop also invalidates requests that have not committed their admission yet.
   let stopGeneration = 0
   const sessionStops = new Map<string, number>()
@@ -188,8 +191,9 @@ const createDurableDelegatedWork = (
       createMessageId: () => createId('message')
     })
     let cancelRequested = false
+    let cleanupUnconfirmed = false
     let cancellationReason: 'main_agent_stop' | 'session_stop' | 'runtime_interrupted' =
-      'main_agent_stop'
+      'runtime_interrupted'
     let context: Awaited<ReturnType<DelegatedWorkDurableRecords['startRuntime']>> | undefined
     const stageRuntimeTranscript = createAttemptRuntimeTranscriptStager({
       records: options.records,
@@ -271,7 +275,8 @@ const createDurableDelegatedWork = (
           options.onAgentRuntimeUpdate?.(event.update)
         })
         void handle.completion.finally(unsubscribe).catch(() => undefined)
-        await Promise.race([handle.accepted, handle.completion.then(() => undefined)])
+        // When failure settles both promises, the cleanup outcome owns resource release.
+        await Promise.race([handle.completion, handle.accepted])
         const outcome = await handle.completion
         const endedAt = now()
         if (outcome.status === 'completed' && !cancelRequested) {
@@ -313,6 +318,11 @@ const createDurableDelegatedWork = (
           })
         }
       } catch (error) {
+        cleanupUnconfirmed = error instanceof DelegateExecutionCleanupError
+        if (error instanceof DelegateExecutionCleanupError) {
+          const identity = sessionIdentityOf(session)
+          cleanupFailures.set(identity, error)
+        }
         rejectHandle(
           handle ? error : new DelegateMessagePreAcceptanceError(toErrorMessage(error), error)
         )
@@ -326,7 +336,7 @@ const createDurableDelegatedWork = (
                 attemptId: attempt.id,
                 endedAt,
                 error,
-                ...(cancelRequested ? { cancellationReason } : {})
+                ...(cancelRequested && !cleanupUnconfirmed ? { cancellationReason } : {})
               })
             } catch (terminalizeError) {
               const settled = await snapshotChild(child.frameId)
@@ -618,6 +628,12 @@ const createDurableDelegatedWork = (
       )
       const failure = settled.find((result) => result.status === 'rejected')
       if (failure?.status === 'rejected') throw failure.reason
+      const cleanupFailure = cleanupFailures.get(sessionIdentity)
+      if (cleanupFailure) {
+        if (!options.execution.recoverCleanup) throw cleanupFailure
+        await options.execution.recoverCleanup()
+        cleanupFailures.delete(sessionIdentity)
+      }
       return settled.map((result) => (result as PromiseFulfilledResult<StopOutcome>).value)
     } finally {
       stoppingSessions.delete(sessionIdentity)

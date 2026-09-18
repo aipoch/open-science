@@ -766,6 +766,36 @@ describe('module test impact commands', () => {
   })
 })
 
+it.each([
+  'src/main/delegation/process-ownership.ts',
+  'src/main/delegation/process-ownership.test.ts',
+  'src/main/process-tree-windows.ts',
+  'src/main/process-tree.windows.integration.test.ts'
+])('selects process ownership and lifecycle tests with Windows coverage for %s', (path) => {
+  const plan = createAffectedTestPlan([{ path, status: 'added' }], {
+    status: 'unavailable-manifest-only',
+    testFiles: []
+  })
+
+  expect(plan.mode).toBe('selective')
+  expect(plan.modules).toContain(
+    path.startsWith('src/main/delegation/') ? 'main_delegation' : 'desktop_composition'
+  )
+  expect(plan.capabilityOverlays).toContain('windows_sensitive')
+  if (path.endsWith('.test.ts')) {
+    expect(plan.testFiles).toEqual([path])
+    return
+  }
+  expect(plan.testFiles).toEqual(
+    expect.arrayContaining([
+      'src/main/delegation/process-ownership.test.ts',
+      'src/main/process-tree.windows.integration.test.ts',
+      'src/main/delegation/production-composition.test.ts',
+      'src/main/delegation/production-framework-runtime.test.ts'
+    ])
+  )
+})
+
 it('uses only declared owner tests to recover colocated implementation ownership', () => {
   const manifest = loadModuleImpactManifest(resolve('scripts/ci/module-impact.json'))
   const graph = { status: 'unavailable-manifest-only', testFiles: [] }

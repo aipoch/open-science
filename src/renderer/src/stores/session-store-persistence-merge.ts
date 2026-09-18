@@ -458,7 +458,7 @@ export const mergeRuntimeConversationAuthority = (
       : {})
 })
 
-const planProjectionMatchesRuntimePlan = (
+const planProjectionIdentityMatchesRuntimePlan = (
   projection: ActivePlanProjection | undefined,
   plan: NonNullable<SessionRuntimeContext['plan']> | undefined
 ): projection is ActivePlanProjection =>
@@ -470,8 +470,7 @@ const planProjectionMatchesRuntimePlan = (
     projection.artifactChecksum === plan.artifactChecksum &&
     projection.originatingPromptMessageId === plan.originatingPromptMessageId &&
     projection.materializedAt === plan.materializedAt &&
-    projection.approval === plan.approval &&
-    JSON.stringify(projection.stepStatuses) === JSON.stringify(plan.stepStatuses)
+    projection.approval === plan.approval
   )
 
 export const retainRuntimePlanProjection = (
@@ -485,7 +484,10 @@ export const retainRuntimePlanProjection = (
   const incomingRevision = incoming.runtimeContext?.revision
   if (!projection || incomingRevision === undefined) return undefined
   if (projection.revision > incomingRevision) return projection
-  if (!planProjectionMatchesRuntimePlan(projection, incomingPlan)) return undefined
+  // Runtime progress snapshots intentionally change stepStatuses. The full projection is
+  // maintained by the activity stream; a durable echo for the same Plan must not clear it
+  // merely because that echo contains a newer progress map.
+  if (!planProjectionIdentityMatchesRuntimePlan(projection, incomingPlan)) return undefined
   return projection.revision === incomingRevision
     ? projection
     : { ...projection, revision: incomingRevision }

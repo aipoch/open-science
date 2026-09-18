@@ -234,6 +234,8 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
       notifyFilesChanged: (event) => this.notifyFilesChanged(event),
       notifyRuntimeContextSessionUpdated: (session) =>
         publishSessionUpdate(session, 'runtime-context'),
+      notifyRuntimeTranscriptSessionUpdated: (session) =>
+        publishSessionUpdate(session, 'runtime-transcript'),
       notifyDelegationPolicyUpdated: (session) => onDelegationPolicyUpdated?.(session)
     })
     this.sideChatOwner = new SessionSideChatPersistenceOwner({
@@ -846,7 +848,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
           return {
             saved: await this.stateOwner.saveSession(
               session,
-              sanitizeRendererSaveSessionOptions(options),
+              sanitizeRendererSaveSessionOptions(options, session),
               authority
             )
           }
@@ -978,6 +980,15 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
         this.stateOwner.invalidateBindingTopology(projectId, sessionId)
       }
     })
+  }
+
+  mutateRuntimeSession(
+    scope: { projectId: string; sessionId: string },
+    mutate: (session: PersistedChatSession) => PersistedChatSession
+  ): Promise<PersistedChatSession> {
+    return this.operationScheduler.runSession(scope.projectId, scope.sessionId, () =>
+      this.stateOwner.mutateRuntimeSession(scope, mutate)
+    )
   }
 
   retryArtifactFinalization(
@@ -1225,7 +1236,10 @@ type SessionCatalog = Pick<
   SessionPersistenceCoordinator,
   'containsMessageOnActiveBranch' | 'loadSessionForContinuation' | 'sessionProjectId'
 >
-type SessionMutation = Pick<SessionPersistenceCoordinator, 'appendUserMessageToInteraction'>
+type SessionMutation = Pick<
+  SessionPersistenceCoordinator,
+  'appendUserMessageToInteraction' | 'mutateRuntimeSession'
+>
 type SessionRuntimeContextCommands = Pick<
   SessionPersistenceCoordinator,
   'readSessionRuntimeContext' | 'patchSessionRuntimeContext'

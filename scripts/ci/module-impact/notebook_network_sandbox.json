@@ -97,6 +97,8 @@
     ],
     "contract": [],
     "consumer": [
+      "src/main/session-persistence/runtime-session-owner.test.ts",
+      "src/main/session-plan/adversarial-session-plan.test.ts",
       "scripts/electron-builder-config.test.ts",
       "scripts/windows-installer-smoke.test.ts",
       "src/main/acp/application-commands.test.ts",
@@ -527,7 +529,13 @@
       "src/main/settings/provider-transport-owner.test.ts",
       "src/main/settings/backend-selection-owner.test.ts",
       "src/renderer/src/stores/runtime-settings-store.test.ts",
-      "src/main/settings/notebook-network-settings-owner.test.ts"
+      "src/main/settings/notebook-network-settings-owner.test.ts",
+      "src/main/specialist/marketplace/official-source.test.ts",
+      "src/main/specialist/marketplace/service.test.ts",
+      "src/main/specialist/package/release-certification.test.ts",
+      "src/main/specialist/package/reported-regressions.test.ts",
+      "src/main/specialist/package/transaction.test.ts",
+      "src/main/session-persistence/runtime-authority.test.ts"
     ]
   },
   "capabilityOverlays": [],

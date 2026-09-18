@@ -8,6 +8,7 @@ import {
   MAIN_ENABLED_COMPUTE_HOSTS_LIFECYCLE_CLIENT_ID,
   MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID,
   MAIN_RUNTIME_CONTEXT_LIFECYCLE_CLIENT_ID,
+  MAIN_RUNTIME_TRANSCRIPT_LIFECYCLE_CLIENT_ID,
   MAIN_SESSION_DETAILS_LIFECYCLE_CLIENT_ID,
   type SessionUpsertEvent
 } from '../../../shared/lifecycle-events'
@@ -16,6 +17,7 @@ import { useArchiveUndoStore } from '@/stores/archive-undo-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSessionStore } from '@/stores/session-store'
+import { scheduleCommittedRuntimeTranscriptAutoReview } from '@/lib/acp/workspace-events'
 
 type ExternalSessionNotice = {
   projectId: string
@@ -178,7 +180,20 @@ const useLifecycleSync = ({
         // live projection here can discard a prompt and the Runtime Segment used by its artifact
         // claim. Events from other clients remain authoritative synchronization input; same-client
         // command results return through their direct IPC path.
-        if (originClientId === MAIN_DELEGATION_POLICY_LIFECYCLE_CLIENT_ID) {
+        if (originClientId === MAIN_RUNTIME_TRANSCRIPT_LIFECYCLE_CLIENT_ID) {
+          const store = useSessionStore.getState()
+          const source = store.sessions.find((candidate) => candidate.id === session.id)
+          if (source) {
+            store.applyDurableSessionProjection({
+              source,
+              session,
+              mode: 'runtime-transcript-authority'
+            })
+            scheduleCommittedRuntimeTranscriptAutoReview(source, session)
+          } else {
+            store.upsertPersistedSession(session)
+          }
+        } else if (originClientId === MAIN_DELEGATION_POLICY_LIFECYCLE_CLIENT_ID) {
           useSessionStore.getState().applyDelegationPolicyAuthority(session)
         } else if (originClientId === MAIN_DURABLE_CONTINUATION_LIFECYCLE_CLIENT_ID) {
           const store = useSessionStore.getState()

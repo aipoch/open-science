@@ -13,7 +13,7 @@ import {
   type DelegatedWorkCertificationDriver
 } from './certification-contract.test'
 import { delegateExecutionContract } from './execution-contract.test'
-import type { DelegateExecutionInput } from './execution-port'
+import { DelegateExecutionCleanupError, type DelegateExecutionInput } from './execution-port'
 
 type Deferred<Value> = Readonly<{
   promise: Promise<Value>
@@ -1143,9 +1143,7 @@ describe('ACP delegate execution production adapter', () => {
       await running.accepted
       controls.get('unreaped')!.complete()
 
-      await expect(running.completion).rejects.toThrow(
-        failure === 'throws' ? 'shutdown failed' : 'process tree was not reaped'
-      )
+      await expect(running.completion).rejects.toThrow(DelegateExecutionCleanupError)
       expect(cleanup).toContain('revoke:unreaped')
       expect(cleanup).not.toContain('resources:unreaped')
       await expect(execution.reserve(1)).rejects.toMatchObject({ code: 'capacity' })
@@ -1171,7 +1169,7 @@ describe('ACP delegate execution production adapter', () => {
     const running = execution.run(makeInput('owner'), reservation.slotIds[0])
     await running.accepted
     controls.get('owner')!.complete()
-    await expect(running.completion).rejects.toThrow('process tree was not reaped')
+    await expect(running.completion).rejects.toThrow(DelegateExecutionCleanupError)
     const duplicate = execution.run(makeInput('duplicate'), reservation.slotIds[1])
     await expect(duplicate.completion).rejects.toThrow('runtime home is already active')
     expect(cleanup).not.toContain('resources:owner')
@@ -1186,7 +1184,7 @@ describe('ACP delegate execution production adapter', () => {
     const reservation = await execution.reserve(1)
     const running = execution.run(makeInput('cancel-unreaped'), reservation.slotIds[0])
     await running.accepted
-    const completion = expect(running.completion).rejects.toThrow('process tree was not reaped')
+    const completion = expect(running.completion).rejects.toThrow(DelegateExecutionCleanupError)
     await running.cancel()
     await completion
     expect(cleanup).not.toContain('resources:cancel-unreaped')
@@ -1268,7 +1266,7 @@ describe('ACP delegate execution production adapter', () => {
         await running.accepted
         controls.get('unsafe')!.complete()
       }
-      await expect(running.completion).rejects.toThrow(/shutdown|process tree/)
+      await expect(running.completion).rejects.toThrow(DelegateExecutionCleanupError)
       expect(cleanup).toContain('revoke:unsafe')
       expect(cleanup.filter((entry) => entry === 'release:unsafe')).toHaveLength(1)
       expect(cleanup).not.toContain('resources:unsafe')
@@ -1385,3 +1383,83 @@ describe('ACP delegate execution production adapter', () => {
 
 const _eventTypeCheck: AcpRuntimeEvent | undefined = undefined
 void _eventTypeCheck
+
+it('preserves provider cancellation without a local cancel request', async () => {
+  const harness = makeHarness(1)
+  const reservation = await harness.execution.reserve(1)
+  const run = harness.execution.run(makeInput('audit-cancel'), reservation.slotIds[0])
+  await vi.waitFor(() => expect(harness.controls.get('audit-cancel')?.prompts.length).toBe(1))
+  harness.controls.get('audit-cancel')!.complete({ stopReason: 'cancelled' })
+  await expect(run.completion).resolves.toMatchObject({ status: 'cancelled' })
+})
+it.each(['unreaped', 'throws', 'recoverable'] as const)(
+  'does not reuse resources when shutdown %s',
+  async (mode) => {
+    let cleanupProven = false
+    const disposeResources = vi.fn()
+    const shutdownForQuit = vi
+      .fn(async () => ({ reaped: true }))
+      .mockImplementationOnce(async () => {
+        if (mode === 'throws') throw new Error('process teardown failed')
+        return { reaped: false }
+      })
+    const revoke = vi.fn()
+    const releaseResources = vi.fn()
+    const execution = createAcpDelegateExecution({
+      capacity: 1,
+      prepare: async (input) => ({
+        executionId: input.attemptId,
+        provenance: {
+          projectId: input.session.projectId,
+          sessionId: input.session.sessionId,
+          agentFrameId: input.frameId,
+          runtimeSegmentId: input.runtimeSegmentId
+        },
+        workspace: { cwd: '/audit/workspace' },
+        runtimeHome: '/audit/home',
+        frameworkId: 'test',
+        capability: { revoke },
+        disposeResources,
+        releaseResources,
+        ...(mode === 'recoverable'
+          ? {
+              confirmProcessCleanup: async () => {
+                if (!cleanupProven) throw new Error('owned process tree is still unconfirmed')
+              }
+            }
+          : {})
+      }),
+      assertFrameworkNativeDelegationDisabled: async () => undefined,
+      createRuntime: () => ({
+        createSession: async () => ({ sessionId: 'provider-audit' }),
+        sendAppContinuation: async () => ({ stopReason: 'end_turn' }),
+        cancelPrompt: async () => undefined,
+        setPermissionProfile: async () => undefined,
+        respondToPermission: async () => undefined,
+        deleteSession: async () => undefined,
+        shutdownForQuit
+      })
+    })
+    const reservation = await execution.reserve(1)
+    const run = execution.run(makeInput('audit-reap'), reservation.slotIds[0])
+    const outcome = await run.completion.catch((error: unknown) => error)
+    expect.soft(outcome).toBeInstanceOf(Error)
+    expect.soft(shutdownForQuit).toHaveBeenCalledOnce()
+    expect.soft(revoke).toHaveBeenCalledOnce()
+    expect.soft(disposeResources).not.toHaveBeenCalled()
+    expect(releaseResources).toHaveBeenCalledOnce()
+    // The durable caller releases its reservation again in finally. That must not
+    // erase the execution owner's knowledge that the process may still be alive.
+    await reservation.releaseAll()
+    const next = await execution.reserve(1).catch((error: unknown) => error)
+    expect(next).toBeInstanceOf(Error)
+    if (mode === 'recoverable') {
+      cleanupProven = true
+      await execution.recoverCleanup!()
+      expect(disposeResources).toHaveBeenCalledOnce()
+      expect(releaseResources).toHaveBeenCalledOnce()
+      expect(shutdownForQuit).toHaveBeenCalledOnce()
+      await expect(execution.reserve(1)).resolves.toHaveProperty('slotIds')
+    }
+  }
+)

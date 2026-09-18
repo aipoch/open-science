@@ -1,6 +1,6 @@
 import * as acp from '@agentclientprotocol/sdk'
 
-import type { AcpPromptRequest } from '../../shared/acp'
+import type { AcpPromptRequest, AcpRuntimeEvent } from '../../shared/acp'
 import type { AgentFramework } from '../agent-framework'
 import type { ArtifactTurnHandle } from './artifact-turn-owner'
 import { AcpContextCompactionWorkflow } from './context-compaction-workflow'
@@ -123,8 +123,20 @@ const composeAcpRuntimePromptOwners = (
     onPublished?: () => void
   ): Promise<void> => {
     if (!artifact || !base.artifactTurns) return
+    const executionId = base.artifactTurns.snapshot(artifact).executionId
+    if (!executionId) throw new Error('Artifact publication has no runtime execution owner.')
     const publication = await base.artifactTurns.finalize(artifact)
     if (!publication) return
+    const committed = options.runtimeSessions
+      ? await options.runtimeSessions.publish({
+          appSessionId: publication.appSessionId,
+          artifactClaimId: publication.artifactClaimId,
+          runId: publication.runId,
+          promptMessageId: publication.promptMessageId,
+          artifacts: publication.artifacts,
+          executionId
+        })
+      : undefined
     session.publication.pushEvent(
       {
         kind: 'artifact',
@@ -135,7 +147,8 @@ const composeAcpRuntimePromptOwners = (
         promptMessageId: publication.promptMessageId,
         artifactSessionId: publication.artifactStorageSessionId,
         artifactClaimId: publication.artifactClaimId,
-        artifacts: publication.artifacts
+        artifacts: committed?.artifacts ?? publication.artifacts,
+        ...(committed ? { messageId: committed.messageId, publicationOwner: 'main' as const } : {})
       },
       onPublished
     )
@@ -293,6 +306,16 @@ const composeAcpRuntimePromptOwners = (
       emitSkillActivities,
       onSkillImportAttachmentEligible: callbacks.onSkillImportAttachmentEligible,
       onProviderPromptAccepted: callbacks.onProviderPromptAccepted,
+      ...(options.runtimeSessions
+        ? {
+            onRuntimeSessionProviderAccepted: async (
+              sessionId: string,
+              promptMessageId: string
+            ) => {
+              await options.runtimeSessions!.consumeReplay(sessionId, promptMessageId)
+            }
+          }
+        : {}),
       sideChatRelays: options.sideChatRelays,
       routeNotification: (notification, sessionId) =>
         session.sessionUpdateProjector.route(notification, { appSessionId: sessionId }),
@@ -330,6 +353,24 @@ const composeAcpRuntimePromptOwners = (
       errorMessage,
       errorKind: acpErrorKind,
       pushEvent: (event) => session.publication.pushEvent(event),
+      ...(options.runtimeSessions
+        ? {
+            commitTerminal: async (event) => {
+              const durableEvent = {
+                ...event,
+                id: session.publication.nextEventId(),
+                timestamp: event.timestamp ?? Date.now(),
+                level: event.level ?? 'info'
+              } as AcpRuntimeEvent
+              options.runtimeSessions!.accept(durableEvent)
+              await options.runtimeSessions!.flush(
+                durableEvent.sessionId ?? '',
+                durableEvent.promptMessageId ?? ''
+              )
+              session.publication.pushEvent({ ...durableEvent, publicationOwner: 'main' })
+            }
+          }
+        : {}),
       onPromptEnded: (sessionId, turnToken) => {
         host.onPromptEnded?.(sessionId, turnToken)
         callbacks.onPromptEnded?.(sessionId, turnToken)
@@ -350,6 +391,53 @@ const composeAcpRuntimePromptOwners = (
     disconnectForReload: host.reload.disconnect,
     resumeAfterReload: host.reload.resume,
     recordAdmittedPrompt: (request) => base.handoffContinuity.recordAdmittedPrompt(request),
+    ...(options.runtimeSessions
+      ? {
+          beginRuntimeSessionTurn: async (
+            request,
+            executionId,
+            reviewOwner,
+            planDeliveryCommandId
+          ) => {
+            const provenance = request.provenanceContext
+            if (
+              !provenance?.agentFrameId ||
+              !provenance.messageBranchId ||
+              !provenance.runtimeSegmentId
+            ) {
+              throw new Error('Runtime Session admission requires a durable conversation path.')
+            }
+            const aggregate = session.sessionRegistry
+              .lookup(request.sessionId)
+              ?.aggregate.snapshot()
+            const backend = base.backendGeneration.current
+            await options.runtimeSessions!.begin(
+              {
+                projectId: projectId(request.sessionId),
+                sessionId: request.sessionId,
+                promptMessageId: provenance.promptMessageId,
+                agentFrameId: provenance.agentFrameId,
+                messageBranchId: provenance.messageBranchId,
+                runtimeSegmentId: provenance.runtimeSegmentId,
+                executionId
+              },
+              {
+                ...(aggregate?.providerSessionId
+                  ? { providerSessionId: aggregate.providerSessionId }
+                  : {}),
+                ...(backend.providerContinuityToken
+                  ? { providerContinuityToken: backend.providerContinuityToken }
+                  : {}),
+                agentFrameworkId: backend.framework.id,
+                ...(backend.backendId ? { agentBackendId: backend.backendId } : {}),
+                ...(backend.session.model ? { agentModel: backend.session.model } : {}),
+                reviewOwner,
+                ...(planDeliveryCommandId ? { planDeliveryCommandId } : {})
+              }
+            )
+          }
+        }
+      : {}),
     onPromptStarted: (sessionId, turnToken, promptAttemptId) =>
       callbacks.onPromptStarted?.(sessionId, turnToken, promptAttemptId),
     emitState

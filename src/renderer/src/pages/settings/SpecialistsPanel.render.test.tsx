@@ -1011,6 +1011,7 @@ describe('SpecialistsPanel', () => {
 
     // After the install, the Skill catalog must be refreshed so a Skill bundled by the package is
     // recognized as available in the editor instead of showing "Missing · unavailable".
+    useSettingsStore.setState({ skillsLoaded: true, skills: [] })
     window.api.settings.listSkills = vi.fn().mockResolvedValue([
       {
         id: 'analysis-tools',
@@ -1018,12 +1019,12 @@ describe('SpecialistsPanel', () => {
         description: 'Runs analyses.',
         source: 'personal',
         updatedAt: '2026-08-04T00:00:00.000Z',
-        enabled: true
+        enabled: false
       }
     ])
     await act(async () => {
       Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
-        .find((button) => button.textContent === 'Next')
+        .find((button) => button.textContent === 'Import and configure')
         ?.click()
     })
     expect(installPackage).toHaveBeenCalledOnce()
@@ -1035,7 +1036,7 @@ describe('SpecialistsPanel', () => {
         description: 'Runs analyses.',
         source: 'personal',
         updatedAt: '2026-08-04T00:00:00.000Z',
-        enabled: true
+        enabled: false
       }
     ])
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'edit', id: 'research-synth' })
@@ -1099,7 +1100,7 @@ describe('SpecialistsPanel', () => {
       })
       await act(async () => {
         Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
-          .find((button) => button.textContent === 'Next')
+          .find((button) => button.textContent === 'Import and configure')
           ?.click()
       })
 

@@ -13,7 +13,7 @@ import {
   createOpenCodeDelegateExecution,
   type PreparedOpenCodeDelegateExecution
 } from './opencode-execution'
-import type { DelegateExecutionInput } from './execution-port'
+import { DelegateExecutionCleanupError, type DelegateExecutionInput } from './execution-port'
 
 type Deferred<Value> = Readonly<{
   promise: Promise<Value>
@@ -74,7 +74,13 @@ type OpenCodeHarness = Readonly<{
   prepared: PreparedOpenCodeDelegateExecution[]
 }>
 
-const makeHarness = (capacity: number): OpenCodeHarness => {
+const makeHarness = (
+  capacity: number,
+  resources: Pick<
+    PreparedOpenCodeDelegateExecution,
+    'confirmProcessCleanup' | 'disposeResources'
+  > = {}
+): OpenCodeHarness => {
   const controls = new Map<string, RuntimeControl>()
   const inputs: DelegateExecutionInput[] = []
   const prepared: PreparedOpenCodeDelegateExecution[] = []
@@ -97,7 +103,8 @@ const makeHarness = (capacity: number): OpenCodeHarness => {
         runtimeHome: `/runtime/${input.attemptId}`,
         frameworkId: 'opencode',
         modelConfig: modelConfig(`/runtime/${input.attemptId}`),
-        capability: { revoke: async () => undefined }
+        capability: { revoke: async () => undefined },
+        ...resources
       }
       prepared.push(scope)
       return scope
@@ -263,6 +270,52 @@ describe('OpenCode delegated-work production adapter', () => {
       messageBranchId: 'branch-frame-2',
       runtimeSegmentId: 'segment-2'
     })
+  })
+
+  it('releases quarantined capacity and paths after proven cleanup recovery', async () => {
+    let cleanupProven = false
+    const disposeResources = vi.fn(async () => undefined)
+    const harness = makeHarness(1, {
+      confirmProcessCleanup: async () => {
+        if (!cleanupProven) throw new Error('owned process tree is still unconfirmed')
+      },
+      disposeResources
+    })
+    const input: DelegateExecutionInput = {
+      session: { projectId: 'project', sessionId: 'session' },
+      frameId: 'frame-recovery',
+      attemptId: 'attempt-recovery',
+      runtimeSegmentId: 'segment-recovery',
+      task: 'recover the child',
+      inputs: [],
+      continuation: false
+    }
+    const reservation = await harness.execution.reserve(1)
+    const running = harness.execution.run(input, reservation.slotIds[0])
+    const failed = expect(running.completion).rejects.toBeInstanceOf(DelegateExecutionCleanupError)
+    await vi.waitFor(() => expect(harness.controls.get(input.attemptId)?.requests).toHaveLength(1))
+    const firstControl = harness.controls.get(input.attemptId)!
+    firstControl.complete()
+    await failed
+    await reservation.releaseAll()
+    expect(disposeResources).not.toHaveBeenCalled()
+    await expect(harness.execution.reserve(1)).rejects.toMatchObject({ code: 'capacity' })
+
+    cleanupProven = true
+    // Match the production owner's optional recovery call, then observe capacity and path reuse.
+    await harness.execution.recoverCleanup?.()
+    const retry = await harness.execution.reserve(1)
+    expect(disposeResources).toHaveBeenCalledOnce()
+    await harness.execution.recoverCleanup?.()
+    expect(disposeResources).toHaveBeenCalledOnce()
+    const resumed = harness.execution.run(input, retry.slotIds[0])
+    await vi.waitFor(() => expect(harness.prepared).toHaveLength(2))
+    await vi.waitFor(() => expect(harness.controls.get(input.attemptId)).not.toBe(firstControl))
+    await vi.waitFor(() => expect(harness.controls.get(input.attemptId)?.requests).toHaveLength(1))
+    harness.controls.get(input.attemptId)!.complete()
+    await expect(resumed.completion).resolves.toMatchObject({ status: 'completed' })
+    expect(disposeResources).toHaveBeenCalledTimes(2)
+    await retry.releaseAll()
   })
 
   it('rejects an unsupported config before preparing or creating a runtime', async () => {

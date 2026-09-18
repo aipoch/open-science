@@ -47,8 +47,11 @@ const installFile = vi.fn(async (_url: string, path: string): Promise<string> =>
   return path
 })
 const waitForIdle = async (owner: ReturnType<typeof createLocalModelOwner>): Promise<void> => {
-  await vi.waitFor(async () =>
-    expect((await owner.getSnapshot()).availability).not.toBe('installing')
+  await vi.waitFor(
+    async () => expect((await owner.getSnapshot()).availability).not.toBe('installing'),
+    // Installation hashes and publishes real files; the default 1s poll budget is too short
+    // under hosted Windows disk contention, even though the enclosing test still has time.
+    { timeout: 10_000 }
   )
 }
 const seed = async (root: string, name = 'v1'): Promise<void> => {
@@ -734,8 +737,12 @@ describe('local model lifecycle', () => {
       revisions: [revision('v1')],
       download: installFile
     })
-    await first.install()
-    await waitForIdle(first)
+    try {
+      await first.install()
+      await waitForIdle(first)
+    } finally {
+      await first.close()
+    }
     const next = createLocalModelOwner({
       ...shared,
       revisions: [revision('v2'), revision('v1')],
@@ -743,18 +750,22 @@ describe('local model lifecycle', () => {
         throw new DownloadChecksumError()
       }
     })
-    expect((await next.getSnapshot()).updateAvailable).toBe(true)
-    await next.install()
-    await waitForIdle(next)
-    expect(await next.getSnapshot()).toMatchObject({
-      availability: 'ready',
-      installedRevision: 'v1',
-      error: 'integrity',
-      updateAvailable: true
-    })
-    expect(
-      JSON.parse(await readFile(join(root, 'models/pdf-tables/active.json'), 'utf8')).revision
-    ).toBe('v1')
+    try {
+      expect((await next.getSnapshot()).updateAvailable).toBe(true)
+      await next.install()
+      await waitForIdle(next)
+      expect(await next.getSnapshot()).toMatchObject({
+        availability: 'ready',
+        installedRevision: 'v1',
+        error: 'integrity',
+        updateAvailable: true
+      })
+      expect(
+        JSON.parse(await readFile(join(root, 'models/pdf-tables/active.json'), 'utf8')).revision
+      ).toBe('v1')
+    } finally {
+      await next.close()
+    }
   })
 
   it('removes only known model files and preserves documents, results and unknown revisions', async () => {

@@ -127,7 +127,10 @@ const describesUnresumableSession = (details: unknown): boolean => {
       details
     ) ||
     /\b(?:session|conversation)(?:\s+(?:id|identifier))?\s+does not exist\b/i.test(details) ||
-    /\b(?:no|missing|unknown)\s+(?:saved\s+|previous\s+)?(?:session|conversation)\b/i.test(details)
+    /\b(?:no|missing|unknown)\s+(?:saved\s+|previous\s+)?(?:session|conversation)\b/i.test(
+      details
+    ) ||
+    /\bno\s+rollout\s+found\s+for\s+thread\s+id\b/i.test(details)
   const describesFailedResume =
     /\b(?:failed|unable|cannot|can't|could not)\s+to\s+(?:resume|restore|reopen|reattach)\b.{0,80}\b(?:session|conversation)\b/i.test(
       details

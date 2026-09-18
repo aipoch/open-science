@@ -85,7 +85,8 @@ export type NotebookSandboxCommand = Readonly<{
   signal?: AbortSignal
   localRpcSocketPath?: string
   inheritedFileDescriptorCount?: number
-  // Opt-in ownership for short-lived workers; ordinary persistent kernels keep their current path.
+  // Opt-in Job Object ownership for standard-mode Windows process trees that require verifiable
+  // descendant cleanup.
   superviseProcessTree?: boolean
   /** Transient R admission decision; launch must retain this protection requirement. */
   windowsProtectionRequired?: boolean

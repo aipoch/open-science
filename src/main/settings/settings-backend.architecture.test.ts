@@ -529,6 +529,8 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/subagent-model-owner.ts',
       'src/main/settings/vision-model-owner.ts',
       'src/main/settings/xai-provider-account-owner.ts',
+      'src/main/specialist/package/service.ts',
+      'src/main/specialist/package/transaction.ts',
       'src/main/storage/initialize-location.ts'
     ])
     expect(importersOf(settingsPaths.recordCodec)).toEqual([
@@ -753,6 +755,7 @@ describe('Settings backend ownership architecture', () => {
       'src/main/ipc.ts',
       'src/main/settings/compute-grant-port.ts',
       'src/main/settings/service.ts',
+      'src/main/specialist/package/transaction.ts',
       'src/main/storage/initialize-location.ts'
     ])
     const computeIpc = readSource(resolve(projectRoot, 'src/main/compute/ipc.ts'))
@@ -769,6 +772,8 @@ describe('Settings backend ownership architecture', () => {
       /registerIpcHandlers\(\{\s+mainEntryPath,\s+settingsStore,\s+translate,/u
     )
     expect(mainIpc).toContain('settingsStore ?? resolveConfigRoot()')
+    // Package transactions use the shared production repository; their fallback supports standalone use.
+    expect(mainIpc).toContain('skillSettings: settingsRepository')
     expect(mainIpc).toContain('await settingsService.migrateAgentHomeSkillIdentities()')
     expect(mainIpc.indexOf('specialistPackageRecovery.current =')).toBeLessThan(
       mainIpc.indexOf('await settingsService.migrateAgentHomeSkillIdentities()')
@@ -1054,6 +1059,8 @@ describe('Settings backend ownership architecture', () => {
       'src/main/web-service/task-api.test.ts'
     ])
     expect(manifest.modules.settings_backend_resolution.testFiles.consumer).toEqual([
+      'src/main/session-persistence/runtime-session-owner.test.ts',
+      'src/main/session-plan/adversarial-session-plan.test.ts',
       'packages/open-science/cli.test.ts',
       'src/main/acp/artifact-code-reconstruction-runner.test.ts',
       'src/main/acp/backend-generation-owner.test.ts',
@@ -1459,7 +1466,16 @@ describe('Settings backend ownership architecture', () => {
       'src/main/credential-identity/macos.test.ts',
       'src/main/credential-identity/probe-logging.test.ts',
       'src/renderer/src/lib/session-persistence/session-persistence.test.ts',
-      'src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts'
+      'src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts',
+      'src/main/specialist/marketplace/official-source.test.ts',
+      'src/main/specialist/marketplace/service.test.ts',
+      'src/main/specialist/package/release-certification.test.ts',
+      'src/main/specialist/package/reported-regressions.test.ts',
+      'src/main/specialist/package/transaction.test.ts',
+      'src/main/delegation/process-ownership.test.ts',
+      'src/main/process-tree.windows.integration.test.ts',
+      'src/main/delegation/frame-workspace.test.ts',
+      'src/main/acp/agent-process.test.ts'
     ])
     expect(
       [

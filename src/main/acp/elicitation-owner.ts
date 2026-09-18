@@ -466,7 +466,10 @@ export class AcpElicitationOwner {
       ...pending.projection,
       state,
       ...(answers && answers.length > 0 ? { answers } : {}),
-      respondedAt: this.now()
+      respondedAt: this.now(),
+      ...(pending.request.durable && response.action !== 'cancel'
+        ? { continuationPending: true as const }
+        : {})
     }
     this.tryPublishProjection(pending.request, projection)
     pending.resolve?.(protocolResponse)

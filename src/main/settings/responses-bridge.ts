@@ -486,7 +486,29 @@ export class ResponsesBridge {
       }
     )
     const chatRequestBody = JSON.stringify(chatRequest)
-    const replayKey = providerRequestFingerprint(target.baseUrl, chatRequestBody)
+    // Go requires conversation affinity. The Responses-to-Chat translation removes
+    // prompt_cache_key, so carry the existing Codex identity across the HTTP boundary.
+    // Never replace a missing conversation identity with a shared or per-request UUID.
+    const goSession =
+      target.vendorId === 'opencode-go'
+        ? (request.headers['x-opencode-session'] ?? request.headers['session-id'] ?? promptCacheKey)
+        : undefined
+    if (
+      target.vendorId === 'opencode-go' &&
+      (typeof goSession !== 'string' ||
+        !/^[\x21-\x7e]+$/.test(goSession) ||
+        goSession.includes(','))
+    ) {
+      json(response, 400, {
+        error: { message: 'OpenCode Go requires a valid conversation session ID.' }
+      })
+      return
+    }
+    const replayKey = providerRequestFingerprint(
+      target.baseUrl,
+      chatRequestBody,
+      typeof goSession === 'string' ? goSession : ''
+    )
     this.reconcileReasoningForRequest(promptCacheKey, body.input)
 
     // Reveals which real model actually serves the turn (Codex only ever sees the internal catalog
@@ -535,7 +557,10 @@ export class ResponsesBridge {
 
     const headers: Record<string, string> = {
       'content-type': 'application/json',
-      ...(target.key ? { authorization: `Bearer ${target.key}` } : {})
+      ...(target.key ? { authorization: `Bearer ${target.key}` } : {}),
+      ...(typeof goSession === 'string'
+        ? { 'x-opencode-session': goSession, 'user-agent': 'open-science/codex-bridge' }
+        : {})
     }
     const replay = this.deterministicErrors.get(replayKey)
     if (replay) {

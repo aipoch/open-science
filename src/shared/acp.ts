@@ -537,6 +537,8 @@ type AcpRuntimeEventBase = {
   // from the ACP layer itself (our runtime) and stays reportable unless it is one of our own crafted,
   // actionable reminder messages.
   providerError?: boolean
+  // Main has durably committed this event's Message/Artifact projection before publication.
+  publicationOwner?: 'main'
   sessionId?: string
   messageId?: string
   role?: 'assistant' | 'user'

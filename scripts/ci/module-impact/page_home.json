@@ -6,7 +6,8 @@
     "src/renderer/src/pages/home/HomePage.tsx",
     "src/renderer/src/pages/home/ProjectFormDialog.behavior.test.tsx",
     "src/renderer/src/pages/home/ProjectFormDialog.tsx",
-    "src/renderer/src/pages/home/home-dialogs.render.test.tsx"
+    "src/renderer/src/pages/home/home-dialogs.render.test.tsx",
+    "src/renderer/src/pages/home/use-recent-sessions.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/home/DeleteProjectDialog.tsx",

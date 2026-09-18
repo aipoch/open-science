@@ -438,6 +438,55 @@ describe('ACP Session resume policy', () => {
     })
   })
 
+  it('classifies Codex missing-rollout details as adoptable', () => {
+    const policy = new AcpSessionResumePolicy()
+
+    expect(
+      policy.classifyFailure(
+        {
+          code: -32603,
+          message: 'Internal error',
+          data: {
+            details: 'no rollout found for thread id 019fb8c8-6c66-7f22-9653-17b5b287dbbb'
+          }
+        },
+        {
+          currentFrameworkId: 'codex',
+          currentModelRoute: 'codex-responses-compatibility',
+          providerSessionIdPersisted: false
+        }
+      )
+    ).toEqual({
+      disposition: 'adoptable',
+      reason: 'legacy-unresumable-details'
+    })
+  })
+
+  it('keeps a provider-wrapped missing-rollout diagnostic authoritative in Codex context', () => {
+    const policy = new AcpSessionResumePolicy()
+
+    expect(
+      policy.classifyFailure(
+        {
+          code: -32603,
+          message: 'Internal error',
+          data: {
+            details:
+              'Provider error: no rollout found for thread id 019fb8c8-6c66-7f22-9653-17b5b287dbbb'
+          }
+        },
+        {
+          currentFrameworkId: 'codex',
+          currentModelRoute: 'codex-responses-compatibility',
+          providerSessionIdPersisted: false
+        }
+      )
+    ).toEqual({
+      disposition: 'authoritative',
+      reason: 'unrelated-internal-error'
+    })
+  })
+
   it('keeps an explicit non-session service failure authoritative', () => {
     const policy = new AcpSessionResumePolicy()
 
@@ -481,7 +530,8 @@ describe('ACP Session resume policy', () => {
     'Authentication failed while configuring the provider',
     'Failed to load session provider credentials',
     'Unable to load Model Context Protocol server for this session',
-    'Unknown model context for this conversation'
+    'Unknown model context for this conversation',
+    'Provider error: no rollout found for thread id 019fb8c8-6c66-7f22-9653-17b5b287dbbb'
   ])('keeps an unrelated Internal error authoritative: %s', (details) => {
     const policy = new AcpSessionResumePolicy()
 

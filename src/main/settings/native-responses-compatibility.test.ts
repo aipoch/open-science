@@ -185,7 +185,8 @@ describe('native Responses compatibility', () => {
         method: 'POST',
         headers: {
           authorization: `Bearer ${connection.token}`,
-          'content-type': 'application/json'
+          'content-type': 'application/json',
+          'session-id': 'codex-conversation'
         },
         body: JSON.stringify({ model: 'untrusted', input: 'hello', stream: false })
       })
@@ -201,7 +202,10 @@ describe('native Responses compatibility', () => {
         1,
         'https://a.example/v1/responses',
         expect.objectContaining({
-          headers: expect.objectContaining({ authorization: 'Bearer key-a' }),
+          headers: expect.objectContaining({
+            authorization: 'Bearer key-a',
+            'session-id': 'codex-conversation'
+          }),
           body: expect.stringContaining('"model":"model-a"')
         })
       )
@@ -209,7 +213,10 @@ describe('native Responses compatibility', () => {
         2,
         'https://b.example/custom/responses',
         expect.objectContaining({
-          headers: expect.objectContaining({ authorization: 'Bearer key-b' }),
+          headers: expect.objectContaining({
+            authorization: 'Bearer key-b',
+            'session-id': 'codex-conversation'
+          }),
           body: expect.stringContaining('"model":"model-b"')
         })
       )

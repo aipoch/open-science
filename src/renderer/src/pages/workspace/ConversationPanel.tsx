@@ -2,6 +2,7 @@ import { forkSession, sessionForkAvailable } from '@/lib/session-fork'
 import { sideChatBlock, sideChatBlockMessage } from './side-chat-availability'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { PackageOperationIndicator } from '@/components/SessionPackageOperation'
+import { SessionInfoPopover } from './SessionInfoPopover'
 import { sessionExportLocked, usePackageOperationStore } from '@/stores/package-operation-store'
 import { AnnotationTransferSource } from './annotations/AnnotationTransferSource'
 import { useAnnotationDrop } from './annotations/use-annotation-drop'
@@ -399,6 +400,8 @@ type ConversationPanelWorkflows = {
 }
 
 type ConversationPanelSessionTools = {
+  togglePin?: (session: ChatSession) => void
+  editSession?: (session: ChatSession) => void
   notebookReference: NotebookSessionReference | undefined
   openNotebook: (notebook: NotebookSessionReference, runId?: string) => void
   openJobs: (sessionId: string) => void
@@ -452,11 +455,10 @@ const ConversationPanel = ({
   const { total: bookmarkCount, loadError: bookmarkLoadError } = useBookmarks()
   const { activeSession, composerFocusKey, canEditDraft, actionError, sideChatDisabledReason } =
     view
-  const sourceSessionNumber = useSessionStore(
-    (state) =>
-      state.sessions.find((session) => session.id === activeSession?.branchSource?.sessionId)
-        ?.number
+  const sourceSession = useSessionStore((state) =>
+    state.sessions.find((session) => session.id === activeSession?.branchSource?.sessionId)
   )
+  const sourceSessionNumber = sourceSession?.number
   const hasBookmarkEntry = Boolean(activeSession && (bookmarkCount > 0 || bookmarkLoadError))
   const {
     view: {
@@ -1159,13 +1161,19 @@ const ConversationPanel = ({
           >
             <Menu className="size-5" strokeWidth={2} aria-hidden="true" />
           </button>
-          <h1 className="flex min-w-0 flex-1 items-center gap-2 text-[13px] font-semibold text-text-000">
-            {activeSession?.number !== undefined ? (
-              <span className="shrink-0 font-normal text-muted-foreground">
-                #{activeSession.number}
-              </span>
-            ) : null}
-            <span className="truncate">{activeSession?.title ?? t('New conversation')}</span>
+          <h1 className="min-w-0 flex-1 text-[13px] font-semibold text-text-000">
+            {activeSession ? (
+              <SessionInfoPopover
+                key={activeSession.id}
+                session={activeSession}
+                sourceSession={sourceSession}
+                onOpenSession={sessionTools.openSession}
+                onEdit={sessionTools.editSession}
+                onTogglePin={sessionTools.togglePin}
+              />
+            ) : (
+              <span className="block truncate">{t('New conversation')}</span>
+            )}
           </h1>
           <NotificationBell className="md:hidden" />
           <button

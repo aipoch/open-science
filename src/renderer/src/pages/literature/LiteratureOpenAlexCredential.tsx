@@ -1,3 +1,4 @@
+import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { useFileCredentialNotice } from '../settings/use-file-credential-notice'
 import { useEffect, useId, useState } from 'react'
 import { Check, Settings2 } from 'lucide-react'
@@ -68,9 +69,17 @@ export const LiteratureOpenAlexCredential = ({
             void submit()
           }}
         >
-          <label htmlFor={id} className="text-xs font-medium">
-            {t('OpenAlex API key')}
-          </label>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <label htmlFor={id} className="text-xs font-medium">
+              {t('OpenAlex API key')}
+            </label>
+            <ExternalTextLink
+              href="https://openalex.org/settings/api"
+              className="whitespace-nowrap text-xs"
+            >
+              {t('Get an API key')}
+            </ExternalTextLink>
+          </div>
           <MaskedPasswordField
             id={id}
             value={key}

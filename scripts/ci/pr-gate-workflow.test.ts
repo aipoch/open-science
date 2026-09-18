@@ -120,7 +120,14 @@ describe('PR Gate workflow', () => {
 
   it('replays explicit module dry-run revisions through the real revision and plan scripts', () => {
     const dir = mkdtempSync(join(tmpdir(), 'module-coverage-plan-'))
-    const base = execFileSync('git', ['rev-parse', 'HEAD^'], { encoding: 'utf8' }).trim()
+    // Mirror the revisions step fallback: shallow or single-commit checkouts have no parent, so
+    // compare HEAD against itself instead of failing the whole suite.
+    const parent = spawnSync('git', ['rev-parse', 'HEAD^'], { encoding: 'utf8' })
+    const base = (
+      parent.status === 0
+        ? parent.stdout
+        : execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' })
+    ).trim()
     const head = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
     const revisions = workflow.jobs.preflight.steps?.find(({ id }) => id === 'revisions')
     const classify = workflow.jobs.preflight.steps?.find(({ id }) => id === 'classify')
@@ -167,7 +174,7 @@ describe('PR Gate workflow', () => {
     const selected = shards.steps?.find(({ id }) => id === 'unit_macos_related_shard')
     expect(selected?.run).toContain('npm run test:affected')
     expect(selected?.run).toContain('--coverage-changed "$BASE_SHA" --')
-    expect(selected?.run).toContain('--shard=${{ matrix.shard }}/3')
+    expect(selected?.run).toContain('--shard=${{ matrix.shard }}/4')
     expect(selected?.run).toContain('--reporter=blob')
     expect(shards.env?.VITEST_DEFER_COVERAGE_THRESHOLDS).toBe('1')
     const merge = workflow.jobs.unit.steps?.find(({ id }) => id === 'unit_macos_related_merge')
@@ -490,6 +497,7 @@ describe('PR Gate workflow', () => {
             'i18n',
             'runtime-bundle',
             'windows-e2e',
+            'windows-process',
             'e2e',
             'source-regressions',
             'macos-smoke'
@@ -850,12 +858,12 @@ describe('PR Gate workflow', () => {
     expect(unit.env?.VITEST_DEFER_COVERAGE_THRESHOLDS).toBeUndefined()
     expect(shards).toMatchObject({
       env: { VITEST_DEFER_COVERAGE_THRESHOLDS: '1', VITEST_PORTABLE_CI: '1' },
-      name: 'Portable tests (Ubuntu, shard ${{ matrix.shard }}/3)',
+      name: 'Portable tests (Ubuntu, shard ${{ matrix.shard }}/4)',
       needs: 'preflight',
       'runs-on': 'ubuntu-latest',
       strategy: {
         'fail-fast': false,
-        matrix: { shard: [1, 2, 3] }
+        matrix: { shard: [1, 2, 3, 4] }
       }
     })
     expect(shards.if).toContain("fromJSON(needs.preflight.outputs.plan).mode == 'full'")
@@ -869,7 +877,7 @@ describe('PR Gate workflow', () => {
         '--coverage',
         '--coverage.reporter=text-summary',
         '--testTimeout=30000',
-        '--shard=${{ matrix.shard }}/3',
+        '--shard=${{ matrix.shard }}/4',
         '--reporter=blob',
         '--reporter=github-actions',
         '--outputFile=vitest-reports/blob-${{ matrix.shard }}.json'
@@ -1150,9 +1158,16 @@ describe('PR Gate workflow', () => {
     }
   )
 
-  it.skipIf(process.platform === 'win32')(
-    'executes the focused Windows plan through the real preflight script',
-    () => {
+  it.skipIf(process.platform === 'win32').each([
+    [
+      'windows-e2e',
+      ['policy', 'windows_e2e'],
+      ['policy', 'e2e_functional_windows', 'e2e_workspace_windows']
+    ],
+    ['windows-process', ['policy', 'windows_core'], ['policy', 'windows_runtime']]
+  ])(
+    'executes the focused %s plan through the real preflight script',
+    (dryRunMode, bundles, lanes) => {
       const directory = mkdtempSync(join(tmpdir(), 'pr-gate-windows-'))
       try {
         const output = join(directory, 'output')
@@ -1161,7 +1176,7 @@ describe('PR Gate workflow', () => {
           env: {
             ...process.env,
             EVENT_NAME: 'workflow_dispatch',
-            DRY_RUN_MODE: 'windows-e2e',
+            DRY_RUN_MODE: dryRunMode,
             GITHUB_OUTPUT: output,
             GITHUB_STEP_SUMMARY: join(directory, 'summary')
           },
@@ -1173,8 +1188,8 @@ describe('PR Gate workflow', () => {
           .find((line) => line.startsWith('plan='))!
         expect(JSON.parse(planLine.slice(5))).toMatchObject({
           mode: 'selective',
-          bundles: ['policy', 'windows_e2e'],
-          lanes: ['policy', 'e2e_functional_windows', 'e2e_workspace_windows']
+          bundles,
+          lanes
         })
       } finally {
         rmSync(directory, { recursive: true, force: true })
@@ -1390,6 +1405,7 @@ describe('PR Gate workflow', () => {
       ({ name }) => name === 'Test Windows wheel evidence recovery'
     )
     expect(wheelEvidence?.if).toContain("'windows_runtime'")
+    expect(wheelEvidence?.if).toContain("inputs.dry_run != 'windows-process'")
     expect(wheelEvidence?.env).toMatchObject({ RUN_KERNEL: '1' })
     expect(wheelEvidence?.run).toContain('OPEN_SCIENCE_TEST_PYTHON')
     expect(wheelEvidence?.run).toContain('pip-wheel-evidence.test.ts')

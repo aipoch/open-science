@@ -47,7 +47,11 @@ import {
 const log = createLogger('acp-prompt-turn-workflow')
 
 type AcpPromptTurnMode =
-  | Readonly<{ kind: 'user'; promptAttemptId?: string }>
+  | Readonly<{
+      kind: 'user'
+      promptAttemptId?: string
+      runtimeReviewOwner?: 'task' | 'renderer'
+    }>
   | Readonly<{
       kind: 'application'
       attribution: MessageAttribution
@@ -94,6 +98,7 @@ type AcpPromptTurnEnvironment = Readonly<{
   ) => void
   onSkillImportAttachmentEligible?: (sessionId: string, turnToken: string, uri: string) => void
   onProviderPromptAccepted?: (sessionId: string, promptAttemptId?: string) => void
+  onRuntimeSessionProviderAccepted?: (sessionId: string, promptMessageId: string) => Promise<void>
   sideChatRelays?: Readonly<{
     claim: (parentSessionId: string) =>
       | Readonly<{
@@ -172,6 +177,7 @@ type AcpPromptTurnFinalization = Readonly<{
   errorMessage: AcpPromptFinalizationHandles['errorMessage']
   errorKind: AcpPromptFinalizationHandles['errorKind']
   pushEvent: AcpPromptFinalizationHandles['pushEvent']
+  commitTerminal?: AcpPromptFinalizationHandles['commitTerminal']
   onPromptEnded: (sessionId: string, turnToken: string) => void
   generationActivityChanged: () => void
   autoCompact: (
@@ -221,16 +227,54 @@ type AcpPromptTurnWorkflowOptions = Readonly<{
     permissionProfile: PermissionProfileId
   }) => Promise<{ contextReset?: boolean }>
   recordAdmittedPrompt: (request: AcpPromptRequest) => void
+  beginRuntimeSessionTurn?: (
+    request: AcpPromptRequest,
+    executionId: string,
+    reviewOwner: 'task' | 'renderer',
+    planDeliveryCommandId?: string
+  ) => Promise<void>
   onPromptStarted: (sessionId: string, turnToken: string, promptAttemptId?: string) => void
   emitState: () => void
 }>
 
 class AcpPromptTurnWorkflow {
+  // A send outlives the provider generation replaced by a forced Skill reload.
+  private readonly requests = new Map<string, { cancelled: boolean }>()
+
+  captureCancellation(sessionId: string): (() => void) | undefined {
+    const request = this.requests.get(sessionId)
+    return request
+      ? () => {
+          request.cancelled = true
+        }
+      : undefined
+  }
+
   constructor(private readonly options: AcpPromptTurnWorkflowOptions) {}
 
   async run(
     request: AcpPromptRequest,
     mode: AcpPromptTurnMode,
+    onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>
+  ): Promise<PromptResponse> {
+    if (!this.activeSession(request.sessionId)) {
+      throw new Error(`ACP session not found: ${request.sessionId}`)
+    }
+    this.assertSessionIdle(request.sessionId)
+    const cancellation = { cancelled: false }
+    this.requests.set(request.sessionId, cancellation)
+    try {
+      return await this.runRequest(request, mode, cancellation, onPromptAdmitted)
+    } finally {
+      if (this.requests.get(request.sessionId) === cancellation)
+        this.requests.delete(request.sessionId)
+    }
+  }
+
+  private async runRequest(
+    request: AcpPromptRequest,
+    mode: AcpPromptTurnMode,
+    cancellation: { cancelled: boolean },
     onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>
   ): Promise<PromptResponse> {
     let activeSession = this.activeSession(request.sessionId)
@@ -281,6 +325,11 @@ class AcpPromptTurnWorkflow {
     try {
       if (skill.reloadDecision.kind === 'reload') {
         this.assertSessionIdle(request.sessionId)
+        if (cancellation.cancelled) {
+          skill.close('reload-restored')
+          this.options.interactions.release(reservation)
+          return { stopReason: 'cancelled' }
+        }
         const snapshot = this.options.registry.lookup(request.sessionId)?.aggregate.snapshot()
         const projectId = this.options.resolveProjectId(request.sessionId)
         await this.options.disconnectForReload()
@@ -292,6 +341,11 @@ class AcpPromptTurnWorkflow {
             snapshot?.permissionProfile?.selectedProfile ?? DEFAULT_PERMISSION_PROFILE,
           ...(request.memoryEnabled !== undefined ? { memoryEnabled: request.memoryEnabled } : {})
         })
+        if (cancellation.cancelled) {
+          skill.close('reload-restored')
+          this.options.interactions.release(reservation)
+          return { stopReason: 'cancelled' }
+        }
         if (resumed.contextReset) {
           request.historyPreamble = request.resumeFallback?.historyPreamble
           request.historyAttachments = request.resumeFallback?.historyAttachments
@@ -334,6 +388,14 @@ class AcpPromptTurnWorkflow {
       if (admittedProvenanceContext) {
         this.options.interactions.updatePromptProvenance(interaction, admittedProvenanceContext)
         admittedRequest = { ...request, provenanceContext: admittedProvenanceContext }
+      }
+      if (this.options.beginRuntimeSessionTurn) {
+        await this.options.beginRuntimeSessionTurn(
+          admittedRequest,
+          interaction.turnToken,
+          mode.kind === 'user' ? (mode.runtimeReviewOwner ?? 'renderer') : 'renderer',
+          mode.kind === 'app-continuation' ? mode.planDelivery?.commandId : undefined
+        )
       }
       this.options.registry.select(admittedRequest.sessionId)
       this.options.recordAdmittedPrompt(admittedRequest)
@@ -552,6 +614,12 @@ class AcpPromptTurnWorkflow {
             // Receipts describe provider acceptance and keep their durable notifications. Only
             // the current turn may publish live acceptance and Skill completion after those waits.
             if (!this.isCurrent(turn)) return
+            if (request.provenanceContext?.promptMessageId) {
+              await env.onRuntimeSessionProviderAccepted?.(
+                sessionId,
+                request.provenanceContext.promptMessageId
+              )
+            }
             this.safeCallback('provider-prompt-accepted callback failed', () =>
               env.onProviderPromptAccepted?.(sessionId, turn.mode.promptAttemptId)
             )
@@ -667,6 +735,7 @@ class AcpPromptTurnWorkflow {
         errorMessage: finalization.errorMessage,
         errorKind: finalization.errorKind,
         pushEvent: finalization.pushEvent,
+        ...(finalization.commitTerminal ? { commitTerminal: finalization.commitTerminal } : {}),
         emitState: this.options.emitState,
         onPromptEnded: () => finalization.onPromptEnded(sessionId, turnToken),
         generationActivityChanged: finalization.generationActivityChanged,

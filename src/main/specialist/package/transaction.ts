@@ -7,6 +7,7 @@ import type { SpecialistView } from '../../../shared/specialist'
 import { emptyFullAccessConfig } from '../../../shared/specialist'
 import { createLogger } from '../../logger'
 import { SpecialistRepository } from '../repository'
+import { SettingsRepository } from '../../settings/repository'
 import {
   SPECIALISTS_FILE_VERSION,
   type SpecialistOrigin,
@@ -25,6 +26,8 @@ type TransactionJournal = {
   beforeDigest: string
   afterDigest: string
   deleteSkillIds?: string[]
+  // Only settings added by this install; absent in historical journals.
+  newlyDisabledSkillIds?: string[]
   // Legacy journals embedded documents. New journals keep sensitive Specialist payloads in
   // transaction data sidecars and contain only IDs, digests, and phase metadata.
   before?: StoredSpecialists
@@ -70,7 +73,11 @@ export class SpecialistPackageTransaction {
     private readonly cleanupCommittedDeletion?: (
       specialistId: string,
       skillIds: readonly string[]
-    ) => Promise<void>
+    ) => Promise<void>,
+    private readonly skillSettings: Pick<
+      SettingsRepository,
+      'getSettings' | 'setSkillsEnabled'
+    > = new SettingsRepository(storageDir)
   ) {
     this.journalPath = join(storageDir, 'specialist-package-transaction.json')
     this.beforeDataPath = join(storageDir, 'specialist-package-transaction.before.json')
@@ -121,46 +128,63 @@ export class SpecialistPackageTransaction {
         typeof journal.transactionId !== 'string' ||
         (journal.deleteSkillIds !== undefined &&
           (!Array.isArray(journal.deleteSkillIds) ||
-            journal.deleteSkillIds.some((id) => typeof id !== 'string')))
+            journal.deleteSkillIds.some((id) => typeof id !== 'string'))) ||
+        (journal.newlyDisabledSkillIds !== undefined &&
+          (!Array.isArray(journal.newlyDisabledSkillIds) ||
+            journal.newlyDisabledSkillIds.some(
+              (id) => typeof id !== 'string' || !/^[a-z0-9-]+$/.test(id)
+            )))
       ) {
         throw new Error('Invalid Specialist package transaction journal.')
       }
-      if (journal.phase === 'committed') {
-        retryableCommitted = true
-        const current = await this.repository.getAll()
-        const currentDigest = documentDigest(current)
-        const committedDeletionStillAbsent =
-          journal.deleteSkillIds !== undefined &&
-          !current.specialists.some((specialist) => specialist.id === journal.specialistId)
-        if (
-          !committedDeletionStillAbsent &&
-          (typeof journal.afterDigest !== 'string' || currentDigest !== journal.afterDigest)
-        ) {
+      const settle = async (): Promise<void> => {
+        if (journal.phase === 'committed') {
+          retryableCommitted = true
+          const current = await this.repository.getAll()
+          const currentDigest = documentDigest(current)
+          const committedDeletionStillAbsent =
+            journal.deleteSkillIds !== undefined &&
+            !current.specialists.some((specialist) => specialist.id === journal.specialistId)
+          if (
+            !committedDeletionStillAbsent &&
+            (typeof journal.afterDigest !== 'string' || currentDigest !== journal.afterDigest)
+          ) {
+            const { before, after } = await this.readTransactionData(journal)
+            const beforeDigest = journal.beforeDigest ?? documentDigest(before)
+            const afterDigest = journal.afterDigest ?? documentDigest(after)
+            if (currentDigest === beforeDigest) {
+              await this.repository.replaceAllIfUnchanged(before, after)
+            } else if (currentDigest !== afterDigest) {
+              throw new Error('Specialist document changed after package commit.')
+            }
+          }
+          await this.skillPort.recover(journal.transactionId, 'commit')
+          if (journal.deleteSkillIds) {
+            await this.cleanupCommittedDeletion?.(journal.specialistId, journal.deleteSkillIds)
+          }
+        } else if (journal.phase !== 'rolled-back') {
           const { before, after } = await this.readTransactionData(journal)
           const beforeDigest = journal.beforeDigest ?? documentDigest(before)
           const afterDigest = journal.afterDigest ?? documentDigest(after)
-          if (currentDigest === beforeDigest) {
-            await this.repository.replaceAllIfUnchanged(before, after)
-          } else if (currentDigest !== afterDigest) {
-            throw new Error('Specialist document changed after package commit.')
+          await this.skillPort.recover(journal.transactionId, 'rollback')
+          const current = await this.repository.getAll()
+          if (documentDigest(current) === afterDigest) {
+            await this.repository.replaceAllIfUnchanged(after, before)
+          } else if (documentDigest(current) !== beforeDigest) {
+            throw new Error('Specialist document changed before package rollback.')
           }
-        }
-        await this.skillPort.recover(journal.transactionId, 'commit')
-        if (journal.deleteSkillIds) {
-          await this.cleanupCommittedDeletion?.(journal.specialistId, journal.deleteSkillIds)
-        }
-      } else if (journal.phase !== 'rolled-back') {
-        const { before, after } = await this.readTransactionData(journal)
-        const beforeDigest = journal.beforeDigest ?? documentDigest(before)
-        const afterDigest = journal.afterDigest ?? documentDigest(after)
-        await this.skillPort.recover(journal.transactionId, 'rollback')
-        const current = await this.repository.getAll()
-        if (documentDigest(current) === afterDigest) {
-          await this.repository.replaceAllIfUnchanged(after, before)
-        } else if (documentDigest(current) !== beforeDigest) {
-          throw new Error('Specialist document changed before package rollback.')
+          if (journal.newlyDisabledSkillIds?.length)
+            await this.skillSettings.setSkillsEnabled(journal.newlyDisabledSkillIds, true)
+          // A cleanup retry must not replay settings restoration over a later user choice.
+          journal.phase = 'rolled-back'
+          await this.writeJournal(journal)
         }
       }
+      // Keep rollback and its settings restoration atomic with respect to user Skill mutations.
+      // Historical/delete journals retain their existing recovery and cleanup ordering.
+      await (journal.newlyDisabledSkillIds && this.skillPort.runMutationExclusive
+        ? this.skillPort.runMutationExclusive(settle)
+        : settle())
       await this.cleanupTransactionData()
       log.info('recovered specialist package transaction', {
         transactionId: journal.transactionId,
@@ -275,6 +299,18 @@ export class SpecialistPackageTransaction {
         skillMutationBegun = true
         const commit = async (): Promise<void> => {
           await assertApprovedImpact?.(before)
+          const disabled = new Set((await this.skillSettings.getSettings()).disabledSkillIds ?? [])
+          journal.newlyDisabledSkillIds = [
+            ...new Set(
+              plan.skills
+                .filter((skill) => skill.disposition === 'install')
+                .map((skill) => skill.localId ?? skill.id)
+            )
+          ].filter((id) => !disabled.has(id))
+          // Persist rollback intent before changing settings, and disable before publishing files.
+          await this.writeJournal(journal)
+          if (journal.newlyDisabledSkillIds.length)
+            await this.skillSettings.setSkillsEnabled(journal.newlyDisabledSkillIds, false)
           await this.repository.replaceAllIfUnchanged(before, after)
           specialistCommitted = true
           await this.skillPort.commit(transactionId)
@@ -292,15 +328,22 @@ export class SpecialistPackageTransaction {
       } catch (error) {
         if (journal.phase === 'committed') throw new SpecialistPackageRecoveryError()
         try {
-          journal.phase = 'rolling-back'
-          await this.writeJournal(journal)
-          await this.skillPort.rollback(transactionId)
-          if (specialistCommitted) {
-            await this.repository.replaceAllIfUnchanged(after, before)
+          const rollback = async (): Promise<void> => {
+            journal.phase = 'rolling-back'
+            await this.writeJournal(journal)
+            await this.skillPort.rollback(transactionId)
+            if (specialistCommitted) {
+              await this.repository.replaceAllIfUnchanged(after, before)
+            }
+            if (journal.newlyDisabledSkillIds?.length)
+              await this.skillSettings.setSkillsEnabled(journal.newlyDisabledSkillIds, true)
+            journal.phase = 'rolled-back'
+            await this.writeJournal(journal)
+            await this.cleanupTransactionData()
           }
-          journal.phase = 'rolled-back'
-          await this.writeJournal(journal)
-          await this.cleanupTransactionData()
+          await (skillMutationBegun && this.skillPort.runInMutationContext
+            ? this.skillPort.runInMutationContext(transactionId, rollback)
+            : rollback())
         } catch (recoveryError) {
           this.recoveryFailure = recoveryError
           throw new SpecialistPackageRollbackError()

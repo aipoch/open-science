@@ -252,6 +252,7 @@ const WorkspacePage = ({
     Record<string, ManualReviewRequestState>
   >({})
   const previewFocusFallbackRef = useRef<HTMLElement>(null)
+  const sessionInfoReturnFocusRef = useRef<HTMLElement | null>(null)
   const manualReviewPendingSessionIdsRef = useRef(new Set<string>())
   const syncPreviewPanelState = usePreviewWorkbenchStore((state) => state.syncPanelState)
   const runtime = useWorkspaceAgentRuntime()
@@ -1543,6 +1544,15 @@ const WorkspacePage = ({
                 }
               }}
               sessionTools={{
+                togglePin: isSessionPersistenceReady
+                  ? sessionController.actions.togglePin
+                  : undefined,
+                editSession: isSessionPersistenceReady
+                  ? (session) => {
+                      sessionInfoReturnFocusRef.current = document.activeElement as HTMLElement
+                      sessionController.actions.openEdit(session)
+                    }
+                  : undefined,
                 openSession: (sessionId) => void openForkSource(sessionId),
                 notebookReference: activeNotebookReference,
                 openNotebook: openNotebookPreview,
@@ -1568,6 +1578,14 @@ const WorkspacePage = ({
         />
 
         <EditSessionDialog
+          onCloseAutoFocus={(event) => {
+            const target = sessionInfoReturnFocusRef.current
+            sessionInfoReturnFocusRef.current = null
+            if (target?.isConnected) {
+              event.preventDefault()
+              target.focus()
+            }
+          }}
           session={sessionController.view.dialogs.edit?.session}
           titleDraft={sessionController.view.dialogs.edit?.titleDraft ?? ''}
           descriptionDraft={sessionController.view.dialogs.edit?.descriptionDraft ?? ''}

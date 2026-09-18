@@ -606,6 +606,8 @@ describe('Artifact Provenance repository architecture', () => {
       'src/shared/renderer-surface-matrix.test.ts'
     ])
     expect(module.testFiles.consumer).toEqual([
+      'src/main/session-persistence/runtime-session-owner.test.ts',
+      'src/main/session-plan/adversarial-session-plan.test.ts',
       'src/main/acp/file-reference-resolver.test.ts',
       'src/main/acp/runtime.test.ts',
       'src/main/artifacts/code-reconstruction.test.ts',
@@ -935,7 +937,8 @@ describe('Artifact Provenance repository architecture', () => {
       'src/main/storage/migration-target-race.test.ts',
       'src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx',
       'src/main/settings/provider-runtime-health-owner.test.ts',
-      'src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts'
+      'src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts',
+      'src/main/session-persistence/runtime-authority.test.ts'
     ])
     expect(module.capabilityOverlays).toEqual([
       'windows_sensitive',

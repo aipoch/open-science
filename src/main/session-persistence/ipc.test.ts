@@ -595,6 +595,74 @@ describe('session persistence IPC handlers', () => {
     expect(saveSession).toHaveBeenCalledWith(session)
   })
 
+  it('accepts only append-user commands backed by the submitted Session', async () => {
+    const message = {
+      id: 'prompt-1',
+      role: 'user' as const,
+      content: 'Research this.',
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: 1710000000001,
+      updatedAt: 1710000000001
+    }
+    const session = materializeSessionConversationGraph({
+      ...createSession(),
+      messages: [message]
+    })
+    const repository: SessionPersistenceBackend = {
+      loadAll: vi.fn(),
+      loadOne: vi.fn(),
+      saveSession: vi.fn(),
+      deleteSession: vi.fn(),
+      saveManifest: vi.fn()
+    }
+    const saveSession = vi.fn(async () => ({ created: false, session }))
+    const handlers: SessionPersistenceHandlers = {
+      searchMessages: vi.fn(),
+      loadAll: vi.fn(),
+      list: vi.fn(),
+      loadUsage: vi.fn(),
+      loadOne: vi.fn(),
+      saveSession,
+      setDelegationPolicy: vi.fn(),
+      updateArchive: vi.fn(),
+      deleteSession: vi.fn(),
+      saveManifest: vi.fn()
+    }
+    registerSessionPersistenceIpcHandlers(repository, createMockReviewRepository(), handlers)
+    const command = {
+      id: 'append-prompt-1',
+      kind: 'append-user' as const,
+      timestamp: 1710000000001,
+      branchId: session.conversationGraph!.branches[0].id,
+      message: { id: message.id, role: 'user' as const, content: 'Untrusted replacement' }
+    }
+
+    await expect(
+      ipcHandlers.get('sessions:save-session')?.({ sender: { id: 7 } }, session, {
+        conversationCommands: [command]
+      })
+    ).resolves.toEqual({ ok: true, result: session })
+
+    expect(saveSession).toHaveBeenCalledWith(session, {
+      conversationCommands: [{ ...command, message }]
+    })
+
+    saveSession.mockClear()
+    await expect(
+      ipcHandlers.get('sessions:save-session')?.({ sender: { id: 7 } }, session, {
+        conversationCommands: [
+          {
+            ...command,
+            id: 'append-missing-prompt',
+            message: { id: 'missing-prompt', role: 'user', content: 'Not in the Session' }
+          }
+        ]
+      })
+    ).rejects.toThrow('Conversation command user Message is absent from the submitted Session')
+    expect(saveSession).not.toHaveBeenCalled()
+  })
+
   it('accepts Reviewer Correction attribution only from main-owned runtime evidence', async () => {
     const correctionAttribution = {
       kind: 'application' as const,

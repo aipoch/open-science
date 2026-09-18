@@ -23,6 +23,7 @@ import {
   isHiddenControlMessage,
   isReviewerCorrectionAttribution,
   sanitizeMessageAttribution,
+  sessionRevision,
   type PersistedChatSession
 } from '../../../../shared/session-persistence'
 import { createPreviewFileItemFromArtifact } from '../../pages/workspace/preview-file-item'
@@ -130,7 +131,7 @@ const isTerminalToolActivity = (activity: ToolActivity | undefined): boolean =>
   activity?.status === 'completed' || activity?.status === 'failed'
 
 const hasPendingDurableUserChoice = (
-  session: ChatSession | undefined,
+  session: Pick<PersistedChatSession, 'activities'> | undefined,
   promptMessageId: string | undefined
 ): boolean =>
   session?.activities?.some((activity) => {
@@ -587,7 +588,8 @@ const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
 // Fire-and-forget: errors are caught and silently dropped so the main session is never blocked.
 const triggerAutoReview = async (
   sessionId: string,
-  saveSession: NonNullable<WorkspaceRuntimeEventDependencies['saveSession']>
+  saveSession: NonNullable<WorkspaceRuntimeEventDependencies['saveSession']>,
+  committedTurnMessageId?: string
 ): Promise<void> => {
   try {
     if (autoReviewsSuppressedForQuit) return
@@ -607,7 +609,11 @@ const triggerAutoReview = async (
     // Auto-review defaults to disabled: run only when the switch was explicitly turned on.
     if (session.autoReviewEnabled !== true) return
 
-    const request = assembleReviewRunRequest(sessionId)
+    const assembledRequest = assembleReviewRunRequest(sessionId)
+    const request =
+      assembledRequest && committedTurnMessageId
+        ? { ...assembledRequest, turnMessageId: committedTurnMessageId }
+        : assembledRequest
 
     if (!request) return
 
@@ -673,15 +679,50 @@ const scheduleAutoReview = (
   sessionId: string,
   saveSession: NonNullable<
     WorkspaceRuntimeEventDependencies['saveSession']
-  > = saveSessionInRuntimeOrder
+  > = saveSessionInRuntimeOrder,
+  committedTurnMessageId?: string
 ): void => {
   if (autoReviewsSuppressedForQuit) return
   cancelScheduledAutoReview(sessionId)
   const timer = setTimeout(() => {
     scheduledAutoReviewsBySession.delete(sessionId)
-    void triggerAutoReview(sessionId, saveSession)
+    void triggerAutoReview(sessionId, saveSession, committedTurnMessageId)
   }, AUTO_REVIEW_ARTIFACT_SETTLE_DELAY_MS)
   scheduledAutoReviewsBySession.set(sessionId, timer)
+}
+
+const scheduleCommittedRuntimeTranscriptAutoReview = (
+  previous: ChatSession | undefined,
+  committed: PersistedChatSession
+): void => {
+  if (previous && sessionRevision(committed) < sessionRevision(previous)) return
+  const completedRun = committed.runtimeTranscriptLastRun
+  const reviewOwner = committed.runtimeTranscriptReviewOwner
+  const completedMessage = completedRun
+    ? [...committed.messages]
+        .reverse()
+        .find(
+          (message) =>
+            message.role === 'agent' && message.responseToMessageId === completedRun.promptMessageId
+        )
+    : undefined
+  if (
+    !completedRun ||
+    !completedMessage ||
+    reviewOwner?.owner !== 'renderer' ||
+    reviewOwner.promptMessageId !== completedRun.promptMessageId ||
+    committed.activeRun ||
+    committed.status === 'error' ||
+    committed.resumeRecovery ||
+    (previous?.runtimeTranscriptLastRun?.promptMessageId === completedRun.promptMessageId &&
+      previous.runtimeTranscriptLastRun.startedAt === completedRun.startedAt) ||
+    hasPendingDurableUserChoice(committed, completedRun.promptMessageId)
+  ) {
+    return
+  }
+  // The lifecycle payload is already Main's durable commit; the legacy pre-review renderer save
+  // would only submit a stale whole-session projection back across the ownership boundary.
+  scheduleAutoReview(committed.id, async (session) => session, completedMessage.id)
 }
 
 // Startup summaries have no message graph. Load their existing authority before projecting
@@ -853,6 +894,14 @@ const applyWorkspaceRuntimeEvent = async (
     const terminalPromptMessageId =
       event.promptMessageId ?? activeSession?.activeRun?.promptMessageId
     const contextWindowSample = getTerminalContextWindowSample(event)
+    if (activeSession?.runtimeTranscriptOwner === 'main') {
+      // Main applies and publishes the terminal event from its ordered transcript lane. Settling
+      // the renderer copy here would create a competing terminal graph and could trigger a save
+      // before the authoritative receipt arrives.
+      deferredArtifactEventsBySession.delete(event.sessionId)
+      pendingArtifactTurnUsageBySession.delete(event.sessionId)
+      return true
+    }
     if (event.text === 'cancelled') {
       deferredArtifactEventsBySession.delete(event.sessionId)
       pendingArtifactTurnUsageBySession.delete(event.sessionId)
@@ -957,7 +1006,10 @@ const applyWorkspaceRuntimeEvent = async (
 
     // A durable user choice pauses the same logical turn; reviewing the partial response here would
     // freeze an incomplete scope before the hidden continuation resumes it.
-    if (!hasPendingDurableUserChoice(terminalSession, terminalPromptMessageId)) {
+    if (
+      terminalSession?.runtimeTranscriptOwner !== 'main' &&
+      !hasPendingDurableUserChoice(terminalSession, terminalPromptMessageId)
+    ) {
       // Trigger a background review for the just-completed turn. Read state after both finishRun and
       // Artifact finalization so the scope includes the terminal message and finalized versions.
       scheduleAutoReview(event.sessionId, dependencies.saveSession)
@@ -1027,6 +1079,19 @@ const applyWorkspaceRuntimeEvent = async (
   ) {
     const session = store.sessions.find((candidate) => candidate.id === event.sessionId)
     if (session?.conversationGraphSyncBlocked) return true
+    if (Reflect.get(event, 'publicationOwner') === 'main') {
+      const attached = attachArtifactEvent(event)
+      if (attached) {
+        useSessionStore.getState().replaceMessageArtifacts({
+          sessionId: event.sessionId,
+          messageId: attached.messageId,
+          artifacts: event.artifacts,
+          preserveArtifactIds: event.artifacts.map((artifact) => artifact.versionId ?? artifact.id)
+        })
+        useSessionStore.getState().clearArtifactError(event.sessionId, event.id)
+      }
+      return true
+    }
     if (session?.activeRun) {
       const deferredArtifacts = deferredArtifactEventsBySession.get(event.sessionId) ?? []
       deferredArtifacts.push({ event, dependencies })
@@ -1187,5 +1252,6 @@ export {
   suppressAutoReviewsForQuit,
   suppressNextAutoReview,
   clearSuppressNextAutoReview,
+  scheduleCommittedRuntimeTranscriptAutoReview,
   resetDeferredArtifactEventsForTests
 }

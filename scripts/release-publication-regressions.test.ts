@@ -7,6 +7,7 @@ import {
   readFileSync,
   rmSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync
 } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -484,7 +485,7 @@ it.skipIf(process.platform === 'win32')(
   'backfills a legacy release through the real mirror steps without changing stable',
   () => {
     const { cwd, remote, env } = objectStore()
-    rmSync(join(cwd, 'scripts'))
+    unlinkSync(join(cwd, 'scripts'))
     mkdirSync(join(cwd, 'scripts'))
     for (const name of [
       'generate-version-manifest.mjs',

@@ -1111,8 +1111,17 @@ const sendWorkspaceMessage = async (
     // Application-owned stable identities need an explicit save because they may be dispatched
     // outside the mounted store saver. Ordinary user Messages are already queued by that saver;
     // drain it before provider dispatch so Delegation cannot authenticate against a stale root
-    // conversation snapshot. Recovery rearms an already durable Message and needs no extra barrier.
-    if (stableMessageId && !(input.allowCompactionRecovery && rearmExistingStableMessage)) {
+    // conversation snapshot. Main-owned recovery also persists its new start-run command before
+    // dispatch, even though the user Message already exists in the durable transcript.
+    const mainOwnedRecovery =
+      input.allowCompactionRecovery &&
+      rearmExistingStableMessage &&
+      useSessionStore.getState().sessions.find((candidate) => candidate.id === sessionId)
+        ?.runtimeTranscriptOwner === 'main'
+    if (
+      stableMessageId &&
+      (!(input.allowCompactionRecovery && rearmExistingStableMessage) || mainOwnedRecovery)
+    ) {
       const durableSession = useSessionStore
         .getState()
         .sessions.find((candidate) => candidate.id === sessionId)

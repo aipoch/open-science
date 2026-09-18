@@ -49,7 +49,7 @@ AIPOCH Open-Science는 과학자와 연구자를 위한 AI 연구 워크벤치�
 
 AIPOCH Open-Science는 머신러닝, 통계학, 생명과학, 화학, 재료과학, 물리학, 환경과학을 비롯한 여러 분야의 계산 및 데이터 집약적 연구를 지원합니다. 문헌 검토와 가설 수립부터 코드 실행, 데이터 분석, 시뮬레이션, 시각화, 추적 가능한 연구 결과 생성까지 전체 연구 과정을 지원합니다.
 
-> 💡 **[AIPOCH Open-Science v0.30.2 출시](https://github.com/aipoch/open-science/releases/latest)** _(마지막 업데이트: 2026년 9월)_. AIPOCH Open-Science v0.30.2는 안정성 릴리스입니다. Windows R 런타임이 안정적으로 복구되고(conda 시작, 실행 파일 확인, 커널 복구, 검증된 pip 진입점), Notebook의 같은 턴 입력이 올바르게 재실행되며, 검토자 수정이 연결된 피드백 전반에서 컨텍스트를 유지합니다. 문헌 가져오기는 PubMed 저자의 성과 이니셜을 분리하고 철회 관계를 잡아내며, 커넥터는 Ensembl, VEP, Reactome, UCSC, gnomAD 동작을 다듬고, DeepSeek V4.1 Flash가 모델 카탈로그에 합류합니다. 자세한 내용은 [최신 릴리스 노트](https://github.com/aipoch/open-science/releases/latest)를 확인하세요.
+> 💡 **[AIPOCH Open-Science v0.31.0 출시](https://github.com/aipoch/open-science/releases/latest)** _(마지막 업데이트: 2026년 9월)_. AIPOCH Open-Science v0.31.0에서는 대화 분기, Notebook 기록, 아티팩트, 문헌, 북마크를 포함한 전체 연구 이력을 그대로 가져와 쓰기 가능한 세션을 포크할 수 있으며, 가져온 세션은 계속 읽기 전용으로 유지됩니다. 제품명은 Open-Science로 통일되고 기존 설치와 모든 연구 데이터는 그대로 보존 됩니다. 에이전트 컨텍스트 재구성 후에도 세션 계획이 컨텍스트를 복원하고, 공급자 연결은 저장 전에 검증되며, gnomAD 커넥터가 집단 수준 빈도를 반환할 수 있고, 분기된 세션에는 원본으로 돌아가는 연속 구분선이 표시됩니다. Windows의 R은 보호 모드 설정 없이 표준 모드에서 실행될 수 있고, 커넥터, 대화 상자, 권한 처리도 전반적으로 다듬어졌습니다. 세션 정보 카드는 세션의 번호, 제목, 설명, 원본, 타임스탬프, 메시지 및 아티팩트 수를 표시하고 고정 기능을 제공하며, 자격 증명 프롬프트가 공식 API 키 페이지로 연결됩니다.자세한 내용은 [최신 릴리스 노트](https://github.com/aipoch/open-science/releases/latest)를 확인하세요.
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 히어로 배너: Science, Open to All — 오픈 소스, 모델 독립적, 자체 호스팅 가능한 과학 AI 연구 워크벤치" src="../images/readme/open-science-banner.png" />
