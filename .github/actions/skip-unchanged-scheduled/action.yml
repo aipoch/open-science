@@ -1,0 +1,67 @@
+name: Skip unchanged scheduled revision
+description: >-
+  Decide whether a scheduled run on main still has work to do. A workflow_dispatch always runs.
+  A scheduled run is skipped when the most recent successful scheduled run of the same workflow
+  already covered GITHUB_SHA. With include-dispatch-modes, the most recent successful
+  workflow_dispatch run of the same workflow also counts as coverage. The REST runs API does not
+  expose dispatch inputs, so the mode list cannot be enforced: any successful dispatch of the same
+  SHA counts, whichever mode it selected. Requires GH_TOKEN in the caller's env.
+inputs:
+  workflow-file:
+    description: Workflow file name whose successful runs count as coverage (for example windows-full-test.yml)
+    required: true
+  include-dispatch-modes:
+    description: >-
+      Comma-separated dispatch mode values whose successful workflow_dispatch runs also count as
+      coverage. Documents intent only; the API cannot filter dispatch runs by input.
+    required: false
+    default: ''
+outputs:
+  should_run:
+    description: "'true' when the caller must run, 'false' when GITHUB_SHA is already covered"
+    value: ${{ steps.decide.outputs.should_run }}
+  last_successful_sha:
+    description: Head SHA of the successful run that was compared, empty when none is available
+    value: ${{ steps.decide.outputs.last_successful_sha }}
+runs:
+  using: composite
+  steps:
+    - name: Compare with the last successful run
+      id: decide
+      shell: bash
+      env:
+        WORKFLOW_FILE: ${{ inputs.workflow-file }}
+        INCLUDE_DISPATCH_MODES: ${{ inputs.include-dispatch-modes }}
+      run: |
+        set -euo pipefail
+        if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+          echo "should_run=true" >> "$GITHUB_OUTPUT"
+          echo "last_successful_sha=" >> "$GITHUB_OUTPUT"
+          echo "Manual dispatch always runs $WORKFLOW_FILE for $GITHUB_SHA."
+          exit 0
+        fi
+
+        last_successful_sha() {
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$WORKFLOW_FILE/runs?branch=main&event=$1&status=success&per_page=1" \
+            --jq '.workflow_runs[0].head_sha // ""' 2>/dev/null || true
+        }
+
+        scheduled_sha="$(last_successful_sha schedule)"
+        dispatch_sha=""
+        if [[ -n "$INCLUDE_DISPATCH_MODES" ]]; then
+          dispatch_sha="$(last_successful_sha workflow_dispatch)"
+        fi
+
+        if [[ -n "$scheduled_sha" && "$scheduled_sha" == "$GITHUB_SHA" ]]; then
+          echo "should_run=false" >> "$GITHUB_OUTPUT"
+          echo "last_successful_sha=$scheduled_sha" >> "$GITHUB_OUTPUT"
+          echo "Skipping $WORKFLOW_FILE: a scheduled run already succeeded for $GITHUB_SHA."
+        elif [[ -n "$dispatch_sha" && "$dispatch_sha" == "$GITHUB_SHA" ]]; then
+          echo "should_run=false" >> "$GITHUB_OUTPUT"
+          echo "last_successful_sha=$dispatch_sha" >> "$GITHUB_OUTPUT"
+          echo "Skipping $WORKFLOW_FILE: a manual dispatch (accepted modes: $INCLUDE_DISPATCH_MODES) already succeeded for $GITHUB_SHA."
+        else
+          echo "should_run=true" >> "$GITHUB_OUTPUT"
+          echo "last_successful_sha=${scheduled_sha:-$dispatch_sha}" >> "$GITHUB_OUTPUT"
+          echo "Running $WORKFLOW_FILE for $GITHUB_SHA; last successful scheduled run is ${scheduled_sha:-unavailable}${INCLUDE_DISPATCH_MODES:+, last successful dispatch is ${dispatch_sha:-unavailable}}."
+        fi

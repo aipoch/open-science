@@ -89,11 +89,12 @@ describe('release and scheduled workflow topology', () => {
     expect(windows.permissions).toEqual({ actions: 'read', contents: 'read' })
     expect(plan).toMatchObject({
       'runs-on': 'ubuntu-latest',
-      outputs: { should_test: '${{ steps.decide.outputs.should_test }}' }
+      outputs: { should_test: '${{ steps.decide.outputs.should_run }}' }
     })
-    expect(step(plan, 'Check for untested main changes').run).toContain(
-      'actions/workflows/windows-full-test.yml/runs?branch=main&event=schedule&status=success&per_page=1'
-    )
+    expect(step(plan, 'Check for untested main changes')).toMatchObject({
+      uses: './.github/actions/skip-unchanged-scheduled',
+      with: { 'workflow-file': 'windows-full-test.yml', 'include-dispatch-modes': 'full' }
+    })
     expect(job).toMatchObject({
       needs: ['plan', 'windows_dependencies'],
       if: "${{ needs.plan.outputs.should_test == 'true' && needs.windows_dependencies.result == 'success' && (github.event_name != 'workflow_dispatch' || (inputs.mode == 'full' || inputs.mode == 'regressions')) }}",
@@ -187,9 +188,10 @@ describe('release and scheduled workflow topology', () => {
       group: 'runtime-resource-soak-${{ github.event_name }}-${{ github.ref }}',
       'cancel-in-progress': true
     })
-    expect(step(plan, 'Check for unprofiled main changes').run).toContain(
-      'event=schedule&status=success&per_page=1'
-    )
+    expect(step(plan, 'Check for unprofiled main changes')).toMatchObject({
+      uses: './.github/actions/skip-unchanged-scheduled',
+      with: { 'workflow-file': 'runtime-resource-soak.yml' }
+    })
     expect(soak).toMatchObject({
       needs: 'plan',
       if: "needs.plan.outputs.should_test == 'true' && inputs.mode != 'package-macos-arm64'",
@@ -244,9 +246,15 @@ describe('release and scheduled workflow topology', () => {
           "${{ inputs.dry_run == 'macos-x64' && 'macos-x64' || inputs.dry_run == 'linux-cli' && 'linux-x64' || '' }}"
       }
     })
-    expect(step(nightly.jobs.plan, 'Compare main with the rolling nightly tag').run).toContain(
-      'repos/$GITHUB_REPOSITORY/commits/nightly'
-    )
+    expect(nightly.jobs.plan.outputs).toEqual({
+      should_build: '${{ steps.decide.outputs.should_run }}'
+    })
+    expect(
+      step(nightly.jobs.plan, 'Compare main with the last successful scheduled build')
+    ).toMatchObject({
+      uses: './.github/actions/skip-unchanged-scheduled',
+      with: { 'workflow-file': 'nightly.yml' }
+    })
     expect(nightly.jobs).not.toHaveProperty('publish-dry-run')
     const dispatch = nightly.on?.workflow_dispatch as {
       inputs?: { dry_run?: { default?: string; options?: string[] } }

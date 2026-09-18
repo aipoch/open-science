@@ -30,29 +30,21 @@ jobs:
     name: Check for unprofiled main changes
     runs-on: ubuntu-latest
     outputs:
-      should_test: ${{ steps.decide.outputs.should_test }}
+      should_test: ${{ steps.decide.outputs.should_run }}
     steps:
+      - name: Checkout skip check
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/actions/skip-unchanged-scheduled
+          sparse-checkout-cone-mode: false
       - name: Check for unprofiled main changes
         id: decide
+        uses: ./.github/actions/skip-unchanged-scheduled
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
-            echo "should_test=true" >> "$GITHUB_OUTPUT"
-            echo "Manual dispatch always profiles the selected ref."
-            exit 0
-          fi
-
-          last_successful_sha="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/runtime-resource-soak.yml/runs?branch=main&event=schedule&status=success&per_page=1" --jq '.workflow_runs[0].head_sha // ""' 2>/dev/null || true)"
-          if [[ "$last_successful_sha" == "$GITHUB_SHA" ]]; then
-            echo "should_test=false" >> "$GITHUB_OUTPUT"
-            echo "Runtime resource coverage already passed for $GITHUB_SHA."
-          else
-            echo "should_test=true" >> "$GITHUB_OUTPUT"
-            echo "Latest successful runtime resource coverage is ${last_successful_sha:-unavailable}; profiling $GITHUB_SHA."
-          fi
+          GH_TOKEN: ${{ github.token }}
+        with:
+          workflow-file: runtime-resource-soak.yml
 
   runtime_resource_soak:
     name: Windows runtime resource ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'soak' }}
