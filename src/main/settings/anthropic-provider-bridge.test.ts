@@ -235,7 +235,9 @@ describe('AnthropicProviderBridge', () => {
         authorization: `Bearer ${connection.token}`,
         'content-type': 'application/json',
         'sec-fetch-site': 'same-origin',
-        'x-request-id': 'request-1'
+        'x-request-id': 'request-1',
+        'session-id': 'codex-conversation',
+        'x-opencode-session': 'opencode-conversation'
       },
       body: JSON.stringify({ model: 'ignored', messages: [] })
     })
@@ -243,6 +245,8 @@ describe('AnthropicProviderBridge', () => {
     expect(response.status).toBe(200)
     expect(upstreamHeaders?.get('sec-fetch-site')).toBeNull()
     expect(upstreamHeaders?.get('x-request-id')).toBe('request-1')
+    expect(upstreamHeaders?.get('session-id')).toBe('codex-conversation')
+    expect(upstreamHeaders?.get('x-opencode-session')).toBe('opencode-conversation')
   })
 
   it('logs a redacted upstream connection failure after the loopback request arrives', async () => {
