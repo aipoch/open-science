@@ -4058,6 +4058,31 @@ const delayedSandboxCleanup = (
 }
 
 describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
+  it('reports diagnostics when the REPL exits before replying', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-repl-exit-diagnostic-'))
+    const terminations: unknown[][] = []
+    const executor = new NotebookKernelExecutor({
+      replLoopPath: REPL_LOOP,
+      onTerminated: (...args) => terminations.push(args),
+      terminateTree: async () => ({ reaped: true })
+    })
+
+    try {
+      const result = await executor.execute({
+        ...baseRequest(cwdDir),
+        kind: 'repl',
+        code: 'process.exit(23)'
+      })
+
+      expect(result.status).toBe('failed')
+      expect(result.stderr).toContain('Notebook kernel process exited with exit code 23.')
+      expect(terminations).toHaveLength(1)
+      expect(terminations[0]).toEqual(['repl', '', { reason: 'exit', exitCode: 23, signal: null }])
+    } finally {
+      await executor.shutdown()
+    }
+  })
+
   it.each(['execute', 'restart', 'shutdown'] as const)(
     'retries receipt completion through %s without terminating the same process tree twice',
     async (recovery) => {

@@ -23,7 +23,7 @@ import {
 import { NotebookSessionRegistry } from './session-registry'
 import type { NotebookRuntimeBindingOwner } from './runtime-binding'
 import { DEFAULT_PY_ENV, DEFAULT_R_ENV, resolveEnvName } from './runtime-paths'
-import type { KernelProcessKind } from './kernel-executor'
+import type { KernelProcessKind, NotebookKernelTerminationDiagnostic } from './kernel-executor'
 import {
   createFrameNotebookLane,
   createRootNotebookLane,
@@ -42,7 +42,11 @@ const log = createLogger('notebook:file-evidence-lifecycle')
 
 type NotebookExecutorLifecycleCallbacks = {
   onIdleShutdown: (kind?: KernelProcessKind, env?: string) => Promise<void>
-  onTerminated: (kind: KernelProcessKind, env?: string) => Promise<void>
+  onTerminated: (
+    kind: KernelProcessKind,
+    env?: string,
+    diagnostic?: NotebookKernelTerminationDiagnostic
+  ) => Promise<void>
 }
 
 type NotebookSessionLifecycleCallbacks = {
@@ -399,7 +403,15 @@ class NotebookSessionLifecycleOwner {
             })
           })
         },
-        onTerminated: (kind, env) => {
+        onTerminated: (kind, env, diagnostic) => {
+          if (diagnostic) {
+            log.warn('Notebook kernel process terminated', {
+              lane,
+              kind,
+              env,
+              ...diagnostic
+            })
+          }
           void lifecycle.onTerminated(kind, env).catch((error: unknown) => {
             this.options.onKernelStatusPersistenceFailure?.({
               operation: 'terminated',
