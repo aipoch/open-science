@@ -560,7 +560,24 @@ describe('PR Gate workflow', () => {
     )
     expect(windows?.if).toBeUndefined()
     expect(windows?.run).toContain('--shard=${{ matrix.shard }}/3')
-    expect(workflowText).toContain('--fail-on-flaky-tests')
+  })
+
+  it('lets retries absorb flakes on PR and merge-queue business E2E while scheduled regressions stay strict', () => {
+    for (const [jobId, job] of Object.entries(workflow.jobs)) {
+      for (const step of job.steps ?? []) {
+        expect(step.run ?? '', `${jobId}/${step.id ?? step.name}`).not.toContain(
+          '--fail-on-flaky-tests'
+        )
+      }
+    }
+    for (const strict of [
+      '.github/actions/source-regression/action.yml',
+      '.github/workflows/source-regression.yml'
+    ]) {
+      expect(readFileSync(join(process.cwd(), strict), 'utf8'), strict).toContain(
+        '--fail-on-flaky-tests'
+      )
+    }
   })
 
   it('plans with the trusted base classifier and fails closed during bootstrap', () => {
@@ -1056,10 +1073,10 @@ describe('PR Gate workflow', () => {
     expect(macosRuns?.filter((run) => run === 'npm run build:e2e')).toHaveLength(1)
     expect(macosRuns).toEqual(
       expect.arrayContaining([
-        'npm run test:e2e:journey -- --fail-on-flaky-tests --global-timeout=600000',
-        'npm run test:e2e:workspace -- --fail-on-flaky-tests --global-timeout=900000',
+        'npm run test:e2e:journey -- --global-timeout=600000',
+        'npm run test:e2e:workspace -- --global-timeout=900000',
         'npm run test:e2e:accessibility:signal',
-        'npm run test:e2e:visual -- --fail-on-flaky-tests --global-timeout=300000'
+        'npm run test:e2e:visual -- --global-timeout=300000'
       ])
     )
 
@@ -1067,9 +1084,9 @@ describe('PR Gate workflow', () => {
     expect(windowsRuns?.filter((run) => run === 'npm run build:e2e')).toHaveLength(0)
     expect(windowsRuns).toEqual(
       expect.arrayContaining([
-        'npm run test:e2e:journey -- --workers=1 --fully-parallel --shard=${{ matrix.shard }}/3 --fail-on-flaky-tests --global-timeout=600000',
-        'npm run test:e2e:workspace -- --workers=1 --fully-parallel --shard=${{ matrix.shard }}/3 --fail-on-flaky-tests --global-timeout=900000',
-        'npm run test:e2e:accessibility -- --fail-on-flaky-tests'
+        'npm run test:e2e:journey -- --workers=1 --fully-parallel --shard=${{ matrix.shard }}/3 --global-timeout=600000',
+        'npm run test:e2e:workspace -- --workers=1 --fully-parallel --shard=${{ matrix.shard }}/3 --global-timeout=900000',
+        'npm run test:e2e:accessibility'
       ])
     )
   })
@@ -1099,7 +1116,7 @@ describe('PR Gate workflow', () => {
         `contains(fromJSON(needs.preflight.outputs.plan).lanes, '${lane}')`
       )
       expect(step?.run).toContain('--workers=1 --fully-parallel --shard=${{ matrix.shard }}/3')
-      expect(step?.run).toContain('--fail-on-flaky-tests')
+      expect(step?.run).not.toContain('--fail-on-flaky-tests')
     }
     const uploads = job.steps?.filter(({ name }) =>
       /Upload (functional|workspace)/.test(name ?? '')
@@ -1225,7 +1242,7 @@ describe('PR Gate workflow', () => {
     expect(compatibility).toMatchObject({
       id: 'e2e_accessibility_windows',
       'continue-on-error': true,
-      run: 'npm run test:e2e:accessibility -- --fail-on-flaky-tests'
+      run: 'npm run test:e2e:accessibility'
     })
     expect(compatibility?.if).toContain(
       "contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_accessibility_windows')"
@@ -1260,7 +1277,7 @@ describe('PR Gate workflow', () => {
     )
 
     expect(macosStep?.run).toBe('npm run test:e2e:accessibility:signal')
-    expect(windowsStep?.run).toBe('npm run test:e2e:accessibility -- --fail-on-flaky-tests')
+    expect(windowsStep?.run).toBe('npm run test:e2e:accessibility')
   })
 
   it('retains focused real-Darwin coverage in full plans without another macOS job', () => {
@@ -1538,7 +1555,7 @@ describe('E2E throughput contracts', () => {
     const job = workflow.jobs.windows_e2e
     expect(job.steps?.find(({ id }) => id === 'renderer_layout')?.if).toBeUndefined()
     expect(job.steps?.find(({ id }) => id === 'renderer_layout')).toMatchObject({
-      run: 'npm run test:e2e:browser -- --workers=1 --fail-on-flaky-tests --global-timeout=420000 --shard=${{ matrix.shard }}/3'
+      run: 'npm run test:e2e:browser -- --workers=1 --global-timeout=420000 --shard=${{ matrix.shard }}/3'
     })
     expect(
       job.steps?.find(({ name }) => name === 'Enforce selected Windows E2E checks')?.run

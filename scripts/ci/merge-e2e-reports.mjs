@@ -32,6 +32,16 @@ export function timingRows(report) {
   return rows.sort((a, b) => b.duration - a.duration)
 }
 
+// Retries hide flakes from the PR verdict, so the summary keeps them visible per report.
+export function flakySummary(rows) {
+  const flaky = rows.filter((row) => row.status === 'flaky')
+  if (flaky.length === 0) return 'Flaky (passed on retry): 0'
+  return (
+    `Flaky (passed on retry): ${flaky.length}\n\n` +
+    flaky.map((row) => `- ${row.file}: ${row.title}`).join('\n')
+  )
+}
+
 function files(root) {
   return readdirSync(root, { withFileTypes: true }).flatMap((entry) => {
     const path = join(root, entry.name)
@@ -52,7 +62,7 @@ export function mergeReports(root = 'test-results/downloaded-e2e') {
     if (!Array.isArray(report.suites)) continue
     const rows = timingRows(report)
     sections.push(
-      `### ${path}\n\nWall time: ${((report.stats?.duration ?? 0) / 1000).toFixed(1)}s\n\n| Test | Seconds (including retries) | Status |\n| --- | ---: | --- |\n` +
+      `### ${path}\n\nWall time: ${((report.stats?.duration ?? 0) / 1000).toFixed(1)}s\n\n${flakySummary(rows)}\n\n| Test | Seconds (including retries) | Status |\n| --- | ---: | --- |\n` +
         rows
           .slice(0, 20)
           .map(
