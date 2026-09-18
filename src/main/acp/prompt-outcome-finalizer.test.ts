@@ -2,6 +2,7 @@ import type { PromptResponse } from '@agentclientprotocol/sdk'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { AcpRuntimeEvent } from '../../shared/acp'
+import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
 import type { ContextWindowTurnHandle } from './context-usage-tracker'
 import {
   AcpPromptOutcomeFinalizer,
@@ -122,6 +123,30 @@ const stopped = (
 })
 
 describe('AcpPromptOutcomeFinalizer', () => {
+  it.each([true, false])(
+    'retains failed Notebook stop severity after cleanup (fatal: %s)',
+    async (fatal) => {
+      const harness = createHarness()
+      const error = fatal ? new NotebookExecutionStopError() : new Error('Artifact cleanup failed')
+      harness.handles.disposeArtifact = vi.fn(async () => {
+        throw error
+      })
+      expect(harness.interactions.captureTerminal(harness.interaction, 'cancelled')).toBe(true)
+      const result = new AcpPromptOutcomeFinalizer().finalize(
+        harness.handles,
+        stopped({ stopReason: 'cancelled' })
+      )
+      if (fatal) await expect(result).rejects.toBe(error)
+      else await expect(result).resolves.toMatchObject({ stopReason: 'cancelled' })
+      expect(harness.interactions.current('s1')).toBeUndefined()
+      expect(harness.handles.permission.clearCorrelationsForSession).toHaveBeenCalledOnce()
+      expect(harness.handles.beforeInteractionRelease).toHaveBeenCalledOnce()
+      expect(harness.handles.afterInteractionRelease).toHaveBeenCalledOnce()
+      expect(harness.handles.onPromptEnded).toHaveBeenCalledOnce()
+      expect(harness.handles.skill.close).toHaveBeenCalledWith(fatal ? 'failed' : 'cancelled')
+    }
+  )
+
   it('sequences provider facts, context, Artifact, stop publication, and cleanup', async () => {
     const harness = createHarness({ now: () => 1234 })
     expect(harness.interactions.captureTerminal(harness.interaction, 'stop')).toBe(true)

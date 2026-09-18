@@ -19,14 +19,14 @@ export const sessionUsageMessages = (session: PersistedChatSession): SessionUsag
     ? graph.messages.map((message) => ({
         message,
         isRootFrame: message.agentFrameId === graph.rootFrameId,
-        inherited: !!message.usageOrigin,
+        inherited: !!session.packageOrigin || !!message.usageOrigin,
         runtimeSegmentId: message.runtimeSegmentId,
         parentMessageId: message.parentMessageId
       }))
     : session.messages.map((message, index) => ({
         message,
         isRootFrame: true,
-        inherited: !!message.usageOrigin,
+        inherited: !!session.packageOrigin || !!message.usageOrigin,
         parentMessageId: session.messages[index - 1]?.id
       }))
 

@@ -1,3 +1,4 @@
+import { rebaseTaskSessionBinding, rebaseTaskTurnOntoLatestSession } from './task-admission'
 import { createHash, randomUUID } from 'node:crypto'
 
 import { resolveActiveConversationMessages } from '../../shared/conversation-graph'
@@ -17,6 +18,8 @@ import {
   type SaveSessionOptions,
   type FailTaskSessionRunRequest,
   type SettleTaskSessionCompletionRequest,
+  type BindTaskSessionRequest,
+  type AdmitTaskSessionTurnRequest,
   type StageTaskSessionCompletionRequest,
   type SessionRuntimeContext,
   type SessionRuntimeContextPatch
@@ -33,6 +36,7 @@ import {
 import { mergeMainOwnedRelayProjection } from './relay-projection'
 import { loadSessionMutationAuthority as loadAuthority } from './repository'
 import { saveSessionWithRevision } from './save-session'
+import { preserveImportedSession } from './imported-session'
 
 type SessionMetadata = Readonly<Pick<PersistedChatSession, 'id' | 'projectId' | 'title'>>
 
@@ -81,7 +85,7 @@ type SessionStateRepository = {
   saveSession(
     session: PersistedChatSession,
     expectedRevision?: number
-  ): Promise<PersistedChatSession | void>
+  ): Promise<PersistedChatSession>
 }
 
 type SessionStateFileIndex = {
@@ -686,6 +690,46 @@ class SessionPersistenceStateOwner {
     )
   }
 
+  async bindTaskSession(command: BindTaskSessionRequest): Promise<PersistedChatSession> {
+    const { projectId, id } = command.session
+    this.options.assertMutable(projectId, id, 'mutate')
+    const loaded = await loadAuthority(this.options.repository, projectId, id)
+    if (loaded.status !== 'found')
+      throw new Error(`Cannot bind Task provider for a ${loaded.status} Session.`)
+    if (loaded.session.archivedAt !== undefined)
+      throw new Error('Cannot bind a Task provider to an archived Session.')
+    return this.saveSession(rebaseTaskSessionBinding(loaded.session, command))
+  }
+
+  async admitTaskTurn(command: AdmitTaskSessionTurnRequest): Promise<PersistedChatSession> {
+    const prepared = command.session
+    this.options.assertMutable(prepared.projectId, prepared.id, 'mutate')
+    const loaded = await loadAuthority(this.options.repository, prepared.projectId, prepared.id)
+    if (loaded.status !== 'found')
+      throw new Error(`Cannot admit Task turn for a ${loaded.status} Session.`)
+    const latest = loaded.session
+    if (latest.archivedAt !== undefined)
+      throw new Error('Cannot admit a Task turn to an archived Session.')
+    if (
+      latest.activeRun &&
+      latest.activeRun.promptMessageId !== prepared.activeRun?.promptMessageId
+    ) {
+      throw new Error('Session already has an active run.')
+    }
+    const latestGraph = materializeSessionConversationGraph(latest).conversationGraph
+    const preparedGraph = materializeSessionConversationGraph(prepared).conversationGraph
+    if (
+      latestGraph.activeFrameId !== preparedGraph.activeFrameId ||
+      latestGraph.frames.find((frame) => frame.id === latestGraph.activeFrameId)?.activeBranchId !==
+        preparedGraph.frames.find((frame) => frame.id === preparedGraph.activeFrameId)
+          ?.activeBranchId
+    ) {
+      throw new Error('The active conversation branch changed before Task prompt admission.')
+    }
+    const candidate = rebaseTaskTurnOntoLatestSession(latest, prepared, command.contextReset)
+    return this.saveSession(candidate)
+  }
+
   async stageTaskCompletion(
     command: StageTaskSessionCompletionRequest
   ): Promise<PersistedChatSession> {
@@ -902,6 +946,13 @@ class SessionPersistenceStateOwner {
       )
     }
     const authority = authoritative.status === 'found' ? authoritative.session : undefined
+    session = {
+      ...session,
+      forkOrigin: authority?.forkOrigin,
+      forkHeadMessageId: authority?.forkHeadMessageId
+    }
+    if (authority?.packageOrigin) session = preserveImportedSession(authority, session)
+    else if (session.packageOrigin) session = { ...session, packageOrigin: undefined }
     const { session: submittedSession, expectedRevision } = resolveRevisionedSessionSave(
       authority,
       session,

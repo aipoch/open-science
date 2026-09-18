@@ -7,6 +7,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as React from 'react'
 
+import { useSettingsStore } from '@/stores/settings-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { createInitialMemoryState, useMemoryStore } from '@/stores/memory-store'
 import {
@@ -20,6 +21,8 @@ import {
   useSessionStore,
   type ChatSession
 } from '@/stores/session-store'
+import type { PersistedChatSession } from '../../../../shared/session-persistence'
+import { resetSessionPersistenceWriteFailuresForTests } from '@/lib/session-persistence/session-persistence'
 import type { ReviewWithChecks } from '../../../../shared/reviewer'
 import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
 
@@ -43,6 +46,7 @@ const runtime = vi.hoisted(() => ({
   cancelRun: vi.fn().mockResolvedValue(undefined),
   deleteRuntimeSession: vi.fn(),
   respondToPermission: vi.fn(),
+  setPermissionProfile: vi.fn().mockResolvedValue(true),
   setMemoryEnabled: vi.fn()
 }))
 
@@ -69,6 +73,7 @@ vi.mock('@/lib/acp/useWorkspaceAgentRuntime', () => ({
     cancelRun: runtime.cancelRun,
     deleteRuntimeSession: runtime.deleteRuntimeSession,
     respondToPermission: runtime.respondToPermission,
+    setPermissionProfile: runtime.setPermissionProfile,
     setMemoryEnabled: runtime.setMemoryEnabled
   })
 }))
@@ -117,6 +122,15 @@ const createSession = (overrides: Partial<ChatSession> = {}): ChatSession => {
 const createReviewableSession = (): ChatSession =>
   createSession({
     messages: [
+      {
+        id: 'user-before-analysis',
+        role: 'user',
+        content: 'Analyze',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 0,
+        updatedAt: 0
+      },
       {
         id: 'agent-1',
         role: 'agent',
@@ -250,6 +264,79 @@ describe('WorkspacePage send gate while compacting', () => {
       )
     })
   }
+
+  it.each(['codex-shared', 'codex-isolated'] as const)(
+    'keeps Side chat available when the global main provider changes to %s',
+    async (type) => {
+      useSessionStore.setState({ sessions: [createReviewableSession()] })
+      await renderPage()
+      await act(async () => {
+        conversationProps.composer.actions.changeDoc(textDoc('Ask on the side'))
+      })
+      expect(conversationProps.view.sideChatDisabledReason).toBeUndefined()
+
+      await act(async () => {
+        useSettingsStore.setState({
+          activeProviderId: 'builtin-codex-subscription',
+          activeModel: 'gpt-5.6-luna',
+          providers: [
+            {
+              id: 'builtin-codex-subscription',
+              type,
+              name: 'Codex subscription',
+              models: ['gpt-5.6-luna'],
+              hasKey: true,
+              needsKey: false,
+              supportsImageInput: true
+            }
+          ]
+        })
+      })
+
+      expect(conversationProps.view.sideChatDisabledReason).toBeUndefined()
+    }
+  )
+
+  it('saves the selected branch before stopping its Subagents', async () => {
+    let releaseSave: (() => void) | undefined
+    const saveSession = vi.fn(
+      (session: PersistedChatSession) =>
+        new Promise<PersistedChatSession>((resolve) => {
+          releaseSave = () => resolve(session)
+        })
+    )
+    window.api.sessions = { saveSession } as never
+    const cancel = vi.fn().mockResolvedValue(undefined)
+    window.api.acp.cancel = cancel
+    await renderPage()
+    const stopping = Promise.resolve(conversationProps.subagents?.stop?.())
+    try {
+      expect(cancel).not.toHaveBeenCalled()
+      await vi.waitFor(() => expect(saveSession).toHaveBeenCalledOnce())
+      expect(saveSession.mock.calls[0][0].id).toBe('sess-a')
+      expect(cancel).not.toHaveBeenCalled()
+      releaseSave!()
+      await stopping
+      expect(cancel).toHaveBeenCalledExactlyOnceWith({ sessionId: 'sess-a', scope: 'subagents' })
+    } finally {
+      releaseSave?.()
+      await stopping
+    }
+  })
+
+  it('propagates a branch save failure without sending a Subagent Stop', async () => {
+    const error = new Error('Session storage unavailable')
+    window.api.sessions = { saveSession: vi.fn().mockRejectedValue(error) } as never
+    const cancel = vi.fn().mockResolvedValue(undefined)
+    window.api.acp.cancel = cancel
+    await renderPage()
+    try {
+      await expect(Promise.resolve(conversationProps.subagents?.stop?.())).rejects.toBe(error)
+      expect(cancel).not.toHaveBeenCalled()
+    } finally {
+      resetSessionPersistenceWriteFailuresForTests()
+    }
+  })
 
   it('disables sending while the active session is compacting, and re-enables after', async () => {
     await renderPage()
@@ -1066,7 +1153,41 @@ describe('WorkspacePage send gate while compacting', () => {
     expect(conversationProps.agentControls.canChangeAutoReview).toBe(true)
     expect(conversationProps.agentControls.canChangeMemory).toBe(true)
     expect(conversationProps.agentControls.canChangeSpecialist).toBe(true)
-    expect(conversationProps.permissions.canChangePermissionProfile).toBe(false)
+    expect(conversationProps.permissions.canChangePermissionProfile).toBe(true)
+    await act(async () => conversationProps.permissions.changeProfile('ask'))
+    expect(runtime.setPermissionProfile).toHaveBeenCalledWith('sess-a', 'ask')
+    expect(conversationProps.view.sideChatDisabledReason).toBeUndefined()
+    expect(useSessionStore.getState().sessions[0].pendingHistoryReplay).toEqual({ kind: 'all' })
+  })
+
+  it.each(['creating', 'preparing', 'compacting'] as const)(
+    'keeps permission changes blocked while a replay Session is %s',
+    async (phase) => {
+      useSessionStore.setState({
+        sessions: [
+          createSession({
+            pendingHistoryReplay: { kind: 'all' },
+            isPending: phase === 'creating',
+            compacting: phase === 'compacting'
+          })
+        ]
+      })
+      if (phase === 'preparing') runtime.sendPreparationInFlightSessionIds = ['sess-a']
+      await renderPage()
+
+      expect(conversationProps.permissions.canChangePermissionProfile).toBe(false)
+      await act(async () => conversationProps.permissions.changeProfile('full'))
+      expect(runtime.setPermissionProfile).not.toHaveBeenCalled()
+      expect(useSessionStore.getState().sessions[0].pendingHistoryReplay).toEqual({ kind: 'all' })
+    }
+  )
+
+  it('keeps Side chat blocked while the parent Session is still being created', async () => {
+    useSessionStore.setState({
+      sessions: [{ ...createReviewableSession(), isPending: true }]
+    })
+    await renderPage()
+
     expect(conversationProps.view.sideChatDisabledReason).toBe(
       'Resolve the current Session operation first.'
     )

@@ -1,0 +1,41 @@
+{
+  "ownerPaths": [
+    "src/renderer/src/components/global-search/GlobalSearchDialog.i18n.render.test.tsx",
+    "src/renderer/src/components/global-search/GlobalSearchDialog.test.tsx",
+    "src/renderer/src/components/global-search/GlobalSearchDialog.tsx",
+    "src/renderer/src/components/global-search/SearchContentHighlight.test.tsx",
+    "src/renderer/src/components/global-search/SearchContentHighlight.tsx",
+    "src/renderer/src/components/global-search/SearchDetailHeader.tsx",
+    "src/renderer/src/components/global-search/SearchDetails.tsx",
+    "src/renderer/src/components/global-search/SearchFilePreview.tsx",
+    "src/renderer/src/components/global-search/SearchHighlight.tsx",
+    "src/renderer/src/components/global-search/SearchResultFilters.tsx",
+    "src/renderer/src/components/global-search/global-search-catalog.test.ts",
+    "src/renderer/src/components/global-search/global-search-catalog.ts",
+    "src/renderer/src/components/global-search/global-search.css",
+    "src/renderer/src/components/global-search/global-search.test-support.tsx",
+    "src/renderer/src/components/global-search/search-content-ranges.ts",
+    "src/renderer/src/components/global-search/search-result.ts",
+    "src/renderer/src/components/global-search/use-search-results.ts",
+    "src/renderer/src/components/global-search/use-search-summary-counts.ts"
+  ],
+  "interfacePaths": ["src/renderer/src/components/global-search/GlobalSearchDialog.tsx"],
+  "consumerModules": [],
+  "testFiles": {
+    "owner": [
+      "src/renderer/src/components/global-search/GlobalSearchDialog.i18n.render.test.tsx",
+      "src/renderer/src/components/global-search/GlobalSearchDialog.test.tsx",
+      "src/renderer/src/components/global-search/SearchContentHighlight.test.tsx",
+      "src/renderer/src/components/global-search/global-search-catalog.test.ts"
+    ],
+    "contract": [],
+    "consumer": [
+      "src/renderer/src/App.test.tsx",
+      "src/renderer/src/main.render.test.tsx",
+      "src/renderer/web/bootstrap.test.ts",
+      "src/renderer/web/renderer-argument-shape-characterization.test.ts"
+    ]
+  },
+  "capabilityOverlays": [],
+  "fallbackCapability": "renderer_view"
+}

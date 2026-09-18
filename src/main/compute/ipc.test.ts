@@ -133,6 +133,25 @@ describe('compute handlers', () => {
     })
   })
 
+  it('passes the complete owner tuple to result collection without submitting a new job', async () => {
+    const retryJobHarvest = vi.fn(async () => undefined)
+    const submitJob = vi.fn()
+    const handlers = createComputeHandlers(
+      mockRepository({}),
+      undefined,
+      mockService({ retryJobHarvest, submitJob })
+    )
+    const request = {
+      jobId: 'job',
+      providerId: 'ssh:test',
+      sessionId: 'session',
+      projectId: 'project'
+    }
+    await handlers.jobsRetryHarvest(request)
+    expect(retryJobHarvest).toHaveBeenCalledExactlyOnceWith(request)
+    expect(submitJob).not.toHaveBeenCalled()
+  })
+
   it('passes the complete renderer owner tuple to cancellation', async () => {
     const cancelJob = vi.fn(async () => ({
       job_id: 'job-1',
@@ -1736,6 +1755,7 @@ describe('toJobSummary — harvest features and left_on_remote parsing', () => {
   })
 
   afterEach(async () => {
+    vi.unstubAllEnvs()
     await rm(storageRoot, { recursive: true, force: true })
   })
 
@@ -1906,6 +1926,7 @@ describe('createJobUpdatedBroadcaster', () => {
   })
 
   afterEach(async () => {
+    vi.unstubAllEnvs()
     await rm(storageRoot, { recursive: true, force: true })
   })
 
@@ -2215,6 +2236,7 @@ describe('compute handlers — jobsPendingNotification', () => {
   })
 
   afterEach(async () => {
+    vi.unstubAllEnvs()
     await rm(storageRoot, { recursive: true, force: true })
   })
 
@@ -2566,11 +2588,16 @@ describe('installComputeIpcHandlers', () => {
   beforeEach(async () => {
     handlers.clear()
     storageRoot = await mkdtemp(join(tmpdir(), 'compute-ipc-register-'))
+    vi.stubEnv('OPEN_SCIENCE_CONFIG_ROOT', storageRoot)
     process.env.OPEN_SCIENCE_STORAGE_ROOT = storageRoot
+    const { initializeDataLocation } = await import('../storage/initialize-location')
+    const { SettingsRepository } = await import('../settings/repository')
+    await initializeDataLocation(new SettingsRepository(storageRoot))
   })
 
   afterEach(async () => {
     delete process.env.OPEN_SCIENCE_STORAGE_ROOT
+    vi.unstubAllEnvs()
     await rm(storageRoot, { recursive: true, force: true })
   })
 
@@ -2651,6 +2678,7 @@ describe('installComputeIpcHandlers', () => {
       'compute:jobs:set-remote-cleanup',
       COMPUTE_JOBS_LIST_CHANNEL,
       'compute:jobs:pending-notification',
+      'compute:jobs:retry-harvest',
       'compute:jobs:mark-consumed',
       'compute:jobs:transition-analysis',
       'compute:enabled-hosts:get',
@@ -2905,11 +2933,16 @@ describe('installComputeIpcHandlers — remoteFsError serialization', () => {
   beforeEach(async () => {
     handlers.clear()
     storageRoot = await mkdtemp(join(tmpdir(), 'compute-ipc-err-'))
+    vi.stubEnv('OPEN_SCIENCE_CONFIG_ROOT', storageRoot)
     process.env.OPEN_SCIENCE_STORAGE_ROOT = storageRoot
+    const { initializeDataLocation } = await import('../storage/initialize-location')
+    const { SettingsRepository } = await import('../settings/repository')
+    await initializeDataLocation(new SettingsRepository(storageRoot))
   })
 
   afterEach(async () => {
     delete process.env.OPEN_SCIENCE_STORAGE_ROOT
+    vi.unstubAllEnvs()
     await rm(storageRoot, { recursive: true, force: true })
   })
 

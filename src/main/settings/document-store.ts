@@ -1,25 +1,20 @@
+import { validateSettingsDocumentShape } from './document-shape'
+import { settingsDocumentReadError } from './document-read-error'
+import {
+  assertCredentialAccessAllowed,
+  credentialAccessInstalled
+} from '../credential-identity/runtime'
+import { renameSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { SETTINGS_FILE_VERSION } from '../../shared/settings'
-import {
-  DurableJsonRecoveryBarrierError,
-  readDurableJsonFile,
-  writeDurableJsonFile
-} from '../storage/durable-json-file'
+import { readDurableJsonFile, writeDurableJsonFile } from '../storage/durable-json-file'
 import { sanitizeSettings } from './document-codec'
 import { createEmptySettings, type StoredSettings } from './types'
 import { isRecord } from '../value-guards'
 import { SETTINGS_RESOURCE_LIMITS } from './settings-resource-limits'
 
 const SETTINGS_FILE = 'settings.json'
-
-class UnsupportedSettingsDocumentVersionError extends DurableJsonRecoveryBarrierError {
-  constructor(version: number) {
-    super(
-      `Settings document version ${version} is newer than supported version ${SETTINGS_FILE_VERSION}.`
-    )
-  }
-}
 
 const migrateSettingsDocument = (value: unknown): StoredSettings | undefined => {
   if (!isRecord(value)) return undefined
@@ -38,10 +33,7 @@ const migrateSettingsDocument = (value: unknown): StoredSettings | undefined => 
 
 const decodeSettingsDocument = (contents: string): StoredSettings => {
   const value: unknown = JSON.parse(contents)
-  const version = isRecord(value) ? value.version : undefined
-  if (Number.isSafeInteger(version) && Number(version) > SETTINGS_FILE_VERSION) {
-    throw new UnsupportedSettingsDocumentVersionError(Number(version))
-  }
+  validateSettingsDocumentShape(value)
   const migrated = migrateSettingsDocument(value)
   if (!migrated) throw new Error('Settings document is corrupt.')
   return migrated
@@ -59,21 +51,27 @@ class SettingsDocumentStore {
   }
 
   async read(): Promise<StoredSettings> {
-    const result = await readDurableJsonFile(
-      this.path,
-      decodeSettingsDocument,
-      {},
-      {
-        maxBytes: SETTINGS_RESOURCE_LIMITS.documentBytes
-      }
-    )
-    return result.status === 'found' ? result.value : createEmptySettings()
+    assertCredentialAccessAllowed()
+    try {
+      const result = await readDurableJsonFile(
+        this.path,
+        decodeSettingsDocument,
+        {},
+        { maxBytes: SETTINGS_RESOURCE_LIMITS.documentBytes }
+      )
+      return result.status === 'found' ? result.value : createEmptySettings()
+    } catch (cause) {
+      throw settingsDocumentReadError(this.path, cause)
+    }
   }
 
-  mutate(update: (settings: StoredSettings) => StoredSettings): Promise<StoredSettings> {
+  mutate(
+    update: (settings: StoredSettings) => StoredSettings,
+    beforePublish?: () => void
+  ): Promise<StoredSettings> {
     const result = this.mutationTail.then(async () => {
       const next = update(await this.read())
-      await this.write(next)
+      await this.write(next, beforePublish)
       return next
     })
     this.mutationTail = result.then(
@@ -83,14 +81,29 @@ class SettingsDocumentStore {
     return result
   }
 
-  private async write(settings: StoredSettings): Promise<void> {
+  private async write(settings: StoredSettings, beforePublish?: () => void): Promise<void> {
+    assertCredentialAccessAllowed()
     const contents = `${JSON.stringify(settings, null, 2)}\n`
     if (Buffer.byteLength(contents, 'utf8') > SETTINGS_RESOURCE_LIMITS.documentBytes) {
       throw new Error(
         `Settings document exceeds the ${SETTINGS_RESOURCE_LIMITS.documentBytes} byte limit.`
       )
     }
-    await writeDurableJsonFile(this.path, contents)
+    await writeDurableJsonFile(
+      this.path,
+      contents,
+      beforePublish || credentialAccessInstalled()
+        ? {
+            // Recheck on every atomic publish retry; a concurrent failed secret read must not allow an
+            // already queued settings rewrite to discard the original encrypted values.
+            rename: async (source, destination) => {
+              assertCredentialAccessAllowed()
+              beforePublish?.()
+              renameSync(source, destination)
+            }
+          }
+        : {}
+    )
   }
 }
 

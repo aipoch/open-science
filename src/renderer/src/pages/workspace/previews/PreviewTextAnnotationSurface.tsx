@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Check, Copy, ListCollapse, MessageCircleQuestionMark, Quote } from 'lucide-react'
+import {
+  Bookmark as BookmarkIcon,
+  Check,
+  Copy,
+  ListCollapse,
+  MessageCircleQuestionMark,
+  Quote
+} from 'lucide-react'
 
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import {
@@ -12,10 +19,17 @@ import {
 import { parseArtifactVersionLocator } from '../../../../../shared/artifact-provenance'
 import { parseUploadVersionReference } from '../../../../../shared/uploads'
 import type { PreviewFileRendererProps } from './preview-types'
+import type { TextBookmarkTarget } from '../../../../../shared/bookmarks'
+import type { PdfBookmarkSource, PdfBookmarkTarget } from '../../../../../shared/pdf-bookmarks'
+import { useBookmarks } from '../bookmarks/bookmark-context'
+import { BookmarkMarker } from '../bookmarks/BookmarkMarker'
 import {
   revealTextAnnotationRange,
   subscribeAnnotationReveal,
   subscribeAnnotationRevealPreparation,
+  subscribeBookmarkReveal,
+  subscribeBookmarkRevealPreparation,
+  type BookmarkRevealTarget,
   retryPendingAnnotationReveal
 } from '../annotations/annotation-reveal'
 import { isBackwardSelection } from '../annotations/annotation-trigger-anchor'
@@ -37,11 +51,17 @@ import {
 type RangeAnnotation = TextAnnotation
 
 type SelectionDraft = Readonly<{
+  bookmarkId: string
   quote: string
   backward: boolean
   range: Range
   occurrence: number
 }>
+
+const createBookmarkId = (): string =>
+  globalThis.crypto?.randomUUID
+    ? `bookmark-${globalThis.crypto.randomUUID()}`
+    : `bookmark-${Date.now()}-${Math.random().toString(36).slice(2)}`
 
 type PdfSelectionSegment = Readonly<{
   text: string
@@ -228,6 +248,48 @@ const belongsToPreview = (
   return pageNumber === undefined
 }
 
+const textBookmarkBelongsToPreview = (
+  target: Extract<BookmarkRevealTarget, { kind: 'text' }>,
+  item: PreviewFileItem,
+  pageNumber?: number,
+  annotationVersionId?: string
+): boolean => {
+  const source = target.source
+  if (
+    source.kind !== 'project-file' ||
+    !item.projectId ||
+    source.projectId !== item.projectId ||
+    pageNumber !== undefined
+  )
+    return false
+  const versionId = projectFileVersionId(item, annotationVersionId)
+  const managedIdentity = resolveManagedProjectFileAnnotationIdentity(source)
+  if (managedIdentity === null) return false
+  if (item.managedFileId) {
+    const itemSource = item.source === 'upload' ? 'upload' : 'artifact'
+    return (
+      managedIdentity !== undefined &&
+      managedIdentity.fileId === item.managedFileId &&
+      managedIdentity.fileSource === itemSource &&
+      managedIdentity.versionId === versionId
+    )
+  }
+  return (
+    source.projectId === item.projectId &&
+    source.path === item.path &&
+    source.versionId === versionId
+  )
+}
+
+const getBookmarkHighlight = (): Highlight | undefined => {
+  if (typeof Highlight === 'undefined' || !globalThis.CSS?.highlights) return undefined
+  const existing = CSS.highlights.get('preview-personal-bookmark')
+  if (existing) return existing
+  const highlight = new Highlight()
+  CSS.highlights.set('preview-personal-bookmark', highlight)
+  return highlight
+}
+
 const getDraftHighlight = (): Highlight | undefined => {
   if (typeof Highlight === 'undefined' || !globalThis.CSS?.highlights) return undefined
   if (!document.getElementById(DRAFT_HIGHLIGHT_STYLE_ID)) {
@@ -254,28 +316,39 @@ export const PreviewTextAnnotationSurface = ({
   annotationVersionPending = false,
   onAddAnnotation,
   onUpdateAnnotationNote,
+  onRemoveAnnotation,
   onAnnotationError,
   sourcePageNumber,
   pdfEvidenceSource,
+  pdfBookmarkSource,
+  pdfPageRotation,
   pdfExtractorVersion,
   onAnnotationAdded,
   children
 }: PreviewFileRendererProps & {
   sourcePageNumber?: number
   pdfEvidenceSource?: PdfAnnotation['source']
+  pdfBookmarkSource?: PdfBookmarkSource
+  pdfPageRotation?: number
   pdfExtractorVersion?: string
   onAnnotationAdded?: () => void
   children: React.ReactNode
 }): React.JSX.Element => {
   const { t } = useTranslation()
+  const bookmarks = useBookmarks()
   const surfaceRef = useRef<HTMLDivElement | null>(null)
   const contentRef = useRef<HTMLDivElement | null>(null)
   const ownedRanges = useRef(new Map<string, Range>())
+  const ownedBookmarkRanges = useRef(new Map<string, Range>())
+  const [bookmarkMarkers, setBookmarkMarkers] = useState<
+    readonly { id: string; left: number; top: number; note: string }[]
+  >([])
   const pendingRangeRef = useRef<Range | null>(null)
   const copiedResetRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const [selection, setSelection] = useState<SelectionDraft>()
   const selectionRef = useRef(selection)
   const [open, setOpen] = useState(false)
+  const [editorDestination, setEditorDestination] = useState<'agent' | 'bookmark'>('agent')
   const [note, setNote] = useState('')
   const [revealUnavailable, setRevealUnavailable] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -295,6 +368,23 @@ export const PreviewTextAnnotationSurface = ({
           belongsToPreview(annotation, item, sourcePageNumber, annotationVersionId)
       ),
     [activeAnnotations, annotationVersionId, item, sourcePageNumber]
+  )
+
+  const matchingBookmarks = useMemo(
+    () =>
+      annotationVersionPending
+        ? []
+        : bookmarks.bookmarks.filter(
+            (bookmark) =>
+              bookmark.target.kind === 'text' &&
+              textBookmarkBelongsToPreview(
+                { id: bookmark.id, ...bookmark.target },
+                item,
+                sourcePageNumber,
+                annotationVersionId
+              )
+          ),
+    [annotationVersionPending, bookmarks.bookmarks, item, sourcePageNumber, annotationVersionId]
   )
 
   const measureAnnotationControls = useCallback((): void => {
@@ -321,7 +411,22 @@ export const PreviewTextAnnotationSurface = ({
         ]
       })
     )
-  }, [matchingAnnotations])
+    setBookmarkMarkers(
+      matchingBookmarks.flatMap((bookmark) => {
+        const range = ownedBookmarkRanges.current.get(bookmark.id)
+        const rect = Array.from(range?.getClientRects?.() ?? []).at(-1)
+        if (!rect || (rect.width === 0 && rect.height === 0)) return []
+        return [
+          {
+            id: bookmark.id,
+            note: bookmark.note,
+            left: rect.right - surfaceRect.left + 1,
+            top: rect.top - surfaceRect.top - 3
+          }
+        ]
+      })
+    )
+  }, [matchingAnnotations, matchingBookmarks])
 
   const trackAnnotatedTextHover = (event: React.PointerEvent<HTMLDivElement>): void => {
     const hovered = matchingAnnotations.find((annotation) => {
@@ -376,9 +481,19 @@ export const PreviewTextAnnotationSurface = ({
       ownedRanges.current
     )
     for (const range of ownedRanges.current.values()) highlight.add(range)
+    const bookmarkHighlight = getBookmarkHighlight()
+    for (const range of ownedBookmarkRanges.current.values()) bookmarkHighlight?.delete(range)
+    ownedBookmarkRanges.current = reconcileTextAnnotationRanges(
+      content,
+      matchingBookmarks.flatMap((bookmark) =>
+        bookmark.target.kind === 'text' ? [{ id: bookmark.id, ...bookmark.target }] : []
+      ),
+      ownedBookmarkRanges.current
+    )
+    for (const range of ownedBookmarkRanges.current.values()) bookmarkHighlight?.add(range)
     measureAnnotationControls()
     retryPendingAnnotationReveal()
-  }, [matchingAnnotations, measureAnnotationControls])
+  }, [matchingAnnotations, matchingBookmarks, measureAnnotationControls])
 
   useLayoutEffect(() => {
     reconcilePreviewHighlights()
@@ -424,6 +539,9 @@ export const PreviewTextAnnotationSurface = ({
   useLayoutEffect(
     () => () => {
       if (copiedResetRef.current) clearTimeout(copiedResetRef.current)
+      const bookmarkHighlight = getBookmarkHighlight()
+      for (const range of ownedBookmarkRanges.current.values()) bookmarkHighlight?.delete(range)
+      ownedBookmarkRanges.current.clear()
       const highlight = getDraftHighlight()
       if (!highlight) return
       for (const range of ownedRanges.current.values()) highlight.delete(range)
@@ -482,7 +600,11 @@ export const PreviewTextAnnotationSurface = ({
     // While the note editor is open the draft is frozen; stray mouseup/keyup
     // events from the surface must neither replace nor drop it.
     if (open) return
-    if (annotationVersionPending || (!source && !pdfEvidenceSource) || !onAddAnnotation) {
+    if (
+      annotationVersionPending ||
+      (!source && !pdfEvidenceSource && !pdfBookmarkSource) ||
+      (!onAddAnnotation && !bookmarks.available)
+    ) {
       clearDraft()
       return
     }
@@ -498,7 +620,11 @@ export const PreviewTextAnnotationSurface = ({
       clearDraft()
       return
     }
-    const quote = selected.toString().trim()
+    // PDF.js visually separates lines with layout/BRs. Selection.toString() inserts
+    // line breaks that Range.toString() and the DOM text index do not contain.
+    const quote = (
+      pdfEvidenceSource || pdfBookmarkSource ? range.toString() : selected.toString()
+    ).trim()
     if (!quote) {
       clearDraft()
       return
@@ -510,6 +636,7 @@ export const PreviewTextAnnotationSurface = ({
       ? (retargetTextAnnotationRange(content, quote, cloned, occurrence) ?? cloned)
       : cloned
     setSelection({
+      bookmarkId: createBookmarkId(),
       quote,
       backward: isBackwardSelection(selected),
       range: exactRange,
@@ -560,6 +687,39 @@ export const PreviewTextAnnotationSurface = ({
       stopReveal()
     }
   }, [matchingAnnotations, item, sourcePageNumber, annotationVersionId, annotationVersionPending])
+
+  useLayoutEffect(() => {
+    let prepared: Extract<BookmarkRevealTarget, { kind: 'text' }> | undefined
+    const stopPreparation = subscribeBookmarkRevealPreparation((target) => {
+      prepared =
+        target.kind === 'text' &&
+        textBookmarkBelongsToPreview(target, item, sourcePageNumber, annotationVersionId)
+          ? target
+          : undefined
+      setRevealUnavailable(false)
+    })
+    const stopReveal = subscribeBookmarkReveal((target) => {
+      if (
+        annotationVersionPending ||
+        target.kind !== 'text' ||
+        !textBookmarkBelongsToPreview(target, item, sourcePageNumber, annotationVersionId)
+      ) {
+        return
+      }
+      const bookmark = prepared?.id === target.id ? prepared : target
+      const content = contentRef.current
+      if (!content) return
+      const range = reconcileTextAnnotationRanges(content, [bookmark], new Map()).get(target.id)
+      setRevealUnavailable(!range)
+      if (!range) return 'locator-unsupported'
+      revealTextAnnotationRange(range)
+      return true
+    })
+    return () => {
+      stopPreparation()
+      stopReveal()
+    }
+  }, [annotationVersionId, annotationVersionPending, item, sourcePageNumber])
 
   const add = (noteValue = note): void => {
     if (
@@ -617,12 +777,54 @@ export const PreviewTextAnnotationSurface = ({
     onAnnotationAdded?.()
   }
 
+  const saveBookmark = async (noteValue: string): Promise<void> => {
+    if (!selection || !bookmarks.available) return
+    let target: TextBookmarkTarget | PdfBookmarkTarget | undefined
+    if (
+      pdfBookmarkSource &&
+      sourcePageNumber !== undefined &&
+      pdfExtractorVersion &&
+      pdfPageRotation !== undefined
+    ) {
+      const selector = pdfTextSelectorForRange(
+        contentRef.current!,
+        selection.range,
+        sourcePageNumber,
+        pdfExtractorVersion,
+        surfaceRef.current!
+      )
+      if (selector) {
+        target = {
+          kind: 'pdf',
+          source: pdfBookmarkSource,
+          selector: {
+            ...selector,
+            pageRotation: pdfPageRotation,
+            coordinateVersion: 1
+          }
+        }
+      }
+    } else if (source) {
+      target = {
+        kind: 'text',
+        quote: selection.quote,
+        anchor: textAnnotationAnchorForRange(contentRef.current!, selection.range),
+        source
+      }
+    }
+    if (!target) throw new Error('The selected source cannot be bookmarked.')
+    await bookmarks.create(selection.bookmarkId, target, noteValue)
+    clearDraft()
+    window.getSelection()?.removeAllRanges()
+    onAnnotationAdded?.()
+  }
+
   const copySelection = useCallback(async (): Promise<void> => {
     const clipboard = navigator.clipboard
     if (!selection || !clipboard) return
     const contentSurface = contentRef.current
     const content =
-      pdfEvidenceSource && contentSurface
+      (pdfEvidenceSource || pdfBookmarkSource) && contentSurface
         ? pdfClipboardContent(contentSurface, selection.range, selection.quote)
         : { plainText: selection.quote, html: undefined }
     try {
@@ -650,42 +852,63 @@ export const PreviewTextAnnotationSurface = ({
     } catch {
       setCopied(false)
     }
-  }, [pdfEvidenceSource, selection])
+  }, [pdfBookmarkSource, pdfEvidenceSource, selection])
 
   const canCopy = Boolean(navigator.clipboard)
 
-  const triggerActions: readonly AnnotationTriggerAction[] | undefined = pdfEvidenceSource
-    ? [
-        {
-          id: 'citate',
-          label: t('Citate'),
-          icon: Quote,
-          showLabel: true,
-          primary: true,
-          onActivate: () => add('')
-        },
-        {
-          id: 'explain',
-          label: t('Explain'),
-          icon: MessageCircleQuestionMark,
-          onActivate: () => add(t('Explain this passage.'))
-        },
-        {
-          id: 'summarize',
-          label: t('Summarize'),
-          icon: ListCollapse,
-          onActivate: () => add(t('Summarize this passage.'))
-        },
-        {
-          id: 'copy',
-          label: copied ? t('Copied') : t('Copy'),
-          icon: copied ? Check : Copy,
-          disabled: !canCopy,
-          availableWhenAnnotationBlocked: true,
-          onActivate: () => void copySelection()
-        }
-      ]
-    : undefined
+  const triggerActions: readonly AnnotationTriggerAction[] | undefined =
+    pdfEvidenceSource || pdfBookmarkSource
+      ? [
+          ...(pdfEvidenceSource
+            ? [
+                {
+                  id: 'citate',
+                  label: t('Citate'),
+                  icon: Quote,
+                  showLabel: true,
+                  primary: true,
+                  onActivate: () => add('')
+                },
+                {
+                  id: 'explain',
+                  label: t('Explain'),
+                  icon: MessageCircleQuestionMark,
+                  onActivate: () => add(t('Explain this passage.'))
+                },
+                {
+                  id: 'summarize',
+                  label: t('Summarize'),
+                  icon: ListCollapse,
+                  onActivate: () => add(t('Summarize this passage.'))
+                }
+              ]
+            : []),
+          ...(pdfBookmarkSource
+            ? [
+                {
+                  id: 'bookmark',
+                  availableWhenAnnotationBlocked: true,
+                  label: t('Bookmark'),
+                  icon: BookmarkIcon,
+                  showLabel: !pdfEvidenceSource,
+                  primary: !pdfEvidenceSource,
+                  onActivate: () => {
+                    setEditorDestination('bookmark')
+                    setOpen(true)
+                  }
+                }
+              ]
+            : []),
+          {
+            id: 'copy',
+            label: copied ? t('Copied') : t('Copy'),
+            icon: copied ? Check : Copy,
+            disabled: !canCopy,
+            availableWhenAnnotationBlocked: true,
+            onActivate: () => void copySelection()
+          }
+        ]
+      : undefined
 
   return (
     <div
@@ -712,8 +935,12 @@ export const PreviewTextAnnotationSurface = ({
         hoveredAnnotationId={hoveredAnnotationId}
         variant="preview"
         onUpdateNote={onUpdateAnnotationNote}
+        onRemove={onRemoveAnnotation}
         onError={onAnnotationError}
       />
+      {bookmarkMarkers.map((marker) => (
+        <BookmarkMarker key={marker.id} {...marker} />
+      ))}
       {matchingAnnotations.length > 0 ? (
         <span className="sr-only">{t('Annotated for Agent')}</span>
       ) : null}
@@ -739,6 +966,9 @@ export const PreviewTextAnnotationSurface = ({
           onAdd={() => add()}
           annotationBlockedByHistoricalVersion={annotationBlockedByHistoricalVersion}
           triggerActions={triggerActions}
+          initialDestination={pdfBookmarkSource ? 'bookmark' : editorDestination}
+          bookmarkOnly={Boolean(pdfBookmarkSource)}
+          bookmark={{ available: bookmarks.available, onSave: saveBookmark }}
         />
       ) : null}
     </div>

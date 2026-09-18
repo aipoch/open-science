@@ -55,7 +55,9 @@ type NotebookPackageAdmittedTarget = Readonly<{
   request: InstallRequest
   environmentName: string
   binding?: NotebookSessionRuntimeBinding
-  interpreter?: Pick<NotebookSessionResolvedInterpreter, 'command' | 'args' | 'condaPrefix'>
+  interpreter?: Pick<NotebookSessionResolvedInterpreter, 'command' | 'args' | 'condaPrefix'> & {
+    library?: string
+  }
   environmentCaptureTarget: EnvironmentCaptureTarget
   repairRuntimeId: string
   repairMarkerKey: string
@@ -164,14 +166,21 @@ class NotebookPackageAdmissionOwner {
           receipt
         )
       }
-      if (request.language !== 'python') {
+      if (request.language === 'r' && !enablement?.installLibraries?.[binding.runtimeId]) {
         return refusal(
-          'Package management for an external R runtime is not supported yet. Use the managed R ' +
-            'environment, or install the package yourself.',
+          'Select and authorize a personal R package library in Settings before installing packages.',
           receipt
         )
       }
       interpreter = binding.resolvedInterpreter
+        ? {
+            ...binding.resolvedInterpreter,
+            ...(request.language === 'r'
+              ? { library: enablement?.installLibraries?.[binding.runtimeId] }
+              : {})
+          }
+        : undefined
+      if (!interpreter) return refusal('The external runtime interpreter is unavailable.', receipt)
     } else if (binding) {
       const blocked =
         (binding.status ?? 'active') !== 'active' && binding.reason !== 'repair-required'
@@ -217,8 +226,9 @@ class NotebookPackageAdmissionOwner {
     if (runtimeIdBlocked || prefixBlocked || corruptBlockedExternal) {
       return refusal(
         `RUNTIME_RECOVERY_BLOCKED: the ${request.language} environment is recovering from an ` +
-          'interrupted operation whose process could not be confirmed stopped. Restart the app to ' +
-          're-check and recover it before installing packages.',
+          'interrupted operation that has not been safely reconciled. Use Recheck in Settings → ' +
+          'Runtimes to inspect the reason and retry recovery. Restarting the app does not prove ' +
+          'that an old worker stopped; do not delete the operation journal or force package writes.',
         receipt
       )
     }
@@ -292,6 +302,25 @@ class NotebookPackageAdmissionOwner {
     return this.protectedRepairRefusal(target, repair.protectedIdentity)
   }
 
+  async recheckAuthorization(
+    target: NotebookPackageAdmittedTarget
+  ): Promise<NotebookPackageRefusal | undefined> {
+    if (target.binding?.source !== 'external') return undefined
+    const current = await this.options.resolveRuntimeEnablement(target.request.language)
+    const id = target.binding.runtimeId
+    if (
+      !current?.installAuthorized[id] ||
+      (target.request.language === 'r' &&
+        (!target.interpreter?.library ||
+          current.installLibraries?.[id] !== target.interpreter.library))
+    )
+      return refusal(
+        'Package installation authorization changed. Review this runtime in Settings and retry.',
+        target.receipt
+      )
+    return undefined
+  }
+
   private protectedRepairRefusal(
     target: Pick<NotebookPackageAdmittedTarget, 'binding' | 'environmentName' | 'request'>,
     protectedIdentity: boolean,
@@ -353,8 +382,8 @@ class NotebookPackageAdmissionOwner {
     return refusal(
       `RUNTIME_BINDING_UNAVAILABLE: the bound ${language} runtime is ${binding.status}` +
         (binding.reason ? ` (${binding.reason})` : '') +
-        '. Switch to another runtime (list_notebook_runtimes → notebook_switch_runtime) before ' +
-        'installing packages.',
+        '. Call list_notebook_runtimes then notebook_switch_runtime with the language and an exact ' +
+        'runtimeId from the listing before installing packages. Switching clears the previous Kernel memory.',
       receipt
     )
   }

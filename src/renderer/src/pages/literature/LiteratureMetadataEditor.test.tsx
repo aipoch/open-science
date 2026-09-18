@@ -399,3 +399,14 @@ it('does not treat an incomplete native access-date input as an intentional clea
   expect(onSave).not.toHaveBeenCalled()
   expect(document.activeElement).toBe(input)
 })
+
+it('allows original seasonal date text with an independently optional searchable year', () => {
+  const onSave = mountEditor()
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Use original date text' }))
+  change('Publication date', 'Winter 2024–2025?')
+  change('Year', '')
+  save()
+  expect(onSave).toHaveBeenCalledWith(
+    expect.objectContaining({ issuedText: 'Winter 2024–2025?', issuedYear: undefined })
+  )
+})

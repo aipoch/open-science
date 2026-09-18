@@ -75,7 +75,8 @@ describe('DataRootCleanupJournal', () => {
     await stage()
     await journal.markCommitted('runtime-cleanup')
     expect(await journal.recover(target, removeSources)).toEqual({ pending: true, failureCount: 1 })
-    expect(revoke).toHaveBeenCalledWith(runtime)
+    // Cleanup revokes the canonical source path, including macOS /var → /private/var aliases.
+    expect(revoke).toHaveBeenCalledWith(await realpath(runtime))
     expect(await readFile(join(runtime, 'R.exe'), 'utf8')).toBe('old runtime')
     revoke.mockResolvedValue(undefined as never)
     const restarted = new DataRootCleanupJournal(configRoot)

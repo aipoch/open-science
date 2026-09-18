@@ -106,7 +106,7 @@ describe('DataRootMissingDialog', () => {
     expect(buttons).toHaveLength(1)
     expect(buttons[0]?.textContent).toContain('Reconnect & retry')
     expect(document.body.textContent).toContain(
-      'To choose another location or continue with an empty folder, use Open Science on the home computer.'
+      'To choose another location or continue with an empty folder, use Open-Science on the home computer.'
     )
     expect(document.body.textContent).not.toContain('Choose another location')
     expect(document.body.textContent).not.toContain('Continue with an empty folder')
@@ -151,7 +151,7 @@ describe('DataRootMissingDialog', () => {
     expect(dialog?.className).toContain('shadow-dialog')
     expect(dialog?.className).toContain('data-[state=open]:zoom-in-95')
     expect(dialog?.className).toContain('data-[state=closed]:fill-mode-forwards')
-    expect(dialog?.className).toContain('overflow-hidden')
+    expect(dialog?.className).toContain('overflow-y-auto')
     expect(
       Array.from(document.body.querySelectorAll<HTMLElement>('div')).some((element) =>
         element.className.includes('border-b border-border-300/90 px-5 py-3.5')
@@ -278,7 +278,11 @@ describe('DataRootMissingDialog', () => {
 
     expect(api.pickDirectory).toHaveBeenCalledTimes(1)
     expect(api.inspectDataRoot).toHaveBeenCalledWith('/mnt/other')
-    expect(api.setDataRootAndRelaunch).toHaveBeenCalledWith('/mnt/other', false)
+    expect(api.setDataRootAndRelaunch).toHaveBeenCalledWith(
+      '/mnt/other/OpenScience',
+      false,
+      undefined
+    )
     const buttons = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
     expect(buttons).toHaveLength(3)
     expect(buttons.every((button) => button.disabled)).toBe(true)
@@ -305,7 +309,11 @@ describe('DataRootMissingDialog', () => {
       await Promise.resolve()
     })
 
-    expect(api.setDataRootAndRelaunch).toHaveBeenCalledWith('/mnt/empty', false)
+    expect(api.setDataRootAndRelaunch).toHaveBeenCalledWith(
+      '/mnt/empty/OpenScience',
+      false,
+      undefined
+    )
   })
 
   it('Choose another location shows an inline error for an invalid target and does not relaunch', async () => {
@@ -402,7 +410,11 @@ describe('DataRootMissingDialog', () => {
     })
 
     const buttons = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
-    expect(api.setDataRootAndRelaunch).toHaveBeenCalledWith('/mnt/other', false)
+    expect(api.setDataRootAndRelaunch).toHaveBeenCalledWith(
+      '/mnt/other/OpenScience',
+      false,
+      undefined
+    )
     expect(buttons).toHaveLength(3)
     expect(buttons.every((button) => !button.disabled)).toBe(true)
     expect(document.body.textContent).toContain('Could not switch to this folder.')

@@ -1,3 +1,4 @@
+import { storageErrorMessage } from '@/lib/storage-error'
 import { AlertDialog } from 'radix-ui'
 import { FolderInput, RefreshCw } from 'lucide-react'
 import { useState } from 'react'
@@ -74,15 +75,23 @@ const DataRootMissingDialog = ({
       setIsChoosing(true)
       const inspection = await window.api.storage.inspectDataRoot(picked)
       if (inspection.kind !== 'move' && inspection.kind !== 'adopt') {
-        setOperationError(inspection.error ?? t('The selected folder is not usable.'))
+        setOperationError(
+          storageErrorMessage(inspection.error, t) ?? t('The selected folder is not usable.')
+        )
         return
       }
 
       // Both 'move' (empty - nothing to move, the old data is gone) and 'adopt' (already has our
       // data) apply as a plain pointer switch + relaunch; this is recovery, not onboarding.
-      const result = await window.api.storage.setDataRootAndRelaunch(picked, false)
+      const result = await window.api.storage.setDataRootAndRelaunch(
+        inspection.dataRoot,
+        false,
+        inspection.selection
+      )
       if (!result.ok) {
-        setOperationError(result.error ?? t('Could not switch to this folder.'))
+        setOperationError(
+          storageErrorMessage(result.error, t) ?? t('Could not switch to this folder.')
+        )
         return
       }
       // app.quit() can return while teardown is still in progress. Keep every action disabled so
@@ -187,10 +196,10 @@ const DataRootMissingDialog = ({
             <p className="text-xs text-muted-foreground">
               {isRemoteWebSurface
                 ? t(
-                    'To choose another location or continue with an empty folder, use Open Science on the home computer.'
+                    'To choose another location or continue with an empty folder, use Open-Science on the home computer.'
                   )
                 : t(
-                    "Open Science will recreate the folder as you use it. Files from the old location won't be available until it's reconnected."
+                    "Open-Science will recreate the folder as you use it. Files from the old location won't be available until it's reconnected."
                   )}
             </p>
           </div>

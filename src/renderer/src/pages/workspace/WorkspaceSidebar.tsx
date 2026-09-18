@@ -1,3 +1,4 @@
+import { SessionPackageImportMenu } from '@/components/SessionPackageImportMenu'
 import {
   BookOpen,
   ChevronDown,
@@ -5,6 +6,7 @@ import {
   Download,
   Files,
   Cpu,
+  Lock,
   MoreVertical,
   PanelLeft,
   Plus,
@@ -13,7 +15,7 @@ import {
   Toolbox,
   X
 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   DropdownMenu,
@@ -22,6 +24,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
+import { packageOperationActive, usePackageOperationStore } from '@/stores/package-operation-store'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 
@@ -56,6 +59,7 @@ import {
 } from './session-action-menu'
 
 type WorkspaceSidebarProps = {
+  importProjectId?: string
   projectName: string
   otherProjects?: ReadonlyArray<{
     id: string
@@ -89,8 +93,11 @@ type WorkspaceSidebarProps = {
   ) => Promise<boolean> | void
   canDownloadArtifacts: boolean
   onDownloadArtifacts: (session: ChatSession) => void
+  onCheckArtifacts?: (session: ChatSession) => void
   onViewNotebook: (session: ChatSession) => void
   onExportSession?: (session: ChatSession) => void
+  onForkSession?: (session: ChatSession) => Promise<void>
+  onExportPackage?: (session: ChatSession) => Promise<void>
   onTogglePin: (session: ChatSession) => void
   canArchiveSession?: (session: ChatSession) => boolean
   onArchiveSession?: (session: ChatSession) => void
@@ -119,6 +126,7 @@ type WorkspaceSidebarProps = {
 
 type WorkspaceSidebarViewProps = WorkspaceSidebarProps & {
   now: number
+  packageBusy?: boolean
   showSessionShortcuts?: boolean
   openSessionActionsId?: string | null
   onSessionActionsOpenChange?: (sessionId: string, open: boolean) => void
@@ -257,7 +265,7 @@ const sessionRowClassName = cn(
 )
 
 const sessionRowActionClassName =
-  'absolute right-1.5 top-1/2 z-10 -translate-y-1/2 rounded p-0.5 text-text-100 opacity-0 transition-opacity duration-200 ease-out hover:!opacity-100 hover:bg-bg-400 hover:text-text-000 focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100'
+  'absolute right-1.5 top-1/2 z-10 -translate-y-1/2 rounded p-0.5 text-text-100 opacity-0 transition-opacity duration-200 ease-out hover:!opacity-100 hover:bg-bg-400 hover:text-text-000 focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 data-[state=open]:opacity-100'
 
 const SESSION_ACTION_TARGET_PREFIX = 'session:'
 const sessionActionDangerClassName =
@@ -366,8 +374,32 @@ const matchProjects = (
   return [...titleMatches, ...descriptionMatches]
 }
 
+const SessionList = ({
+  activeSessionId,
+  visible,
+  children
+}: {
+  activeSessionId: string | undefined
+  visible: boolean
+  children: React.ReactNode
+}): React.JSX.Element => {
+  const listRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!visible) return
+    listRef.current
+      ?.querySelector<HTMLElement>('[aria-current="page"]')
+      ?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
+  }, [activeSessionId, visible])
+  return (
+    <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto py-1">
+      {children}
+    </div>
+  )
+}
+
 // Left navigation owns session selection, creation entry, and workspace settings.
 const WorkspaceSidebarView = ({
+  importProjectId,
   projectName,
   otherProjects = [],
   onOpenProject,
@@ -391,8 +423,12 @@ const WorkspaceSidebarView = ({
   onRenameSessionTitle,
   canDownloadArtifacts,
   onDownloadArtifacts,
+  onCheckArtifacts,
   onViewNotebook,
   onExportSession,
+  onForkSession,
+  onExportPackage,
+  packageBusy = false,
   onTogglePin,
   canArchiveSession,
   onArchiveSession,
@@ -524,6 +560,7 @@ const WorkspaceSidebarView = ({
                   </span>
                   {t('Download artifacts…')}
                 </DropdownMenuItem>
+                {importProjectId ? <SessionPackageImportMenu projectId={importProjectId} /> : null}
                 <DropdownMenuSeparator />
                 {otherProjects.length > INITIAL_PROJECT_MENU_LIMIT ? (
                   // Keep the input outside the Radix item collection so typing never selects a row.
@@ -886,7 +923,13 @@ const WorkspaceSidebarView = ({
                 )
               }}
             >
-              <div className="min-h-0 flex-1 overflow-y-auto py-1">
+              <SessionList
+                activeSessionId={activeSessionId}
+                visible={
+                  (!mobileMode || isMobileOpen) &&
+                  sessions.some((session) => session.id === activeSessionId)
+                }
+              >
                 {sections.map((section) => (
                   <div key={section.label}>
                     <div className="px-2 pb-[5px] pt-3.5 text-[11px] font-medium text-muted-foreground">
@@ -894,6 +937,10 @@ const WorkspaceSidebarView = ({
                     </div>
                     {section.items.map((session) => {
                       const isActive = session.id === activeSessionId
+                      const imported =
+                        session.contentLoaded === false
+                          ? session.id.startsWith('import-')
+                          : Boolean(session.packageOrigin)
                       const shortcutNumber = shortcutNumberBySessionId.get(session.id)
                       const presentedStatus = getPresentedSessionStatus(
                         session,
@@ -912,8 +959,12 @@ const WorkspaceSidebarView = ({
                         onTogglePin,
                         onRenameSession,
                         onDownloadArtifacts,
+                        onCheckArtifacts,
                         onViewNotebook,
                         onExportSession,
+                        onForkSession,
+                        onExportPackage,
+                        packageBusy,
                         onArchiveSession,
                         onDeleteSession
                       })
@@ -922,17 +973,24 @@ const WorkspaceSidebarView = ({
                         session.updatedAt,
                         session.pinned ?? false,
                         presentedStatus,
+                        session.status,
+                        session.runtimeContext?.permission?.state,
+                        session.runtimeContext?.plan?.approval,
                         session.activeMessageCount ?? session.messages.length,
                         canMutateConversations,
                         canDeleteConversations,
                         canDownloadArtifacts,
                         Boolean(onExportSession),
+                        Boolean(onForkSession),
+                        Boolean(onExportPackage),
+                        packageBusy,
                         archiveAvailable
                       ])
                       const openSessionButton = (
                         <button
                           type="button"
                           data-slot="session-open-button"
+                          title={imported ? t('Read-only') : undefined}
                           className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left"
                           aria-current={isActive ? 'page' : undefined}
                           aria-keyshortcuts={
@@ -980,6 +1038,21 @@ const WorkspaceSidebarView = ({
                             >
                               {isMac ? `⌘${shortcutNumber}` : `Ctrl+${shortcutNumber}`}
                             </kbd>
+                          ) : null}
+                          {imported ? (
+                            <span
+                              role="img"
+                              aria-label={t('Read-only')}
+                              className={cn(
+                                'relative z-[2] inline-flex size-4 shrink-0 items-center justify-center text-text-200 transition-opacity motion-reduce:transition-none',
+                                mobileMode
+                                  ? 'mr-5'
+                                  : 'group-hover:opacity-0 group-focus-within:opacity-0',
+                                !mobileMode && openSessionActionsId === session.id && 'opacity-0'
+                              )}
+                            >
+                              <Lock className="size-3.5" strokeWidth={1.75} aria-hidden="true" />
+                            </span>
                           ) : null}
                         </button>
                       )
@@ -1058,7 +1131,7 @@ const WorkspaceSidebarView = ({
                     })}
                   </div>
                 ))}
-              </div>
+              </SessionList>
             </ActionMenuProvider>
           </SessionHoverPreviewProvider>
 
@@ -1101,6 +1174,7 @@ const WorkspaceSidebarView = ({
 }
 
 const WorkspaceSidebar = (props: WorkspaceSidebarProps): React.JSX.Element => {
+  const packageBusy = usePackageOperationStore((state) => packageOperationActive(state.operation))
   const {
     credentialPendingSessionIds = EMPTY_CREDENTIAL_SESSION_IDS,
     onOpenSession,
@@ -1188,6 +1262,7 @@ const WorkspaceSidebar = (props: WorkspaceSidebarProps): React.JSX.Element => {
   return (
     <WorkspaceSidebarView
       {...props}
+      packageBusy={packageBusy}
       now={now}
       showSessionShortcuts={showSessionShortcuts}
       openSessionActionsId={openSessionActionsId}

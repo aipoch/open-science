@@ -64,7 +64,9 @@ const PermissionScopeConfirmationDialog = ({
       <AlertDialog.Portal>
         <AlertDialog.Overlay className={`${dialogOverlayClassName} z-[70]`} />
         <AlertDialog.Content
-          className={dialogPanelClassName('z-[70] w-[min(420px,calc(100vw-2rem))] p-0')}
+          className={dialogPanelClassName(
+            'z-[70] max-h-[calc(100dvh-2rem)] w-[min(420px,calc(100vw-2rem))] overflow-y-auto p-0'
+          )}
           data-testid="permission-scope-confirmation"
         >
           <div className={dialogHeaderClassName}>
@@ -94,7 +96,7 @@ const PermissionScopeConfirmationDialog = ({
               <strong className="font-semibold text-foreground">{settingsTarget}</strong>
             </AlertDialog.Description>
           </div>
-          <div className={dialogFooterClassName}>
+          <div className={`${dialogFooterClassName} flex-wrap`}>
             <AlertDialog.Cancel asChild>
               <Button
                 type="button"

@@ -1,10 +1,11 @@
+import { Notice } from '@/components/notice'
 import { useFileCredentialNotice } from './use-file-credential-notice'
 /* Hallmark · component: credential disclosure · genre: modern-minimal · theme: existing Settings system */
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import type { TFunction } from 'i18next'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { AlertTriangle, CheckCircle2, LoaderCircle } from 'lucide-react'
+import { CheckCircle2, LoaderCircle } from 'lucide-react'
 
 import type { GitHubTokenStatus } from '../../../../shared/settings'
 import { DiagnosticDetails } from '@/components/diagnostic-details'
@@ -181,23 +182,26 @@ const GitHubTokenControl = ({ onCancel }: { onCancel?(): void } = {}): React.JSX
           </p>
         ) : null}
         {feedback ? (
-          <>
+          feedback.kind === 'error' ? (
+            <Notice
+              inline
+              id="github-token-feedback"
+              level="error"
+              role="alert"
+              description={feedbackCopy(feedback, t)}
+            >
+              <DiagnosticDetails detail={feedback.detail} />
+            </Notice>
+          ) : (
             <div
               id="github-token-feedback"
-              role={feedback.kind === 'error' ? 'alert' : 'status'}
-              className={`flex items-start gap-2 text-xs ${
-                feedback.kind === 'error' ? 'text-danger-000' : 'text-primary'
-              }`}
+              role="status"
+              className="flex items-start gap-2 text-xs text-primary"
             >
-              {feedback.kind === 'error' ? (
-                <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-              ) : (
-                <CheckCircle2 className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-              )}
+              <CheckCircle2 className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
               <p>{feedbackCopy(feedback, t)}</p>
             </div>
-            {feedback.kind === 'error' ? <DiagnosticDetails detail={feedback.detail} /> : null}
-          </>
+          )
         ) : null}
       </div>
 
@@ -213,26 +217,32 @@ const GitHubTokenControl = ({ onCancel }: { onCancel?(): void } = {}): React.JSX
             variant="outline"
             disabled={busy !== null}
             onClick={() => void remove()}
+            aria-busy={Boolean(busy === 'removing')}
           >
-            {busy === 'removing' ? t('Removing…') : t('Remove token')}
+            <span key={String(busy === 'removing')} className="button-feedback">
+              {busy === 'removing' ? t('Removing…') : t('Remove token')}
+            </span>
           </Button>
         ) : null}
         <Button
           type="button"
           disabled={busy !== null || token.trim().length === 0}
           onClick={() => void save()}
+          aria-busy={Boolean(busy === 'saving')}
         >
-          {busy === 'saving' ? (
-            <>
-              <LoaderCircle
-                className="size-4 animate-spin motion-reduce:animate-none"
-                aria-hidden="true"
-              />
-              {t('Verifying…')}
-            </>
-          ) : (
-            t('Verify and save')
-          )}
+          <span key={String(busy === 'saving')} className="button-feedback">
+            {busy === 'saving' ? (
+              <>
+                <LoaderCircle
+                  className="size-4 animate-spin motion-reduce:animate-none"
+                  aria-hidden="true"
+                />
+                {t('Verifying…')}
+              </>
+            ) : (
+              t('Verify and save')
+            )}
+          </span>
         </Button>
       </div>
     </section>

@@ -25,7 +25,8 @@ export class SlurmDriverError extends Error {
   }
 }
 
-const jobName = (jobId: string): string => `openscience-${jobId}`
+const jobName = (jobId: string, workdir?: string): string =>
+  `${workdir?.includes('/.openscience/jobs/') ? 'openscience' : 'open-science'}-${jobId}`
 
 const normalizeState = (state: string): string =>
   state
@@ -49,14 +50,14 @@ const terminalStates = new Set([
 ])
 
 const APP_OWNED_DIRECTIVE_GUIDANCE: Record<string, string> = {
-  output: 'Remove it; Open Science captures scheduler stdout in the Job result.',
-  error: 'Remove it; Open Science captures scheduler stderr in the Job result.',
-  chdir: 'Remove it; Open Science submits from the managed Job working directory.',
-  'job-name': 'Remove it; Open Science assigns the Job name used for tracking and recovery.',
-  array: 'Submit independent Open Science Jobs instead.',
+  output: 'Remove it; Open-Science captures scheduler stdout in the Job result.',
+  error: 'Remove it; Open-Science captures scheduler stderr in the Job result.',
+  chdir: 'Remove it; Open-Science submits from the managed Job working directory.',
+  'job-name': 'Remove it; Open-Science assigns the Job name used for tracking and recovery.',
+  array: 'Submit independent Open-Science Jobs instead.',
   wrap: 'Put the workload command directly after the #SBATCH header instead.',
   clusters: 'Choose a Compute Host for the intended Slurm cluster instead.',
-  'het-group': 'Submit each workload as a separate Open Science Job instead.'
+  'het-group': 'Submit each workload as a separate Open-Science Job instead.'
 }
 
 const appOwnedDirective = (line: string): { option: string; guidance: string } | undefined => {
@@ -94,7 +95,7 @@ const commandDirectives = (
     if (owned) {
       throw new SlurmDriverError(
         'invalid_resources',
-        `Slurm directive ${owned.option} is managed by Open Science. ${owned.guidance}`
+        `Slurm directive ${owned.option} is managed by Open-Science. ${owned.guidance}`
       )
     }
     if (
@@ -140,12 +141,11 @@ export const buildSlurmScript = (
   job: Pick<ComputeJob, 'job_id' | 'command' | 'timeout_seconds'> & { environment?: string },
   workdir: string
 ): string => {
-  void workdir
   const timeout = job.timeout_seconds ?? 86_400
   const parsedDirectives = commandDirectives(applyComputeEnvironment(job.command, job.environment))
   return [
     '#!/usr/bin/env bash',
-    `#SBATCH --job-name=${jobName(job.job_id)}`,
+    `#SBATCH --job-name=${jobName(job.job_id, workdir)}`,
     '#SBATCH --output=stdout',
     '#SBATCH --error=stderr',
     ...(parsedDirectives.hasTime ? [] : [`#SBATCH --time=${Math.max(1, Math.ceil(timeout / 60))}`]),
@@ -210,7 +210,7 @@ export const dispatchSlurmJob = async (
         `printf '%s' ${JSON.stringify(toBase64(script))} | base64 -d > job.sbatch`,
         `rm -f ${SUBMISSION_ERROR_FILE} ${SUBMISSION_ERROR_FILE}.tmp ${SUBMISSION_ERROR_FILE}.stderr.tmp`,
         'set +e',
-        `SLURM_JOB_ID=$(sbatch --parsable --job-name=${jobName(job.job_id)} --output=stdout --error=stderr --chdir="$PWD" job.sbatch 2>${SUBMISSION_ERROR_FILE}.stderr.tmp)`,
+        `SLURM_JOB_ID=$(sbatch --parsable --job-name=${jobName(job.job_id, workdir)} --output=stdout --error=stderr --chdir="$PWD" job.sbatch 2>${SUBMISSION_ERROR_FILE}.stderr.tmp)`,
         'SBATCH_EXIT=$?',
         'set -e',
         'if [ "$SBATCH_EXIT" -ne 0 ]; then',
@@ -267,7 +267,7 @@ export const dispatchSlurmJob = async (
     if (recovered) return recovered
     throw new SlurmDriverError(
       'host_unreachable',
-      'Slurm submission may have succeeded, but its job id was not confirmed. Open Science will look up candidates and recover only a job whose recorded workdir proves ownership; it will not submit a duplicate.'
+      'Slurm submission may have succeeded, but its job id was not confirmed. Open-Science will look up candidates and recover only a job whose recorded workdir proves ownership; it will not submit a duplicate.'
     )
   }
   return handleFor(workdir, id)
@@ -279,7 +279,7 @@ export const recoverSlurmJob = async (
 ): Promise<SlurmRemoteHandle | undefined> => {
   const workdir = job.remote_workdir
   if (!workdir) return undefined
-  const name = jobName(job.job_id)
+  const name = jobName(job.job_id, workdir)
   const receiptPath = quoteRemotePath(`${workdir}/scheduler_job_id`)
   const scriptPath = quoteRemotePath(`${workdir}/job.sbatch`)
   const quotedWorkdir = quoteRemotePath(workdir)

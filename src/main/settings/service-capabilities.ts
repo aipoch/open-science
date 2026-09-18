@@ -20,7 +20,7 @@ export type AcpSettingsCapabilities = Pick<
   | 'provisionedConnectorSkillNames'
   | 'rememberCodexAutoHttpsFallback'
 > &
-  Partial<Pick<SettingsService, 'resolveAdmittedSubagentBackend'>>
+  Partial<Pick<SettingsService, 'resolveAdmittedSubagentBackend' | 'prepareDelegatedSkills'>>
 
 export type WindowSettingsCapabilities = Pick<
   SettingsService,

@@ -1,3 +1,10 @@
+import { useNoticeCountdown } from './use-notice-countdown'
+import {
+  noticeSurfaceClassName,
+  noticeTitleClassName,
+  noticeActionClassName,
+  noticeDismissClassName
+} from './ui/notice-chrome'
 import { X } from 'lucide-react'
 import {
   type CSSProperties,
@@ -85,7 +92,9 @@ const NotificationLiveToastContent = (): React.JSX.Element | null => {
   const projects = useProjectStore((state) => state.projects)
   const view = useNavigationStore((state) => state.view)
   const [notice, setNotice] = useState<LiveNotice>()
-  const [paused, setPaused] = useState(false)
+  const [pointerPaused, setPointerPaused] = useState(false)
+  const [focusPaused, setFocusPaused] = useState(false)
+  const paused = pointerPaused || focusPaused
   const [position, setPosition] = useState<ToastPosition>()
   const baselineSequenceRef = useRef<number | undefined>(undefined)
   const toastRef = useRef<HTMLDivElement>(null)
@@ -96,7 +105,11 @@ const NotificationLiveToastContent = (): React.JSX.Element | null => {
   // Mutations do not allocate a new sequence. Withdraw stale content before it can be clicked.
   if (notice && !leadNotification) {
     setNotice(undefined)
-    setPaused(false)
+  }
+  // A removed DOM node cannot emit pointerleave/blur. New arrivals start unpaused.
+  if (!notice && (pointerPaused || focusPaused)) {
+    setPointerPaused(false)
+    setFocusPaused(false)
   }
 
   useEffect(() => {
@@ -146,11 +159,12 @@ const NotificationLiveToastContent = (): React.JSX.Element | null => {
     return () => window.removeEventListener(NOTIFICATION_CENTER_OPENED_EVENT, dismiss)
   }, [])
 
-  useEffect(() => {
-    if (!notice || paused) return
-    const timeout = window.setTimeout(() => setNotice(undefined), AUTO_DISMISS_MS)
-    return () => window.clearTimeout(timeout)
-  }, [notice, paused])
+  useNoticeCountdown(
+    notice ? AUTO_DISMISS_MS : undefined,
+    paused,
+    () => setNotice(undefined),
+    notice
+  )
 
   const updatePosition = useCallback((): void => {
     try {
@@ -245,14 +259,15 @@ const NotificationLiveToastContent = (): React.JSX.Element | null => {
           width: Math.min(TOAST_MAX_WIDTH, window.innerWidth - VIEWPORT_MARGIN * 2)
         }
       }
-      onPointerEnter={() => setPaused(true)}
-      onPointerLeave={() => setPaused(false)}
-      onFocusCapture={() => setPaused(true)}
+      onPointerEnter={() => setPointerPaused(true)}
+      onPointerLeave={() => setPointerPaused(false)}
+      onFocusCapture={() => setFocusPaused(true)}
       onBlurCapture={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget)) setPaused(false)
+        if (!event.currentTarget.contains(event.relatedTarget)) setFocusPaused(false)
       }}
       className={cn(
-        'fixed z-[75] rounded-xl border border-border-200/80 bg-bg-000 p-3 text-text-000 shadow-dialog motion-safe:animate-in motion-safe:fade-in-0 motion-safe:duration-150 motion-reduce:animate-none',
+        noticeSurfaceClassName,
+        'pointer-events-auto fixed z-toast shadow-dialog motion-safe:animate-in motion-safe:fade-in-0 motion-safe:duration-150 motion-reduce:animate-none',
         !position && 'invisible'
       )}
     >
@@ -260,7 +275,7 @@ const NotificationLiveToastContent = (): React.JSX.Element | null => {
         aria-hidden="true"
         style={{ left: position?.arrowLeft }}
         className={cn(
-          'absolute size-2 rotate-45 border-border-200/80 bg-bg-000',
+          'absolute size-2 rotate-45 border-border bg-card',
           position?.placement === 'above'
             ? '-bottom-[5px] border-b border-r'
             : '-top-[5px] border-l border-t'
@@ -276,7 +291,7 @@ const NotificationLiveToastContent = (): React.JSX.Element | null => {
           <NotificationEventIcon notification={notification} />
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm font-semibold">
+          <span className={cn('block truncate', noticeTitleClassName)}>
             {sessionTitle ?? t(notification.title)}
           </span>
           <span className="mt-0.5 block truncate text-xs text-text-300">
@@ -295,7 +310,7 @@ const NotificationLiveToastContent = (): React.JSX.Element | null => {
                 type="button"
                 aria-label={t('Close')}
                 onClick={() => setNotice(undefined)}
-                className="-mr-1 -mt-1 inline-flex size-7 shrink-0 items-center justify-center rounded-md text-text-300 hover:bg-bg-300 hover:text-text-000 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                className={cn(noticeDismissClassName, '-mr-1 -mt-1')}
               >
                 <X className="size-3.5" strokeWidth={2} aria-hidden="true" />
               </button>
@@ -305,11 +320,7 @@ const NotificationLiveToastContent = (): React.JSX.Element | null => {
         </TooltipProvider>
       </div>
       <div className="mt-2 flex items-center gap-2 pl-9">
-        <button
-          type="button"
-          onClick={openLead}
-          className="inline-flex h-7 items-center rounded-md border border-border-200 bg-bg-100 px-2.5 text-xs font-medium text-text-000 hover:bg-bg-300 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
-        >
+        <button type="button" onClick={openLead} className={noticeActionClassName}>
           {t('Open')}
         </button>
         {notice.count > 1 ? (
@@ -333,7 +344,7 @@ const NotificationLiveToastContent = (): React.JSX.Element | null => {
 }
 
 const NotificationLiveToast = (): React.JSX.Element => (
-  <NotificationErrorBoundary>
+  <NotificationErrorBoundary surface="toast">
     <NotificationLiveToastContent />
   </NotificationErrorBoundary>
 )

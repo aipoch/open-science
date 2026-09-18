@@ -5,6 +5,23 @@ import { sendPrompt } from './certification/helpers'
 import { test } from './fixtures/electron-app'
 import { openGeneralSettings, setTheme } from './fixtures/settings-preferences'
 
+// file:// modules do not reliably populate Resource Timing. CDP reports the scripts Chromium
+// actually parsed, including those loaded before the test attached to the restarted window.
+const loadedLocaleChunks = async (page: Page): Promise<string[]> => {
+  const client = await page.context().newCDPSession(page)
+  const locales = new Set<string>()
+  client.on('Debugger.scriptParsed', ({ url }) => {
+    const match = /\/(de|es|fr|ja|ko|ru|zh-Hans|zh-Hant)-[^/]+\.js(?:$|\?)/u.exec(url)
+    if (match) locales.add(match[1])
+  })
+  try {
+    await client.send('Debugger.enable')
+    return [...locales].sort()
+  } finally {
+    await client.detach()
+  }
+}
+
 const expectMemoryConfirmDialogChrome = async (
   dialog: Locator,
   confirmLabel: string
@@ -301,11 +318,15 @@ test('contains long memory lists and layers destructive confirmations above sett
   await categoryDialog.getByRole('button', { name: 'Cancel' }).click()
 })
 
-test('persists Russian into the built main-process native quit dialog', async ({ app }) => {
+test('persists Russian into the built main-process native quit dialog', async ({
+  app
+}, testInfo) => {
   let page = await app.completeOnboarding()
 
+  expect(await loadedLocaleChunks(page)).toEqual([])
   await selectLanguage(page, 'Русский')
   await expect(page.locator('html')).toHaveAttribute('lang', 'ru')
+  expect(await loadedLocaleChunks(page)).toEqual(['ru'])
 
   await expect
     .poll(() => app.capturePersistedLocaleNativeQuitDialog())
@@ -313,18 +334,24 @@ test('persists Russian into the built main-process native quit dialog', async ({
       buttons: ['Отмена', 'Выйти'],
       detail: 'Выполнение ещё не завершено. При выходе работа будет прервана.',
       includesRendererCatalog: false,
-      message: 'Выйти из Open Science?'
+      message: 'Выйти из Open-Science?'
     })
 
+  const screenshot = testInfo.outputPath('russian-locale-loaded.png')
+  await page.screenshot({ path: screenshot })
+  await testInfo.attach('russian-locale-loaded', { path: screenshot, contentType: 'image/png' })
   page = await app.restart()
   await expect(page.locator('html')).toHaveAttribute('lang', 'ru')
+  const localized = localizedSettingsCases.find((entry) => entry.locale === 'ru')!
+  await expect(page.getByRole('region', { name: localized.projects })).toBeVisible()
+  expect(await loadedLocaleChunks(page)).toEqual(['ru'])
   await expect
     .poll(() => app.capturePersistedLocaleNativeQuitDialog())
     .toEqual({
       buttons: ['Отмена', 'Выйти'],
       detail: 'Выполнение ещё не завершено. При выходе работа будет прервана.',
       includesRendererCatalog: false,
-      message: 'Выйти из Open Science?'
+      message: 'Выйти из Open-Science?'
     })
 })
 
@@ -338,17 +365,22 @@ test('persists German into the built main-process native quit dialog', async ({ 
     buttons: ['Abbrechen', 'Beenden'],
     detail: 'Die Arbeit läuft noch und wird beim Beenden unterbrochen.',
     includesRendererCatalog: false,
-    message: 'Open Science beenden?'
+    message: 'Open-Science beenden?'
   }
 
   await expect.poll(() => app.capturePersistedLocaleNativeQuitDialog()).toEqual(expectedDialog)
 
   page = await app.restart()
   await expect(page.locator('html')).toHaveAttribute('lang', 'de')
+  const localized = localizedSettingsCases.find((entry) => entry.locale === 'de')!
+  await expect(page.getByRole('region', { name: localized.projects })).toBeVisible()
   await expect.poll(() => app.capturePersistedLocaleNativeQuitDialog()).toEqual(expectedDialog)
 })
 
-for (const localized of localizedSettingsCases) {
+// Russian and German restart/renderer checks are combined with their native-dialog journeys above.
+for (const localized of localizedSettingsCases.filter(
+  ({ locale }) => !['ru', 'de'].includes(locale)
+)) {
   test(`persists ${localized.language} after an Electron restart`, async ({ app }) => {
     let page = await app.completeOnboarding()
     await selectLanguage(page, localized.pickerLabel)

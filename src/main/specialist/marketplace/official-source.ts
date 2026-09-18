@@ -2,7 +2,7 @@ import type { OfficialMarketplaceSourceConfig } from './service'
 
 export const OFFICIAL_MARKETPLACE_SOURCE: OfficialMarketplaceSourceConfig = {
   id: 'openscience-official',
-  name: 'OpenScience Specialist Marketplace',
+  name: 'Open-Science Specialist Marketplace',
   repositoryUrl: 'https://github.com/aipoch/openscience-specialist-marketplace',
   ref: 'published',
   metadataBaseUrls: [

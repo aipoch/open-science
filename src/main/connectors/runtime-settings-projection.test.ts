@@ -1,3 +1,4 @@
+import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { StoredConnectors } from '../settings/types'
@@ -167,31 +168,38 @@ describe('ConnectorRuntimeSettingsProjection', () => {
     })
   })
 
-  it('classifies authentication discovery failures without exposing transport details', async () => {
-    const server = {
-      id: 'oauth-id',
-      name: 'oauth',
-      displayName: 'OAuth',
-      transport: 'streamable_http' as const,
-      url: 'https://mcp.example.test',
-      enabled: true
+  it.each([
+    [new UnauthorizedError('Authentication required for a secret endpoint'), 'unauthenticated'],
+    [Object.assign(new Error('HTTP discovery failed'), { status: 401 }), 'unauthenticated'],
+    [new Error('401 invalid_token for a secret endpoint'), 'unavailable']
+  ] as const)(
+    'classifies discovery failure from authentication evidence: %s',
+    async (error, availability) => {
+      const server = {
+        id: 'oauth-id',
+        name: 'oauth',
+        displayName: 'OAuth',
+        transport: 'streamable_http' as const,
+        url: 'https://mcp.example.test',
+        enabled: true
+      }
+      const projection = new ConnectorRuntimeSettingsProjection({
+        readConnectors: vi.fn().mockResolvedValue(connectors({ customMcpServers: [server] })),
+        skillsDir: '/config/skills',
+        mcpClientManager: { listTools: vi.fn().mockResolvedValue([]) },
+        syncBundledSkillDocs: vi.fn().mockResolvedValue(undefined),
+        syncCustomSkillDocs: vi.fn().mockResolvedValue({
+          materializedNames: [],
+          failures: [{ server, error }]
+        }),
+        reportError: vi.fn()
+      })
+
+      await projection.refresh()
+
+      expect(projection.customServerAvailability(server.id)).toBe(availability)
     }
-    const projection = new ConnectorRuntimeSettingsProjection({
-      readConnectors: vi.fn().mockResolvedValue(connectors({ customMcpServers: [server] })),
-      skillsDir: '/config/skills',
-      mcpClientManager: { listTools: vi.fn().mockResolvedValue([]) },
-      syncBundledSkillDocs: vi.fn().mockResolvedValue(undefined),
-      syncCustomSkillDocs: vi.fn().mockResolvedValue({
-        materializedNames: [],
-        failures: [{ server, error: new Error('401 invalid_token for a secret endpoint') }]
-      }),
-      reportError: vi.fn()
-    })
-
-    await projection.refresh()
-
-    expect(projection.customServerAvailability(server.id)).toBe('unauthenticated')
-  })
+  )
 
   it('clears a runtime failure after a successful retry refresh', async () => {
     const server = {

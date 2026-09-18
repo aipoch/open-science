@@ -133,7 +133,7 @@ describe('StorageMigrationModal', () => {
       await Promise.resolve()
     })
 
-    expect(api.migrate).toHaveBeenCalledWith('/mnt/data')
+    expect(api.migrate).toHaveBeenCalledWith('/mnt/data', undefined)
     expect(document.body.querySelector('[role="dialog"]')).toBeNull()
 
     await act(async () => {
@@ -161,7 +161,7 @@ describe('StorageMigrationModal', () => {
     })
 
     expect(document.body.textContent).not.toMatch(/Checking for running sessions/i)
-    expect(api.migrate).toHaveBeenCalledWith('/mnt/data')
+    expect(api.migrate).toHaveBeenCalledWith('/mnt/data', undefined)
   })
 
   it('migrates immediately with no active sessions, reflects progress, and shows restarting on success', async () => {
@@ -194,7 +194,7 @@ describe('StorageMigrationModal', () => {
     })
 
     expect(api.detectActive).toHaveBeenCalled()
-    expect(api.migrate).toHaveBeenCalledWith('/mnt/data')
+    expect(api.migrate).toHaveBeenCalledWith('/mnt/data', undefined)
 
     act(() => {
       progressListener?.({
@@ -473,7 +473,7 @@ describe('StorageMigrationModal', () => {
       await Promise.resolve()
     })
 
-    expect(api.migrate).toHaveBeenCalledWith('/mnt/data')
+    expect(api.migrate).toHaveBeenCalledWith('/mnt/data', undefined)
   })
 
   it('blocks migration for delegated work and only lets the user return to stop it manually', async () => {

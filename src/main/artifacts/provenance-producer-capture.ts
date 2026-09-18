@@ -17,8 +17,19 @@ import type {
   NotebookRunInputFile,
   NotebookRunRecord
 } from '../../shared/notebook'
+import { hasImmutableExecutionFileEvidenceReference } from '../../shared/execution-file-evidence'
+import type { ExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
 import type { ImmutableInputAuthority } from '../immutable-input-authority'
 import { getNotebookSessionRoot, NotebookRunRepository } from '../notebook/repository'
+import {
+  unavailableNotebookDependencyProjection,
+  type NotebookDependencyAnalyzer
+} from '../notebook/dependency-analysis'
+import {
+  sealArtifactProvenanceGraph,
+  type ArtifactProvenanceComputeActivityInput,
+  type ArtifactProvenanceNotebookActivityInput
+} from './artifact-provenance-graph'
 import {
   canonicalJson,
   isCanonicalJsonValue,
@@ -31,9 +42,13 @@ import {
   inputEvidence,
   resolveRunEnvironmentCapture
 } from './provenance-execution-evidence'
+import { resolveStorageKey } from './provenance-storage'
+import { sealArtifactAnalysisRevision } from './provenance-analysis-revision'
 
 const CONNECTOR_ARGUMENTS_MAX_BYTES = 64 * 1024
 const CONNECTOR_IDENTITY_MAX_LENGTH = 256
+const MAX_GRAPH_ACTIVITY_COUNT = 256
+const MAX_GRAPH_SOURCE_BYTES = 16 * 1024 * 1024
 
 const isConnectorProducerEvidence = (
   producer: ArtifactVersionEvidence['producer']
@@ -147,13 +162,20 @@ type ArtifactProvenanceProducerCaptureOptions = {
   notebookRepository: Pick<NotebookRunRepository, 'readSessionDocuments'>
   storageRoot: string
   createId: () => string
+  dependencyAnalyzer?: Pick<NotebookDependencyAnalyzer, 'project'>
   computeJobReader?: {
     findByProducer(
       projectId: string,
       sessionId: string,
       producerRunId: string,
       priorityJobIds?: readonly string[]
-    ): Promise<ArtifactComputeExecutionEvidence[]>
+    ): Promise<{
+      activities: Array<{
+        evidence: ArtifactComputeExecutionEvidence
+        fileEvidence?: ExecutionFileEvidenceSummary
+      }>
+      omittedActivityCount: number
+    }>
     findOutputOwners(
       projectId: string,
       sessionId: string,
@@ -162,6 +184,12 @@ type ArtifactProvenanceProducerCaptureOptions = {
       artifactChecksum: string
     ): Promise<string[]>
   }
+}
+type ArtifactVersionTargetCapture = {
+  versionId: string
+  filename: string
+  checksum: string
+  sizeBytes: number
 }
 type PrepareVersionPersistenceInput = {
   request: CreateArtifactVersionRequest
@@ -217,7 +245,7 @@ class ArtifactProvenanceProducerCapture {
   async captureProducer(
     request: CreateArtifactVersionRequest,
     createdAt: Date,
-    artifactChecksum: string,
+    target: ArtifactVersionTargetCapture,
     appGeneratedProducer?: AppGeneratedArtifactProducer
   ): Promise<ArtifactVersionProducerCapture> {
     if (appGeneratedProducer) {
@@ -272,7 +300,7 @@ class ArtifactProvenanceProducerCapture {
       ? await this.assessSourceFileObservation(
           document,
           request.sourceFileObservation,
-          artifactChecksum,
+          target.checksum,
           getNotebookSessionRoot(
             this.options.storageRoot,
             request.projectId,
@@ -359,7 +387,7 @@ class ArtifactProvenanceProducerCapture {
           request.notebookSessionId,
           request.producerRunId,
           sourceFileObservation,
-          artifactChecksum
+          target.checksum
         )) ?? []
       if (observedOwners.length > 0 && !observedOwners.includes(request.producerRunId)) {
         throw new Error(
@@ -378,6 +406,87 @@ class ArtifactProvenanceProducerCapture {
       .slice(0, producerRunIndex + 1)
       .map((run, runIndex) => ({ run, runIndex }))
       .filter(({ run }) => producerScopeMismatch(run, scope) === null)
+    const graphRuns = eligibleRuns.slice(-MAX_GRAPH_ACTIVITY_COUNT)
+    let remainingGraphSourceBytes = MAX_GRAPH_SOURCE_BYTES
+    const loadEvidenceJson = async (
+      summary: ExecutionFileEvidenceSummary | undefined
+    ): Promise<string | undefined> => {
+      if (!hasImmutableExecutionFileEvidenceReference(summary)) return undefined
+      try {
+        const path = resolveStorageKey(this.options.storageRoot, summary.storageKey)
+        const metadata = await stat(path)
+        if (!metadata.isFile() || metadata.size > remainingGraphSourceBytes) return undefined
+        const bytes = await readFile(path)
+        if (bytes.byteLength !== metadata.size || bytes.byteLength > remainingGraphSourceBytes) {
+          return undefined
+        }
+        remainingGraphSourceBytes -= bytes.byteLength
+        return bytes.toString('utf8')
+      } catch {
+        return undefined
+      }
+    }
+    const computeResult = (await this.options.computeJobReader?.findByProducer(
+      request.projectId,
+      request.notebookSessionId,
+      producerRunId,
+      computeOutputOwners
+    )) ?? { activities: [], omittedActivityCount: 0 }
+    const graphRunEvidenceJson = new Map<string, string | undefined>()
+    const producerGraphRun = graphRuns.find((eligible) => eligible.run.runId === producerRunId)
+    if (producerGraphRun) {
+      graphRunEvidenceJson.set(
+        producerRunId,
+        await loadEvidenceJson(producerGraphRun.run.fileEvidence)
+      )
+    }
+    const computeGraphActivities: ArtifactProvenanceComputeActivityInput[] = []
+    for (const [ordinal, compute] of computeResult.activities.entries()) {
+      computeGraphActivities.push({
+        activityId: compute.evidence.activity_id,
+        parentActivityId: producerRunId,
+        ordinal,
+        fileEvidence: compute.fileEvidence,
+        evidenceJson: await loadEvidenceJson(compute.fileEvidence)
+      })
+    }
+    for (const eligible of [...graphRuns].reverse()) {
+      if (graphRunEvidenceJson.has(eligible.run.runId)) continue
+      graphRunEvidenceJson.set(
+        eligible.run.runId,
+        await loadEvidenceJson(eligible.run.fileEvidence)
+      )
+    }
+    const notebookGraphActivities: ArtifactProvenanceNotebookActivityInput[] = graphRuns.map(
+      (eligible) => ({
+        ...eligible,
+        evidenceJson: graphRunEvidenceJson.get(eligible.run.runId)
+      })
+    )
+    const sourceGenerationId = sourceFileObservation
+      ? await this.findSourceGenerationId(producerRun, sourceFileObservation, target.checksum)
+      : undefined
+    const notebookDependencies = await this.options.dependencyAnalyzer
+      ?.project({
+        projectId: request.projectId,
+        sessionId: request.notebookSessionId,
+        throughRunId: producerRunId
+      })
+      .catch(() => undefined)
+    const provenanceGraph = sealArtifactProvenanceGraph({
+      target: {
+        ...target,
+        producerRunId,
+        ...(sourceGenerationId ? { sourceGenerationId } : {})
+      },
+      notebookActivities: notebookGraphActivities,
+      computeActivities: computeGraphActivities,
+      notebookDependencies:
+        notebookDependencies ??
+        unavailableNotebookDependencyProjection(graphRuns.map(({ run }) => run)),
+      omittedLeadingActivityCount:
+        eligibleRuns.length - graphRuns.length + computeResult.omittedActivityCount
+    })
     const executionSnapshot = buildBoundedExecutionSnapshot(
       {
         schemaVersion: 2,
@@ -387,7 +496,12 @@ class ArtifactProvenanceProducerCapture {
         terminalPromptMessageId: request.promptMessageId,
         producerRunId,
         producerRunIndex,
-        createdAt: createdAt.toISOString()
+        createdAt: createdAt.toISOString(),
+        provenanceGraph,
+        analysisRevision: sealArtifactAnalysisRevision(
+          provenanceGraph,
+          notebookDependencies !== undefined
+        )
       },
       eligibleRuns
     )
@@ -395,13 +509,7 @@ class ArtifactProvenanceProducerCapture {
     await this.validateInputReferences(request.projectId, inputFiles)
     const executionJson = canonicalJson(executionSnapshot as unknown as CanonicalJson)
     const environment = resolveRunEnvironmentCapture(producerRun)
-    const computeExecutions =
-      (await this.options.computeJobReader?.findByProducer(
-        request.projectId,
-        request.notebookSessionId,
-        producerRunId,
-        computeOutputOwners
-      )) ?? []
+    const computeExecutions = computeResult.activities.map((compute) => compute.evidence)
 
     return {
       state: 'available',
@@ -579,6 +687,28 @@ class ArtifactProvenanceProducerCapture {
     if (!document || !observation) return undefined
     const matches = await this.findObservedWorkingFileRunIds(document, observation, scope)
     return matches.length === 1 ? matches[0] : undefined
+  }
+
+  private async findSourceGenerationId(
+    run: NotebookRunRecord,
+    observation: SourceFileObservation,
+    artifactChecksum: string
+  ): Promise<string | undefined> {
+    const observedPath = await canonicalPath(observation.path)
+    const matches = (
+      await Promise.all(
+        run.workingFiles.map(async (file) =>
+          file.createdByRunId === run.runId &&
+          file.generationId &&
+          file.checksum === artifactChecksum &&
+          file.size === observation.sizeBytes &&
+          (await canonicalPath(file.path)) === observedPath
+            ? file.generationId
+            : undefined
+        )
+      )
+    ).filter((generationId): generationId is string => generationId !== undefined)
+    return [...new Set(matches)].length === 1 ? matches[0] : undefined
   }
 
   // Main re-observes the untrusted RPC path under durable roots and proves its bytes match the

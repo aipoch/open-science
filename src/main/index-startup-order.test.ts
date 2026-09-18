@@ -30,6 +30,16 @@ describe('main startup ordering', () => {
     expect(createFirstWindow).toBeGreaterThan(registerBridge)
   })
 
+  it('creates the startup window before composing application IPC adapters', () => {
+    const createFirstWindow = mainSource.indexOf(
+      'createMainWindow(startupWindowCloseOptions, translate)'
+    )
+    const registerIpc = mainSource.indexOf('await registerIpcHandlers({')
+
+    expect(createFirstWindow).toBeGreaterThan(-1)
+    expect(registerIpc).toBeGreaterThan(createFirstWindow)
+  })
+
   it('binds the startup locale owner into native windows and close confirmation', () => {
     const createOwner = mainSource.indexOf('const localeOwner = new LocalePreferenceOwner(')
     const bindTranslator = mainSource.indexOf('const translate = localeOwner.t.bind(localeOwner)')

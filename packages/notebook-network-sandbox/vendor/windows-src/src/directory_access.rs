@@ -3,28 +3,23 @@ use std::{mem::size_of, path::Path, ptr::NonNull};
 
 use anyhow::{Context, Result, bail};
 use windows::Win32::{
-    Foundation::{CloseHandle, HLOCAL, LocalFree},
+    Foundation::{HLOCAL, LocalFree},
     Security::{
         ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, ACL_REVISION_DS, ACL_SIZE_INFORMATION,
         AclSizeInformation, AddAccessAllowedAceEx, AddAce,
-        Authorization::{
-            ConvertStringSidToSidW, GetNamedSecurityInfoW, SE_FILE_OBJECT, SetSecurityInfo,
-        },
+        Authorization::{ConvertStringSidToSidW, GetNamedSecurityInfoW, SE_FILE_OBJECT},
         DACL_SECURITY_INFORMATION, EqualSid, GetAce, GetAclInformation, GetLengthSid,
-        GetSecurityDescriptorControl, INHERITED_ACE, InitializeAcl, PSECURITY_DESCRIPTOR, PSID,
-        SE_DACL_AUTO_INHERIT_REQ, SE_DACL_AUTO_INHERITED, SECURITY_DESCRIPTOR_CONTROL,
-        SetFileSecurityW, SetSecurityDescriptorControl,
+        GetSecurityDescriptorControl, INHERITED_ACE, InitializeAcl, InitializeSecurityDescriptor,
+        PSECURITY_DESCRIPTOR, PSID, SE_DACL_AUTO_INHERIT_REQ, SE_DACL_AUTO_INHERITED,
+        SE_DACL_DEFAULTED, SE_DACL_PROTECTED, SECURITY_DESCRIPTOR, SECURITY_DESCRIPTOR_CONTROL,
+        SetFileSecurityW, SetSecurityDescriptorControl, SetSecurityDescriptorDacl,
     },
-    Storage::FileSystem::{
-        CreateFileW, FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_DELETE, FILE_SHARE_READ,
-        FILE_SHARE_WRITE, OPEN_EXISTING,
-    },
+    System::SystemServices::SECURITY_DESCRIPTOR_REVISION,
 };
 use windows::core::PCWSTR;
 
 // FILE_LIST_DIRECTORY | FILE_READ_EA | FILE_READ_ATTRIBUTES | READ_CONTROL | SYNCHRONIZE.
 const LIST_DIRECTORY: u32 = 0x0012_0089;
-const MAXIMUM_ALLOWED: u32 = 0x0200_0000;
 
 struct Allocation(*mut std::ffi::c_void);
 impl Drop for Allocation {
@@ -176,66 +171,40 @@ fn access(path: &str, identity: &str, change: Option<bool>, allow_existing: bool
             )
         }?;
     }
-    // MAXIMUM_ALLOWED is intentional: SetSecurityInfo then does not propagate existing inheritable
-    // ACEs to descendants, unlike a named-path update or icacls on a drive root.
-    let handle = unsafe {
-        CreateFileW(
-            PCWSTR(name.as_ptr()),
-            MAXIMUM_ALLOWED,
-            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-            None,
-            OPEN_EXISTING,
-            FILE_FLAG_BACKUP_SEMANTICS,
-            None,
-        )
-    }
-    .with_context(|| format!("open runtime directory permissions: {path}"))?;
-    let result = unsafe {
-        SetSecurityInfo(
-            handle,
-            SE_FILE_OBJECT,
-            DACL_SECURITY_INFORMATION,
-            None,
-            None,
+    // SetFileSecurityW is intentionally used for its documented non-propagating directory update.
+    // SetSecurityInfo with MAXIMUM_ALLOWED avoids propagation too, but requests DELETE access and
+    // fails when an ancestor is held as another process's working directory. Preserve DACL control
+    // bits directly, without temporarily changing inheritance or touching any descendants.
+    let mut updated = SECURITY_DESCRIPTOR::default();
+    let updated_ptr = PSECURITY_DESCRIPTOR((&mut updated as *mut SECURITY_DESCRIPTOR).cast());
+    unsafe {
+        InitializeSecurityDescriptor(updated_ptr, SECURITY_DESCRIPTOR_REVISION)?;
+        SetSecurityDescriptorDacl(
+            updated_ptr,
+            true,
             Some(target),
-            None,
-        )
-    }
-    .ok();
-    unsafe {
-        let _ = CloseHandle(handle);
-    }
-    result.with_context(|| format!("update runtime directory permissions: {path}"))?;
-    // SetSecurityInfo upgrades legacy inheritance-control flags even with propagation disabled.
-    // Preserve the current ACL and restore only those flags, as the filesystem lease owner does.
-    let mut updated = PSECURITY_DESCRIPTOR::default();
-    unsafe {
-        GetNamedSecurityInfoW(
+            original_control & SE_DACL_DEFAULTED.0 != 0,
+        )?;
+        let mask = SE_DACL_AUTO_INHERITED.0 | SE_DACL_AUTO_INHERIT_REQ.0 | SE_DACL_PROTECTED.0;
+        // The low-level setter requires AUTO_INHERIT_REQ in its input to retain an existing
+        // AUTO_INHERITED bit; the request bit itself is consumed by Windows.
+        let inheritance_request = if original_control & SE_DACL_AUTO_INHERITED.0 != 0 {
+            SE_DACL_AUTO_INHERIT_REQ.0
+        } else {
+            0
+        };
+        SetSecurityDescriptorControl(
+            updated_ptr,
+            SECURITY_DESCRIPTOR_CONTROL(mask),
+            SECURITY_DESCRIPTOR_CONTROL((original_control & mask) | inheritance_request),
+        )?;
+        SetFileSecurityW(
             PCWSTR(name.as_ptr()),
-            SE_FILE_OBJECT,
             DACL_SECURITY_INFORMATION,
-            None,
-            None,
-            None,
-            None,
-            &mut updated,
+            updated_ptr,
         )
-    }
-    .ok()?;
-    let _updated = Allocation(updated.0);
-    let mut updated_control = 0u16;
-    unsafe { GetSecurityDescriptorControl(updated, &mut updated_control, &mut revision) }?;
-    let mask = SE_DACL_AUTO_INHERITED.0 | SE_DACL_AUTO_INHERIT_REQ.0;
-    if original_control & mask != updated_control & mask {
-        unsafe {
-            SetSecurityDescriptorControl(
-                updated,
-                SECURITY_DESCRIPTOR_CONTROL(mask),
-                SECURITY_DESCRIPTOR_CONTROL(original_control & mask),
-            )
-        }?;
-        unsafe { SetFileSecurityW(PCWSTR(name.as_ptr()), DACL_SECURITY_INFORMATION, updated) }
-            .ok()?;
+        .ok()
+        .with_context(|| format!("update runtime directory permissions: {path}"))?;
     }
     Ok(add)
 }

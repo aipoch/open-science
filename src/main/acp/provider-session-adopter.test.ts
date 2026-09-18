@@ -19,11 +19,16 @@ import type { AcpCreateSessionResponse } from '../../shared/acp'
 import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
 import type { EffectiveSpecialistSkills } from '../../shared/specialist'
 import { claudeCodeFramework, codexFramework, opencodeFramework } from '../agent-framework'
+import {
+  shellRuntimeAgentContract,
+  type ShellRuntimeAgentContract
+} from '../notebook/shell-runtime'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 import { AcpProviderSessionAdopter } from './provider-session-adopter'
 import {
   CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
   SIDE_CHAT_SESSION_CAPABILITY_POLICY,
+  type SessionCapabilityName,
   type SessionCapabilityPolicy
 } from './session-capability-owner'
 import { AcpSessionRegistry, type AcpPrimarySessionIdentityReservation } from './session-registry'
@@ -78,6 +83,8 @@ const createHarness = (
     specialistIdentity?: { append: string; prefix: string }
     specialistSkills?: EffectiveSpecialistSkills
     capabilityMcpServers?: McpServer[]
+    descriptorCapabilities?: SessionCapabilityName[]
+    shellRuntimeAgentContract?: ShellRuntimeAgentContract
   } = {}
 ): AdopterHarness => {
   const order: string[] = []
@@ -131,7 +138,9 @@ const createHarness = (
   })
   if (reservation.collision) throw reservation.collision
   const commit = vi.fn(() => order.push('capability commit'))
-  const release = vi.fn(() => order.push('capability release'))
+  const release = vi.fn(() => {
+    order.push('capability release')
+  })
   const commitClaudeReplay = vi.fn(() => order.push('handoff commit'))
   const configure = vi.fn(
     options.configure ??
@@ -147,7 +156,7 @@ const createHarness = (
       role: 'primary' as const,
       delegation: 'denied' as const,
       transport: 'none' as const,
-      capabilities: [],
+      capabilities: options.descriptorCapabilities ?? [],
       canonicalMcpServerNames: [],
       modelFacingMcpServerNames: [],
       controlRpcMethods: []
@@ -155,6 +164,9 @@ const createHarness = (
     return {
       mcpServers,
       descriptor,
+      ...(options.shellRuntimeAgentContract
+        ? { shellRuntimeAgentContract: options.shellRuntimeAgentContract }
+        : {}),
       includeFrameworkMcpServers: (servers: readonly McpServer[]) => ({
         mcpServers: [...mcpServers, ...servers],
         descriptor: {
@@ -391,6 +403,41 @@ describe('AcpProviderSessionAdopter', () => {
       'handoff commit',
       'state callback'
     ])
+  })
+
+  it('adopts one redacted WSL shell prompt after persistent instructions', async () => {
+    const contract = shellRuntimeAgentContract({
+      kind: 'wsl2-bash',
+      profileId: 'private-profile',
+      distro: 'Ubuntu-22.04',
+      user: 'researcher'
+    })
+    const harness = createHarness({
+      descriptorCapabilities: ['notebook'],
+      shellRuntimeAgentContract: contract,
+      initialBackend: {
+        framework: opencodeFramework,
+        backendId: 'opencode:provider-a',
+        session: { modelRequired: false },
+        prompt: {
+          systemPromptAppends: [],
+          persistentSystemPrompt: 'Baked OpenCode instructions.'
+        },
+        context: { supportsImageInput: false },
+        adapter: { nativeMcpEnabled: true, bridgeMcpAliasesEnabled: false }
+      }
+    })
+
+    await harness.adopt()
+
+    const setupText = harness.sessionSetupAppends.flat().join('\n')
+    expect(setupText.match(/Notebook `bash_execute` is bound to WSL2 Bash/g)).toHaveLength(1)
+    expect(setupText).not.toMatch(/private-profile|Ubuntu-22\.04|researcher/)
+    const prefix = harness.registry
+      .lookup('stable-app-session')
+      ?.aggregate.snapshot().sessionSetupPromptPrefix
+    expect(prefix).toContain('host and workspace path are Windows')
+    expect(prefix).not.toContain('Baked OpenCode instructions.')
   })
 
   it('disposes the provisional Session and capability when configuration fails', async () => {

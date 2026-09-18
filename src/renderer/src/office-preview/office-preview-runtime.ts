@@ -1,4 +1,4 @@
-import { initI18n } from '../i18n'
+import { initI18n, prepareI18nLocale } from '../i18n'
 import type {
   OfficePreviewErrorCode,
   OfficePreviewRuntimeStart,
@@ -82,6 +82,8 @@ const runOfficePreview = async (
   let sessionError: Error | undefined
 
   try {
+    const preparing = prepareI18nLocale(start.locale ?? 'en')
+    if (preparing) await preparing
     initI18n(start.locale ?? 'en')
     reportState({ sessionId: start.sessionId, phase: 'reading' })
     let bytes: Uint8Array

@@ -6,11 +6,14 @@ import {
 } from './identity-catalog'
 
 describe('permission identity catalog', () => {
-  it('contains the closed 47-identity bootstrap inventory', () => {
-    expect(PRE_REGISTERED_PERMISSION_IDENTITY_COUNT).toBe(47)
-    expect(PRE_REGISTERED_PERMISSION_IDENTITIES.builtin_tool).toEqual([])
+  it('contains the closed 51-identity inventory including native web reading and search', () => {
+    expect(PRE_REGISTERED_PERMISSION_IDENTITY_COUNT).toBe(51)
+    expect(PRE_REGISTERED_PERMISSION_IDENTITIES.builtin_tool).toEqual([
+      'builtin:web_fetch',
+      'builtin:web_search'
+    ])
     expect(PRE_REGISTERED_PERMISSION_IDENTITIES.customize_mutation).toHaveLength(8)
-    expect(PRE_REGISTERED_PERMISSION_IDENTITIES.mcp_tool).toHaveLength(30)
+    expect(PRE_REGISTERED_PERMISSION_IDENTITIES.mcp_tool).toHaveLength(32)
     expect(PRE_REGISTERED_PERMISSION_IDENTITIES.mcp_tool).toContain(
       'mcp:open-science-notebook/request_network_access'
     )
@@ -44,7 +47,9 @@ describe('permission identity catalog', () => {
         'mcp:open-science-library/prepare_latex_bundle',
         'mcp:open-science-library/save_to_inbox',
         'mcp:open-science-library/acquire_pdf',
-        'mcp:open-science-literature/read_document'
+        'mcp:open-science-literature/read_document',
+        'mcp:open-science-literature/list_pdf_elements',
+        'mcp:open-science-literature/read_pdf_element'
       ])
     )
   })

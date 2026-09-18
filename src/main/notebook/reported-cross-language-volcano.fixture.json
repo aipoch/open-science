@@ -1,0 +1,56 @@
+[
+  {
+    "index": 0,
+    "language": "python",
+    "status": "completed",
+    "script": "import os\nprint(os.getcwd())\nprint(os.listdir('.'))\nprint(os.listdir('inputs'))"
+  },
+  {
+    "index": 1,
+    "language": "python",
+    "status": "completed",
+    "script": "import pandas as pd\ncsv_path = 'inputs/expression-matrix-444444444444.csv'\n# Just read header first\nwith open(csv_path, 'r') as f:\n    for _ in range(3):\n        print(f.readline())"
+  },
+  {
+    "index": 2,
+    "language": "python",
+    "status": "completed",
+    "script": "import pandas as pd\nxlsx_path = 'inputs/differential-results-333333333333.xlsx'\n# Get sheet names\nxls = pd.ExcelFile(xlsx_path)\nprint(\"Sheet names:\", xls.sheet_names)"
+  },
+  {
+    "index": 3,
+    "language": "python",
+    "status": "completed",
+    "script": "import pandas as pd\nxlsx_path = 'inputs/differential-results-333333333333.xlsx'\n# Read the differential analysis results - inspect the first rows and columns\ndf_diff = pd.read_excel(xlsx_path, sheet_name='Sheet 1')\nprint(\"Shape:\", df_diff.shape)\nprint(\"Columns:\", df_diff.columns.tolist())\nprint(df_diff.head(8))"
+  },
+  {
+    "index": 4,
+    "language": "python",
+    "status": "completed",
+    "script": "import pandas as pd\ncsv_path = 'inputs/expression-matrix-444444444444.csv'\n# Read CSV: skip the first annotation row, use second as header\ndf_expr = pd.read_csv(csv_path, skiprows=1)\nprint(\"Expression matrix shape:\", df_expr.shape)\nprint(\"First column name:\", df_expr.columns[0])\nprint(df_expr.head(5))\nprint(\"\\n--- Last 3 rows ---\")\nprint(df_expr.tail(3))\nprint(\"\\n--- Are IDs unique? ---\")\nprint(\"Total:\", len(df_expr))\nprint(\"Unique:\", df_expr['id'].nunique())"
+  },
+  {
+    "index": 5,
+    "language": "python",
+    "status": "completed",
+    "script": "import pandas as pd\nimport numpy as np\ncsv_path = 'inputs/expression-matrix-444444444444.csv'\nxlsx_path = 'inputs/differential-results-333333333333.xlsx'\n# Expression matrix (skip the annotation row)\nexpr = pd.read_csv(csv_path, skiprows=1)\n# Deduplicate by keeping the first occurrence\nexpr = expr.drop_duplicates(subset='id', keep='first').reset_index(drop=True)\nprint(\"Expression after dedup:\", expr.shape)\n# Differential analysis results\ndiff = pd.read_excel(xlsx_path, sheet_name='Sheet 1')\nprint(\"Differential analysis:\", diff.shape)\n# Merge on gene id\nmerged = diff.merge(expr, on='id', how='inner')\nprint(\"Merged:\", merged.shape)\nprint(merged[['id', 'log2FoldChange', 'pvalue']].head())\n# Save merged table to a CSV for the R session\nmerged_out = merged[['id', 'log2FoldChange', 'pvalue']].copy()\nmerged_out.to_csv('processed/diff_results.csv', index=False)\nprint(\"\\nSaved processed/diff_results.csv:\", merged_out.shape)"
+  },
+  {
+    "index": 6,
+    "language": "r",
+    "status": "completed",
+    "script": "# Switch to R kernel\nlibrary(ggplot2)\nlibrary(dplyr)\n# Read the differential results\ndf <- read.csv('processed/diff_results.csv', stringsAsFactors = FALSE)\ncat(\"Rows:\", nrow(df), \"\\n\")\ncat(\"Columns:\", paste(colnames(df), collapse=\", \"), \"\\n\")\ncat(\"Summary:\\n\")\nprint(summary(df$log2FoldChange))\ncat(\"\\np-value summary:\\n\")\nprint(summary(df$pvalue))"
+  },
+  {
+    "index": 7,
+    "language": "r",
+    "status": "completed",
+    "script": "library(ggplot2)\nlibrary(dplyr)\n# --- 1. Load and prepare data ---\ndf <- read.csv('processed/diff_results.csv', stringsAsFactors = FALSE)\n# Remove NA\ndf <- df %>% filter(!is.na(log2FoldChange) & !is.na(pvalue))\n# Compute -log10(p) (cap at a sensible max to avoid Inf)\ndf$neg_log10_p <- -log10(df$pvalue)\ndf$neg_log10_p[df$neg_log10_p > 50] <- 50\n# --- 2. Cutoffs (typical \"diagonal\" volcano uses joint thresholds) ---\nfc_cut   <- 1           # |log2FC| >= 1\np_cut    <- 0.05        # p-value <= 0.05\nk        <- 1           # slope of diagonal\nintercept <- -log10(p_cut)  # 1.301\n# Build the two diagonal cutoff lines\nx_line <- seq(-max(abs(df$log2FoldChange)),\n              max(abs(df$log2FoldChange)), length.out = 200)\ndiag_df <- data.frame(\n  x = c(x_line, x_line),\n  y = c(intercept + k * abs(x_line), intercept + k * abs(x_line)),\n  side = c(rep(\"up\", length(x_line)), rep(\"down\", length(x_line)))\n)\n# --- 3. Classify genes ---\ndf$status <- \"NS\"\ndf$status[df$log2FoldChange >=  fc_cut & df$pvalue <= p_cut] <- \"Up\"\ndf$status[df$log2FoldChange <= -fc_cut & df$pvalue <= p_cut] <- \"Down\"\ncat(\"Counts:\\n\")\nprint(table(df$status))\n# Top 10 by |log2FC|\ntop_up <- df %>% filter(status == \"Up\") %>%\n  arrange(pvalue) %>% head(5) %>% pull(id)\ntop_down <- df %>% filter(status == \"Down\") %>%\n  arrange(pvalue) %>% head(5) %>% pull(id)\ncat(\"\\nTop 5 Up:  \", paste(top_up, collapse=\", \"), \"\\n\")\ncat(\"Top 5 Down:\", paste(top_down, collapse=\", \"), \"\\n\")\ndf$label <- ifelse(df$id %in% c(top_up, top_down), df$id, \"\")"
+  },
+  {
+    "index": 8,
+    "language": "r",
+    "status": "completed",
+    "script": "library(ggplot2)\nlibrary(dplyr)\nlibrary(ggrepel)\n# --- 1. Load and prepare data ---\ndf <- read.csv('processed/diff_results.csv', stringsAsFactors = FALSE)\ndf <- df %>% filter(!is.na(log2FoldChange) & !is.na(pvalue))\ndf$neg_log10_p <- -log10(df$pvalue)\ndf$neg_log10_p[df$neg_log10_p > 50] <- 50\n# --- 2. Cutoffs (typical \"diagonal\" volcano uses joint thresholds) ---\nfc_cut   <- 1\np_cut    <- 0.05\nk        <- 1\nintercept <- -log10(p_cut)  # ~1.301\n# Build the two diagonal cutoff lines (the signature of \"Synthetic volcano plot\")\nx_line <- seq(0, max(abs(df$log2FoldChange)) + 1, length.out = 200)\ndiag_pos <- data.frame(x =  x_line, y = intercept + k * x_line)\ndiag_neg <- data.frame(x = -x_line, y = intercept + k * abs(x_line))\n# --- 3. Classify genes ---\ndf$status <- \"NS\"\ndf$status[df$log2FoldChange >=  fc_cut & df$pvalue <= p_cut] <- \"Up\"\ndf$status[df$log2FoldChange <= -fc_cut & df$pvalue <= p_cut] <- \"Down\"\ndf$status <- factor(df$status, levels = c(\"Up\", \"Down\", \"NS\"))\n# Top genes to label\ntop_up   <- df %>% filter(status == \"Up\")   %>% arrange(pvalue) %>% head(8) %>% pull(id)\ntop_down <- df %>% filter(status == \"Down\") %>% arrange(pvalue) %>% head(8) %>% pull(id)\ndf$label <- ifelse(df$id %in% c(top_up, top_down), df$id, \"\")\n# --- 4. Plot ---\np <- ggplot(df, aes(x = log2FoldChange, y = neg_log10_p, colour = status)) +\n  # NS background points (drawn first so they sit underneath)\n  geom_point(data = subset(df, status == \"NS\"),\n             aes(x = log2FoldChange, y = neg_log10_p),\n             colour = \"grey80\", size = 0.8, alpha = 0.6) +\n  # Significant points\n  geom_point(data = subset(df, status != \"NS\"),\n             size = 1.1, alpha = 0.75) +\n  # Diagonal cutoff lines (the defining feature of a diagonal volcano plot)\n  geom_line(data = diag_pos, aes(x = x, y = y),\n            inherit.aes = FALSE, colour = \"#2C7FB8\",\n            linetype = \"dashed\", linewidth = 0.6) +\n  geom_line(data = diag_neg, aes(x = x, y = y),\n            inherit.aes = FALSE, colour = \"#2C7FB8\",\n            linetype = \"dashed\", linewidth = 0.6) +\n  # Reference axes at the conventional thresholds\n  geom_vline(xintercept = c(-fc_cut, fc_cut),\n             linetype = \"dotted\", colour = \"grey40\", linewidth = 0.4) +\n  geom_hline(yintercept = intercept,\n             linetype = \"dotted\", colour = \"grey40\", linewidth = 0.4) +\n  # Gene labels\n  geom_text_repel(aes(label = label),\n                  size = 3, max.overlaps = 100,\n                  box.padding = 0.3, show.legend = FALSE) +\n  scale_colour_manual(values = c(\"Up\" = \"#D7263D\",\n                                 \"Down\" = \"#1B998B\",\n                                 \"NS\" = \"grey80\")) +\n  scale_x_continuous(limits = c(-max(abs(df$log2FoldChange)) - 0.5,\n                                max(abs(df$log2FoldChange)) + 0.5)) +\n  labs(\n    title = \"Synthetic volcano plot (Diagonal Volcano Plot)\",\n    subtitle = sprintf(\"|log2FC| ≥ %g  &  p ≤ %g  |  Diagonal: -log10(p) = %.2f + |log2FC|\",\n                       fc_cut, p_cut, intercept),\n    x = \"log2 Fold Change\",\n    y = expression(-log[10](p~value)),\n    colour = NULL\n  ) +\n  theme_bw(base_size = 12) +\n  theme(\n    plot.title    = element_text(face = \"bold\", hjust = 0.5),\n    plot.subtitle = element_text(hjust = 0.5, colour = \"grey30\"),\n    legend.position = \"top\",\n    panel.grid.minor = element_blank()\n  ) +\n  guides(colour = guide_legend(override.aes = list(size = 3, alpha = 1)))\n# --- 5. Save figure ---\nggsave(\"processed/diagonal_volcano.png\", p,\n       width = 9, height = 7, dpi = 200)\nggsave(\"processed/diagonal_volcano.pdf\", p,\n       width = 9, height = 7)\ncat(\"Saved processed/diagonal_volcano.png\\n\")\ncat(\"Saved processed/diagonal_volcano.pdf\\n\")"
+  }
+]

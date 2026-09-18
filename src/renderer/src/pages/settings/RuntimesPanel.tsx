@@ -1,13 +1,25 @@
+import { Notice } from '@/components/notice'
+import { InlineNotice } from '@/components/ui/inline-notice'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
 /* Hallmark · macrostructure: Workbench · genre: modern-minimal · tone: technical/austere
- * theme: existing Open Science Settings tokens · enrichment: none · motion: existing controls only
+ * theme: existing Open-Science Settings tokens · enrichment: none · motion: existing controls only
  */
-import { CheckCircle2, FolderInput, Package, RefreshCw, Search, X } from 'lucide-react'
+import {
+  CheckCircle2,
+  FolderInput,
+  LoaderCircle,
+  Package,
+  RefreshCw,
+  Search,
+  Upload,
+  X
+} from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
 import * as Dialog from '@/components/ui/dialog'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { ErrorNotice } from '@/components/error-notice'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -35,13 +47,18 @@ import {
   type RuntimeUsage
 } from '../../../../shared/notebook-runtime'
 import type { NotebookLanguage } from '../../../../shared/notebook'
+import type { Wsl2BashPreviewStatus } from '../../../../shared/wsl-setup'
+import type { ImportArtifactEnvironmentLockResult } from '../../../../shared/artifact-reproducibility'
 import { SettingsRow, SettingsSection, SettingsToggle } from './SettingsLayout'
 import {
   getSettingsSearchKeyShortcuts,
   useSettingsSearchShortcut
 } from './settings-search-shortcut'
 import { PythonIcon, RIcon } from './language-icons'
+import { NotebookRecoveryNotice } from './NotebookRecoveryNotice'
 import { NotebookNetworkProtectionBanner } from './NotebookNetworkProtectionBanner'
+import { useNotebookNetworkStatus } from './use-notebook-network-status'
+import { WslLocalShellSection } from './WslLocalShellSection'
 import { envReadyLine, managedLine, providerType } from './runtimes-panel-view'
 import { provisionProgressText } from '../workspace/provision-progress-text'
 
@@ -102,6 +119,10 @@ const RuntimesPanel = ({
   )
   const loaded = useRuntimeSettingsStore((state) => state.loaded)
   const checkedAt = useRuntimeSettingsStore((state) => state.checkedAt)
+  const networkStatus = useNotebookNetworkStatus(
+    window.api.platform === 'win32' || Boolean(onOpenNetworkProtection),
+    checkedAt
+  )
   const busy = useRuntimeSettingsStore((state) => state.busy)
   const error = useRuntimeSettingsStore((state) => state.error)
   const packageCounts = useRuntimeSettingsStore((state) => state.packageCounts)
@@ -150,6 +171,9 @@ const RuntimesPanel = ({
   const [managedOperations, setManagedOperations] = useState<
     Partial<Record<NotebookLanguage, boolean>>
   >({})
+  const [importingEnvironmentLock, setImportingEnvironmentLock] = useState(false)
+  const [environmentLockImportResult, setEnvironmentLockImportResult] =
+    useState<ImportArtifactEnvironmentLockResult>()
   // Set while confirming a disable that would affect live sessions (WS11): the runtime being disabled
   // plus its current usage, so the dialog can warn before revoking.
   const [disableImpact, setDisableImpact] = useState<{
@@ -168,6 +192,36 @@ const RuntimesPanel = ({
   const [packages, setPackages] = useState<EnvPackage[] | null>(null)
   const [packagesError, setPackagesError] = useState<string | null>(null)
   const [packagesRetryNonce, setPackagesRetryNonce] = useState(0)
+  const [installLibraries, setInstallLibraries] = useState<Record<string, string>>({})
+  const [wsl2Preview, setWsl2Preview] = useState<{
+    available: boolean
+    development: boolean
+    needsPowerShellRecovery: boolean
+    reason: Wsl2BashPreviewStatus['reason']
+  }>()
+
+  useEffect(() => {
+    let cancelled = false
+    if (window.api.platform !== 'win32') return () => undefined
+    void Promise.all([
+      window.api.settings
+        .getWsl2BashPreviewStatus()
+        .catch((): Wsl2BashPreviewStatus => ({ available: false, reason: 'not-initialized' })),
+      window.api.settings.getLocalShellRuntimePreference().catch(() => undefined)
+    ]).then(([status, preference]) => {
+      if (!cancelled) {
+        setWsl2Preview({
+          available: status.available,
+          development: status.development === true,
+          needsPowerShellRecovery: !status.available && preference === 'wsl2-bash',
+          reason: status.reason
+        })
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
   const [packagesFilter, setPackagesFilter] = useState('')
   const packagesFilterRef = useRef<HTMLInputElement>(null)
   useSettingsSearchShortcut(packagesFilterRef, packagesEnv !== null)
@@ -175,6 +229,13 @@ const RuntimesPanel = ({
   const provisionEnv = useNotebookEnvStore((state) => state.provision)
   const cancelEnv = useNotebookEnvStore((state) => state.cancel)
   const resetEnv = useNotebookEnvStore((state) => state.reset)
+  const envStatus = useNotebookEnvStore((state) => state.status)
+  const recovery = envStatus.recovery
+  const blockedLabel = (language: NotebookLanguage): string =>
+    (language === 'python' ? envStatus.pythonRepairRequired : envStatus.rRepairRequired)
+      ? t('Runtime repair required')
+      : t('Runtime recovery blocked')
+  const [rechecking, setRechecking] = useState(false)
   const statusError = useNotebookEnvStore((state) => state.statusError)
   // Per-language provisioning state: python and R each track their own progress/preparing/error, so
   // requesting one never makes the other's card look cancelled (the provisioner serializes the runs).
@@ -221,12 +282,39 @@ const RuntimesPanel = ({
   // cleared after a successful refresh so every badge refetches against the new env list; a failed
   // refresh retains both the last complete registry snapshot and its matching counts.
   const recheck = async (): Promise<void> => {
-    if (LANGUAGES.some(({ id }) => languageOperationActive(id))) return
+    if (rechecking || LANGUAGES.some(({ id }) => languageOperationActive(id))) return
+    setRechecking(true)
     setError(null)
     try {
+      await initEnv()
       await recheckRuntimeSettings()
     } catch {
       setError('Could not re-check runtimes.')
+    } finally {
+      setRechecking(false)
+    }
+  }
+
+  const importEnvironmentLock = async (): Promise<void> => {
+    const importBundle = window.api?.artifacts?.importEnvironmentLock
+    if (!importBundle || importingEnvironmentLock) return
+    setImportingEnvironmentLock(true)
+    setEnvironmentLockImportResult(undefined)
+    setError(null)
+    try {
+      const result = await importBundle({})
+      setEnvironmentLockImportResult(result)
+      if (result.imported) {
+        try {
+          await recheckRuntimeSettings()
+        } catch {
+          setError('Could not re-check runtimes.')
+        }
+      }
+    } catch {
+      setError(t('Environment lock could not be imported.'))
+    } finally {
+      setImportingEnvironmentLock(false)
     }
   }
 
@@ -234,7 +322,27 @@ const RuntimesPanel = ({
     isEnvEnabled(env, enablement[language])
 
   const isInstallAuthorized = (language: NotebookLanguage, env: DiscoveredInterpreter): boolean =>
+    // Display persisted consent so historical R grants without a library can still be revoked.
+    // Package admission separately requires a library before an R installation can run.
     enablement[language]?.installAuthorized[env.envId] ?? false
+
+  const selectedRLibrary = (env: DiscoveredInterpreter): string | undefined =>
+    enablement.r?.installLibraries?.[env.envId] ??
+    installLibraries[env.envId] ??
+    (env.personalRLibraries?.length === 1 ? env.personalRLibraries[0] : undefined)
+
+  const chooseRLibrary = async (env: DiscoveredInterpreter): Promise<void> => {
+    if (busy || languageOperationActive('r')) return
+    setBusy(true)
+    try {
+      const selected = await window.api.storage.pickDirectory()
+      if (selected) setInstallLibraries((current) => ({ ...current, [env.envId]: selected }))
+    } catch (error) {
+      setError(error instanceof Error ? error.message : t('Could not select a folder.'))
+    } finally {
+      setBusy(false)
+    }
+  }
 
   const applyEnabled = async (
     language: NotebookLanguage,
@@ -320,12 +428,23 @@ const RuntimesPanel = ({
       const next = await window.api.runtime.setInstallAuthorized(
         language,
         env.envId,
-        !isInstallAuthorized(language, env)
+        !isInstallAuthorized(language, env),
+        ...(language === 'r' ? [selectedRLibrary(env)] : [])
       )
       setEnablement(language, next)
     } catch (e) {
+      const message =
+        e instanceof Error
+          ? e.message
+              .replace(/^Error invoking remote method '[^']*':\s*/, '')
+              .replace(/^Error:\s*/, '')
+          : ''
       setError(
-        e instanceof Error ? e.message : t('Could not change package-install authorization.')
+        message === 'Select an existing personal library visible to this R runtime.'
+          ? t(
+              'This folder cannot be used to install packages for this R. Click Recheck and use a detected personal package folder, or use an app-managed R environment.'
+            )
+          : message || t('Could not change package-install authorization.')
       )
     } finally {
       setBusy(false)
@@ -501,13 +620,14 @@ const RuntimesPanel = ({
               </div>
             ) : null}
             {!operationActive && operation?.error ? (
-              <p
+              <InlineNotice
+                level="error"
                 role="alert"
-                className="mt-1 text-[13px] text-destructive"
+                className="mt-1"
                 data-testid={`runtime-operation-error-${language}`}
               >
-                {operation.error}
-              </p>
+                {recoveryBlocked ? blockedLabel(language) : operation.error}
+              </InlineNotice>
             ) : null}
             <code className="mt-1 block truncate text-xs text-muted-foreground">
               {env.interpreterPath}
@@ -593,7 +713,7 @@ const RuntimesPanel = ({
                 type="button"
                 variant="outline"
                 size="sm"
-                disabled={busy || !enabled || !env.runnable}
+                disabled={busy || !enabled || !env.runnable || networkStatus.kind !== 'ready'}
                 onClick={() => void setSandboxAccess(env, true)}
               >
                 {t('Authorize and verify')}
@@ -608,6 +728,13 @@ const RuntimesPanel = ({
                 {t('Remove R access')}
               </Button>
             </div>
+            {networkStatus.kind !== 'ready' ? (
+              <p className="mt-2 text-xs text-muted-foreground">
+                {t(
+                  'R access verification requires network protection to be ready. Review Network settings, then recheck runtimes.'
+                )}
+              </p>
+            ) : null}
             {runtimeAccessMessage[env.envId] ? (
               <p role="status" className="mt-2 text-xs">
                 {runtimeAccessMessage[env.envId]}
@@ -624,22 +751,92 @@ const RuntimesPanel = ({
               description={
                 language === 'r'
                   ? t(
-                      'Open Science cannot install packages into user-owned R environments yet. You can still manage packages in the environment yourself.'
+                      'Authorize an existing personal R library. Installation may change packages used by other projects. Environment restoration requires a matching interpreter.'
                     )
                   : t(
-                      'Lets Open Science install packages into this environment. Installs go to your own environment, not the app-managed storage.'
+                      'Lets Open-Science install packages into this environment. Installs go to your own environment, not the app-managed storage.'
                     )
               }
             >
               <div className="flex justify-end">
                 <SettingsToggle
-                  enabled={language !== 'r' && isInstallAuthorized(language, env)}
+                  enabled={isInstallAuthorized(language, env)}
                   onToggle={() => void toggleInstallAuthorized(language, env)}
-                  disabled={busy || language === 'r' || languageOperationActive(language)}
+                  disabled={
+                    busy ||
+                    languageOperationActive(language) ||
+                    (language === 'r' &&
+                      !isInstallAuthorized(language, env) &&
+                      !selectedRLibrary(env)?.trim())
+                  }
                   aria-label={t('Allow package install for {{label}}', { label: env.label })}
                 />
               </div>
             </SettingsRow>
+            {language === 'r' ? (
+              <div className="mt-2 space-y-2 text-xs">
+                {(env.personalRLibraries?.length ?? 0) > 1 ? (
+                  <select
+                    className="w-full rounded-md border border-input bg-background p-2"
+                    aria-label={t('Personal R package library')}
+                    value={selectedRLibrary(env) ?? ''}
+                    disabled={
+                      busy || languageOperationActive('r') || isInstallAuthorized(language, env)
+                    }
+                    onChange={(event) =>
+                      setInstallLibraries((current) => ({
+                        ...current,
+                        [env.envId]: event.target.value
+                      }))
+                    }
+                  >
+                    <option value="">{t('Select a personal R library')}</option>
+                    {[
+                      ...new Set([
+                        ...env.personalRLibraries!,
+                        ...(selectedRLibrary(env) ? [selectedRLibrary(env)!] : [])
+                      ])
+                    ].map((path) => (
+                      <option key={path} value={path}>
+                        {path}
+                      </option>
+                    ))}
+                  </select>
+                ) : selectedRLibrary(env) ? (
+                  <p
+                    className="break-all text-muted-foreground"
+                    aria-label={t('Personal R package library')}
+                  >
+                    {selectedRLibrary(env)}
+                  </p>
+                ) : (
+                  <p className="text-muted-foreground">
+                    {t(
+                      'No personal package folder was found for this R. Use an app-managed R environment, or set up a personal package folder in this R and click Recheck.'
+                    )}
+                  </p>
+                )}
+                <details>
+                  <summary className="cursor-pointer">{t('Advanced options')}</summary>
+                  <p className="my-2 text-muted-foreground">
+                    {t(
+                      'If you have already set up a personal package folder in this R, select that folder here.'
+                    )}
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={
+                      busy || languageOperationActive('r') || isInstallAuthorized(language, env)
+                    }
+                    onClick={() => void chooseRLibrary(env)}
+                  >
+                    {t('Choose library folder…')}
+                  </Button>
+                </details>
+              </div>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -671,17 +868,53 @@ const RuntimesPanel = ({
         actionClassName="ml-auto"
         action={
           <div className="flex flex-col items-end gap-1.5">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              data-testid="runtimes-recheck"
-              onClick={() => void recheck()}
-              disabled={busy || loading || LANGUAGES.some(({ id }) => languageOperationActive(id))}
-            >
-              <RefreshCw className={cn(busy && 'animate-spin')} aria-hidden="true" />
-              {t('Recheck')}
-            </Button>
+            <div className="flex flex-wrap justify-end gap-2">
+              {window.api?.artifacts?.importEnvironmentLock ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  data-testid="runtimes-import-environment"
+                  onClick={() => void importEnvironmentLock()}
+                  disabled={
+                    importingEnvironmentLock ||
+                    busy ||
+                    loading ||
+                    LANGUAGES.some(({ id }) => languageOperationActive(id))
+                  }
+                  aria-busy={Boolean(importingEnvironmentLock)}
+                >
+                  <span key={String(importingEnvironmentLock)} className="button-feedback">
+                    {importingEnvironmentLock ? (
+                      <LoaderCircle
+                        className="animate-spin motion-reduce:animate-none"
+                        aria-hidden="true"
+                      />
+                    ) : (
+                      <Upload aria-hidden="true" />
+                    )}
+                    {importingEnvironmentLock ? t('Importing…') : t('Import environment…')}
+                  </span>
+                </Button>
+              ) : null}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                data-testid="runtimes-recheck"
+                onClick={() => void recheck()}
+                disabled={
+                  rechecking ||
+                  importingEnvironmentLock ||
+                  busy ||
+                  loading ||
+                  LANGUAGES.some(({ id }) => languageOperationActive(id))
+                }
+              >
+                <RefreshCw className={cn(busy && 'animate-spin')} aria-hidden="true" />
+                {t('Recheck')}
+              </Button>
+            </div>
             {checkedAt !== null ? (
               <span
                 className="whitespace-nowrap text-xs tabular-nums text-muted-foreground"
@@ -695,17 +928,39 @@ const RuntimesPanel = ({
           </div>
         }
       >
+        {statusError ? (
+          <ErrorNotice
+            tone="amber"
+            title={t('Could not re-check runtimes.')}
+            errorCode={statusError}
+          />
+        ) : null}
+        <NotebookRecoveryNotice recovery={recovery} />
         {onOpenNetworkProtection ? (
-          <NotebookNetworkProtectionBanner onOpen={onOpenNetworkProtection} />
+          <NotebookNetworkProtectionBanner
+            onOpen={onOpenNetworkProtection}
+            status={networkStatus}
+          />
+        ) : null}
+        {environmentLockImportResult?.imported ? (
+          <p role="status" className="text-sm text-status-info-foreground">
+            {environmentLockImportResult.reused
+              ? t('Environment {{name}} is already available.', {
+                  name: environmentLockImportResult.environmentName
+                })
+              : t('Environment imported as {{name}}.', {
+                  name: environmentLockImportResult.environmentName
+                })}
+          </p>
         ) : null}
         {error !== null && (
-          <p role="alert" className="text-sm text-destructive" data-testid="runtimes-error">
+          <InlineNotice level="error" role="alert" data-testid="runtimes-error">
             {error === 'Could not load runtimes.'
               ? t('Could not load runtimes.')
               : error === 'Could not re-check runtimes.'
                 ? t('Could not re-check runtimes.')
                 : error}
-          </p>
+          </InlineNotice>
         )}
         {!loading && envs !== null ? (
           <SettingsRow
@@ -831,13 +1086,16 @@ const RuntimesPanel = ({
                             </div>
                           ) : null}
                           {!settingUp && langError ? (
-                            <p
+                            <InlineNotice
+                              level="error"
                               role="alert"
-                              className="mt-1 text-[13px] text-destructive"
+                              className="mt-1"
                               data-testid={`runtimes-provision-error-${id}`}
                             >
-                              {langError}
-                            </p>
+                              {langError.includes('RUNTIME_RECOVERY_BLOCKED')
+                                ? blockedLabel(id)
+                                : langError}
+                            </InlineNotice>
                           ) : null}
                         </div>
                         {preparing ? (
@@ -898,6 +1156,13 @@ const RuntimesPanel = ({
           })
         )}
       </SettingsSection>
+      {wsl2Preview?.available || wsl2Preview?.needsPowerShellRecovery ? (
+        <WslLocalShellSection
+          previewAvailable={wsl2Preview.available}
+          developmentPreview={wsl2Preview.development}
+          previewUnavailableReason={wsl2Preview.available ? undefined : wsl2Preview.reason}
+        />
+      ) : null}
 
       <AlertDialog.Root
         open={managedRepair !== null}
@@ -1097,12 +1362,14 @@ const RuntimesPanel = ({
                   </Dialog.Close>
                 </div>
 
-                <div className={`${dialogBodyClassName} min-h-0 flex-1 overflow-hidden`}>
-                  <p className={dialogDescriptionClassName}>
+                <div
+                  className={`${dialogBodyClassName} flex min-h-0 flex-1 flex-col overflow-hidden`}
+                >
+                  <p className={cn(dialogDescriptionClassName, 'shrink-0')}>
                     {t('Installed packages in this environment.')}
                   </p>
 
-                  <div className="mt-2 flex flex-wrap items-center gap-2 text-[13px] text-muted-foreground">
+                  <div className="mt-2 flex shrink-0 flex-wrap items-center gap-2 text-[13px] text-muted-foreground">
                     <Badge variant="secondary">{providerType(dialogPackagesEnv, t)}</Badge>
                     {/* Conda env name badge — but only when the provenance badge doesn't already carry
                       it: providerType() returns the "Conda: <name>" label for user-own conda envs, so
@@ -1121,7 +1388,7 @@ const RuntimesPanel = ({
                     <code className="truncate text-xs">{dialogPackagesEnv.interpreterPath}</code>
                   </div>
 
-                  <div className="mt-3 flex items-center gap-3">
+                  <div className="mt-3 flex shrink-0 items-center gap-3">
                     <div className="relative max-w-sm flex-1">
                       <Search
                         aria-hidden="true"
@@ -1154,25 +1421,22 @@ const RuntimesPanel = ({
                     ) : null}
                   </div>
 
-                  <div className="mt-2 max-h-[48vh] min-h-0 overflow-y-auto rounded-md border border-border">
+                  <div className="relative mt-2 max-h-[48vh] min-h-0 flex-1 overflow-y-auto rounded-md border border-border">
                     {packagesError !== null ? (
-                      <div className="flex flex-col items-center gap-2 px-3 py-6">
-                        <p role="alert" className="text-sm text-destructive">
-                          {packagesError}
-                        </p>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
+                      <Notice
+                        level="error"
+                        role="alert"
+                        className="m-3 w-auto"
+                        description={packagesError}
+                        primaryButton={{
+                          label: t('Retry'),
+                          onClick: () => {
                             setPackages(null)
                             setPackagesError(null)
                             setPackagesRetryNonce((nonce) => nonce + 1)
-                          }}
-                        >
-                          {t('Retry')}
-                        </Button>
-                      </div>
+                          }
+                        }}
+                      />
                     ) : packages === null ? (
                       <p className="px-3 py-6 text-center text-sm text-muted-foreground">
                         {t('Listing packages…')}

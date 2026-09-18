@@ -169,7 +169,11 @@ describe('ConcurrencyManager integration with ComputeService', () => {
     const providerId = computeProviderId('test-host')
     const durableSessionLimits = new Map<string, number>()
     const sessionLimitPersistence = {
-      load: async () => [...durableSessionLimits.entries()],
+      resolve: async (sessionId: string) => ({
+        status: 'ready' as const,
+        limit: durableSessionLimits.get(sessionId) ?? null,
+        revision: 0
+      }),
       save: async (sessionId: string, limit: number) => {
         durableSessionLimits.set(sessionId, limit)
       }

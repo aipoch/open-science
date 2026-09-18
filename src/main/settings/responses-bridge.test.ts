@@ -8,6 +8,122 @@ import { inputToMessages, responsesToChatRequest, toolsToChat } from './response
 import { selectExplicitConnectorSkills } from './skill-selector-routing'
 
 describe('Responses-compatible bridge conversion', () => {
+  it('attributes a delayed rejection to the request target before retargeting', async () => {
+    const originalObserver = vi.fn()
+    const nextObserver = vi.fn()
+    let complete!: (response: Response) => void
+    let accept!: () => void
+    const accepted = new Promise<void>((resolve) => {
+      accept = resolve
+    })
+    const bridge = new ResponsesBridge(
+      {
+        baseUrl: 'https://original.example/v1',
+        model: 'original-model',
+        onProviderFailure: originalObserver
+      },
+      async () => {
+        accept()
+        return new Promise((resolve) => {
+          complete = resolve
+        })
+      }
+    )
+    const connection = await bridge.start()
+    try {
+      const pending = fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ model: 'ignored', input: 'hello' })
+      })
+      await accepted
+      bridge.setTarget({
+        baseUrl: 'https://next.example/v1',
+        model: 'next-model',
+        onProviderFailure: nextObserver
+      })
+      complete(Response.json({ error: { type: 'authentication_error' } }, { status: 401 }))
+      expect((await pending).status).toBe(400)
+      expect(originalObserver).toHaveBeenCalledExactlyOnceWith({
+        category: 'auth',
+        status: 401,
+        model: 'original-model',
+        endpoint: 'openai',
+        startedAt: expect.any(Number)
+      })
+      expect(nextObserver).not.toHaveBeenCalled()
+    } finally {
+      await bridge.close()
+    }
+  })
+
+  it.each([
+    ['message', 'original'],
+    ['tool output', 'original'],
+    ['message', 'high'],
+    ['tool output', 'high']
+  ] as const)(
+    'accepts %s images with %s detail through the HTTP boundary (issue #2647)',
+    async (source, detail) => {
+      const image = {
+        type: 'input_image',
+        image_url:
+          'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=',
+        detail
+      }
+      const input =
+        source === 'message'
+          ? [{ type: 'message', role: 'user', content: [image] }]
+          : [
+              { type: 'function_call', call_id: 'image-1', name: 'view_image', arguments: '{}' },
+              { type: 'function_call_output', call_id: 'image-1', output: [image] }
+            ]
+      const upstreamFetch = vi.fn<typeof fetch>(async () =>
+        Response.json({
+          id: 'chat-image',
+          model: 'glm-5.3-flash',
+          choices: [{ message: { role: 'assistant', content: 'ok' } }]
+        })
+      )
+      const bridge = new ResponsesBridge(
+        { baseUrl: 'https://vendor.example/v1', model: 'glm-5.3-flash' },
+        upstreamFetch
+      )
+      const connection = await bridge.start()
+      try {
+        const response = await fetch(`${connection.baseUrl}/responses`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({ model: 'glm-5.3-flash', input, stream: false })
+        })
+        const body = await response.json()
+        expect(
+          response.status,
+          `${JSON.stringify(body)}; upstream calls: ${upstreamFetch.mock.calls.length}`
+        ).toBe(200)
+        expect(upstreamFetch).toHaveBeenCalledOnce()
+        const request = JSON.parse(String(upstreamFetch.mock.calls[0]![1]!.body))
+        expect(request.messages).toContainEqual(
+          expect.objectContaining({
+            role: 'user',
+            content: expect.arrayContaining([
+              { type: 'image_url', image_url: { url: image.image_url, detail: 'high' } }
+            ])
+          })
+        )
+        expect(body).toMatchObject({ output: [{ content: [{ text: 'ok' }] }] })
+      } finally {
+        await bridge.close()
+      }
+    }
+  )
+
   it('accepts a successful JSON response with a UTF-8 BOM', async () => {
     const upstreamFetch = vi.fn(
       async () =>
@@ -323,7 +439,9 @@ describe('Responses-compatible bridge conversion', () => {
   })
 
   it('re-attaches cached reasoning to a replayed assistant tool-call for thinking-mode providers', () => {
-    const reasoningByCallId = new Map([['call-1', 'let me look that up']])
+    const reasoningByCallId = new Map([
+      [JSON.stringify(['function_call', 'call-1']), { text: 'let me look that up' }]
+    ])
     expect(
       inputToMessages(
         {
@@ -715,6 +833,7 @@ describe('Responses-compatible bridge conversion', () => {
   })
 
   it('replays an identical deterministic provider error without a second upstream request', async () => {
+    const onProviderFailure = vi.fn()
     const upstreamFetch = vi.fn(async () =>
       Response.json(
         { error: { type: 'authentication_error', message: 'Incorrect API key provided' } },
@@ -722,7 +841,12 @@ describe('Responses-compatible bridge conversion', () => {
       )
     )
     const bridge = new ResponsesBridge(
-      { baseUrl: 'https://vendor.example/v1', key: 'wrong-key', model: 'model-a' },
+      {
+        baseUrl: 'https://vendor.example/v1',
+        key: 'wrong-key',
+        model: 'model-a',
+        onProviderFailure
+      },
       upstreamFetch
     )
     const connection = await bridge.start()
@@ -750,6 +874,13 @@ describe('Responses-compatible bridge conversion', () => {
         }
       })
       expect(upstreamFetch).toHaveBeenCalledOnce()
+      expect(onProviderFailure).toHaveBeenCalledExactlyOnceWith({
+        startedAt: expect.any(Number),
+        category: 'auth',
+        status: 401,
+        model: 'model-a',
+        endpoint: 'openai'
+      })
     } finally {
       await bridge.close()
     }
@@ -1587,7 +1718,7 @@ describe('Responses-compatible bridge conversion', () => {
         callIds: string[]
       ) => void
       reconcileReasoningForRequest: (promptCacheKey: string | undefined, input: unknown) => void
-      reasoningByPromptCacheKey: Map<string, Map<string, string>>
+      reasoningByPromptCacheKey: Map<string, Map<string, { text: string }>>
       reasoningCacheEntryCount: number
       reasoningCacheCharacterCount: number
     }
@@ -1635,7 +1766,7 @@ describe('Responses-compatible bridge conversion', () => {
       { type: 'function_call', call_id: 'retained-call' }
     ])
     expect(reconciled.reasoningByPromptCacheKey.get('session-a')).toEqual(
-      new Map([['retained-call', 'aaa']])
+      new Map([[JSON.stringify(['function_call', 'retained-call']), { text: 'aaa' }]])
     )
     expect(reconciled.reasoningCacheEntryCount).toBe(1)
     expect(reconciled.reasoningCacheCharacterCount).toBe(3)
@@ -2006,13 +2137,16 @@ describe('Responses-compatible bridge conversion', () => {
     const bridge = new ResponsesBridge({ baseUrl: 'https://a.example/v1', model: 'm1', key: 'k1' })
     const cache = (
       bridge as unknown as {
-        reasoningByPromptCacheKey: Map<string, Map<string, string>>
+        reasoningByPromptCacheKey: Map<string, Map<string, { text: string }>>
       }
     ).reasoningByPromptCacheKey
-    cache.set('session-1', new Map([['call-1', 'thinking']]))
+    cache.set(
+      'session-1',
+      new Map([[JSON.stringify(['function_call', 'call-1']), { text: 'thinking' }]])
+    )
     // Same target (e.g. a skill-reload reconnect): cache is preserved so a resumed thinking session works.
     bridge.setTarget({ baseUrl: 'https://a.example/v1', model: 'm1', key: 'k1' })
-    expect(cache.get('session-1')?.has('call-1')).toBe(true)
+    expect(cache.get('session-1')?.has(JSON.stringify(['function_call', 'call-1']))).toBe(true)
     // Real provider switch: cache is cleared so stale reasoning can't leak across providers.
     bridge.setTarget({ baseUrl: 'https://b.example/v1', model: 'm2', key: 'k2' })
     expect(cache.size).toBe(0)

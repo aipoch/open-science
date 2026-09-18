@@ -1,3 +1,4 @@
+import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import {
   LiteraturePdfBatchImportDialog,
   type PdfImportDestination
@@ -77,6 +78,7 @@ import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { ActionToast } from '@/components/ActionToast'
 import { ErrorNotice } from '@/components/error-notice'
 import { LiteratureErrorNotice } from './LiteratureErrorNotice'
+import { ProjectPicker } from '@/components/ProjectPicker'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
@@ -1058,7 +1060,11 @@ function LiteratureNoteControl({
       />
       {failed ? (
         <div className="flex items-center gap-2 px-2 text-xs text-status-warning-foreground">
-          <p role="alert" className="truncate" title={t('Draft preserved. Escape to discard.')}>
+          <p
+            role="alert"
+            className="whitespace-normal [overflow-wrap:anywhere]"
+            title={t('Draft preserved. Escape to discard.')}
+          >
             {t('Draft preserved. Escape to discard.')}
           </p>
           <button
@@ -1094,7 +1100,7 @@ const typeFieldText = (item: LiteratureItemInput, field: string): string => {
 }
 
 const publicationSummary = (item: LiteratureItemInput): string => {
-  const publication = item.shortTitle || item.containerTitle
+  const publication = typeFieldText(item, 'journalAbbreviation') || item.containerTitle
   const date = item.issuedText || item.issuedYear?.toString() || ''
   const volume = typeFieldText(item, 'volume')
   const issue = typeFieldText(item, 'issue')
@@ -1258,7 +1264,7 @@ const LITERATURE_REVIEW_CTA_ATTENTION_KEY = 'open-science:literature-review-cta-
 
 const LiteratureLibraryPage = (): React.JSX.Element => {
   const { i18n, t } = useTranslation()
-  const goHome = useNavigationStore((state) => state.goHome)
+  const returnFromLibrary = useNavigationStore((state) => state.returnFromLibrary)
   const startPdfReadingConversation = useNavigationStore(
     (state) => state.startPdfReadingConversation
   )
@@ -1312,6 +1318,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const { from: filterYearFrom, to: filterYearTo } = yearFilter
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [restorePreview, setRestorePreview] = useState<{ itemIds: string[]; skipped: number }>()
+  const dialogRestorePreview = useRetainedDialogValue(restorePreview)
   const [isBatching, setIsBatching] = useState(false)
   const [batchLookup, setBatchLookup] = useState<{
     mode: BatchLookupMode
@@ -1376,6 +1383,30 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     RecordImportDraft & { destination: { name: string; projectId?: string; collectionId?: string } }
   >()
   const [duplicatePolicy, setDuplicatePolicy] = useState<LiteratureDuplicatePolicy>('reuse')
+  const dialogItemEditor = useRetainedDialogValue(
+    useMemo(
+      () =>
+        isCreatingItem
+          ? {
+              file: pendingImportPdf,
+              draft: pendingImportDraft,
+              reading: isReadingImportMetadata,
+              error: createItemError,
+              duplicatePolicy,
+              createdItemId
+            }
+          : undefined,
+      [
+        isCreatingItem,
+        pendingImportPdf,
+        pendingImportDraft,
+        isReadingImportMetadata,
+        createItemError,
+        duplicatePolicy,
+        createdItemId
+      ]
+    )
+  )
   const recordImportRequest = useRef(0)
 
   const [isImportingRecords, setIsImportingRecords] = useState(false)
@@ -1519,6 +1550,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     []
   )
   const [startingReadingProjectId, setStartingReadingProjectId] = useState<string>()
+  const [readingProjectQuery, setReadingProjectQuery] = useState('')
   const [readingProjectError, setReadingProjectError] = useState<string>()
   const [citationStyles, setCitationStyles] = useState<LiteratureCitationStyleView[]>()
   const [citationStylesOpen, setCitationStylesOpen] = useState(false)
@@ -2098,6 +2130,9 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     () => projects.filter((project) => project.archivedAt === undefined),
     [projects]
   )
+  const returnLabel = activeProjects.some((project) => project.id === activeProjectId)
+    ? t('Back to Project')
+    : t('Back to Home')
   const selectedProject = useMemo(
     () => activeProjects.find((project) => project.id === projectId),
     [activeProjects, projectId]
@@ -2448,8 +2483,25 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     collectionEditorRef.current?.openEdit(collection)
   }
 
+  const collectionDeletion = useMemo(() => {
+    if (!collectionPendingDelete) return undefined
+    const promoted = collections.filter(({ parentId }) => parentId === collectionPendingDelete.id)
+    const rootNames = new Set(
+      collections.filter(({ parentId }) => !parentId).map(({ name }) => name.toLowerCase())
+    )
+    return {
+      collection: collectionPendingDelete,
+      promoted,
+      conflicting: promoted.filter(({ name }) => rootNames.has(name.toLowerCase()))
+    }
+  }, [collectionPendingDelete, collections])
+  const dialogCollectionDeletion = useRetainedDialogValue(collectionDeletion)
+  const promotedCollections = dialogCollectionDeletion?.promoted ?? []
+  const conflictingCollections = dialogCollectionDeletion?.conflicting ?? []
+
   const deleteCollection = async (): Promise<void> => {
-    if (!collectionPendingDelete || isDeletingCollection) return
+    if (!collectionPendingDelete || isDeletingCollection || collectionDeletion?.conflicting.length)
+      return
     const deletingCollection = collectionPendingDelete
     setIsDeletingCollection(true)
     setCollectionDeleteError(undefined)
@@ -2471,6 +2523,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
             )
           : t('Collection could not be deleted.')
       )
+      await loadCollections().catch(() => undefined)
     } finally {
       setIsDeletingCollection(false)
     }
@@ -3189,10 +3242,12 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   }
 
   const previewFirstAttachment = (entry: LiteratureItemView): void => {
-    const version = entry.attachments.find((attachment) => attachment.versions[0])?.versions[0]
+    const attachment = entry.attachments.find((candidate) => candidate.versions[0])
+    const version = attachment?.versions[0]
     if (
       section === 'trash' ||
       entry.deletedAt !== undefined ||
+      !attachment ||
       !version ||
       version.availability === 'unavailable' ||
       useAttachmentOperations
@@ -3206,6 +3261,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       title: version.filename,
       type: 'file',
       source: 'literature',
+      managedFileId: attachment.id,
       path: createLiteratureAttachmentVersionReference(version.id),
       format: 'pdf',
       name: version.filename,
@@ -3226,6 +3282,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       void startReadingInProject(selectedProject.id, reading)
       return
     }
+    setReadingProjectQuery('')
     setPendingLiteratureReading(reading)
   }
 
@@ -3739,12 +3796,12 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 <button
                   type="button"
                   className={navButtonClassName}
-                  aria-label={t('Back to Home')}
-                  title={sidebarCollapsed ? t('Back to Home') : undefined}
-                  onClick={() => goHome('user')}
+                  aria-label={returnLabel}
+                  title={sidebarCollapsed ? returnLabel : undefined}
+                  onClick={() => returnFromLibrary('user')}
                 >
                   <ArrowLeft className="size-4" aria-hidden="true" />
-                  {!sidebarCollapsed ? <span>{t('Back to Home')}</span> : null}
+                  {!sidebarCollapsed ? <span>{returnLabel}</span> : null}
                 </button>
               </div>
               <nav
@@ -4094,6 +4151,9 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                           onSelect={() => {
                             setCollectionDeleteError(undefined)
                             setCollectionPendingDelete(selectedCollection)
+                            void loadCollections().catch(() =>
+                              setCollectionDeleteError(t('Literature could not be loaded.'))
+                            )
                           }}
                         >
                           <span className="flex size-4 shrink-0 items-center justify-center">
@@ -4602,6 +4662,27 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
               onClose={() => setBatchLookup(undefined)}
               onChanged={receiveBackgroundItems}
             />
+          ) : null}
+          {dismissedCandidateUndo ? (
+            <fieldset
+              className="contents"
+              disabled={isBatching || Boolean(pendingCandidateId)}
+              aria-busy={isBatching || Boolean(pendingCandidateId)}
+            >
+              <ActionToast
+                title={t('Dismissed from Inbox')}
+                detail={dismissedCandidateUndo.detail}
+                actionLabel={dismissedCandidateUndo.needsRecheck ? t('Recheck') : t('Undo')}
+                dismissLabel={t('Close')}
+                onAction={() => void restoreDismissedCandidates()}
+                onDismiss={() => {
+                  setDismissedCandidateUndo(undefined)
+                  setUndoNotice(undefined)
+                }}
+                testId="literature-dismiss-undo"
+                className="static w-full max-w-none shadow-none"
+              />
+            </fieldset>
           ) : null}
           {linkFailure && linkFailure.scopeKey === entriesKey ? (
             <div className="mt-2">
@@ -5419,7 +5500,9 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       >
         <Dialog.Portal>
           <Dialog.Overlay className={dialogOverlayClassName} />
-          <Dialog.Content className={dialogPanelClassName('w-[min(960px,calc(100vw-2rem))] p-0')}>
+          <Dialog.Content
+            className={dialogPanelClassName('flex w-[min(960px,calc(100vw-2rem))] flex-col p-0')}
+          >
             <div className={dialogHeaderClassName}>
               <div>
                 <Dialog.Title className={dialogTitleClassName}>
@@ -5435,7 +5518,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 </Button>
               </Dialog.Close>
             </div>
-            <div className="max-h-[60vh] space-y-5 overflow-y-auto p-5">
+            <div className="relative min-h-0 max-h-[60vh] space-y-5 overflow-y-auto p-5">
               {mergeError ? <LiteratureErrorNotice tone="amber" title={mergeError} /> : null}
               <LiteratureMergeReview
                 entries={selectedItems}
@@ -5451,7 +5534,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 disabled={isBatching}
               />
             </div>
-            <div className="flex justify-end gap-2 border-t border-border-300/80 px-5 py-4">
+            <div className="flex shrink-0 justify-end gap-2 border-t border-border-300/80 px-5 py-4">
               <Dialog.Close asChild>
                 <Button type="button" variant="outline">
                   {t('Cancel')}
@@ -5512,16 +5595,18 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       >
         <Dialog.Portal>
           <Dialog.Overlay className={dialogOverlayClassName} />
-          <Dialog.Content className={dialogPanelClassName('w-[min(640px,calc(100vw-2rem))] p-0')}>
+          <Dialog.Content
+            className={dialogPanelClassName('flex w-[min(640px,calc(100vw-2rem))] flex-col p-0')}
+          >
             <div className={dialogHeaderClassName}>
               <div>
                 <Dialog.Title className={dialogTitleClassName}>
-                  {pendingImportPdf ? t('Import PDF') : t('Add reference')}
+                  {dialogItemEditor?.file ? t('Import PDF') : t('Add reference')}
                 </Dialog.Title>
                 <Dialog.Description className={dialogDescriptionClassName}>
-                  {pendingImportPdf
+                  {dialogItemEditor?.file
                     ? t('Review reference details before importing {{name}}.', {
-                        name: pendingImportPdf.name
+                        name: dialogItemEditor?.file.name
                       })
                     : t('Create a reference in your library.')}
                 </Dialog.Description>
@@ -5540,7 +5625,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
               </Dialog.Close>
             </div>
             {isSavingNewItem ? pdfUploadNotice : null}
-            {pendingImportPdf && isReadingImportMetadata ? (
+            {dialogItemEditor?.file && dialogItemEditor?.reading ? (
               <div
                 className="grid min-h-80 place-items-center text-sm text-muted-foreground"
                 role="status"
@@ -5555,25 +5640,30 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
               </div>
             ) : (
               <LiteratureMetadataEditor
+                className="min-h-0"
                 beforeFields={
                   <LiteratureDuplicatePolicyField
-                    value={duplicatePolicy}
+                    value={dialogItemEditor?.duplicatePolicy ?? duplicatePolicy}
                     onChange={setDuplicatePolicy}
-                    disabled={isSavingNewItem || Boolean(createdItemId)}
+                    disabled={isSavingNewItem || Boolean(dialogItemEditor?.createdItemId)}
                   />
                 }
-                key={pendingImportPdf?.name ?? 'manual-reference'}
+                key={dialogItemEditor?.file?.name ?? 'manual-reference'}
                 item={
-                  pendingImportDraft ?? {
+                  dialogItemEditor?.draft ?? {
                     ...emptyLiteratureItem(),
-                    title: pendingImportPdf ? titleFromPdfFilename(pendingImportPdf.name) : ''
+                    title: dialogItemEditor?.file
+                      ? titleFromPdfFilename(dialogItemEditor?.file.name)
+                      : ''
                   }
                 }
                 saving={isSavingNewItem}
-                error={createItemError}
+                error={dialogItemEditor?.error}
                 onRetry={createdItemId ? () => void createManualItem() : undefined}
                 onCancel={closeItemEditor}
-                onSave={(item) => void createManualItem(item)}
+                onSave={(item) => {
+                  if (isCreatingItem) void createManualItem(item)
+                }}
               />
             )}
           </Dialog.Content>
@@ -5589,10 +5679,12 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         {selectedCandidate ? (
           <Dialog.Portal>
             <Dialog.Overlay className={dialogOverlayClassName} />
-            <Dialog.Content className={dialogPanelClassName('w-[min(620px,calc(100vw-2rem))] p-0')}>
+            <Dialog.Content
+              className={dialogPanelClassName('flex w-[min(620px,calc(100vw-2rem))] flex-col p-0')}
+            >
               <div className={cn(dialogHeaderClassName, 'px-5 py-3')}>
                 <div className="min-w-0">
-                  <Dialog.Title className={cn(dialogTitleClassName, 'truncate text-base')}>
+                  <Dialog.Title className={cn(dialogTitleClassName, 'truncate')}>
                     {selectedCandidate.candidate.item.title}
                   </Dialog.Title>
                   <Dialog.Description
@@ -5614,7 +5706,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                   </Button>
                 </Dialog.Close>
               </div>
-              <div className="max-h-[70vh] divide-y divide-border-300/80 overflow-y-auto px-5 text-sm">
+              <div className="relative min-h-0 max-h-[70vh] divide-y divide-border-300/80 overflow-y-auto px-5 text-sm">
                 {candidateProjectNames(selectedCandidate).length > 0 ? (
                   <p className="py-4 text-sm leading-6 text-muted-foreground">
                     {t('Accepting will link to: {{projects}}', {
@@ -5702,7 +5794,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                   </section>
                 ) : null}
               </div>
-              <div className="flex justify-end gap-2 border-t border-border-300/80 px-5 py-4">
+              <div className="flex shrink-0 justify-end gap-2 border-t border-border-300/80 px-5 py-4">
                 {selectedCandidate.state === 'dismissed' ? (
                   <Button
                     type="button"
@@ -5757,13 +5849,16 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
 
       <LiteratureDetailBoundary controller={detailController}>
         {({ item: selectedItem, open, generation }) => (
-          // The portaled file preview owns focus while open. A lower modal's scroll lock would
-          // reject its wheel/touch events because the preview is outside the detail content.
-          <Dialog.Root open={open} modal={!previewItem}>
+          <Dialog.Root open={open}>
             {selectedItem ? (
               <Dialog.Portal>
-                <Dialog.Overlay
-                  className={dialogOverlayClassName}
+                {/* Keep the panel and scrim mounted while the portaled preview owns focus.
+                    Only release Radix's scroll lock: changing Root.modal remounts Content. */}
+                {!previewItem ? <Dialog.Overlay className="hidden" /> : null}
+                <div
+                  aria-hidden="true"
+                  data-state={open ? 'open' : 'closed'}
+                  className={cn(dialogOverlayClassName, 'pointer-events-auto')}
                   onPointerDownCapture={(event) => {
                     const dialogBounds = selectedItemDialogRef.current?.getBoundingClientRect()
                     const pointInsideDialog = Boolean(
@@ -5806,7 +5901,6 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                   ref={selectedItemDialogRef}
                   onCloseAutoFocus={(event) => {
                     event.preventDefault()
-                    // Switching modal mode for a child preview must not restore list focus.
                     if (detailController.getSnapshot().open || previewItem) return
                     const initiator = detailInitiatorRef.current
                     if (initiator?.isConnected && !initiator.closest('[inert], [hidden]')) {
@@ -5858,9 +5952,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                       <div className="min-w-0 flex-1">
                         {metadata.mode !== 'view' ? (
                           <>
-                            <Dialog.Title
-                              className={cn(dialogTitleClassName, 'truncate text-base')}
-                            >
+                            <Dialog.Title className={cn(dialogTitleClassName, 'truncate')}>
                               {metadata.mode === 'edit'
                                 ? t('Edit metadata')
                                 : metadata.mode === 'complete'
@@ -5890,7 +5982,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                             <Dialog.Title
                               className={cn(
                                 dialogTitleClassName,
-                                'line-clamp-3 break-words text-base leading-snug'
+                                'line-clamp-3 break-words leading-snug'
                               )}
                             >
                               {selectedItem.item.title}
@@ -6206,7 +6298,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                       }}
                     />
                   ) : (
-                    <div className="min-h-0 flex-1 divide-y divide-border-300/80 overflow-y-auto px-5 text-sm">
+                    <div className="relative min-h-0 flex-1 divide-y divide-border-300/80 overflow-y-auto px-5 text-sm">
                       {fullCreatorLabel(selectedItem.item) ? (
                         <section className="py-4">
                           <h3 className="font-medium">{t('Authors')}</h3>
@@ -6374,13 +6466,20 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                           readItem={detailController.read}
                           key={selectedItem.id}
                           item={selectedItem}
-                          onPreview={(version) =>
+                          onPreview={(version) => {
+                            const attachment = selectedItem.attachments.find((candidate) =>
+                              candidate.versions.some(
+                                (candidateVersion) => candidateVersion.id === version.id
+                              )
+                            )
+                            if (!attachment) return
                             setPreviewItem({
                               id: `literature:${version.id}`,
                               sessionId: LITERATURE_PREVIEW_SESSION_ID,
                               title: version.filename,
                               type: 'file',
                               source: 'literature',
+                              managedFileId: attachment.id,
                               path: createLiteratureAttachmentVersionReference(version.id),
                               format: 'pdf',
                               name: version.filename,
@@ -6388,7 +6487,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                               size: version.sizeBytes,
                               versionNumber: version.versionNumber
                             })
-                          }
+                          }}
                         />
                         {selectedItem.attachments.length === 0 ? (
                           <button
@@ -6457,7 +6556,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
           >
             <div className={dialogHeaderClassName}>
               <AlertDialog.Title className={dialogTitleClassName}>
-                {t('Delete “{{name}}”?', { name: collectionPendingDelete?.name ?? '' })}
+                {t('Delete “{{name}}”?', { name: dialogCollectionDeletion?.collection.name ?? '' })}
               </AlertDialog.Title>
               <Button
                 type="button"
@@ -6477,6 +6576,42 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                   'References in this collection will remain in All references. This action cannot be undone.'
                 )}
               </AlertDialog.Description>
+              {promotedCollections.length ? (
+                <div className="mt-3 space-y-2 text-sm">
+                  <p>{t('Child collections will move to the top level.')}</p>
+                  <ul className="space-y-2">
+                    {promotedCollections.map((child) => (
+                      <li
+                        key={child.id}
+                        className="flex flex-wrap items-center justify-between gap-2"
+                      >
+                        <span className="min-w-0 break-words">{child.name}</span>
+                        {conflictingCollections.some(({ id }) => id === child.id) ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={isDeletingCollection}
+                            onClick={() => {
+                              setCollectionPendingDelete(undefined)
+                              openEditCollection(child)
+                            }}
+                          >
+                            {t('Rename conflicting collection')}
+                          </Button>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                  {conflictingCollections.length ? (
+                    <p role="alert">
+                      {t(
+                        'A child collection would duplicate a top-level name. Rename it before deleting this collection.'
+                      )}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
               {collectionDeleteError ? (
                 <p className="mt-3 text-sm text-danger-000" role="alert">
                   {collectionDeleteError}
@@ -6499,7 +6634,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
               <Button
                 type="button"
                 variant="destructive"
-                disabled={isDeletingCollection}
+                disabled={isDeletingCollection || conflictingCollections.length > 0}
                 onClick={() => void deleteCollection()}
               >
                 {isDeletingCollection ? (
@@ -6531,8 +6666,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
             <div className={dialogBodyClassName}>
               <AlertDialog.Description className={dialogDescriptionClassName}>
                 {t('Can restore: {{recoverable}}. Merged duplicates skipped: {{skipped}}.', {
-                  recoverable: restorePreview?.itemIds.length ?? 0,
-                  skipped: restorePreview?.skipped ?? 0
+                  recoverable: dialogRestorePreview?.itemIds.length ?? 0,
+                  skipped: dialogRestorePreview?.skipped ?? 0
                 })}
               </AlertDialog.Description>
             </div>
@@ -6650,6 +6785,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         open={Boolean(pendingLiteratureReading) && !readingProjectFormDialog.dialogProps.open}
         onOpenChange={(open) => {
           if (open || startingReadingProjectId) return
+          setReadingProjectQuery('')
           setPendingLiteratureReading(undefined)
           setReadingProjectError(undefined)
         }}
@@ -6706,28 +6842,14 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 ) : null}
                 {projectsLoaded ? (
                   activeProjects.length > 0 ? (
-                    <div className="grid gap-2">
-                      {activeProjects.map((project) => (
-                        <Button
-                          key={project.id}
-                          type="button"
-                          variant="outline"
-                          className="min-w-0 justify-start"
-                          disabled={Boolean(startingReadingProjectId)}
-                          onClick={() => void startReadingInProject(project.id)}
-                        >
-                          {startingReadingProjectId === project.id ? (
-                            <LoaderCircle
-                              className="size-4 animate-spin motion-reduce:animate-none"
-                              aria-hidden="true"
-                            />
-                          ) : (
-                            <FolderOpen className="size-4" aria-hidden="true" />
-                          )}
-                          <span className="truncate">{project.name}</span>
-                        </Button>
-                      ))}
-                    </div>
+                    <ProjectPicker
+                      projects={activeProjects}
+                      query={readingProjectQuery}
+                      onQueryChange={setReadingProjectQuery}
+                      disabled={Boolean(startingReadingProjectId)}
+                      pendingId={startingReadingProjectId}
+                      onSelect={(id) => void startReadingInProject(id)}
+                    />
                   ) : (
                     <div className="flex flex-col items-start gap-3 rounded-lg border border-dashed border-border-300/80 bg-bg-100 p-4">
                       <FolderPlus className="size-5 text-muted-foreground" aria-hidden="true" />
@@ -6788,6 +6910,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
           }}
           onContinue={(documents) => {
             setBatchReading(undefined)
+            setReadingProjectQuery('')
             setReadingProjectError(undefined)
             if (selectedProject) void startReadingInProject(selectedProject.id, documents)
             else setPendingLiteratureReading(documents)
@@ -6815,26 +6938,6 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
               .catch(() => undefined)
         }}
       />
-      {dismissedCandidateUndo ? (
-        <fieldset
-          className="contents"
-          disabled={isBatching || Boolean(pendingCandidateId)}
-          aria-busy={isBatching || Boolean(pendingCandidateId)}
-        >
-          <ActionToast
-            title={t('Dismissed from Inbox')}
-            detail={dismissedCandidateUndo.detail}
-            actionLabel={dismissedCandidateUndo.needsRecheck ? t('Recheck') : t('Undo')}
-            dismissLabel={t('Close')}
-            onAction={() => void restoreDismissedCandidates()}
-            onDismiss={() => {
-              setDismissedCandidateUndo(undefined)
-              setUndoNotice(undefined)
-            }}
-            testId="literature-dismiss-undo"
-          />
-        </fieldset>
-      ) : null}
     </main>
   )
 }

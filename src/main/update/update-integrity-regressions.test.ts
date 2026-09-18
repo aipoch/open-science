@@ -15,6 +15,8 @@ vi.mock('electron', () => ({
   shell: {}
 }))
 vi.mock('electron-updater', () => ({
+  DebUpdater: class {},
+  AppImageUpdater: class {},
   autoUpdater: {},
   CancellationToken: class {
     cancelled = false

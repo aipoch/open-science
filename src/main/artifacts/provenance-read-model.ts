@@ -153,6 +153,7 @@ const validateArtifactExecutionInputs = (
       input.storageKey !== evidenceInput.storage_key ||
       input.storageKey !== row.storageKey ||
       input.association !== evidenceInput.strongest_association ||
+      input.accessEvidence !== evidenceInput.access_evidence ||
       input.association !== row.strongestAssociation
     )
   })
@@ -182,6 +183,10 @@ type ResolvedArtifactExecutionSnapshot = Omit<PersistedArtifactExecutionSnapshot
 
 type ArtifactVersionReconstructionProvenance = Omit<ArtifactVersionProvenance, 'execution'> & {
   execution?: ResolvedArtifactExecutionSnapshot
+}
+
+type ArtifactVersionReproductionProvenance = Omit<ArtifactVersionProvenance, 'execution'> & {
+  execution?: PersistedArtifactExecutionSnapshot
 }
 
 type ArtifactProvenanceReadModelOptions = {
@@ -330,13 +335,22 @@ class ArtifactProvenanceReadModel {
   ): Promise<ArtifactVersionReconstructionProvenance>
   async getVersionProvenance(
     request: GetArtifactVersionProvenanceRequest,
+    sections: { execution: boolean; messages: boolean; review: boolean },
+    options: { includePrivateExecution: true }
+  ): Promise<ArtifactVersionReproductionProvenance>
+  async getVersionProvenance(
+    request: GetArtifactVersionProvenanceRequest,
     sections: { execution: boolean; messages: boolean; review: boolean } = {
       execution: true,
       messages: true,
       review: true
     },
-    options?: { includePrivateHelperSource?: boolean }
-  ): Promise<ArtifactVersionProvenance | ArtifactVersionReconstructionProvenance> {
+    options?: { includePrivateHelperSource?: boolean; includePrivateExecution?: boolean }
+  ): Promise<
+    | ArtifactVersionProvenance
+    | ArtifactVersionReconstructionProvenance
+    | ArtifactVersionReproductionProvenance
+  > {
     const projectId = assertSafeSegment(request.projectId, 'project id')
     const appSessionId = assertSafeSegment(request.appSessionId, 'app session id')
     const artifactId = assertSafeSegment(request.artifactId, 'artifact id')
@@ -397,7 +411,11 @@ class ArtifactProvenanceReadModel {
       ? parseArtifactLiteratureManifest(version.literatureManifest, versionId)
       : undefined
 
-    let execution: ArtifactExecutionSnapshot | ResolvedArtifactExecutionSnapshot | undefined
+    let execution:
+      | ArtifactExecutionSnapshot
+      | ResolvedArtifactExecutionSnapshot
+      | PersistedArtifactExecutionSnapshot
+      | undefined
     if (
       sections.execution &&
       version.executionSnapshotJson &&
@@ -422,14 +440,18 @@ class ArtifactProvenanceReadModel {
         evidence
       })
       validateArtifactExecutionInputs(persistedExecution, evidence, version.inputs)
-      const projectedInputs = await Promise.all(
-        persistedExecution.inputFiles
-          .filter((input) => !hiddenInputVersions.has(input.inputFileVersionId))
-          .map((input) => this.projectExecutionInput(input))
-      )
-      execution = options?.includePrivateHelperSource
-        ? { ...persistedExecution, inputFiles: projectedInputs }
-        : projectPublicArtifactExecutionSnapshot(persistedExecution, projectedInputs)
+      if (options?.includePrivateExecution) {
+        execution = persistedExecution
+      } else {
+        const projectedInputs = await Promise.all(
+          persistedExecution.inputFiles
+            .filter((input) => !hiddenInputVersions.has(input.inputFileVersionId))
+            .map((input) => this.projectExecutionInput(input))
+        )
+        execution = options?.includePrivateHelperSource
+          ? { ...persistedExecution, inputFiles: projectedInputs }
+          : projectPublicArtifactExecutionSnapshot(persistedExecution, projectedInputs)
+      }
     }
 
     let messages: ArtifactVersionProvenance['messages'] = {
@@ -793,5 +815,9 @@ class ArtifactProvenanceReadModel {
 }
 
 export { ArtifactProvenanceReadModel, projectPublicArtifactExecutionSnapshot }
-export type { ArtifactVersionReconstructionProvenance, ResolvedArtifactExecutionSnapshot }
+export type {
+  ArtifactVersionReconstructionProvenance,
+  ArtifactVersionReproductionProvenance,
+  ResolvedArtifactExecutionSnapshot
+}
 export type { ArtifactProvenanceReadModelOptions }

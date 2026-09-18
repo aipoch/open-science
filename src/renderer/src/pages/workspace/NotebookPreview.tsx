@@ -1,3 +1,4 @@
+import { InlineNotice } from '@/components/ui/inline-notice'
 import {
   useCallback,
   useEffect,
@@ -43,6 +44,7 @@ import { EnvProvisionOverlay } from './EnvProvisionOverlay'
 import { shouldProvisionR } from './lazy-r'
 import { hasActiveRuntimeTarget, notebookGated } from './provisioning-view'
 import { NotebookCodeBlock } from './notebook-code'
+import { NotebookRunEvidence } from './NotebookRunEvidence'
 import { NotebookRunOutputs } from './NotebookRunOutputs'
 import { NotebookInputDataStrip } from './NotebookInputDataStrip'
 import { isCurrentSessionNotebookView } from './follow-notebook-scroll'
@@ -145,15 +147,42 @@ const DependencyStatusBadge = ({
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const isStale = staleness.state === 'stale'
-  const label = isStale ? t('Variable changed after this run') : t('Variable tracking is limited')
+  const missingGraphicsState =
+    staleness.state === 'unknown' && staleness.reasons.includes('graphics-state-unavailable')
+  const missingPackages =
+    staleness.state === 'unknown'
+      ? [
+          ...new Set(
+            staleness.reasons
+              .filter((reason) => reason.startsWith('missing-package-load:'))
+              .map((reason) => reason.slice('missing-package-load:'.length))
+          )
+        ]
+      : []
+  const label = isStale
+    ? t('Variable changed after this run')
+    : missingPackages.length
+      ? t('Package setup is missing')
+      : missingGraphicsState
+        ? t('Plot setup is incomplete')
+        : t('Variable tracking is limited')
   const detail = isStale
     ? t(
         'Run [{{index}}] later changed {{names}}. This output is the snapshot recorded before that change; this run completed normally.',
         { names: staleness.names.join(', '), index: causedByRunIndex }
       )
-    : t(
-        'This run completed normally. Some variable relationships in this code could not be determined automatically, so later variable changes may not be linked back to this run.'
-      )
+    : missingPackages.length
+      ? t(
+          'Package loading steps were not captured for {{packageNames}}. Run the package setup cells again, then rerun this cell to capture its dependencies.',
+          { packageNames: missingPackages.join(', ') }
+        )
+      : missingGraphicsState
+        ? t(
+            'Earlier circlize plotting parameters were not captured. Call circlize::circos.clear() before configuring and drawing the plot, then rerun the cell.'
+          )
+        : t(
+            'This run completed normally. Some variable relationships in this code could not be determined automatically, so later variable changes may not be linked back to this run.'
+          )
 
   return (
     <>
@@ -163,7 +192,9 @@ const DependencyStatusBadge = ({
             type="button"
             className={cn(
               'inline-flex cursor-help items-center gap-1 rounded px-1.5 py-0.5',
-              isStale ? 'bg-warning-100 text-warning-900' : 'bg-bg-300 text-text-200'
+              isStale
+                ? 'bg-status-warning-surface dark:bg-status-warning-dark-surface text-status-warning-foreground dark:text-status-warning-dark-foreground'
+                : 'bg-bg-300 text-text-200'
             )}
             data-testid={isStale ? 'notebook-cell-stale' : 'notebook-cell-dependency-unknown'}
           >
@@ -245,6 +276,7 @@ const NotebookRunCell = ({
         highlightLine={errorLine}
       />
       <NotebookRunOutputs run={run} />
+      <NotebookRunEvidence run={run} />
     </div>
   )
 }
@@ -1165,9 +1197,9 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
         </div>
       ) : null}
       {activeNamespaceStatus === 'error' ? (
-        <div className="shrink-0 border-b border-border-100 bg-danger-900 px-3 py-1.5 text-[11px] text-danger-000">
+        <InlineNotice tone="red" role="alert" className="m-2 shrink-0">
           {namespaceError ?? t('Could not inspect variables.')}
-        </div>
+        </InlineNotice>
       ) : null}
       {activeNamespaceSnapshot?.variablesTruncated ? (
         <div className="shrink-0 border-b border-border-100 bg-bg-200 px-3 py-1.5 text-[11px] text-text-200">
@@ -1268,9 +1300,9 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
         >
           <div className="flex h-full min-h-0 flex-col bg-bg-000" data-testid="kernel-terminal">
             {actionError ? (
-              <div className="border-b border-border-100/60 px-3 py-2 font-mono text-xs text-danger-000">
+              <InlineNotice tone="red" role="alert" className="m-2 font-mono text-xs">
                 {actionError}
-              </div>
+              </InlineNotice>
             ) : null}
             <TerminalScrollback
               runs={visibleRuns}

@@ -2,6 +2,7 @@ import type {
   AgentHomeSkillRef,
   AgentHomeSkillView,
   CreateSkillRequest,
+  DeleteSkillRequest,
   ImportAgentHomeSkillsResult,
   ImportSkillResult,
   ImportSkillZipBatchResult,
@@ -17,12 +18,16 @@ import { createOptimisticBooleanCoordinator } from './settings-optimistic-boolea
 export type SettingsSkillsState = { skills: SkillView[]; skillsLoaded: boolean }
 
 export type SettingsSkillsActions = {
-  loadSkills: () => Promise<void>
+  loadSkills: (force?: boolean) => Promise<void>
   setSkillEnabled: (id: string, enabled: boolean) => Promise<void>
   setSkillsEnabled: (ids: string[], enabled: boolean) => Promise<void>
   createSkill: (request: CreateSkillRequest) => Promise<void>
   updateSkill: (request: UpdateSkillRequest) => Promise<void>
-  deleteSkill: (id: string) => Promise<void>
+  deleteSkill: (
+    id: string,
+    source?: DeleteSkillRequest['source'],
+    directoryName?: DeleteSkillRequest['directoryName']
+  ) => Promise<void>
   importSkill: (url: string) => Promise<ImportSkillResult>
   importSkillZip: (
     dataBase64: string,
@@ -127,13 +132,13 @@ export const createSettingsSkillsSlice = ({
   }
 
   return {
-    loadSkills: async () => {
+    loadSkills: async (force = false) => {
       // Keep subscription and command lookup inside this async action so a missing Settings
       // surface rejects the returned promise. Marketplace install settles that rejection and
       // must not treat it as a synchronous install failure.
       subscribeToCatalogChanges()
-      if (getState().skillsLoaded) return
-      if (catalogLoadRequest) {
+      if (!force && getState().skillsLoaded) return
+      if (!force && catalogLoadRequest) {
         await catalogLoadRequest
         return
       }
@@ -178,7 +183,8 @@ export const createSettingsSkillsSlice = ({
       reconcileCatalogMutation(() => getCommands().setSkillsEnabled({ ids, enabled })),
     createSkill: (request) => reconcileCatalogMutation(() => getCommands().createSkill(request)),
     updateSkill: (request) => reconcileCatalogMutation(() => getCommands().updateSkill(request)),
-    deleteSkill: (id) => reconcileCatalogMutation(() => getCommands().deleteSkill({ id })),
+    deleteSkill: (id, source, directoryName) =>
+      reconcileCatalogMutation(() => getCommands().deleteSkill({ id, source, directoryName })),
     importSkill: (url) => reconcileImport(() => getCommands().importSkill({ url })),
     importSkillZip: (dataBase64, opts) =>
       reconcileImport(() =>

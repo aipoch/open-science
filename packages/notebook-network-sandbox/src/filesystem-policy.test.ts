@@ -111,6 +111,7 @@ describe('Notebook filesystem policy', () => {
         '-c',
         '/usr/bin/curl --silent http://example.com/'
       ])
+      expect(launch.env.HTTP_PROXY).toContain('command:secret@localhost:4312')
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
@@ -139,6 +140,46 @@ describe('Notebook filesystem policy', () => {
       'OPEN_SCIENCE_FILESYSTEM_ACCESS_BLOCKED: /private/output.csv'
     )
     expect(log.attach('command', 'ordinary process failure')).toBe('ordinary process failure')
+  })
+
+  it('does not mislabel non-filesystem permission errors as folder grants', () => {
+    const log = new ViolationLog()
+    for (const error of ['socket: Operation not permitted', 'Permission denied (publickey).']) {
+      expect(log.attach('command', error)).toBe(error)
+    }
+    const result = log.attach('command', 'bash: /data/output.csv: Read-only file system')
+    expect(result).toContain('native permissions, read-only mounts, or the sandbox')
+    expect(result).toContain('writable project path')
+    expect(result).toContain('request_network_access cannot grant filesystem access')
+  })
+
+  it('includes approval recovery in stderr even when curl discards the proxy body', () => {
+    const log = new ViolationLog()
+    log.record('command', 'deny network-outbound trialsearch.who.int:443 (not approved)')
+    const result = log.attach('command', 'curl: (56) CONNECT tunnel failed, response 403')
+    expect(result).toContain('request_network_access tool')
+    expect(result).toContain('exact hostname (without scheme or port), reason, and runtime')
+    expect(result).toContain('exact failed command')
+    expect(result).toContain('This opens a user approval card')
+    expect(result).toContain('If denied, stop')
+    expect(result).not.toContain('OPEN_SCIENCE_NETWORK_POLICY_BLOCKED')
+    expect(log.attach('command', '')).toBe('')
+  })
+
+  it('separates policy failures from missing approvals in tool-visible stderr', () => {
+    for (const reason of [
+      'host did not resolve',
+      'destination resolves to a non-public network address',
+      'host is blocked by policy'
+    ]) {
+      const log = new ViolationLog()
+      log.record('command', `deny network-outbound example.org:443 (${reason})`)
+      const result = log.attach('command', 'curl: (56) CONNECT tunnel failed, response 403')
+      expect(result).toContain('OPEN_SCIENCE_NETWORK_POLICY_BLOCKED')
+      expect(result).toContain(reason)
+      expect(result).toContain('cannot be unlocked by request_network_access')
+      expect(result).not.toContain('OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED')
+    }
   })
 
   it('distinguishes Linux-hidden paths from ordinary missing files', () => {
@@ -171,6 +212,7 @@ describe('Notebook filesystem policy', () => {
 
   linuxIt('keeps hidden Linux mounts read-only while restoring workspace writes', async () => {
     const privateRoot = mkdtempSync(join(tmpdir(), 'open-science-linux-mount-'))
+    const readOnlyRoot = mkdtempSync(join(tmpdir(), 'open-science-linux-input-'))
     const bin = join(privateRoot, 'bin')
     const workspace = join(privateRoot, 'workspace')
     mkdirSync(bin)
@@ -191,7 +233,7 @@ describe('Notebook filesystem policy', () => {
       inheritedFileDescriptorCount: 1,
       filesystem: {
         privateRoot,
-        readOnlyRoots: [],
+        readOnlyRoots: [readOnlyRoot],
         readWriteRoots: [workspace],
         deniedReadRoots: [],
         deniedWriteRoots: []
@@ -200,6 +242,7 @@ describe('Notebook filesystem policy', () => {
 
     try {
       const physicalRoot = realpathSync(privateRoot)
+      const physicalReadOnlyRoot = realpathSync(readOnlyRoot)
       const physicalWorkspace = realpathSync(workspace)
       const remountIndex = launch.argv.findIndex(
         (value, index) => value === '--remount-ro' && launch.argv[index + 1] === physicalRoot
@@ -210,9 +253,16 @@ describe('Notebook filesystem policy', () => {
           launch.argv[index + 1] === physicalWorkspace &&
           launch.argv[index + 2] === physicalWorkspace
       )
+      const readOnlyIndex = launch.argv.findIndex(
+        (value, index) =>
+          value === '--ro-bind' &&
+          launch.argv[index + 1] === physicalReadOnlyRoot &&
+          launch.argv[index + 2] === physicalReadOnlyRoot
+      )
 
       expect(remountIndex).toBeGreaterThan(0)
       expect(writableIndex).toBeGreaterThan(remountIndex)
+      if (process.platform === 'linux') expect(readOnlyIndex).toBeGreaterThan(0)
       expect(launch.argv).not.toContain('--preserve-fds')
       expect(launch.argv.slice(-2)).toEqual(['1', ''])
       for (const temporaryRoot of ['/tmp', '/var/tmp']) {
@@ -223,11 +273,16 @@ describe('Notebook filesystem policy', () => {
           (value, index) => value === '--remount-ro' && launch.argv[index + 1] === temporaryRoot
         )
         expect(tmpfsIndex).toBeGreaterThan(0)
+        if (process.platform === 'linux' && physicalReadOnlyRoot.startsWith(`${temporaryRoot}/`)) {
+          expect(readOnlyIndex).toBeGreaterThan(tmpfsIndex)
+          expect(temporaryRemountIndex).toBeGreaterThan(readOnlyIndex)
+        }
         expect(temporaryRemountIndex).toBeGreaterThan(writableIndex)
       }
     } finally {
       await launch.release()
       rmSync(privateRoot, { force: true, recursive: true })
+      rmSync(readOnlyRoot, { force: true, recursive: true })
     }
   })
 

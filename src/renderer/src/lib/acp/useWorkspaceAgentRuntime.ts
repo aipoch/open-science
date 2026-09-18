@@ -559,7 +559,8 @@ const useOwnedWorkspaceAgentRuntime = (
                       agentFrameworkId: resumed.frameworkId,
                       agentBackendId: resumed.backendId,
                       providerSessionId: resumed.providerSessionId,
-                      providerContinuityToken: resumed.providerContinuityToken
+                      providerContinuityToken: resumed.providerContinuityToken,
+                      wslSetup: resumed.wslSetup
                     }
                   : undefined
               )

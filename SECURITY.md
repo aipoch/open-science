@@ -1,12 +1,12 @@
 # Security Policy
 
-Open Science is a local-first research workbench that runs AI agents, executes code,
+Open-Science is a local-first research workbench that runs AI agents, executes code,
 connects to external services, and stores research data and credentials on the user's
 computer. We appreciate coordinated reports that help us protect those trust boundaries.
 
 ## Supported versions
 
-Open Science is pre-1.0 and changes quickly. Security fixes are provided for the latest
+Open-Science is pre-1.0 and changes quickly. Security fixes are provided for the latest
 tagged `0.x` release and the `main` branch only.
 
 | Version               | Supported |
@@ -67,7 +67,7 @@ by itself a vulnerability.
 
 Actions that behave within an explicit user approval, and documented platform behavior
 without a control bypass, are generally not vulnerabilities. See the
-[Open Science security model](docs/security.md) for the implemented controls, data model,
+[Open-Science security model](docs/security.md) for the implemented controls, data model,
 and user-managed boundaries. If you are unsure whether an impact is in scope, report it
 privately and we will help assess it.
 
@@ -110,7 +110,7 @@ gh attestation verify <installer-path> --repo aipoch/open-science
 ## Dependencies and supply chain
 
 If a vulnerability originates in a third-party dependency, runtime, model framework,
-Connector, or MCP server, report the reachable Open Science impact privately here and
+Connector, or MCP server, report the reachable Open-Science impact privately here and
 notify the upstream project when it is safe to do so.
 
 Building from source runs the repository's `postinstall` steps and downloads pinned

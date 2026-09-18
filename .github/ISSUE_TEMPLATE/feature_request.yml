@@ -1,12 +1,12 @@
 name: Feedback
-description: Share an idea, improvement, or general feedback about Open Science
+description: Share an idea, improvement, or general feedback about Open-Science
 title: '[Feedback]: '
 labels: ['enhancement']
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for helping improve Open Science. Share as much or as little
+        Thanks for helping improve Open-Science. Share as much or as little
         context as you have — a complete solution is not required.
   - type: dropdown
     id: type

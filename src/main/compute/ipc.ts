@@ -7,6 +7,7 @@ import { BrowserWindow, shell } from 'electron'
 import type {
   ChangeComputeHostAuthenticationRequest,
   CancelComputeJobRequest,
+  RetryComputeJobHarvestRequest,
   ChangeComputeHostAuthenticationResult,
   ComputeApprovalDecision,
   ComputeHost,
@@ -39,7 +40,8 @@ import type { TaskNotificationService } from '../notifications/task-notification
 import { buildComputeApprovalBroadcast } from '../notifications/electron-wiring'
 import { ComputeApprovalBroker, type ComputeApprovalContext } from './compute-approval-broker'
 import { ComputeService, type ArtifactResolver } from './compute-service'
-import { ConcurrencyManager, type SessionConcurrencyLimitPersistence } from './concurrency-manager'
+import { ConcurrencyManager } from './concurrency-manager'
+import type { SessionComputePolicyAuthority } from '../session-persistence/compute-policy'
 import { ComputeHostRepository } from './repository'
 import { ComputeJobRepository } from './job-repository'
 import { ComputeJobOperationRepository } from './compute-job-operation-repository'
@@ -197,7 +199,7 @@ type ComputeHandlers = {
     active_count: number
     queued_count: number
     provider_ceilings: Record<string, number>
-    queue_blocked_reason?: 'session_limits_unavailable'
+    queue_blocked_reason?: import('../../shared/compute').ComputeQueueBlockedReason
   }>
   listDir: (providerId: string, path: string) => Promise<DirListing>
   download: (providerId: string, remotePath: string, dest: DownloadDest) => Promise<LocalFile>
@@ -224,6 +226,7 @@ type ComputeHandlers = {
   jobsCancel: (
     request: CancelComputeJobRequest
   ) => Promise<import('../../shared/compute').JobStatusResult>
+  jobsRetryHarvest: (request: RetryComputeJobHarvestRequest) => Promise<void>
   jobsSetRemoteCleanup: (request: SetComputeJobRemoteCleanupRequest) => Promise<void>
   // Returns jobs with notifiedAt set and notificationConsumedAt null (issue 05 restart recovery).
   jobsPendingNotification: (filter: ComputeJobsPendingNotificationFilter) => Promise<JobSummary[]>
@@ -256,8 +259,9 @@ const createComputeHandlers = (
   authenticationDependencies?: ComputeAuthenticationDependencies,
   sessionCacheOwner?: SessionCacheOwner,
   operationRepository?: ComputeJobOperationRepository,
-  sessionLimitPersistence?: SessionConcurrencyLimitPersistence,
+  sessionLimitPersistence?: SessionComputePolicyAuthority,
   resultDelivery?: Pick<ComputeResultDeliveryProjection, 'hasDeliveryPath'>,
+  admitSessionWork?: (projectId: string, sessionId: string) => () => void,
   assertPathVisible?: (path: string) => Promise<void>
 ): ComputeHandlers => {
   const permissionGrants = permissionGrantRegistry
@@ -368,9 +372,25 @@ const createComputeHandlers = (
           sessionLimitPersistence
         )
       : undefined
+  const summarizeJob = async (
+    job: ComputeJob,
+    displayName: string,
+    root: string
+  ): Promise<JobSummary> => ({
+    ...(await toJobSummary(job, displayName, root)),
+    ...(job.status === 'queued' && concurrencyManager
+      ? {
+          queue_blocked_reason: await concurrencyManager.getQueueBlockedReason(
+            job.session_id,
+            job.project_id
+          )
+        }
+      : {})
+  })
   const service =
     injectedService ??
     new ComputeService({
+      admitSessionWork,
       runner: sshRunner,
       repository,
       approvalBroker: broker,
@@ -571,7 +591,7 @@ const createComputeHandlers = (
         )
         return Promise.all(
           jobs.map((job) =>
-            toJobSummary(job, hostNameMap.get(job.provider_id) ?? job.provider_id, storageRoot)
+            summarizeJob(job, hostNameMap.get(job.provider_id) ?? job.provider_id, storageRoot)
           )
         )
       }
@@ -582,7 +602,7 @@ const createComputeHandlers = (
       return Promise.all(
         jobs.map(async (j) =>
           projectDeliveryPath(
-            await toJobSummary(j, hostNameMap.get(j.provider_id) ?? j.provider_id, storageRoot)
+            await summarizeJob(j, hostNameMap.get(j.provider_id) ?? j.provider_id, storageRoot)
           )
         )
       )
@@ -593,6 +613,7 @@ const createComputeHandlers = (
         sessionId: request.sessionId,
         providerId: request.providerId
       }),
+    jobsRetryHarvest: (request) => service.retryJobHarvest(request),
     jobsSetRemoteCleanup: async (request) => {
       if (!jobDeletionOwner) throw new Error('Compute Job cleanup owner is unavailable.')
       if (request.disposition === 'cleaned') {
@@ -611,7 +632,7 @@ const createComputeHandlers = (
       return Promise.all(
         jobs.map(async (j) =>
           projectDeliveryPath(
-            await toJobSummary(j, hostNameMap.get(j.provider_id) ?? j.provider_id, storageRoot)
+            await summarizeJob(j, hostNameMap.get(j.provider_id) ?? j.provider_id, storageRoot)
           )
         )
       )
@@ -637,7 +658,7 @@ const createComputeHandlers = (
       return Promise.all(
         jobs.map(async (job) =>
           projectDeliveryPath(
-            await toJobSummary(
+            await summarizeJob(
               job,
               hostNameMap.get(job.provider_id) ?? job.provider_id,
               storageRoot
@@ -672,7 +693,10 @@ export const createJobUpdatedBroadcaster =
     hostRepository: ComputeHostRepository,
     storageRoot: string,
     jobRepository: Pick<ComputeJobRepository, 'get'>,
-    resultDelivery?: ComputeResultDeliveryProjection
+    resultDelivery?: ComputeResultDeliveryProjection,
+    scheduling?: (
+      job: ComputeJob
+    ) => Promise<import('../../shared/compute').ComputeQueueBlockedReason | undefined>
   ): ((job: ComputeJob) => void) =>
   (job) => {
     // Register the canonical nonterminal observation before any filesystem/Host lookup yields.
@@ -719,6 +743,8 @@ export const createJobUpdatedBroadcaster =
       const current = await jobRepository.get(job.job_id).catch(() => null)
       if (!current) return
       let summary = await toJobSummary(current, displayName, storageRoot)
+      if (summary.status === 'queued' && scheduling)
+        summary.queue_blocked_reason = await scheduling(current)
       // Filesystem scanning above yields. Re-read immediately before delivery so a terminal or
       // consumed transition committed during that scan cannot be overwritten by an older snapshot.
       const verified = await jobRepository.get(job.job_id).catch(() => null)
@@ -777,8 +803,9 @@ const createComputeIpcModule = (
   permissionGrantRegistry?: PermissionGrantRegistry,
   legacyComputeGrants?: LegacyComputeGrantPort,
   hostLifecycle?: ComputeHostLifecycle,
-  sessionLimitPersistence?: SessionConcurrencyLimitPersistence,
+  sessionLimitPersistence?: SessionComputePolicyAuthority,
   resultDelivery?: ComputeResultDeliveryProjection,
+  admitSessionWork?: (projectId: string, sessionId: string) => () => void,
   assertPathVisible?: (path: string) => Promise<void>
 ): ComputeIpcModule => {
   const operationRepository = createDefaultComputeJobOperationRepository()
@@ -796,7 +823,10 @@ const createComputeIpcModule = (
     repository,
     dataRoot,
     jobRepository,
-    resultDelivery
+    resultDelivery,
+    (job) =>
+      handlers.concurrencyManager?.getQueueBlockedReason(job.session_id, job.project_id) ??
+      Promise.resolve(undefined)
   )
   const handlers = createComputeHandlers(
     repository,
@@ -816,6 +846,7 @@ const createComputeIpcModule = (
     operationRepository,
     sessionLimitPersistence,
     resultDelivery,
+    admitSessionWork,
     assertPathVisible
   )
   const jobDeletionOwner = handlers.jobDeletionOwner

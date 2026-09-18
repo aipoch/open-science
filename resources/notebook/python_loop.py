@@ -11,6 +11,103 @@ import reprlib
 import sys
 import traceback
 import types
+import math
+import random as _stdlib_random
+
+# Bind native RNG APIs before user code. NumPy is optional; initializing its
+# global RNG once at kernel startup also captures unseeded first-cell draws.
+# No user objects, Generator instances or data files are traversed.
+_standard_getstate = _stdlib_random.getstate
+_standard_setstate = _stdlib_random.setstate
+_finite_number = math.isfinite
+_standard_rng_api = dict(vars(_stdlib_random))
+try:
+    import numpy as _numpy
+    import numpy.random as _numpy_random
+    _numpy_getstate = _numpy_random.get_state
+    _numpy_setstate = _numpy_random.set_state
+    _numpy_asarray = _numpy.asarray
+    _numpy_array_type = _numpy.ndarray
+    _numpy_rng_api = dict(vars(_numpy_random))
+except Exception:
+    _numpy = _numpy_random = None
+    _numpy_rng_api = {}
+
+
+def _rng_api_unchanged():
+    for name, module, baseline in (("random", _stdlib_random, _standard_rng_api),
+                                   ("numpy.random", _numpy_random, _numpy_rng_api)):
+        if module is None:
+            if name in sys.modules:
+                return False
+            continue
+        if sys.modules.get(name) is not module:
+            return False
+        current = vars(module)
+        if any(current.get(key) is not value for key, value in baseline.items()
+               if not key.startswith("__")):
+            return False
+    return True
+
+
+def _validate_python_random_state(value):
+    def gaussian(x, nullable=False):
+        return (nullable and x is None) or (type(x) in (int, float) and _finite_number(x))
+
+    def words(x, count):
+        return type(x) is list and len(x) == count and all(
+            type(word) is int and 0 <= word <= 4294967295 for word in x)
+
+    if type(value) is not dict or value.get("state") != "available" or set(value) - {"state", "standard", "numpy"}:
+        raise ValueError("Captured Python random state is unavailable or invalid")
+    standard = value.get("standard")
+    if (type(standard) is not dict or set(standard) != {"words", "gaussian"}
+            or not words(standard["words"], 625) or standard["words"][-1] > 624
+            or not gaussian(standard["gaussian"], True)):
+        raise ValueError("Invalid standard-library random state")
+    numpy_state = value.get("numpy")
+    if "numpy" in value and (
+            type(numpy_state) is not dict or set(numpy_state) != {"words", "position", "hasGaussian", "gaussian"}
+            or not words(numpy_state["words"], 624)
+            or type(numpy_state["position"]) is not int or not 0 <= numpy_state["position"] <= 624
+            or type(numpy_state["hasGaussian"]) is not int or numpy_state["hasGaussian"] not in (0, 1)
+            or not gaussian(numpy_state["gaussian"])):
+        raise ValueError("Invalid NumPy random state")
+    return standard, numpy_state
+
+
+def _capture_python_random_state():
+    try:
+        if not _rng_api_unchanged():
+            return {"state": "unavailable", "reason": "modified-rng"}
+        version, words, gaussian = _standard_getstate()
+        if version != 3:
+            return {"state": "unavailable", "reason": "invalid-state"}
+        value = {"state": "available", "standard": {"words": list(words), "gaussian": gaussian}}
+        if _numpy_random is not None:
+            name, words, position, has_gaussian, gaussian = _numpy_getstate()
+            if name != "MT19937" or type(words) is not _numpy_array_type or words.shape != (624,):
+                return {"state": "unavailable", "reason": "invalid-state"}
+            value["numpy"] = {"words": words.tolist(), "position": position,
+                              "hasGaussian": has_gaussian, "gaussian": gaussian}
+        _validate_python_random_state(value)
+        return value
+    except Exception:
+        return {"state": "unavailable", "reason": "capture-failed"}
+
+
+def _restore_python_random_state(value):
+    standard, numpy_state = _validate_python_random_state(value)
+    if not _rng_api_unchanged():
+        raise ValueError("Cannot restore modified Python RNG APIs")
+    if numpy_state is not None and _numpy_random is None:
+        raise ValueError("Captured random state requires NumPy")
+    # Validate both snapshots before changing either RNG. No pickle or object deserialization.
+    numpy_words = _numpy_asarray(numpy_state["words"], dtype="uint32") if numpy_state is not None else None
+    _standard_setstate((3, tuple(standard["words"]), standard["gaussian"]))
+    if numpy_state is not None:
+        _numpy_setstate(("MT19937", numpy_words,
+                         numpy_state["position"], numpy_state["hasGaussian"], numpy_state["gaussian"]))
 
 # Protocol output must survive user code that reassigns fd 1; keep a private handle to the real stdout.
 _protocol_out = os.fdopen(os.dup(1), "w", buffering=1)
@@ -90,6 +187,7 @@ class _BudgetTextIO(io.TextIOBase):
 # Protected-dirs audit hook, injected once into the persistent namespace. This is a DATA kernel with
 # NO outbound connector access: host.mcp lives only in the control-plane REPL kernel, and connector
 # data reaches python via the ./handoff channel. The namespace intentionally exposes no `host` symbol.
+_package_usage_state = {'external': False}
 _BOOTSTRAP = r'''
 import os, re, shlex, sys, warnings
 warnings.filterwarnings("ignore", message=".*is non-interactive, and thus cannot be shown")
@@ -354,13 +452,24 @@ def _command_writes_managed_runtime(command):
         return _text_references_managed_runtime(text) and bool(_runtime_write_command.search(text))
     return _shell_writes_managed_runtime(_command_text(command))
 
-def _protected_paths_audit(event, args):
+# A child interpreter can use distributions that never appear in this Kernel's module list.
+def _protected_paths_audit(event, args, _package_usage_state=_package_usage_state):
     if event in ("subprocess.Popen", "os.system", "os.posix_spawn", "os.exec") and args:
         command = args[1] if event in ("subprocess.Popen", "os.posix_spawn", "os.exec") and len(args) > 1 else args[0]
         if _command_mutates_packages(command):
             _blocked_environment_mutation()
         if _command_writes_managed_runtime(command):
             _blocked_environment_mutation()
+        executable = command[0] if isinstance(command, (list, tuple)) and command else command
+        executable = os.fsdecode(executable) if isinstance(executable, bytes) else str(executable)
+        name = _command_name(executable).lower().removesuffix(".exe")
+        if (
+            event == "os.system"
+            or re.fullmatch(r"(?:python(?:[0-9.]+)?|py|r|rscript|sh|bash|zsh|cmd|powershell|pwsh)", name)
+            or executable.startswith(sys.prefix + os.sep)
+            or executable.lower().endswith((".py", ".r", ".sh", ".bat", ".cmd"))
+        ):
+            _package_usage_state["external"] = True
         return
     if event in (
         "os.remove", "os.rmdir", "os.mkdir", "os.chmod", "os.chown", "os.truncate"
@@ -449,8 +558,9 @@ except ImportError:
     pass
 '''
 
-_globals = {"__name__": "__main__"}
+_globals = {"__name__": "__main__", "_package_usage_state": _package_usage_state}
 exec(compile(_BOOTSTRAP, "<bootstrap>", "exec"), _globals)
+_globals.pop("_package_usage_state")
 _namespace_internal_bindings = dict(_globals)
 
 _namespace_repr = reprlib.Repr()
@@ -609,10 +719,29 @@ def _capture_figures():
     return figures, truncated
 
 
-def _capture_environment():
+def _capture_execution_context():
+    import locale
+    import time
+    try:
+        return {
+            "locale": locale.setlocale(locale.LC_ALL, None)[:1024],
+            "timezone": "/".join(time.tzname)[:256],
+            "threadLimits": {name: os.environ[name][:32] for name in (
+                "OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
+                "VECLIB_MAXIMUM_THREADS", "NUMEXPR_NUM_THREADS") if name in os.environ},
+            "randomLibraries": [name for name in ("random", "numpy", "torch", "tensorflow") if name in sys.modules],
+            "pythonRandomState": _capture_python_random_state(),
+        }
+    except Exception:
+        return None
+
+
+def _capture_environment(execution_context=None):
     packages = []
     seen = set()
-    for module_name, module in list(sys.modules.items()):
+    modules = list(sys.modules.items())
+    loaded_roots = {name.split(".", 1)[0] for name, module in modules if module is not None}
+    for module_name, module in modules:
         root_name = module_name.split(".", 1)[0]
         if not root_name or root_name.startswith("_") or root_name in seen or module is None:
             continue
@@ -632,17 +761,97 @@ def _capture_environment():
             "evidence_sources": ["python-kernel-modules"],
             "loaded_state": "loaded",
         })
+    # Map import roots to distributions before attesting that an installed package is unused.
+    # Names differ for packages such as Pillow/PIL and python-dateutil/dateutil.
+    try:
+        import importlib.metadata as metadata
+        import re
+        normalize = lambda name: re.sub(r"[-_.]+", "-", name).lower()
+        roots_by_distribution = {}
+        owners_by_root = metadata.packages_distributions()
+        loaded_paths = {
+            os.path.realpath(path)
+            for _, module in modules
+            if isinstance(path := getattr(module, "__file__", None), str)
+        }
+        # A module remains loaded after its directory is removed from sys.path. Inspect that
+        # original directory as well, rather than attributing it to a newly shadowing package.
+        metadata_paths = list(sys.path)
+        for root in loaded_roots:
+            module = sys.modules.get(root)
+            path = getattr(module, "__file__", None)
+            if isinstance(path, str):
+                directory = os.path.dirname(os.path.realpath(path))
+                metadata_paths.append(os.path.dirname(directory) if hasattr(module, "__path__") else directory)
+        metadata_paths = list(dict.fromkeys(os.path.realpath(path) for path in metadata_paths if isinstance(path, str)))
+        distributions = list(metadata.distributions(path=metadata_paths))
+        for dist in distributions:
+            name = dist.metadata.get("Name")
+            if name:
+                for root in (dist.read_text("top_level.txt") or "").split():
+                    owners_by_root.setdefault(root, []).append(name)
+        for root, names in owners_by_root.items():
+            for name in names:
+                roots_by_distribution.setdefault(normalize(name), set()).add(root)
+        by_name = {normalize(package["name"]): package for package in packages}
+        for dist in distributions:
+            name = dist.metadata.get("Name")
+            if not name:
+                continue
+            key = normalize(name)
+            roots = roots_by_distribution.get(key)
+            loaded = bool(roots and roots.intersection(loaded_roots))
+            ownership_known = bool(roots)
+            if loaded:
+                # Match actual loaded files, including shared namespaces and multiple copies of
+                # the same distribution. Import names alone do not establish installation identity.
+                files = dist.files
+                ownership_known = files is not None
+                loaded = bool(files is not None and any(
+                    os.path.realpath(dist.locate_file(file)) in loaded_paths for file in files
+                ))
+                if files is None:
+                    # Legacy metadata can omit RECORD. A concrete top-level module path still
+                    # identifies ordinary packages; shared namespaces remain unknown.
+                    loaded = any(
+                        os.path.realpath(dist.locate_file(path)) in loaded_paths
+                        for root in roots
+                        for path in (root + ".py", root + "/__init__.py")
+                    )
+                    ownership_known = loaded
+            existing = by_name.get(key)
+            if existing and loaded and (not existing["version"] or existing["version"] == dist.version):
+                existing["version"] = dist.version
+                existing["version_status"] = "known" if dist.version else "unavailable"
+                existing["evidence_sources"] = ["python-kernel-modules", "python-importlib-metadata"]
+                continue
+            packages.append({
+                "name": name,
+                "version": dist.version,
+                "version_status": "known" if dist.version else "unavailable",
+                "ecosystem": "python",
+                "evidence_sources": ["python-kernel-modules", "python-importlib-metadata"],
+                "loaded_state": "loaded" if loaded else ("installed-only" if ownership_known and not _package_usage_state["external"] else "unknown"),
+            })
+    except Exception:
+        # Without distribution mapping, retain the legacy module observation. The main process
+        # must not treat interpreter-only inventory rows as evidence of unused dependencies.
+        pass
     packages.sort(key=lambda package: package["name"].casefold())
     return {
         "runtime_version": ".".join(str(part) for part in sys.version_info[:3]),
         "packages": packages,
+        **({"execution_context": execution_context} if execution_context else {}),
     }
 
 
 # Runs one request against the persistent namespace: execs all but a trailing bare expression, then
 # evals that expression so its repr echoes like a REPL. KeyboardInterrupt (from a SIGINT timeout) is
 # caught so the process survives and the driver can map the reply to a timeout.
-def _run(code):
+def _run(code, replay_random_state=None):
+    if replay_random_state is not None:
+        _restore_python_random_state(replay_random_state)
+    context_before = _capture_execution_context()
     output_budget = _OutputBudget(_text_limit - _diagnostic_limit)
     diagnostic_budget = _OutputBudget(_diagnostic_limit)
     out, err = _BudgetTextIO(output_budget), _BudgetTextIO(output_budget)
@@ -676,7 +885,8 @@ def _run(code):
     return {"stdout": out.getvalue(), "stderr": err.getvalue(), "error": error,
             "result": result, "cwd": os.getcwd(), "figures": figures,
             "output_truncated": output_budget.truncated or diagnostic_budget.truncated or figures_truncated,
-            "environment": _capture_environment()}
+            "environment": _capture_environment({"schemaVersion": 1, "before": context_before,
+                "after": _capture_execution_context()})}
 
 
 def main():
@@ -709,7 +919,7 @@ def main():
                 response = {"namespace": _inspect_namespace(request.get("include_private") is True)}
             else:
                 install_protected_paths_policy(request.get("protected_dirs", []))
-                response = _run(request.get("code", ""))
+                response = _run(request.get("code", ""), request.get("python_random_state"))
             response["req_id"] = req_id
             _protocol_out.write(json.dumps(response, separators=(",", ":")) + "\n")
             _protocol_out.flush()

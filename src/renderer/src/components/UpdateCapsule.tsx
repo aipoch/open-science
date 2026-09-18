@@ -1,5 +1,5 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
-/* Hallmark · component: update action · genre: modern-minimal · theme: existing Open Science
+/* Hallmark · component: update action · genre: modern-minimal · theme: existing Open-Science
  * states: default · hover · focus · active · disabled · loading · error · success
  * contrast: existing project token pairs
  */
@@ -10,7 +10,7 @@ import { useTranslation } from 'react-i18next'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { useUpdateStore } from '@/stores/update-store'
-import type { UpdateStatus } from '../../../shared/update'
+import { UPDATE_INSTALLATION_REQUIRED, type UpdateStatus } from '../../../shared/update'
 
 type UpdateCapsuleProps = {
   className?: string
@@ -36,6 +36,9 @@ const updateCopy = (
       action: status.applyKind === 'installer' ? t('Install') : t('Restart'),
       icon: RefreshCw
     }
+  }
+  if (status.error === UPDATE_INSTALLATION_REQUIRED) {
+    return { title: t('Installation required'), action: t('Install'), icon: ArrowUp }
   }
   if (status.state === 'error') {
     return { title: t('Update failed'), action: t('Retry'), icon: RotateCcw }
@@ -155,7 +158,7 @@ const UpdateCapsule = ({
             onClick={() => openDialog()}
             aria-label={label}
             className={cn(
-              'update-reminder relative isolate inline-flex size-8 min-w-8 shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-md bg-primary px-2 text-xs font-semibold whitespace-nowrap text-primary-foreground transition-[background-color,transform] duration-150 ease-out hover:bg-primary/80 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto sm:px-2.5 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:min-w-11 motion-reduce:transform-none motion-reduce:transition-none',
+              'update-reminder relative isolate inline-flex h-8 min-w-8 shrink-0 cursor-pointer items-center justify-center gap-0 rounded-md bg-primary px-2 text-xs font-semibold whitespace-nowrap text-primary-foreground transition-[background-color,transform] duration-150 ease-out hover:bg-primary/80 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:min-w-11 motion-reduce:transform-none motion-reduce:transition-none',
               hasError && 'bg-danger-000 text-white hover:bg-danger-000/90',
               className
             )}
@@ -166,7 +169,11 @@ const UpdateCapsule = ({
               Icon={Icon}
               status={status}
             />
-            <span className="relative z-10 hidden sm:inline">{copy.action}</span>
+            <span className="update-action-label relative z-10" aria-hidden="true">
+              <span>
+                <span className="block ps-1.5 tabular-nums">{copy.action}</span>
+              </span>
+            </span>
             {drawsAttention ? (
               <span className="update-reminder-status-dot" aria-hidden="true" />
             ) : null}

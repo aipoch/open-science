@@ -7,7 +7,7 @@ import type {
 } from './provider-turn-adapter'
 
 // Unknown future origins stay eligible so a new user-driven lane does not silently under-report
-// model turns before Open Science knows its name.
+// model turns before Open-Science knows its name.
 const CLAUDE_AUTONOMOUS_RESULT_ORIGINS = new Set([
   'task-notification',
   'peer',

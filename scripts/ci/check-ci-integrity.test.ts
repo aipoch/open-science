@@ -474,7 +474,7 @@ jobs: {}
     )
   })
 
-  it('rejects semantic changes to an established required workflow', () => {
+  it('allows owner-reviewed workflow edits that preserve required checks', () => {
     const baseText = `jobs:
   gate:
     name: PR Gate
@@ -486,21 +486,12 @@ jobs: {}
       {
         path: '.github/workflows/pr-gate.yml',
         baseText,
-        headText: `jobs:
-  gate:
-    name: PR Gate
-    steps:
-      - run: echo pass
-`
+        headText: baseText.replace('needs: [preflight]', 'needs: [preflight, policy]')
       }
     ])
 
-    expect(result.violations).toContainEqual(
-      expect.objectContaining({
-        path: '.github/workflows/pr-gate.yml',
-        rule: 'protected-gate-control-plane'
-      })
-    )
+    // Native ruleset review is separate from this structural validation.
+    expect(result.ok).toBe(true)
   })
 
   it.each([
@@ -509,18 +500,16 @@ jobs: {}
     'scripts/ci/classify-pr-changes.mjs',
     'scripts/ci/change-impact.json',
     'scripts/ci/evaluate-pr-gate.mjs'
-  ])('rejects semantic changes to established trusted control-plane file %s', (path) => {
+  ])('allows owner-reviewed changes to established control-plane file %s', (path) => {
     const result = checkCiIntegrityChanges([
       {
         path,
         baseText: 'trusted base content\n',
-        headText: 'weakened head content\n'
+        headText: 'updated trusted content\n'
       }
     ])
 
-    expect(result.violations).toContainEqual(
-      expect.objectContaining({ path, rule: 'protected-gate-control-plane' })
-    )
+    expect(result.ok).toBe(true)
   })
 
   it('rejects a content-preserving rename of an established required workflow', () => {
@@ -540,7 +529,7 @@ jobs: {}
     expect(result.violations).toContainEqual(
       expect.objectContaining({
         path: '.github/workflows/replacement.yml',
-        rule: 'protected-gate-control-plane'
+        rule: 'reserved-required-check'
       })
     )
   })

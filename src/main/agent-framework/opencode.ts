@@ -92,6 +92,11 @@ const OPENCODE_ENDPOINT_PROVIDER: Record<'anthropic' | 'openai', { id: string; n
 // plaintext key OFF disk — opencode.json only ever holds the reference, never the secret.
 const OPENCODE_API_KEY_ENV = 'OPENCODE_APP_API_KEY'
 
+// OpenCode Go requires this exact header even though OpenCode also sends its own x-session-id and
+// x-session-affinity headers. A native plugin is the only layer that has the current OpenCode session
+// id, so generate one inside the isolated app-owned config and scope it to Go-backed provider ids.
+const OPENCODE_GO_SESSION_PLUGIN = 'open-science-opencode-go-session.js'
+
 // OpenCode rejects a model limit that declares context without output. Keep maxOutputTokens optional
 // in the provider model, but reserve a conservative adapter-only output budget when it is absent so
 // the generated config remains valid and OpenCode can calculate its native compaction threshold.
@@ -117,7 +122,7 @@ const OPENCODE_PERMISSION_RULES: Record<string, 'ask' | 'allow' | 'deny'> = {
   '*': 'ask',
   read: 'allow',
   // Bulk discovery must use Notebook's checked Shell entry. Read can also list a directory, so
-  // external_directory is denied below rather than offering a grant that reopens outside traversal.
+  // external_directory defaults to deny; only the app's provisioned Skill tree is exempted below.
   glob: 'deny',
   grep: 'deny',
   list: 'deny',
@@ -137,6 +142,21 @@ const OPENCODE_PERMISSION_RULES: Record<string, 'ask' | 'allow' | 'deny'> = {
   websearch: 'ask',
   external_directory: 'deny'
 }
+
+const opencodePermissionRules = (storageRoot?: string): Record<string, unknown> => ({
+  ...OPENCODE_PERMISSION_RULES,
+  ...(storageRoot
+    ? {
+        // OpenCode evaluates the last matching rule. Its native Skill allowances precede the app
+        // policy, so restore only the provisioned tree after deny. `*` also matches nested paths.
+        // This directory contains copied Skill resources, not provider configuration or auth data.
+        external_directory: {
+          '*': 'deny',
+          [join(opencodeConfigDir(storageRoot), 'skills', '*')]: 'allow'
+        }
+      }
+    : {})
+})
 
 // OpenCode also permits direct `@agent` invocation independently of Task permission. Disable every
 // built-in subagent exposed by supported/current OpenCode releases; external agent discovery is
@@ -249,6 +269,32 @@ const opencodeModelCatalog = (
   return [...models.values()]
 }
 
+const buildOpencodeGoSessionPlugin = (
+  provider: ResolvedProvider,
+  reasoningEffort: ModelReasoningEffort | undefined,
+  catalog: readonly AgentModelCatalogEntry[]
+): string => {
+  const providerIds = [
+    ...new Set(
+      opencodeModelCatalog(provider, reasoningEffort, catalog)
+        .filter((entry) => entry.provider.vendorId === 'opencode-go')
+        .map((entry) => resolveOpencodeEndpoint(entry.provider).providerId)
+    )
+  ]
+
+  return [
+    `const providerIDs = new Set(${JSON.stringify(providerIds)})`,
+    '',
+    'export const OpenScienceOpencodeGoSession = async () => ({',
+    '  "chat.headers": async (input, output) => {',
+    '    if (!providerIDs.has(input.model.providerID)) return',
+    '    output.headers["x-opencode-session"] = input.sessionID',
+    '  }',
+    '})',
+    ''
+  ].join('\n')
+}
+
 const buildOpencodeModelConfig = (
   provider: ResolvedProvider,
   reasoningEffort: ModelReasoningEffort | undefined,
@@ -343,13 +389,14 @@ const buildOpencodeProviders = (
 const buildAppConfigContent = (
   provider: ResolvedProvider,
   reasoningEffort?: ModelReasoningEffort,
-  catalog: readonly AgentModelCatalogEntry[] = []
+  catalog: readonly AgentModelCatalogEntry[] = [],
+  storageRoot?: string
 ): Record<string, unknown> => {
   const { bareModel, providerId } = resolveOpencodeEndpoint(provider)
 
   return {
     ...(bareModel ? { model: `${providerId}/${bareModel}` } : {}),
-    permission: { ...OPENCODE_PERMISSION_RULES },
+    permission: opencodePermissionRules(storageRoot),
     agent: { ...OPENCODE_DISABLED_NATIVE_AGENTS },
     provider: buildOpencodeProviders(provider, reasoningEffort, catalog)
   }
@@ -365,7 +412,8 @@ const buildOpencodeConfig = (
   baseConfig: Record<string, unknown> = {},
   instructionPaths: string[] = [],
   reasoningEffort?: ModelReasoningEffort,
-  catalog: readonly AgentModelCatalogEntry[] = []
+  catalog: readonly AgentModelCatalogEntry[] = [],
+  storageRoot?: string
 ): string => {
   const { bareModel, providerId } = resolveOpencodeEndpoint(provider)
 
@@ -388,7 +436,7 @@ const buildOpencodeConfig = (
     // config loading, so a repo can no longer override this. See OPENCODE_PERMISSION_RULES for rationale.
     permission: {
       ...basePermission,
-      ...OPENCODE_PERMISSION_RULES
+      ...opencodePermissionRules(storageRoot)
     },
     agent: {
       ...asRecord(baseConfig.agent),
@@ -454,7 +502,19 @@ export const createOpencodeFramework = ({
     const dataHome = opencodeDataHome(ctx.storageRoot)
     const opencodeDir = join(configHome, 'opencode')
     const configPath = join(opencodeDir, 'opencode.json')
-    const configFiles = [{ path: configPath, content: '' }]
+    const configFiles = [
+      { path: configPath, content: '' },
+      {
+        path: join(opencodeDir, 'plugins', OPENCODE_GO_SESSION_PLUGIN),
+        // Always rewrite the app-owned plugin, including with an empty provider set, so switching
+        // away from Go cannot leave a previously generated provider match active on disk.
+        content: buildOpencodeGoSessionPlugin(
+          provider,
+          ctx.reasoningEffort,
+          ctx.providerModelCatalog ?? []
+        )
+      }
+    ]
 
     // Stable app guidance belongs in OpenCode's native instructions layer, never ordinary user prompt
     // history. Keep connector conventions separate so their independent lifecycle remains explicit;
@@ -485,7 +545,8 @@ export const createOpencodeFramework = ({
       {},
       instructionPaths,
       ctx.reasoningEffort,
-      ctx.providerModelCatalog
+      ctx.providerModelCatalog,
+      ctx.storageRoot
     )
 
     return {
@@ -518,7 +579,12 @@ export const createOpencodeFramework = ({
         // active provider's baseURL or swap the model to an attacker provider while inheriting the app's
         // `{env:...}` key ref. The key itself never rides this layer, only its env reference.
         OPENCODE_CONFIG_CONTENT: JSON.stringify(
-          buildAppConfigContent(provider, ctx.reasoningEffort, ctx.providerModelCatalog)
+          buildAppConfigContent(
+            provider,
+            ctx.reasoningEffort,
+            ctx.providerModelCatalog,
+            ctx.storageRoot
+          )
         ),
         // Pass credentials only through referenced environment values. Generation-local transport
         // routes use distinct variables so late OpenCode background work cannot inherit a new route.

@@ -1,5 +1,6 @@
+import { ErrorNotice } from '@/components/error-notice'
 import { useState } from 'react'
-import { AlertTriangle, ShieldAlert, ChevronDown, ChevronUp } from 'lucide-react'
+import { ShieldAlert, ChevronDown, ChevronUp } from 'lucide-react'
 import * as Dialog from '@/components/ui/dialog'
 import { useTranslation } from 'react-i18next'
 
@@ -120,7 +121,10 @@ export function ComputeApprovalDialog({
           )}
         >
           <div className={cn(dialogHeaderClassName, 'shrink-0 items-start justify-start')}>
-            <ShieldAlert className="mt-0.5 size-5 shrink-0 text-amber-500" aria-hidden="true" />
+            <ShieldAlert
+              className="mt-0.5 size-5 shrink-0 text-status-warning-foreground dark:text-status-warning-dark-foreground"
+              aria-hidden="true"
+            />
             <div className="min-w-0">
               <Dialog.Title className={dialogTitleClassName}>{title}</Dialog.Title>
               <Dialog.Description
@@ -246,26 +250,24 @@ export function ComputeApprovalDialog({
                 )}
               </div>
               {dialogRequest.willPersistUnencrypted ? (
-                <div
+                <ErrorNotice
+                  inline
                   role="alert"
-                  className="mt-3 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300"
-                >
-                  <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-                  <span>
-                    {t(
-                      "Secure storage is unavailable. This job's command, paths, and output may be stored without encryption."
-                    )}
-                  </span>
-                </div>
+                  tone="amber"
+                  className="mt-3"
+                  description={t(
+                    "Secure storage is unavailable. This job's command, paths, and output may be stored without encryption."
+                  )}
+                />
               ) : null}
               {responseErrorRequestId === dialogRequest.id ? (
-                <div
+                <ErrorNotice
+                  inline
                   role="alert"
-                  className="mt-3 flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
-                >
-                  <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-                  <span>{t('Could not submit this approval. Try again.')}</span>
-                </div>
+                  tone="amber"
+                  className="mt-3"
+                  description={t('Could not submit this approval. Try again.')}
+                />
               ) : null}
             </div>
           </ScrollArea>

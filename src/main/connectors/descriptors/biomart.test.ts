@@ -121,7 +121,7 @@ describe('biomart / get_data', () => {
         mart: 'ENSEMBL_MART_ENSEMBL',
         dataset: 'hsapiens_gene_ensembl',
         attributes: ['ensembl_gene_id', 'external_gene_name'],
-        filters: { chromosome_name: 'Y', biotype: true }
+        filters: { chromosome_name: 'Y', biotype: 'protein_coding' }
       },
       'ENSG00000292363\tCRLF2\nENSG00000292344\tPLCXD1\n[success]\n'
     )) as { out: string; url: string }
@@ -131,10 +131,61 @@ describe('biomart / get_data', () => {
     expect(xml).toContain('<Attribute name="ensembl_gene_id" />')
     expect(xml).toContain('<Attribute name="external_gene_name" />')
     expect(xml).toContain('<Filter name="chromosome_name" value="Y" />')
-    expect(xml).toContain('<Filter name="biotype" value="only" />')
+    expect(xml).toContain('<Filter name="biotype" value="protein_coding" />')
     expect(xml).toContain('completionStamp="1"')
     expect(out).toBe(
       'ensembl_gene_id,external_gene_name\nENSG00000292363,CRLF2\nENSG00000292344,PLCXD1'
+    )
+  })
+
+  it.each([
+    { included: true, excluded: '0', body: 'ENSG00000141510\tTP53\n[success]\n' },
+    { included: false, excluded: '1', body: '[success]\n' }
+  ])('encodes a boolean filter with excluded=$excluded', async ({ included, excluded, body }) => {
+    const { out, url } = (await call(
+      'get_data',
+      {
+        mart: 'ENSEMBL_MART_ENSEMBL',
+        dataset: 'hsapiens_gene_ensembl',
+        attributes: ['ensembl_gene_id', 'hgnc_symbol'],
+        filters: { ensembl_gene_id: 'ENSG00000141510', with_hgnc: included }
+      },
+      body
+    )) as { out: string; url: string }
+    const xml = new URL(url).searchParams.get('query')!
+    expect(xml).toContain(`<Filter name="with_hgnc" excluded="${excluded}" />`)
+    expect(xml).toContain('<Filter name="ensembl_gene_id" value="ENSG00000141510" />')
+    expect(out).toBe(
+      included ? 'ensembl_gene_id,hgnc_symbol\nENSG00000141510,TP53' : 'ensembl_gene_id,hgnc_symbol'
+    )
+  })
+
+  it('preserves value filters and XML escaping alongside boolean filters', async () => {
+    const { url } = (await call(
+      'get_data',
+      {
+        mart: 'ENSEMBL_MART_ENSEMBL',
+        dataset: 'hsapiens_gene_ensembl',
+        attributes: ['ensembl_gene_id'],
+        filters: {
+          with_hgnc: true,
+          chromosome_name: ['1', '2'],
+          start: 0,
+          end: 100,
+          biotype: 'only',
+          'custom"&<>': 'excluded"&<>'
+        }
+      },
+      '[success]\n'
+    )) as { url: string }
+    const xml = new URL(url).searchParams.get('query')!
+    expect(xml).toContain('<Filter name="with_hgnc" excluded="0" />')
+    expect(xml).toContain('<Filter name="chromosome_name" value="1,2" />')
+    expect(xml).toContain('<Filter name="start" value="0" />')
+    expect(xml).toContain('<Filter name="end" value="100" />')
+    expect(xml).toContain('<Filter name="biotype" value="only" />')
+    expect(xml).toContain(
+      '<Filter name="custom&quot;&amp;&lt;&gt;" value="excluded&quot;&amp;&lt;&gt;" />'
     )
   })
 

@@ -268,18 +268,24 @@ export const sanitizeExportMarkdown = (content: string): string => {
   return parts.map((part) => part.raw).join('')
 }
 
+// Session updatedAt also tracks runtime/metadata changes. It is not part of the reviewed
+// content, but remains in the exported document. Use the same comparison in both processes.
+export const serializeConversationExportContent = (session: PersistedChatSession): string =>
+  JSON.stringify({ ...createConversationExportDocument(session, 0), updatedAt: 0 })
+
 // A precondition only: Main still renders its own durable Session, never renderer-supplied data.
 export const hashConversationExportContent = async (
   session: PersistedChatSession
 ): Promise<string> => {
-  const bytes = new TextEncoder().encode(
-    JSON.stringify(createConversationExportDocument(session, 0))
-  )
+  const bytes = new TextEncoder().encode(serializeConversationExportContent(session))
   const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes)
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')
 }
 
-export const sanitizeExportFilename = (title: string): string => {
+export const sanitizeExportFilename = (
+  title: string,
+  maxBytes = EXPORT_FILENAME_MAX_BYTES
+): string => {
   const sanitized = removeControlCharacters(title)
     .replace(UNSAFE_FILENAME_CHARACTERS, ' ')
     .replace(/\s+/g, ' ')
@@ -298,10 +304,10 @@ export const sanitizeExportFilename = (title: string): string => {
 
   const characters = Array.from(sanitized)
   const totalBytes = characters.reduce((sum, character) => sum + byteLength(character), 0)
-  if (totalBytes <= EXPORT_FILENAME_MAX_BYTES) return sanitized
+  if (totalBytes <= maxBytes) return sanitized
 
   const suffix = '...'
-  const contentByteLimit = EXPORT_FILENAME_MAX_BYTES - suffix.length
+  const contentByteLimit = maxBytes - suffix.length
   let truncated = ''
   let truncatedBytes = 0
 

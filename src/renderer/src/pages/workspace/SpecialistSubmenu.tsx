@@ -101,7 +101,7 @@ const SpecialistSubmenu = ({
       <UserRound
         className={cn(
           'size-4 shrink-0 text-text-200',
-          unavailable && 'text-amber-600 dark:text-amber-400'
+          unavailable && 'text-status-warning-foreground dark:text-status-warning-dark-foreground'
         )}
         strokeWidth={2}
         aria-hidden="true"
@@ -114,7 +114,7 @@ const SpecialistSubmenu = ({
         className={cn(
           'flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium leading-4',
           unavailable
-            ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
+            ? 'bg-status-warning-surface/10 dark:bg-status-warning-dark-surface/10 text-status-warning-foreground dark:text-status-warning-dark-foreground'
             : 'bg-bg-200 text-text-100'
         )}
       >
@@ -193,7 +193,9 @@ const SpecialistSubmenu = ({
                   <span className="min-w-0 flex-1 truncate text-[13px] line-through">
                     {unavailableProfile.name}
                   </span>
-                  <span className="text-[10px] text-amber-500">{t('Unavailable')}</span>
+                  <span className="text-[10px] text-status-warning-foreground dark:text-status-warning-dark-foreground">
+                    {t('Unavailable')}
+                  </span>
                 </div>
               ) : null}
               {enabledSpecialists.map((specialist) => {

@@ -177,6 +177,7 @@ const computeIpcArgumentSchemas = Object.freeze({
   'compute:approval-replay-pending': z.tuple([]),
   'compute:jobs:list': z.tuple([computeJobsListFilterSchema]),
   'compute:jobs:cancel': z.tuple([cancelComputeJobRequestSchema]),
+  'compute:jobs:retry-harvest': z.tuple([cancelComputeJobRequestSchema]),
   'compute:jobs:set-remote-cleanup': z.tuple([setComputeJobRemoteCleanupRequestSchema]),
   'compute:jobs:pending-notification': z.tuple([computeJobsPendingNotificationFilterSchema]),
   'compute:jobs:mark-consumed': z.tuple([z.string(), stringArraySchema]),
@@ -302,6 +303,9 @@ const registerComputeIpcHandlerSet = ({ handlers, enabledHosts }: ComputeIpcAdap
   handleComputeIpc('compute:approval-replay-pending', () => handlers.approvalReplayPending())
   // Returns a Session job feed or the global non-terminal activity projection.
   handleComputeIpc(COMPUTE_JOBS_LIST_CHANNEL, (_event, filter) => handlers.jobsList(filter))
+  handleComputeIpc('compute:jobs:retry-harvest', (_event, request) =>
+    handlers.jobsRetryHarvest(request)
+  )
   handleComputeIpc('compute:jobs:cancel', (_event, request) => handlers.jobsCancel(request))
   handleComputeIpc('compute:jobs:set-remote-cleanup', (_event, request) =>
     handlers.jobsSetRemoteCleanup(request)

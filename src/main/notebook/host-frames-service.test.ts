@@ -218,11 +218,13 @@ describe('HostFramesService', () => {
     })
     await expect(
       service.list({ roots_only: false, limit: 2, cursor: first.next_cursor }, context)
-    ).rejects.toThrow('cursor does not match')
+    ).rejects.toThrow(
+      /cursor does not match.*Restart host\.(frames|sessions)\.(list|get).*omit (cursor|before)/u
+    )
 
     sessions[2].updatedAt += 1
     await expect(service.list({ limit: 2, cursor: first.next_cursor }, context)).rejects.toThrow(
-      'cursor is no longer valid'
+      /cursor is no longer valid.*Restart host\.(frames|sessions)\.(list|get).*omit (cursor|before)/u
     )
   })
 
@@ -461,7 +463,9 @@ describe('HostFramesService', () => {
     })
     await expect(
       service.get('other-frame', { limit: 2, before: first.transcript.previous_cursor }, context)
-    ).rejects.toThrow('cursor does not match')
+    ).rejects.toThrow(
+      /cursor does not match.*Restart host\.(frames|sessions)\.(list|get).*omit (cursor|before)/u
+    )
     await expect(service.get(frameId, { branch_id: 'other-branch' }, context)).rejects.toThrow(
       'Branch not found'
     )
@@ -469,7 +473,9 @@ describe('HostFramesService', () => {
     target.conversationGraph!.messages.find((item) => item.id === 'message-3')!.updatedAt += 1
     await expect(
       service.get(frameId, { limit: 2, before: first.transcript.previous_cursor }, context)
-    ).rejects.toThrow('cursor is no longer valid')
+    ).rejects.toThrow(
+      /cursor is no longer valid.*Restart host\.(frames|sessions)\.(list|get).*omit (cursor|before)/u
+    )
   })
 
   it('requires full exact ids and uses Session narrowing to disambiguate within the Project', async () => {
@@ -487,7 +493,9 @@ describe('HostFramesService', () => {
       readSession
     })
 
-    await expect(service.get('shared-frame-exact', {}, context)).rejects.toThrow('ambiguous')
+    await expect(service.get('shared-frame-exact', {}, context)).rejects.toThrow(
+      /ambiguous.*host\.frames\.list.*host\.frames\.get.*sessionId/u
+    )
     await expect(
       service.get('shared-frame-exact', { session_id: 'session-two' }, context)
     ).resolves.toMatchObject({

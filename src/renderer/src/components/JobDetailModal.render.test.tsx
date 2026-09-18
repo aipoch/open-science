@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // Tests for JobDetailModal — tab switching, Back navigation, and session jobs list.
-import { act } from 'react'
+import { act, Profiler } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -123,10 +123,145 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount())
   container.remove()
+  vi.useRealTimers()
   vi.restoreAllMocks()
 })
 
+it.each(['list', 'row', 'detail'] as const)(
+  'stops elapsed updates for terminal or cancelled jobs in the %s surface and resumes live work',
+  async (surface) => {
+    const { JobDetailModal } = await import('./JobDetailModal')
+    const { RemoteJobRow } = await import('./RemoteJobRow')
+    vi.useFakeTimers()
+    const onRender = vi.fn()
+    const startedAt = Date.now() - 5_000
+    const show = (job: ReturnType<typeof makeJob>): void => {
+      useSessionJobStore.getState().applyUpdate(job)
+      root.render(
+        <Profiler id="elapsed" onRender={onRender}>
+          {surface === 'row' ? (
+            <RemoteJobRow job={job} onOpen={vi.fn()} />
+          ) : (
+            <JobDetailModal
+              open
+              sessionId="sess-1"
+              initialJob={surface === 'detail' ? job : undefined}
+              onClose={vi.fn()}
+            />
+          )}
+        </Profiler>
+      )
+    }
+    act(() => show(makeJob({ status: 'success' })))
+    expect(vi.getTimerCount()).toBe(0)
+    onRender.mockClear()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000)
+    })
+    expect(onRender).not.toHaveBeenCalled()
+
+    act(() => show(makeJob({ job_id: 'job-live', status: 'running', started_at: startedAt })))
+    expect(vi.getTimerCount()).toBeGreaterThan(0)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000)
+    })
+    expect(container.textContent).toContain('1m 6s')
+
+    act(() =>
+      show(makeJob({ job_id: 'job-live', status: 'running', cancellation_status: 'cancelled' }))
+    )
+    expect(vi.getTimerCount()).toBe(0)
+    onRender.mockClear()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000)
+    })
+    expect(onRender).not.toHaveBeenCalled()
+  }
+)
+
+it('does not tick an empty Session list or one with only another Session running', async () => {
+  const { JobDetailModal } = await import('./JobDetailModal')
+  vi.useFakeTimers()
+  act(() => root.render(<JobDetailModal open sessionId="sess-1" onClose={vi.fn()} />))
+  expect(vi.getTimerCount()).toBe(0)
+  act(() => useSessionJobStore.getState().applyUpdate(makeJob({ session_id: 'other' })))
+  expect(vi.getTimerCount()).toBe(0)
+})
+
 describe('JobDetailModal — detail view', () => {
+  it('explains a queued policy blocker and clears it on a recovered job update', async () => {
+    const { JobDetailModal } = await import('./JobDetailModal')
+    const job = makeJob({ status: 'queued', queue_blocked_reason: 'session_policy_unavailable' })
+    useSessionJobStore.getState().applyUpdate(job)
+    act(() => {
+      root.render(
+        <JobDetailModal open={true} sessionId="sess-1" initialJob={job} onClose={vi.fn()} />
+      )
+    })
+    expect(container.textContent).toContain(
+      'Session compute settings could not be read. Dispatch retries automatically.'
+    )
+    act(() => {
+      useSessionJobStore
+        .getState()
+        .applyUpdate({ ...job, status: 'submitted', queue_blocked_reason: undefined })
+    })
+    expect(container.textContent).not.toContain('Session compute settings could not be read.')
+  })
+
+  it('retries only collection for the same completed job and displays remote leftovers independently from analysis', async () => {
+    const { JobDetailModal } = await import('./JobDetailModal')
+    const job = makeJob({
+      status: 'success',
+      harvested_at: undefined,
+      harvest_error: 'temporary transfer failure',
+      analysis_state: 'failed',
+      left_on_remote: [
+        { uri: 'ssh://cluster/scratch/large.dat', size_mb: 512, reason: 'exceeds_max_file_mb' }
+      ]
+    })
+    const jobsRetryHarvest = vi.fn(async () => undefined)
+    const jobsList = vi.fn(async () => [job])
+    Object.assign(window, { api: { compute: { jobsRetryHarvest, jobsList } } })
+    useSessionJobStore.getState().applyUpdate(job)
+    act(() =>
+      root.render(<JobDetailModal open sessionId="sess-1" initialJob={job} onClose={vi.fn()} />)
+    )
+    expect(container.textContent).toContain('Results pending')
+    expect(container.textContent).toContain('ssh://cluster/scratch/large.dat')
+    expect(container.textContent).toContain('The command will not run again.')
+    const button = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.textContent === 'Retry collection'
+    )!
+    await act(async () => button.click())
+    expect(jobsRetryHarvest).toHaveBeenCalledExactlyOnceWith({
+      jobId: job.job_id,
+      projectId: job.project_id,
+      sessionId: job.session_id,
+      providerId: job.provider_id
+    })
+    act(() => useSessionJobStore.getState().applyUpdate({ ...job, harvested_at: Date.now() }))
+    expect(container.textContent).toContain('Collection finished with errors')
+    expect(
+      Array.from(container.querySelectorAll('button')).some(
+        (b) => b.textContent === 'Retry collection'
+      )
+    ).toBe(false)
+  })
+
+  it.each(['dispatch_recovery_pending', 'dispatch_recovery_ambiguous', 'host_unreachable'])(
+    'shows observation %s without changing the running result',
+    async (last_poll_error) => {
+      const { JobDetailModal } = await import('./JobDetailModal')
+      const job = makeJob({ last_poll_error })
+      act(() =>
+        root.render(<JobDetailModal open sessionId="sess-1" initialJob={job} onClose={vi.fn()} />)
+      )
+      expect(container.textContent).toContain('Running')
+      expect(container.querySelector('[role="status"]')).not.toBeNull()
+    }
+  )
+
   it('requests cancellation with the complete owner tuple and disables while cancelling', async () => {
     const { JobDetailModal } = await import('./JobDetailModal')
     const job = makeJob()
@@ -246,7 +381,7 @@ describe('JobDetailModal — detail view', () => {
 
     expect(container.textContent).toContain('Unable to load remote jobs.')
     expect(container.textContent).toContain(
-      'Harvest pending. Open Science will retry automatically.'
+      'Harvest pending. Open-Science will retry automatically.'
     )
     const retry = Array.from(container.querySelectorAll('button')).find(
       (button) => button.textContent === 'Retry'

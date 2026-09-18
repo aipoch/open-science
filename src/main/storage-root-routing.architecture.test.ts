@@ -17,9 +17,12 @@ const projectRoot = resolve(__dirname, '../..')
 const source = (path: string): string => readFileSync(resolve(projectRoot, path), 'utf8')
 
 const referencesIdentifier = (path: string, name: string): boolean => {
+  const contents = readFileSync(path, 'utf8')
+  // Escaped identifiers still require parsing even when the literal name is absent.
+  if (!contents.includes(name) && !contents.includes('\\')) return false
   const file = createSourceFile(
     path,
-    readFileSync(path, 'utf8'),
+    contents,
     ScriptTarget.Latest,
     true,
     path.endsWith('.tsx') ? ScriptKind.TSX : ScriptKind.TS

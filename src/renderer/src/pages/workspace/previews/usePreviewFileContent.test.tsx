@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { usePreviewFileContent } from './usePreviewFileContent'
+import { PreviewInitialPosition } from './PreviewInitialPosition'
 
 const Probe = (): React.JSX.Element => {
   const state = usePreviewFileContent({
@@ -72,6 +73,26 @@ describe('usePreviewFileContent', () => {
     await act(async () => root?.unmount())
     container.remove()
     vi.unstubAllGlobals()
+  })
+
+  it('opens a search match at its byte position and leaves ordinary previews at the beginning', async () => {
+    const bytes = new TextEncoder().encode('group,count\nA,2')
+    vi.mocked(fetch).mockImplementation(async (_url, options) => {
+      const range = new Headers(options?.headers).get('Range')!
+      const start = Number(range.match(/bytes=(\d+)/)![1])
+      return new Response(bytes.slice(start), { status: 206 })
+    })
+    root = createRoot(container)
+    await act(async () =>
+      root.render(
+        <PreviewInitialPosition value={{ offset: 6, startingLineNumber: 1 }}>
+          <Probe />
+        </PreviewInitialPosition>
+      )
+    )
+    expect(container.textContent).toBe('count\nA,2')
+    await act(async () => root.render(<Probe />))
+    expect(container.textContent).toBe('group,count\nA,2')
   })
 
   it.each([

@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
+import { classifyChanges } from './classify-pr-changes.mjs'
 import { evaluatePrGate } from './evaluate-pr-gate.mjs'
 
 describe('PR Gate aggregation', () => {
@@ -275,5 +276,47 @@ describe('PR Gate aggregation', () => {
       conclusion: 'failure',
       reason: 'unselected lane executed unsuccessfully'
     })
+  })
+})
+
+describe('selected platform checks remain mandatory', () => {
+  const plan = classifyChanges([{ path: 'package.json', status: 'modified' }])
+  it.each(['pull_request', 'merge_group'])(
+    'does not let retired deferral flags bypass %s checks',
+    (event) => {
+      const run = spawnSync(process.execPath, [resolve('scripts/ci/evaluate-pr-gate.mjs')], {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          EVENT_NAME: event,
+          PR_GATE_MERGE_QUEUE_ENABLED: 'true',
+          PR_GATE_STAGE: 'pr',
+          PR_GATE_EXECUTION_MODE: 'bundles',
+          PR_GATE_PLAN: JSON.stringify(plan),
+          PR_GATE_NEEDS: JSON.stringify(
+            Object.fromEntries(
+              ['preflight', ...plan.bundles].map((name) => [
+                name,
+                { result: name === 'macos_e2e' ? 'skipped' : 'success' }
+              ])
+            )
+          ),
+          GITHUB_STEP_SUMMARY: ''
+        }
+      })
+      expect(run.status).toBe(1)
+      expect(run.stdout).toContain('macos_e2e')
+    }
+  )
+  it('rejects the retired coverage bundle instead of silently accepting it', () => {
+    expect(
+      evaluatePrGate(
+        { ...plan, bundles: [...plan.bundles, 'coverage_macos'] },
+        Object.fromEntries(
+          ['preflight', ...plan.bundles, 'coverage_macos'].map((name) => [name, 'success'])
+        ),
+        { executionMode: 'bundles' }
+      ).ok
+    ).toBe(false)
   })
 })

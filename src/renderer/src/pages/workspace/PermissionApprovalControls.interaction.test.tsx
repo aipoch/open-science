@@ -30,7 +30,7 @@ const networkApprovalRequest: AcpPermissionRequest = {
   toolCallId: 'app-approval:network-1',
   title: 'Connect to data.example.org?',
   appOwned: true,
-  providerToolName: 'Open Science',
+  providerToolName: 'Open-Science',
   rawInput: {
     notebookNetworkApproval: { hostname: 'data.example.org', port: 443, runtime: 'python' }
   },

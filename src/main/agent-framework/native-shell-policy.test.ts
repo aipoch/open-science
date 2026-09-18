@@ -31,7 +31,7 @@ describe('native shell policy', () => {
       glob: 'deny',
       grep: 'deny',
       list: 'deny',
-      external_directory: 'deny'
+      external_directory: { '*': 'deny' }
     })
 
     const codex = createCodexFramework().prepareModelConfig(

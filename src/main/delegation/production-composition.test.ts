@@ -214,6 +214,7 @@ const createCompositionHarness = async (
     assertSessionIdentityOwnership: async () => undefined,
     saveSession: async (next) => {
       durable = structuredClone(next)
+      return structuredClone(durable)
     },
     saveCommittedProjectSession: async () => undefined,
     deleteSession: async () => undefined,
@@ -925,7 +926,10 @@ describe('production delegated-work composition', () => {
         if (finalSave !== 'no-quit') {
           if (finalSave !== 'conflict-without-work') {
             await prompt(harness.caller.originMessageId)
-            await expect.poll(() => harness.execution.controls()).toHaveLength(1)
+            // Launch prepares a real workspace; fake timers do not accelerate filesystem I/O.
+            await expect
+              .poll(() => harness.execution.controls(), { timeout: 10_000 })
+              .toHaveLength(1)
             harness.execution.control(receipts[0].attemptId).accept()
           }
           const app = Object.assign(new EventEmitter(), { exit: vi.fn() })
@@ -988,7 +992,15 @@ describe('production delegated-work composition', () => {
           expect(sendAppContinuation).not.toHaveBeenCalled()
         }
         await prompt(nextPromptId)
-        await expect.poll(() => harness.execution.controls()).toHaveLength(receipts.length)
+        await expect
+          .poll(
+            async () => {
+              await vi.advanceTimersByTimeAsync(50)
+              return harness.execution.controls()
+            },
+            { timeout: 10_000 }
+          )
+          .toHaveLength(receipts.length)
         const child = receipts.at(-1)!
         harness.execution.control(child.attemptId).accept()
         harness.execution.control(child.attemptId).complete('new result')
@@ -1612,44 +1624,50 @@ describe('production delegated-work composition', () => {
   it('requires non-emoji names and persists caller-chosen unique names across production reopen', async () => {
     root = await mkdtemp(join(tmpdir(), 'delegated-production-naming-'))
     const harness = await createCompositionHarness(root, 'codex')
-    const task = `Trace sources\n${'full prompt detail '.repeat(20)}`
+    const compositions = [harness.composition]
+    try {
+      const task = `Trace sources\n${'full prompt detail '.repeat(20)}`
 
-    await expect(
-      harness.composition.host.delegate(harness.caller, { task } as never, { wait: false })
-    ).rejects.toMatchObject({ code: 'admission_rejection' })
-    await expect(
-      harness.composition.host.delegate(
-        { ...harness.caller, toolInvocationId: 'call-codex-emoji' },
-        { task, name: 'Trace sources 🧪' },
+      await expect(
+        harness.composition.host.delegate(harness.caller, { task } as never, { wait: false })
+      ).rejects.toMatchObject({ code: 'admission_rejection' })
+      await expect(
+        harness.composition.host.delegate(
+          { ...harness.caller, toolInvocationId: 'call-codex-emoji' },
+          { task, name: 'Trace sources 🧪' },
+          { wait: false }
+        )
+      ).rejects.toMatchObject({ code: 'admission_rejection' })
+      expect(harness.execution.reservationCounts()).toEqual([])
+      const first = await harness.composition.host.delegate(
+        { ...harness.caller, toolInvocationId: 'call-codex-named' },
+        { task, name: 'Source audit' },
         { wait: false }
       )
-    ).rejects.toMatchObject({ code: 'admission_rejection' })
-    expect(harness.execution.reservationCounts()).toEqual([])
-    const first = await harness.composition.host.delegate(
-      { ...harness.caller, toolInvocationId: 'call-codex-named' },
-      { task, name: 'Source audit' },
-      { wait: false }
-    )
-    const second = await harness
-      .reopen()
-      .host.delegate(
+      const reopened = harness.reopen()
+      compositions.push(reopened)
+      const second = await reopened.host.delegate(
         { ...harness.caller, toolInvocationId: 'call-codex-reopened' },
         { task, name: 'Source audit 2' },
         { wait: false }
       )
 
-    expect(first).toMatchObject({ kind: 'receipts', children: [{ name: 'Source audit' }] })
-    expect(second).toMatchObject({ kind: 'receipts', children: [{ name: 'Source audit 2' }] })
-    await expect(harness.reopen().host.children(harness.caller)).resolves.toMatchObject([
-      { name: 'Source audit' },
-      { name: 'Source audit 2' }
-    ])
-    expect(
-      harness
-        .durable()
-        .conversationGraph?.frames.filter(({ kind }) => kind === 'delegate')
-        .map(({ delegateName }) => delegateName)
-    ).toEqual(['Source audit', 'Source audit 2'])
+      expect(first).toMatchObject({ kind: 'receipts', children: [{ name: 'Source audit' }] })
+      expect(second).toMatchObject({ kind: 'receipts', children: [{ name: 'Source audit 2' }] })
+      await expect(harness.reopen().host.children(harness.caller)).resolves.toMatchObject([
+        { name: 'Source audit' },
+        { name: 'Source audit 2' }
+      ])
+      expect(
+        harness
+          .durable()
+          .conversationGraph?.frames.filter(({ kind }) => kind === 'delegate')
+          .map(({ delegateName }) => delegateName)
+      ).toEqual(['Source audit', 'Source audit 2'])
+    } finally {
+      // Both owners can still be materializing the wait:false children. Drain them before rm.
+      for (const composition of compositions) await composition.root.shutdown()
+    }
   })
 
   it('records the admitted cross-provider model on every child Runtime Segment', async () => {
@@ -2316,6 +2334,7 @@ describe('production delegated-work composition', () => {
       assertSessionIdentityOwnership: async () => undefined,
       saveSession: async (next) => {
         durable = structuredClone(next)
+        return structuredClone(durable)
       },
       saveCommittedProjectSession: async () => undefined,
       deleteSession: async () => undefined,
@@ -2440,6 +2459,9 @@ describe('production delegated-work composition', () => {
       awaiting: true,
       requestId: 'provider-permission-1',
       title: 'Read evidence',
+      providerToolName: 'WebFetch',
+      isMcp: false,
+      toolKind: 'fetch',
       options: [
         { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once', scope: 'once' },
         { optionId: 'allow', name: 'This session', kind: 'allow_always', scope: 'session' },
@@ -2450,6 +2472,9 @@ describe('production delegated-work composition', () => {
     const projected = harness.composition.root.pendingPermissions()[0]
     expect(projected).toMatchObject({
       sessionId: harness.session.id,
+      providerToolName: 'WebFetch',
+      isMcp: false,
+      toolKind: 'fetch',
       delegated: {
         frameId: receipt.children[0].frameId,
         attemptId: receipt.children[0].attemptId,
@@ -2841,14 +2866,7 @@ describe('production delegated-work composition', () => {
     })
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
       transport: 'tcp',
-      artifactProvenance: {
-        createVersion: (request, signal) => provenance.createVersion(request, signal),
-        replayVersion: (request) => provenance.replayVersion(request),
-        reserveWrite: (request) => provenance.reserveWrite(request),
-        releaseWriteReservation: (request) => provenance.releaseWriteReservation(request),
-        releaseRunWriteReservations: (request) => provenance.releaseRunWriteReservations(request),
-        releaseAllWriteReservations: () => provenance.releaseAllWriteReservations()
-      }
+      artifactProvenance: provenance
     })
     const connection = await server.ensureStarted()
     const turns = new ArtifactTurnOwner({

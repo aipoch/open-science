@@ -1,3 +1,4 @@
+import { ErrorNotice } from '@/components/error-notice'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 
 import { AlertTriangle, CheckCircle2, Download, FileJson } from 'lucide-react'
@@ -97,7 +98,7 @@ export function ConnectorExportView({ id, onDone }: ConnectorExportViewProps): R
               setSaved(false)
             }}
           >
-            {t('Open Science Connector')}
+            {t('Open-Science Connector')}
           </Button>
           <Button
             type="button"
@@ -115,15 +116,7 @@ export function ConnectorExportView({ id, onDone }: ConnectorExportViewProps): R
           <p className="text-xs text-muted-foreground">{t('Preparing preview…')}</p>
         ) : null}
 
-        {error ? (
-          <div
-            role="alert"
-            className="flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
-          >
-            <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-            <span>{t(error)}</span>
-          </div>
-        ) : null}
+        {error ? <ErrorNotice inline role="alert" tone="amber" description={t(error)} /> : null}
 
         {definition ? (
           <div>
@@ -171,7 +164,7 @@ export function ConnectorExportView({ id, onDone }: ConnectorExportViewProps): R
                 key={`${item.code}:${item.path ?? ''}`}
                 className={`flex items-start gap-2 text-xs ${
                   item.severity === 'warning'
-                    ? 'text-amber-600 dark:text-amber-400'
+                    ? 'text-status-warning-foreground dark:text-status-warning-dark-foreground'
                     : 'text-destructive'
                 }`}
               >

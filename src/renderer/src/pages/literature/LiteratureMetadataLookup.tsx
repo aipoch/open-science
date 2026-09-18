@@ -128,16 +128,19 @@ const LiteratureMetadataLookup = ({
             className="h-8"
             disabled={busy || !identifier.value.trim()}
             onClick={search}
+            aria-busy={Boolean(busy)}
           >
-            {busy ? (
-              <LoaderCircle
-                className="size-3.5 animate-spin motion-reduce:animate-none"
-                aria-hidden="true"
-              />
-            ) : (
-              <Search className="size-3.5" aria-hidden="true" />
-            )}
-            {hasResult && !dirty ? t('Check again') : t('Search')}
+            <span key={String(busy)} className="button-feedback">
+              {busy ? (
+                <LoaderCircle
+                  className="size-3.5 animate-spin motion-reduce:animate-none"
+                  aria-hidden="true"
+                />
+              ) : (
+                <Search className="size-3.5" aria-hidden="true" />
+              )}
+              {hasResult && !dirty ? t('Check again') : t('Search')}
+            </span>
           </Button>
         </div>
       </div>

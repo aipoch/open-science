@@ -23,6 +23,7 @@ const PREVIEW_SUPPORTED_EXTENSIONS: Record<string, PreviewFileFormat> = {
   htm: 'html',
   html: 'html',
   json: 'json',
+  ipynb: 'json',
   markdown: 'markdown',
   md: 'markdown',
   pdb: 'pdb',

@@ -101,7 +101,7 @@ describe('workspace session dialogs behavior wiring', () => {
 
     expect(overlay?.props.className).not.toContain('backdrop-blur')
     expect(panel?.props.className).toContain(expectedWidth)
-    expect(panel?.props.className).toContain('overflow-hidden')
+    expect(panel?.props.className).toContain('overflow-y-auto')
     expect(panel?.props.className).toContain('text-foreground')
     expect(panel?.props.className).toContain('shadow-dialog')
     expect(header?.props.className).toContain('px-5 py-3.5')
@@ -220,6 +220,20 @@ describe('workspace session dialogs behavior wiring', () => {
     expect(onConfirmDelete).toHaveBeenCalledOnce()
   })
 
+  it('explains deferred whole-package cleanup for imported Session summaries', async () => {
+    const { DeleteSessionDialog } = await import('./DeleteSessionDialog')
+    const tree = DeleteSessionDialog({
+      session: createSession({ id: 'import-example', title: 'Imported research' }),
+      canDelete: true,
+      onCancel: vi.fn(),
+      onConfirmDelete: vi.fn()
+    })
+    expect(getTextContent(tree)).toContain('the next time Open-Science starts')
+    expect(getTextContent(tree)).toContain('references cannot be verified')
+    expect(getTextContent(tree)).toContain('Exported .science files are not deleted.')
+    expect(getTextContent(tree)).not.toContain('Artifacts created in this session will remain')
+  })
+
   it('renders delete with settings dialog chrome and an explicit close control', async () => {
     const { DeleteSessionDialog } = await import('./DeleteSessionDialog')
     const onCancel = vi.fn()
@@ -303,7 +317,7 @@ describe('workspace session dialogs behavior wiring', () => {
     )
 
     expect(getTextContent(alert)).toBe(
-      "The agent was stopped, but Open Science couldn't delete the saved Session. The Session, draft, and attachments were kept. Please try again."
+      "The agent was stopped, but Open-Science couldn't delete the saved Session. The Session, draft, and attachments were kept. Please try again."
     )
     expect(getTextContent(tree)).not.toContain('disk locked')
     ;(retryButton?.props.onClick as () => void)()
@@ -321,7 +335,7 @@ describe('workspace session dialogs behavior wiring', () => {
       (element) => element.props.role === 'alert'
     )
     expect(getTextContent(runtimeAlert)).toBe(
-      "Open Science couldn't stop the agent for this Session. The Session was not deleted. Please try again."
+      "Open-Science couldn't stop the agent for this Session. The Session was not deleted. Please try again."
     )
   })
 })

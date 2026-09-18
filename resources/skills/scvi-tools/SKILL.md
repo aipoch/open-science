@@ -28,15 +28,16 @@ that drops into the scanpy neighbors → leiden → umap pipeline.
 
 This is a **pure skill** — `kernel.py` is deterministic Python and _you_ (the
 base model) do all the reasoning. There is no `host` runtime and no LLM API.
-The only helper here is `h5ad_safe_obs`, which coerces an obs/var frame so
-`anndata.write_h5ad()` succeeds. Load it once per session in a Python cell:
+The helpers are `prepare_scvi_counts` for input validation and `h5ad_safe_obs`
+for obs/var frames that `anndata.write_h5ad()` can serialize. Load them once
+per session in a Python cell:
 
 ```python
-exec(open("scvi-tools/kernel.py").read())   # path to this skill's kernel.py
+exec(open("scvi-tools/kernel.py", encoding="utf-8").read())   # path to this skill's kernel.py
 ```
 
-Nothing auto-loads it outside Claude Science. Then call `h5ad_safe_obs(...)`
-directly. If it raises `NameError`, you haven't exec'd kernel.py.
+Nothing auto-loads it outside Claude Science. Then call the helpers directly.
+If a helper raises `NameError`, you haven't exec'd kernel.py.
 
 Dependencies: `pip install scvi-tools scanpy anndata`. Training needs a
 CUDA-capable GPU — see [Remote compute](#remote-compute-rent-a-gpu) to fall out
@@ -46,12 +47,28 @@ to a rented GPU when you don't have one locally.
 
 ### scVI — batch-corrected latent space
 
+`prepare_scvi_counts(adata)` checks and preserves existing `counts`. If absent,
+it checks `.X` before copying it to `counts`. Values must be finite, nonnegative,
+and integer-valued, with at least one positive count. Invalid existing counts
+raise instead of being replaced by `.X`; sparse matrices stay sparse.
+
+These numerical checks cannot prove raw-count provenance. Check the dataset
+documentation or preprocessing history; do not round or exponentiate transformed
+values to make them pass. If the history is unclear, resolve it before training.
+The helper does not use `.raw.X`, which may be normalized or have a different
+gene axis. Use an in-memory AnnData object; materialize backed data or copy views
+only within the available memory budget.
+
 ```python
 import scanpy as sc
 import scvi
 
 adata = sc.read_h5ad("dataset.h5ad")
-adata.layers["counts"] = adata.X.copy()          # preserve raw BEFORE any normalize/log1p
+# Verify count provenance from the input documentation or preprocessing history.
+# Preserve counts if present; otherwise validate .X before copying it to counts.
+counts_record = prepare_scvi_counts(adata)
+print(counts_record)       # numerical checks only; does not certify provenance
+adata.X = adata.layers["counts"].copy()        # derive plotting/HVG data from verified counts
 sc.pp.normalize_total(adata); sc.pp.log1p(adata) # optional, for HVG / plotting only
 sc.pp.highly_variable_genes(adata, n_top_genes=2000, batch_key="batch", subset=True)
 
@@ -151,10 +168,11 @@ def main():
     train.remote()   # blocks until done; then read /data/out.h5ad from the volume
 ```
 
-`h5ad_safe_obs` is loaded via `exec` in your **local** session (see **Setup**);
-inside `pipeline.py` running remotely it is not defined, so paste the helper at
-the top of that script (or inline the `pd.Index(np.asarray(..., dtype=object))`
-coercion) before `.write_h5ad()`.
+Helpers loaded via `exec` in your **local** session (see **Setup**) are not
+defined in a remote `pipeline.py`. Include `prepare_scvi_counts` from `kernel.py`
+before the remote preprocessing/training recipe, and `h5ad_safe_obs` before
+`.write_h5ad()`. Copy the helper definitions into that script or ship and load
+`kernel.py` there; keep the documented count-source selection and validation.
 
 For a local/cluster GPU, just run `pipeline.py` directly where CUDA is visible —
 no wrapper needed. (For a fuller Modal workflow see the `remote-compute-modal`
@@ -167,7 +185,7 @@ skill.)
 | `differential_expression()` defaults to `mode="vanilla"` (scvi-tools ≥1.4) | `KeyError: 'lfc_mean'` / `'proba_de'` when sorting — pass `mode="change"` to get `lfc_*`/`proba_de`/`is_de_fdr_*`; in vanilla mode sort on `bayes_factor`.                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `adata.obs` index/columns are `string[pyarrow]` (`ArrowStringArray`)       | `.write_h5ad()` dies with `IORegistryError: No method registered for writing <class 'pandas.arrays.ArrowStringArray'>` (anndata #2377). Coerce before writing: `adata.obs = h5ad_safe_obs(adata.obs)` (kernel helper — load it via `exec` locally, see Setup; inline the coercion in a remote `pipeline.py`). **`.astype(str)` alone is not enough** — on a pyarrow-backed Index/Series it returns another Arrow-backed array; round-trip through `np.asarray(..., dtype=object)`. `anndata.settings.allow_write_nullable_strings = True` does **not** cover Arrow-backed strings. |
 | `use_gpu=` kwarg                                                           | Removed in 1.x → `TypeError: train() got an unexpected keyword argument 'use_gpu'`. Use `accelerator="gpu", devices=1`.                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| Log-normalized data fed to `setup_anndata`                                 | Silent garbage — scVI's NB likelihood needs raw integer counts. Stash counts in `adata.layers["counts"]` _before_ normalize/log1p and pass `layer="counts"`.                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Log-normalized data fed to `setup_anndata`                                 | Silent garbage — scVI's NB likelihood needs raw integer counts. Verify count provenance, call `prepare_scvi_counts`, and pass `layer="counts"`. Never overwrite counts from an unverified `.X`.                                                                                                                                                                                                                                                                                                                                                                                    |
 
 ## Troubleshooting
 

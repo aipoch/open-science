@@ -7,8 +7,11 @@ import {
   type DiscoveredInterpreter
 } from './environment-discovery'
 import { listEnvPackages } from './package-listing'
+import { discoverExternalRLibraries, resolveExternalRLibrary } from './external-r-library'
 import type { MicromambaRunner } from './windows-micromamba-runner'
 import { isMigrationInProgress, withDataRootWrite } from '../storage/migration-state'
+import { createLogger } from '../logger'
+import { startDiagnosticOperation } from '../diagnostics/operation'
 
 // Upper bound on concurrent package listings inside listPackageCounts (mirrors the bounded
 // probe concurrency in environment-discovery): enough to fill the Settings badges quickly without
@@ -27,7 +30,8 @@ type RuntimeSettings = {
   setInstallAuthorized(
     language: NotebookLanguage,
     envId: string,
-    authorized: boolean
+    authorized: boolean,
+    library?: string
   ): Promise<RuntimeEnablement>
   getAgentEnvironmentCreationEnabled(): Promise<boolean>
   setAgentEnvironmentCreationEnabled(enabled: boolean): Promise<boolean>
@@ -48,6 +52,7 @@ type RuntimeWorkflowDeps = {
   // Injectable for tests so the package-listing workflows never spawn micromamba/pip/Rscript;
   // production defaults to listEnvPackages against the real env.
   listPackages?: (env: DiscoveredInterpreter) => Promise<EnvPackage[]>
+  discoverRLibraries?: (interpreterPath: string) => Promise<string[]>
   micromambaRunner?: Pick<MicromambaRunner, 'resolve'>
   setWindowsRuntimeAccess?: (
     executable: string,
@@ -79,6 +84,7 @@ type RuntimeWorkflows = {
     language: NotebookLanguage
     envId: string
     authorized: boolean
+    library?: string
   }): Promise<RuntimeEnablement>
   register(request: { language: NotebookLanguage; path: string }): Promise<string[]>
   setSandboxAccess(request: {
@@ -98,7 +104,7 @@ const createRuntimeWorkflows = (deps: RuntimeWorkflowDeps): RuntimeWorkflows => 
     if (language !== 'r' || !deps.setWindowsRuntimeAccess) return operation()
     if (isMigrationInProgress()) {
       throw new Error(
-        'Open Science is moving your data. Wait for the move to finish before running this.'
+        'Open-Science is moving your data. Wait for the move to finish before running this.'
       )
     }
     if (runtimeAccessUpdate)
@@ -146,23 +152,41 @@ const createRuntimeWorkflows = (deps: RuntimeWorkflowDeps): RuntimeWorkflows => 
   }
 
   return {
-    setSandboxAccess: async (request) =>
-      runRuntimeChange(request.language, async () => {
-        if (request.language !== 'r' || !deps.setWindowsRuntimeAccess)
-          throw new Error('Selected-runtime sandbox access is only available for Windows R.')
-        const env = (await discoverLanguageEnvs('r')).find(
-          (candidate) => candidate.envId === request.envId
-        )
-        if (!env || env.provenance === 'agent-created')
-          throw new Error('Select a discovered managed or external R runtime.')
-        if (request.authorized && !env.runnable)
-          throw new Error('R must be runnable with jsonlite before verifying sandbox access.')
-        if (!request.authorized) {
-          await deps.settingsService.setEnvironmentEnabled('r', env.envId, false)
-          await deps.onRuntimeDisabled?.('r', env.envId)
-        }
-        return deps.setWindowsRuntimeAccess(rscriptFor(env.interpreterPath), request.authorized)
-      }),
+    setSandboxAccess: async (request) => {
+      const diagnostic = startDiagnosticOperation(createLogger('notebook:runtime'), {
+        operation: 'r-sandbox-access-request',
+        fields: { language: request.language, authorized: request.authorized }
+      })
+      try {
+        diagnostic.phase('admission')
+        const result = await runRuntimeChange(request.language, async () => {
+          diagnostic.phase('discovery')
+          if (request.language !== 'r' || !deps.setWindowsRuntimeAccess)
+            throw new Error('Selected-runtime sandbox access is only available for Windows R.')
+          const env = (await discoverLanguageEnvs('r')).find(
+            (candidate) => candidate.envId === request.envId
+          )
+          if (!env || env.provenance === 'agent-created')
+            throw new Error('Select a discovered managed or external R runtime.')
+          if (request.authorized && !env.runnable)
+            throw new Error('R must be runnable with jsonlite before verifying sandbox access.')
+          if (!request.authorized) {
+            diagnostic.phase('disable-runtime')
+            await deps.settingsService.setEnvironmentEnabled('r', env.envId, false)
+            diagnostic.phase('drain-runtime')
+            await deps.onRuntimeDisabled?.('r', env.envId)
+          }
+          diagnostic.phase(request.authorized ? 'authorize' : 'revoke')
+          return deps.setWindowsRuntimeAccess(rscriptFor(env.interpreterPath), request.authorized)
+        })
+        if (result.cancelled) diagnostic.cancel()
+        else diagnostic.complete()
+        return result
+      } catch (error) {
+        diagnostic.fail(error)
+        throw error
+      }
+    },
     listEnvironments: async () => {
       // Discovery expects a synchronous manual-path lookup, so snapshot both persisted catalogs first.
       const [manualPython, manualR] = await Promise.all([
@@ -177,8 +201,30 @@ const createRuntimeWorkflows = (deps: RuntimeWorkflowDeps): RuntimeWorkflows => 
         discoverInterpreters('python', discovery),
         discoverInterpreters('r', discovery)
       ])
+      const externalR = r.filter((env) => env.provenance === 'user-own' && env.runnable)
+      const libraries = new Map<string, string[]>()
+      let next = 0
+      const worker = async (): Promise<void> => {
+        for (let i = next++; i < externalR.length; i = next++) {
+          const env = externalR[i]
+          try {
+            libraries.set(
+              env.envId,
+              await (deps.discoverRLibraries ?? discoverExternalRLibraries)(env.interpreterPath)
+            )
+          } catch {
+            // A failed optional probe must not hide an otherwise usable interpreter.
+          }
+        }
+      }
+      await Promise.all(
+        Array.from({ length: Math.min(PACKAGE_COUNT_CONCURRENCY, externalR.length) }, worker)
+      )
       discoveredRuntimeRoot = currentRuntimeRoot
-      discoveredSnapshot = { python, r }
+      discoveredSnapshot = {
+        python,
+        r: r.map((env) => ({ ...env, personalRLibraries: libraries.get(env.envId) }))
+      }
       return discoveredSnapshot
     },
     // Read-only installed-package inventory for one env (Settings "Packages" dialog). The envId is
@@ -266,12 +312,28 @@ const createRuntimeWorkflows = (deps: RuntimeWorkflowDeps): RuntimeWorkflows => 
         }
         return next
       }),
-    setInstallAuthorized: (request) =>
-      deps.settingsService.setInstallAuthorized(
+    setInstallAuthorized: async (request) => {
+      let library: string | undefined
+      if (request.language === 'r' && request.authorized) {
+        const runtime = (await discoverLanguageEnvs('r')).find((env) => env.envId === request.envId)
+        if (!runtime || runtime.provenance !== 'user-own' || !runtime.runnable)
+          throw new Error('Select a runnable external R runtime.')
+        library = await resolveExternalRLibrary(request.library ?? '')
+        const candidates = await (deps.discoverRLibraries ?? discoverExternalRLibraries)(
+          runtime.interpreterPath
+        )
+        const same = (path: string): string =>
+          process.platform === 'win32' ? path.toLowerCase() : path
+        if (!candidates.some((path) => same(path) === same(library!)))
+          throw new Error('Select an existing personal library visible to this R runtime.')
+      }
+      return deps.settingsService.setInstallAuthorized(
         request.language,
         request.envId,
-        request.authorized
-      ),
+        request.authorized,
+        ...(request.language === 'r' ? [library] : [])
+      )
+    },
     register: async (request) => {
       const result = await deps.settingsService.addManualInterpreter(request.language, request.path)
       invalidateDiscovery()

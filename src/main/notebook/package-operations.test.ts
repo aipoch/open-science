@@ -5,9 +5,11 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { NotebookLanguage } from '../../shared/notebook'
+import type { PackageMirror } from '../../shared/mirror'
 import { createRootNotebookLane } from './lane-identity'
 import { NotebookPackageOperations } from './package-operations'
 import { installPackages } from './package-manager'
+import { compactManagePackagesResult } from './mcp-server'
 import { CHILD_UNCONFIRMED } from './provisioner-runtime'
 import { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
 import { NotebookSessionAggregate, type NotebookSessionRuntimeBinding } from './session-aggregate'
@@ -150,6 +152,88 @@ const harness = (
 }
 
 describe('NotebookPackageOperations', () => {
+  it.each(['python', 'r'] as const)(
+    'returns satisfied %s packages without mirror lookup or restart',
+    async (language) => {
+      const active = session(
+        'satisfied',
+        binding(language, '/managed/interpreter', 'managed', 'analysis')
+      )
+      const { owner, options } = harness(active)
+      const name = language === 'python' ? 'numpy' : 'ggplot2'
+      vi.mocked(options.environmentStateTracker.inspectPackages).mockResolvedValue({
+        inventory: { source: 'full-scan', validation: 'full-scan' },
+        packages: [
+          {
+            requested: name,
+            name,
+            status: 'installed',
+            version: '2.0',
+            versionStatus: 'known',
+            libraryScope: 'environment'
+          }
+        ]
+      })
+      const result = await owner.manage({
+        language,
+        packages: [name],
+        projectId: 'project',
+        sessionId: 'satisfied'
+      })
+      expect(result).toMatchObject({
+        ok: true,
+        needsRestart: false,
+        environmentName: 'analysis',
+        target: { runtimeSource: 'managed' },
+        packageChanges: [{ name, change: 'unchanged', afterVersion: '2.0' }]
+      })
+      expect(options.resolvePackageMirror).not.toHaveBeenCalled()
+      expect(options.installPackages).not.toHaveBeenCalled()
+      expect(options.environmentOperations.recommendRestart).not.toHaveBeenCalled()
+      expect(options.notifyChanged).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each([
+    'ERROR: No matching distribution found for nonexistent-package',
+    'ERROR: Permission denied: /runtime/site-packages'
+  ])(
+    'delivers the actual failed installer output through the MCP projection: %s',
+    async (diagnosis) => {
+      const { owner } = harness(
+        session('session-1', {
+          ...binding('python', '/external/python', 'external'),
+          resolvedInterpreter: { command: '/external/python' }
+        }),
+        {
+          resolveRuntimeEnablement: async () => ({
+            enabled: { '/external/python': true },
+            installAuthorized: { '/external/python': true }
+          }),
+          installPackages: (request, deps) =>
+            installPackages(request, {
+              ...deps,
+              pathExists: () => true,
+              spawn: async () => ({ code: 1, stdout: '', stderr: diagnosis })
+            })
+        }
+      )
+      const result = await owner.manage({
+        sessionId: 'session-1',
+        language: 'python',
+        packages: ['nonexistent-package'],
+        operation: 'install',
+        usePip: true
+      })
+      expect(compactManagePackagesResult(result), result.error).toMatchObject({
+        ok: false,
+        needsRestart: false,
+        diagnostics: diagnosis,
+        attempts: [expect.objectContaining({ installer: 'pip', status: 'failed' })]
+      })
+    }
+  )
+
   it.each(['install', 'uninstall'] as const)(
     'E06 does not recommend restart after an unstructured R %s preflight failure',
     async (operation) => {
@@ -409,6 +493,38 @@ describe('NotebookPackageOperations', () => {
     expect(options.notifyChanged).toHaveBeenCalledWith(activeSession)
   })
 
+  it('passes the current mirror to the installer sandbox without retaining replaced or cleared mirrors', async () => {
+    let configuredMirror: PackageMirror = { pypiIndex: 'https://packages.example.org/simple' }
+    const packageSpawn = vi.fn(() => vi.fn())
+    const { owner } = harness(session('session-1'), {
+      resolvePackageMirror: vi.fn(() => configuredMirror),
+      mirrorProbe: { candidates: [] },
+      packageSpawn
+    })
+
+    await owner.manage({ language: 'python', packages: ['numpy'], usePip: true })
+    configuredMirror = { pypiIndex: 'https://new-packages.example.org/simple' }
+    await owner.manage({ language: 'python', packages: ['pandas'], usePip: true })
+    configuredMirror = {}
+    await owner.manage({ language: 'python', packages: ['scipy'], usePip: true })
+
+    expect(packageSpawn).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ request: expect.objectContaining({ packages: ['numpy'] }) }),
+      { pypiIndex: 'https://packages.example.org/simple' }
+    )
+    expect(packageSpawn).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ request: expect.objectContaining({ packages: ['pandas'] }) }),
+      { pypiIndex: 'https://new-packages.example.org/simple' }
+    )
+    expect(packageSpawn).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({ request: expect.objectContaining({ packages: ['scipy'] }) }),
+      {}
+    )
+  })
+
   it('returns an explicit target receipt when the admitted installer throws', async () => {
     const managed = binding('python', '/runtime/analysis/python', 'managed', 'analysis')
     const { owner, options } = harness(session('session-1', managed), {
@@ -653,6 +769,7 @@ describe('NotebookPackageOperations', () => {
   it('uses the runtime label as the environment name for an external binding', async () => {
     const external = {
       ...binding('python', '/opt/research/bin/python', 'external'),
+      resolvedInterpreter: { command: '/opt/research/bin/python' },
       label: 'Research Python'
     }
     const { owner } = harness(session('session-1', external), {

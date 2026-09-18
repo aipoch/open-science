@@ -13,7 +13,7 @@ import {
 import { seedDefaultPermissionGrants } from '../permission-grants/defaults'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { AcpPermissionBroker, projectRegistrySessionGrants } from './permission-broker'
-import { withTrustedMcpToolIdentity } from './permission-policy'
+import { withTrustedMcpToolIdentity, withTrustedNativeToolIdentity } from './permission-policy'
 import { claudeCodeFramework } from '../agent-framework'
 import { AcpPermissionContext, HUMAN_PERMISSION_ACTION_ORIGIN } from './permission-context'
 import {
@@ -1583,4 +1583,104 @@ describe('ACP permission broker with durable grants', () => {
     expect(broker.listGrants('session-1')).toEqual([])
     await expect(registry.list()).resolves.toEqual([])
   })
+})
+
+it('releases queued durable searches without granting other capabilities or conversations', async () => {
+  storageRoot = await mkdtemp(join(tmpdir(), 'search-queued-'))
+  client = createProjectDbClient(storageRoot)
+  await migrateApplicationDatabase(client)
+  await client.project.create({ data: { id: 'project-web', name: 'Search' } })
+  const registry = await createPermissionGrantRegistry({ getClient: async () => client! })
+  const emit = vi.fn()
+  let active: string | undefined
+  const persist = vi.fn(async (candidate) => {
+    if (!candidate.promptMessageId) return false
+    if (active) throw new Error('Concurrent durable permission persistence')
+    active = candidate.request.requestId
+    return true
+  })
+  const settleLive = vi.fn(async (candidate) => {
+    expect(active).toBe(candidate.request.requestId)
+    active = undefined
+  })
+  const settled = vi.fn()
+  const broker = new AcpPermissionBroker(emit, undefined, registry, settled, {
+    persist,
+    settleLive
+  })
+  const unsubscribe = registry.subscribe(() => {
+    void broker.releaseGrantedWebSearchRequests()
+  })
+  const request = (
+    id: string,
+    sessionId = 'parent',
+    tool = 'WebSearch'
+  ): RequestPermissionRequest =>
+    withTrustedNativeToolIdentity(
+      {
+        sessionId,
+        toolCall: {
+          toolCallId: id,
+          title: tool,
+          kind: 'fetch',
+          rawInput: tool === 'WebSearch' ? { query: id } : { url: 'https://example.org/' },
+          _meta: { toolName: tool }
+        },
+        options: [
+          { optionId: id + ':once', name: 'Once', kind: 'allow_once' },
+          { optionId: id + ':deny', name: 'Deny', kind: 'reject_once' }
+        ]
+      },
+      tool === 'WebSearch' ? 'claude-code/websearch' : 'claude-code/webfetch'
+    )
+  const policy = {
+    profile: 'ask' as const,
+    frameworkId: 'claude-code' as const,
+    projectId: 'project-web',
+    promptMessageId: 'prompt'
+  }
+  try {
+    // The old reading grant cannot release a search, even in the same conversation.
+    await registry.remember({
+      capability: { kind: 'builtin_tool', key: 'builtin:web_fetch' },
+      scope: { kind: 'session', projectId: 'project-web', sessionId: 'parent' }
+    })
+    const first = broker.requestPermission(request('first'), policy)
+    const second = broker.requestPermission(request('second'), policy)
+    const third = broker.requestPermission(request('third'), policy)
+    const foreign = broker.requestPermission(request('foreign', 'foreign'), {
+      ...policy,
+      promptMessageId: undefined
+    })
+    await vi.waitFor(() => expect(emit).toHaveBeenCalledTimes(2))
+    const card = broker.getPendingRequests().find(({ sessionId }) => sessionId === 'parent')!
+    await broker.respond({
+      requestId: card.requestId,
+      optionId: card.options.find(({ scope }) => scope === 'session')!.optionId
+    })
+    for (const [result, id] of [
+      [first, 'first'],
+      [second, 'second'],
+      [third, 'third']
+    ] as const) {
+      await expect(result).resolves.toEqual({
+        outcome: { outcome: 'selected', optionId: id + ':once' }
+      })
+    }
+    expect(active).toBeUndefined()
+    expect(settleLive.mock.calls.length).toBe(
+      persist.mock.calls.filter(([candidate]) => candidate.promptMessageId).length
+    )
+    expect(settled.mock.calls.filter(([, state]) => state === 'resolved')).toHaveLength(3)
+    const pending = broker.getPendingRequests()
+    expect(pending).toHaveLength(1)
+    expect(pending[0].sessionId).toBe('foreign')
+    await broker.respond({ requestId: pending[0].requestId, optionId: 'foreign:deny' })
+    await expect(foreign).resolves.toEqual({
+      outcome: { outcome: 'selected', optionId: 'foreign:deny' }
+    })
+  } finally {
+    unsubscribe()
+    broker.cancelAllPending()
+  }
 })

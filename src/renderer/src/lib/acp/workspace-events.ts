@@ -47,7 +47,11 @@ import {
   recordTextEventApplied,
   recordToolEventApplied
 } from '../streaming-metrics'
-import { saveSessionInOrder } from '../session-persistence/session-persistence'
+import {
+  hydratePersistedSessionIfPresent,
+  loadPersistedSession,
+  saveSessionInOrder
+} from '../session-persistence/session-persistence'
 import {
   createRuntimeStreamId,
   getAcpRuntimeEventImage,
@@ -680,16 +684,31 @@ const scheduleAutoReview = (
   scheduledAutoReviewsBySession.set(sessionId, timer)
 }
 
+// Startup summaries have no message graph. Load their existing authority before projecting
+// output; the lane owner keeps subsequent events ordered while this read is pending.
+const loadRuntimeEventSession = (sessionId: string | undefined): Promise<void> | undefined => {
+  const session = useSessionStore
+    .getState()
+    .sessions.find((candidate) => candidate.id === sessionId)
+  if (!session || session.contentLoaded !== false) return
+  return loadPersistedSession({ projectId: session.projectId, sessionId: session.id }).then(
+    (persisted) => {
+      if (!persisted) throw new Error(`Session not found: ${session.id}`)
+      hydratePersistedSessionIfPresent(persisted)
+    }
+  )
+}
+
 // Applies one runtime event to the workspace store when it affects chat state.
 const applyWorkspaceRuntimeEvent = async (
   event: AcpRuntimeEvent,
   dependencies: WorkspaceRuntimeEventDependencies = {}
 ): Promise<boolean> => {
-  const store = useSessionStore.getState()
-
-  // Thought chunks never enter the transcript. Exit before the permission / message / tool
-  // probes so a thinking-model burst cannot walk Session state once per provider token.
+  // Thought chunks never enter the transcript or require its persisted content.
   if (event.kind === 'thought') return false
+  const loading = loadRuntimeEventSession(event.sessionId)
+  if (loading) await loading
+  const store = useSessionStore.getState()
 
   if (event.kind === 'permission' && event.sessionId) {
     const permission = store.sessions.find((session) => session.id === event.sessionId)
@@ -1120,6 +1139,10 @@ const applyWorkspaceRuntimeEventBatch = async (events: AcpRuntimeEvent[]): Promi
     return true
   }
 
+  for (const sessionId of new Set(events.map((event) => event.sessionId))) {
+    const loading = loadRuntimeEventSession(sessionId)
+    if (loading) await loading
+  }
   const store = useSessionStore.getState()
   const inputs: Parameters<typeof store.appendAgentMessageChunks>[0] = []
   const completedActivityGroups = new Set<string>()

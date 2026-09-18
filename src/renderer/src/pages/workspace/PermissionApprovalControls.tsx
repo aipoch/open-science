@@ -422,10 +422,12 @@ const NotebookNetworkApprovalDetail = ({
     <div className="space-y-2 text-xs leading-5 text-muted-foreground">
       <p>{t('Notebook code requested access to {{destination}}.', { destination })}</p>
       {approval.reason ? <p>{t('Reason: {{reason}}', { reason: approval.reason })}</p> : null}
-      {approval.runtime && approval.runtime !== 'bash' ? (
+      {approval.runtime &&
+      approval.runtime !== 'bash' &&
+      request.options.some((option) => option.kind === 'allow_once') ? (
         <p>
           {t(
-            'Allow once applies to the next execution in this runtime, even if the code changes. It allows multiple connections to this domain during that execution.'
+            'Allow once applies to the next execution of the same command in this session and runtime. It allows multiple connections to this domain during that execution.'
           )}
         </p>
       ) : null}
@@ -974,7 +976,11 @@ const PermissionApprovalCard = ({
         <div className="flex flex-col gap-1 text-xs">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="font-semibold text-foreground">{request.delegated.childTitle}</span>
-            <span className="text-muted-foreground">{request.delegated.riskScope}</span>
+            <span className="text-muted-foreground">
+              {['Read web pages', 'Search the web'].includes(sourcePresentation.categoryLabel)
+                ? t('This conversation or this call')
+                : request.delegated.riskScope}
+            </span>
           </div>
           <span className="break-words text-muted-foreground">
             {literatureSummary ? presentation.description : request.title}
@@ -1003,6 +1009,10 @@ const PermissionApprovalCard = ({
           scopeDescription={scopeDescription}
         />
       </div>
+
+      {['Read web pages', 'Search the web'].includes(sourcePresentation.categoryLabel) ? (
+        <p className="text-muted-foreground">{presentation.description}</p>
+      ) : null}
 
       {/* Affected file targets — the canonical location field, shown so read/edit/delete
           prompts always reveal the path being authorized. Wraps to keep full values readable. */}
@@ -1099,7 +1109,7 @@ const PermissionApprovalCard = ({
                 portaled={embedded}
                 onceDescription={
                   networkRuntime && networkRuntime !== 'bash'
-                    ? t('Next execution in this runtime')
+                    ? t('Next matching execution')
                     : undefined
                 }
               />

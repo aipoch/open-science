@@ -1,3 +1,19 @@
+import type { PersistedConversationGraph } from './conversation-graph'
+export type SideChatModelSelection = Readonly<{
+  providerId: string
+  model?: string
+  reasoningEffort?: import('./settings').ReasoningEffort
+}>
+
+export type SideChatParentBranch = Readonly<{ frameId: string; branchId: string }>
+
+export function sideChatParentBranch(
+  graph: PersistedConversationGraph | undefined
+): SideChatParentBranch | undefined {
+  const frame = graph?.frames.find((item) => item.id === graph.activeFrameId)
+  return frame ? { frameId: frame.id, branchId: frame.activeBranchId } : undefined
+}
+
 export const SIDE_CHAT_MESSAGE_LIMIT = 12_000
 
 export type SideChatTargetState = 'running' | 'waiting' | 'idle' | 'completed'
@@ -18,8 +34,11 @@ export type SideChatSendMessageResult = Readonly<{
 }>
 
 export type SideChatStartRequest = Readonly<{
+  expectedParentBranch?: SideChatParentBranch
+  sideSessionId?: string
   parentSessionId: string
   projectId: string
+  modelSelection?: SideChatModelSelection
   text: string
 }>
 
@@ -30,6 +49,8 @@ export type SideChatStartResponse = Readonly<{
 }>
 
 export type SideChatPromptRequest = Readonly<{
+  expectedParentBranch?: SideChatParentBranch
+  modelSelection?: SideChatModelSelection
   sideSessionId: string
   text: string
 }>
@@ -45,6 +66,7 @@ export type SideChatEntry =
   | Readonly<{ id: string; kind: 'tool'; title: string; status?: string }>
 
 export type SideChatSnapshot = Readonly<{
+  modelSelection?: SideChatModelSelection
   revision: number
   parentSessionId: string
   projectId: string

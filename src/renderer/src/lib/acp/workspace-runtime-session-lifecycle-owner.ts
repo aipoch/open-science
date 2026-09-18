@@ -88,7 +88,8 @@ const ensureWorkspaceSessionReady = async (
           agentFrameworkId: resumed.frameworkId,
           agentBackendId: resumed.backendId,
           providerSessionId: resumed.providerSessionId,
-          providerContinuityToken: resumed.providerContinuityToken
+          providerContinuityToken: resumed.providerContinuityToken,
+          wslSetup: resumed.wslSetup
         }
       : undefined
   )
@@ -224,7 +225,8 @@ const resumeInterruptedWorkspaceSession = async (
           agentFrameworkId: resumeResult.frameworkId,
           agentBackendId: resumeResult.backendId,
           providerSessionId: resumeResult.providerSessionId,
-          providerContinuityToken: resumeResult.providerContinuityToken
+          providerContinuityToken: resumeResult.providerContinuityToken,
+          wslSetup: resumeResult.wslSetup
         }
       : undefined
     if (promptMessageId) {
@@ -436,7 +438,7 @@ const recoverContextOverflowWorkspaceSession = async (
         projectId: session.projectId,
         permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
         // Native compaction retained its own framework-authored summary. Only a replacement session needs
-        // OpenScience to replay the prior transcript into its first prompt.
+        // Open-Science to replay the prior transcript into its first prompt.
         forceHistoryReplay: !nativeCompacted,
         allowCompactionRecovery: true,
         supportsImageInput,

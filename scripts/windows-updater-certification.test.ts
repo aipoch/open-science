@@ -1,5 +1,9 @@
 import { load } from 'js-yaml'
+import { copyFile, mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
+import { runProcess } from './windows-installer-smoke.mjs'
 
 import {
   assertDifferentialObservation,
@@ -10,17 +14,17 @@ import {
   parseSingleRange,
   redactPackagedAppOutput,
   rewriteFeedPaths,
-  waitForInstallerExit
+  observeInstaller
 } from './windows-updater-certification.mjs'
 
 describe('Windows updater certification', () => {
   it('redacts packaged app tokens before output reaches CI diagnostics', () => {
     expect(
       redactPackagedAppOutput(
-        'Open Science Web: http://127.0.0.1:4321/?token=secret-token\nnext?mode=test&token=other'
+        'Open-Science Web: http://127.0.0.1:4321/?token=secret-token\nnext?mode=test&token=other'
       )
     ).toBe(
-      'Open Science Web: http://127.0.0.1:4321/?token=<redacted>\nnext?mode=test&token=<redacted>'
+      'Open-Science Web: http://127.0.0.1:4321/?token=<redacted>\nnext?mode=test&token=<redacted>'
     )
   })
 
@@ -52,12 +56,12 @@ describe('Windows updater certification', () => {
     const runProcessImpl = vi.fn(async () => ({ code: 2, stdout: '', stderr: 'installer failed' }))
 
     await expect(
-      waitForInstallerExit({
+      observeInstaller({
         installer: 'C:\\updates\\aipoch-open-science-0.11.1-win-x64-setup.exe',
         env: { LOCALAPPDATA: 'C:\\profile' },
         signal: controller.signal,
         runProcessImpl
-      })
+      }).exit
     ).resolves.toEqual({ code: 2, stdout: '', stderr: 'installer failed' })
     expect(runProcessImpl).toHaveBeenCalledWith(
       'powershell.exe',
@@ -76,6 +80,66 @@ describe('Windows updater certification', () => {
       })
     )
   })
+
+  it('waits for compiled observer readiness, including a split stdout marker', async () => {
+    const completed = Promise.withResolvers<{ code: number; stdout: string; stderr: string }>()
+    let onStdout!: (output: string) => void
+    const observer = observeInstaller({
+      installer: 'C:\\updates\\setup.exe',
+      env: {},
+      runProcessImpl: (_executable, _args, options) => {
+        onStdout = options.onStdout
+        return completed.promise
+      }
+    })
+    const apply = vi.fn()
+    const applying = observer.ready.then(apply)
+    onStdout('OPEN_SCIENCE_INSTALLER_OBSERVER_')
+    await Promise.resolve()
+    expect(apply).not.toHaveBeenCalled()
+    onStdout('OPEN_SCIENCE_INSTALLER_OBSERVER_READY\r\n')
+    await applying
+    expect(apply).toHaveBeenCalledOnce()
+    completed.resolve({ code: 7, stdout: '', stderr: '' })
+    await expect(observer.exit).resolves.toMatchObject({ code: 7 })
+  })
+
+  it('rejects readiness if PowerShell fails before observation starts', async () => {
+    const observer = observeInstaller({
+      installer: 'C:\\updates\\setup.exe',
+      env: {},
+      runProcessImpl: async () => ({ code: 1, stdout: '', stderr: 'compilation failed' })
+    })
+    await expect(observer.ready).rejects.toThrow('compilation failed')
+  })
+
+  it.skipIf(process.platform !== 'win32')(
+    'observes a short-lived process after actual PowerShell readiness',
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), 'updater-observer-'))
+      const installer = join(root, 'observer-fixture.exe')
+      const controller = new AbortController()
+      await copyFile(process.execPath, installer)
+      const observer = observeInstaller({ installer, env: process.env, signal: controller.signal })
+      try {
+        await observer.ready
+        const processExit = runProcess(
+          installer,
+          ['-e', 'setTimeout(() => process.exit(7), 1500)'],
+          {
+            allowNonZero: true
+          }
+        )
+        await expect(observer.exit).resolves.toMatchObject({ code: 7 })
+        await expect(processExit).resolves.toMatchObject({ code: 7 })
+      } finally {
+        controller.abort()
+        await observer.exit.catch(() => undefined)
+        await rm(root, { recursive: true, force: true })
+      }
+    },
+    60_000
+  )
 
   it('points the installed updater at a local feed without weakening its signing policy', () => {
     const result = buildLocalUpdaterConfig(

@@ -167,6 +167,7 @@ const createDependencies = () => {
     messages: []
   }
   const sessions = {
+    searchMessages: vi.fn(),
     editDetails: vi.fn(async () => session),
     filterPdfContextCandidates: vi.fn(async () => ({
       sources: [],
@@ -179,6 +180,8 @@ const createDependencies = () => {
     loadOne: vi.fn(),
     loadUsage: vi.fn(),
     saveSession: vi.fn(async () => ({ created: true, session })),
+    bindTaskSession: vi.fn(async () => session),
+    admitTaskTurn: vi.fn(async () => session),
     stageTaskCompletion: vi.fn(async () => session),
     settleTaskCompletion: vi.fn(async () => session),
     failTaskRun: vi.fn(async () => session),
@@ -200,6 +203,7 @@ const createDependencies = () => {
     size: 10
   }
   const uploads = {
+    recoverDraft: vi.fn(async () => null),
     claimLocalFile: vi.fn(),
     stageLocalPath: vi.fn(async () => attachment),
     beginTransfer: vi.fn(),
@@ -212,6 +216,10 @@ const createDependencies = () => {
     readPreview: vi.fn()
   }
   const electron = {
+    forkSession: vi.fn(async () => null),
+    exportSessionPackage: vi.fn(async () => ({ saved: false })),
+    sessionPackageOperation: vi.fn(async () => null),
+    importSessionPackage: vi.fn(async () => null),
     exportConversationFromInvokingWindow: vi.fn(async () => ({ saved: false as const })),
     stageLocalFileWithProgress: vi.fn(async () => attachment)
   }
@@ -258,14 +266,21 @@ const WRAPPED_COMMAND_KEYS = [
   'sessionDelete',
   'sessionEditDetails',
   'sessionExportConversation',
+  'sessionFork',
+  'sessionExportPackage',
+  'sessionImportPackage',
+  'sessionPackageOperation',
   'sessionFilterPdfContextCandidates',
   'sessionLinkPdfContext',
   'sessionList',
   'sessionLoadAll',
   'sessionLoadOne',
+  'sessionSearchMessages',
   'sessionLoadUsage',
   'sessionSaveManifest',
   'sessionSave',
+  'sessionBindTask',
+  'sessionAdmitTaskTurn',
   'sessionStageTaskCompletion',
   'sessionSettleTaskCompletion',
   'sessionFailTaskRun',
@@ -343,16 +358,23 @@ describe('Data and content application commands', () => {
         'sessions:delete-session',
         'sessions:edit-details',
         'sessions:export-conversation',
+        'sessions:fork',
+        'sessions:export-package',
+        'sessions:import-package',
+        'sessions:package-operation',
         'sessions:filter-pdf-context-candidates',
         'sessions:link-pdf-context',
         'sessions:list',
         'sessions:load-all',
         'sessions:load-one',
+        'sessions:search-messages',
         'sessions:load-usage',
         'sessions:save-manifest',
         'sessions:update-archive',
         'sessions:unlink-pdf-context',
         'sessions:save-session',
+        'sessions:bind-task-session',
+        'sessions:admit-task-turn',
         'sessions:stage-task-completion',
         'sessions:settle-task-completion',
         'sessions:fail-task-run',
@@ -366,6 +388,7 @@ describe('Data and content application commands', () => {
         'uploads:finalize-session',
         'uploads:finish-transfer',
         'uploads:read-preview',
+        'uploads:recover-draft',
         'uploads:stage-local-file',
         'uploads:stage-local-path',
         'uploads:transfer-status'
@@ -594,6 +617,12 @@ describe('Data and content application commands', () => {
         key: 'uploadFinishTransfer',
         args: [request('upload-finish')],
         owner: deps.uploads.finishTransfer,
+        passInvocation: true
+      },
+      {
+        key: 'uploadRecoverDraft',
+        args: [{ receipt: 'receipt' }],
+        owner: deps.uploads.recoverDraft,
         passInvocation: true
       },
       {
@@ -923,7 +952,7 @@ describe('Data and content application commands', () => {
       for (const operation of operations) {
         await expect(
           dispatchCommand(router, operation.command, operation.args).result
-        ).rejects.toThrow('Open Science is moving your data.')
+        ).rejects.toThrow('Open-Science is moving your data.')
       }
     } finally {
       clearMigrationPending()
@@ -998,6 +1027,8 @@ describe('Data and content application commands', () => {
       | 'unlinkPdfContext'
       | 'updateArchive'
       | 'saveSession'
+      | 'bindTaskSession'
+      | 'admitTaskTurn'
       | 'stageTaskCompletion'
       | 'settleTaskCompletion'
       | 'failTaskRun'
@@ -1107,6 +1138,20 @@ describe('Data and content application commands', () => {
             updatedAt: 2
           }
         ],
+        caller: taskCaller
+      },
+      {
+        label: 'task provider binding',
+        command: 'sessionBindTask',
+        owner: 'bindTaskSession',
+        args: (deps) => [{ session: deps.session, contextReset: false }],
+        caller: taskCaller
+      },
+      {
+        label: 'task turn admission',
+        command: 'sessionAdmitTaskTurn',
+        owner: 'admitTaskTurn',
+        args: (deps) => [{ session: deps.session, contextReset: false }],
         caller: taskCaller
       },
       {
@@ -1593,6 +1638,9 @@ describe('Data and content application commands', () => {
     deps.sessions.list.mockResolvedValueOnce(listResult)
     deps.sessions.loadAll.mockResolvedValueOnce(loadResult)
     deps.sessions.loadOne.mockResolvedValueOnce(loadedSession)
+    const searchRequest = { projectIds: ['project-1'], query: 'needle', limit: 10 }
+    const searchPage = { items: [], totalCount: 0, isComplete: true }
+    deps.sessions.searchMessages.mockResolvedValueOnce(searchPage)
     deps.sessions.loadUsage.mockResolvedValueOnce(usageResult)
     registerDataContentApplicationCommands(router.registrar, deps.dependencies)
     const updateRequest = { id: 'project-1', name: 'Updated project', expectedUpdatedAt: 1 }
@@ -1633,6 +1681,13 @@ describe('Data and content application commands', () => {
       )
     ).resolves.toBe(loadedSession)
     await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionSearchMessages,
+        invocation([searchRequest])
+      )
+    ).resolves.toBe(searchPage)
+    expect(deps.sessions.searchMessages).toHaveBeenCalledWith(searchRequest)
+    await expect(
       router.dispatcher.invoke(dataContentApplicationCommands.sessionLoadUsage, invocation([]))
     ).resolves.toBe(usageResult)
     await router.dispatcher.invoke(
@@ -1661,7 +1716,7 @@ describe('Data and content application commands', () => {
     expect(deps.sessions.saveManifest).toHaveBeenCalledWith(manifestRequest)
     expect(deps.sessions.deleteSession).toHaveBeenCalledWith(deleteSessionRequest)
     expect(deps.sessions.editDetails).toHaveBeenCalledWith(editDetailsRequest)
-    expect(deps.withDataRootWrite).toHaveBeenCalledTimes(7)
+    expect(deps.withDataRootWrite).toHaveBeenCalledTimes(8)
     expect(deps.events.publish).toHaveBeenCalledWith('project:updated', deps.project)
     expect(deps.events.publish).not.toHaveBeenCalledWith('project:deleted', expect.anything())
     expect(deps.events.publish).toHaveBeenCalledWith('session:deleted', deleteSessionRequest)
@@ -1904,6 +1959,14 @@ describe('Data and content application commands', () => {
       format: 'markdown' as const,
       selectedPromptMessageIds: ['prompt-1']
     }
+    const forkInvocation = invocation(
+      [{ projectId: 'project-1', sessionId: 'session-1' }] as const,
+      electronCaller
+    )
+    await expect(
+      router.dispatcher.invoke(dataContentApplicationCommands.sessionFork, forkInvocation)
+    ).resolves.toBeNull()
+    expect(deps.electron.forkSession).toHaveBeenCalledWith(forkInvocation)
     const exportInvocation = invocation([exportRequest] as const, electronCaller)
     await expect(
       router.dispatcher.invoke(

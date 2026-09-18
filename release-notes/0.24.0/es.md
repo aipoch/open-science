@@ -1,7 +1,7 @@
 ## ✨ Lo más destacado
 
 - **Cambie de proyecto en segundos.** El menú de proyectos del espacio de trabajo ahora enumera sus otros proyectos activos con vistas previas del título y la descripción, de modo que puede cambiar de proyecto sin abandonar la sesión en la que se encuentra. (#1957)
-- **El código de Notebook se mantiene dentro de sus límites de red.** Los entornos de ejecución de Notebook y de cálculo solo pueden alcanzar los valores predeterminados de Open Science y los dominios que usted aprueba, y cuando el código intenta un destino nuevo, lo aprueba o lo deniega directamente en la conversación. En Windows, la protección se aplica una vez completada la configuración de administrador del sandbox. (#1911)
+- **El código de Notebook se mantiene dentro de sus límites de red.** Los entornos de ejecución de Notebook y de cálculo solo pueden alcanzar los valores predeterminados de Open-Science y los dominios que usted aprueba, y cuando el código intenta un destino nuevo, lo aprueba o lo deniega directamente en la conversación. En Windows, la protección se aplica una vez completada la configuración de administrador del sandbox. (#1911)
 - **Introduzca las credenciales una vez y reutilícelas en todas partes.** Las claves API, los tokens de acceso y los inicios de sesión de OAuth se pueden almacenar a nivel de dispositivo y vincular a las variables de entorno, los encabezados o el inicio de sesión de cualquier conector personalizado. (#1948, #1963)
 - **Una interfaz en alemán.** El alemán se suma al español, el francés, el chino (simplificado y tradicional), el japonés, el coreano y el ruso, con traducciones del README a juego. (#1761)
 

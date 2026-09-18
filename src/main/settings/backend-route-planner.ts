@@ -73,7 +73,9 @@ type BackendTransportPlan =
     }>
   | Readonly<{
       kind: 'claude-anthropic'
-      targets: readonly AnthropicProviderBridgeTarget[]
+      targets: readonly (AnthropicProviderBridgeTarget & {
+        runtimeTarget?: ProviderRuntimeTarget
+      })[]
       initialTargetId: string
     }>
   | Readonly<{
@@ -131,7 +133,7 @@ const NOTEBOOK_TOOLS: ResponsesBridgeNamespacedTool[] = NOTEBOOK_RPC_TOOLS.map((
   name: tool.name,
   description:
     tool.name === 'notebook_execute'
-      ? `${tool.description} For Open Science data connectors, the Python code MUST call host.mcp(server, method, arguments). Never use requests, urllib, httpx, curl, or a raw upstream API for connector data; those bypass app permissions, credentials, and rate limits. Codex MCP resource-list tools are not connector discovery.`
+      ? `${tool.description} For Open-Science data connectors, the Python code MUST call host.mcp(server, method, arguments). Never use requests, urllib, httpx, curl, or a raw upstream API for connector data; those bypass app permissions, credentials, and rate limits. Codex MCP resource-list tools are not connector discovery.`
       : tool.description,
   parameters: z.toJSONSchema(z.object(tool.inputSchema), {
     target: 'draft-7'
@@ -142,7 +144,7 @@ const ARTIFACT_TOOLS: ResponsesBridgeNamespacedTool[] = [
     namespace: namespaceFor(ARTIFACT_MCP_SERVER_NAME),
     name: 'write_artifact_file',
     description:
-      'Attach a generated image, chart, report, data export, or archive to the current Open Science response. The file must already exist before using a localPath source.',
+      'Attach a generated image, chart, report, data export, or archive to the current Open-Science response. The file must already exist before using a localPath source.',
     parameters: z.toJSONSchema(z.object(writeArtifactFileToolSchema), {
       target: 'draft-7'
     }) as ResponsesBridgeNamespacedTool['parameters']
@@ -313,27 +315,32 @@ class BackendRoutePlanner {
       if (!usesAppProviderTransport(active.provider.type)) {
         return Object.freeze({ kind: 'direct' })
       }
-      const targets = candidates.flatMap((candidate): AnthropicProviderBridgeTarget[] => {
-        const model = candidate.effectiveModel ?? candidate.provider.model
-        const baseUrl = normalizeAnthropicBaseUrl(candidate.provider.baseUrl ?? '')
-        return !model || !baseUrl
-          ? []
-          : [
-              Object.freeze({
-                id: claudeTargetId(candidate.providerId, model),
-                baseUrl,
-                ...(candidate.provider.key ? { key: candidate.provider.key } : {}),
-                model,
-                ...(candidate.provider.vendorId === 'apodex'
-                  ? { backgroundModel: 'apodex-1.1-mini' }
-                  : {}),
-                ...(candidate.provider.vendorId &&
-                usesVendorAnthropicApiKeyHeader(candidate.provider.vendorId)
-                  ? { useApiKeyHeader: true }
-                  : {})
-              })
-            ]
-      })
+      const targets = candidates.flatMap(
+        (
+          candidate
+        ): (AnthropicProviderBridgeTarget & { runtimeTarget?: ProviderRuntimeTarget })[] => {
+          const model = candidate.effectiveModel ?? candidate.provider.model
+          const baseUrl = normalizeAnthropicBaseUrl(candidate.provider.baseUrl ?? '')
+          return !model || !baseUrl
+            ? []
+            : [
+                Object.freeze({
+                  id: claudeTargetId(candidate.providerId, model),
+                  runtimeTarget: candidate,
+                  baseUrl,
+                  ...(candidate.provider.key ? { key: candidate.provider.key } : {}),
+                  model,
+                  ...(candidate.provider.vendorId === 'apodex'
+                    ? { backgroundModel: 'apodex-1.1-mini' }
+                    : {}),
+                  ...(candidate.provider.vendorId &&
+                  usesVendorAnthropicApiKeyHeader(candidate.provider.vendorId)
+                    ? { useApiKeyHeader: true }
+                    : {})
+                })
+              ]
+        }
+      )
       const model = active.effectiveModel ?? active.provider.model
       if (!model) return Object.freeze({ kind: 'direct' })
       const initialTargetId = claudeTargetId(active.providerId, model)

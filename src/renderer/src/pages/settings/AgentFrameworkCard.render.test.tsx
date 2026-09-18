@@ -385,3 +385,47 @@ describe('AgentFrameworkCard', () => {
     expect(onInstall).toHaveBeenCalledWith('managed')
   })
 })
+
+it('offers an optional update without selecting or disabling a ready runtime', () => {
+  const onInstall = vi.fn()
+  const onSelect = vi.fn()
+  renderCard({
+    ready: true,
+    name: 'Codex',
+    path: '/codex',
+    updateAvailable: true,
+    versionDetail: 'Codex CLI 0.144.6 · ACP 1.6.2',
+    onInstall,
+    onSelect
+  })
+  expect(container.querySelector('[role="radio"]')).not.toBeNull()
+  expect(container.textContent).toContain('Codex CLI 0.144.6 · ACP 1.6.2')
+  act(() => container.querySelector<HTMLButtonElement>('[aria-label="Update Codex"]')?.click())
+  expect(onInstall).toHaveBeenCalledWith('managed')
+  expect(onSelect).not.toHaveBeenCalled()
+})
+
+it('keeps update progress and errors visible on a ready runtime', () => {
+  renderCard({
+    ready: true,
+    name: 'Codex',
+    path: '/codex',
+    updateAvailable: true,
+    install: {
+      isInstalling: true,
+      installProgress: null,
+      installLogs: ['download'],
+      installError: 'Update failed'
+    }
+  })
+  expect(container.querySelector('[role="progressbar"]')).not.toBeNull()
+  expect(container.querySelector('[role="alert"]')?.textContent).toBe('Update failed')
+  expect(container.textContent).toContain('download')
+})
+
+it('disables the optional update during a prompt', () => {
+  renderCard({ ready: true, name: 'Codex', updateAvailable: true, promptInFlight: true })
+  expect(container.querySelector<HTMLButtonElement>('[aria-label="Update Codex"]')?.disabled).toBe(
+    true
+  )
+})

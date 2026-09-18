@@ -1,21 +1,50 @@
 import type { PreviewFileRendererProps } from './preview-types'
+import { lazy } from 'react'
 import { CodePreviewRenderer } from './renderers/CodePreview'
 import { CsvPreviewRenderer } from './renderers/CsvPreview'
 import { FastaPreviewRenderer } from './renderers/FastaPreview'
 import { HtmlPreviewRenderer } from './renderers/HtmlPreview'
 import { ImagePreviewRenderer } from './renderers/ImagePreview'
 import { MarkdownPreviewRenderer } from './renderers/MarkdownPreview'
-import { MoleculePreviewRenderer } from './renderers/MoleculePreview'
-import { OfficePreviewRenderer } from './renderers/OfficePreview'
-import { PdbPreviewRenderer } from './renderers/PdbPreview'
 import { PlanJsonPreview } from './renderers/PlanJsonPreview'
-import { PdfPreviewRenderer } from './renderers/PdfPreview'
 import { TextPreviewRenderer } from './renderers/TextPreview'
-import { TiffPreviewRenderer } from './renderers/TiffPreview'
+import { getFileExtension } from '../preview-support'
+
+const OfficePreviewRenderer = lazy(() =>
+  import('./renderers/OfficePreview').then(({ OfficePreviewRenderer }) => ({
+    default: OfficePreviewRenderer
+  }))
+)
+const PdfPreviewRenderer = lazy(() =>
+  import('./renderers/PdfPreview').then(({ PdfPreviewRenderer }) => ({
+    default: PdfPreviewRenderer
+  }))
+)
+const MoleculePreviewRenderer = lazy(() =>
+  import('./renderers/MoleculePreview').then(({ MoleculePreviewRenderer }) => ({
+    default: MoleculePreviewRenderer
+  }))
+)
+const PdbPreviewRenderer = lazy(() =>
+  import('./renderers/PdbPreview').then(({ PdbPreviewRenderer }) => ({
+    default: PdbPreviewRenderer
+  }))
+)
+const TiffPreviewRenderer = lazy(() =>
+  import('./renderers/TiffPreview').then(({ TiffPreviewRenderer }) => ({
+    default: TiffPreviewRenderer
+  }))
+)
+const NotebookFilePreview = lazy(() =>
+  import('./renderers/NotebookFilePreview').then(({ NotebookFilePreview }) => ({
+    default: NotebookFilePreview
+  }))
+)
 
 // Keeps the registry as the single routing point while avoiding dynamic component creation in render.
 export const renderPreviewFile = ({
   item,
+  presentation,
   annotationVersionId,
   annotationBlockedByHistoricalVersion,
   annotationVersionPending,
@@ -28,6 +57,7 @@ export const renderPreviewFile = ({
 }: PreviewFileRendererProps): React.JSX.Element | undefined => {
   const props = {
     item,
+    presentation,
     annotationVersionId,
     annotationBlockedByHistoricalVersion,
     annotationVersionPending,
@@ -37,11 +67,16 @@ export const renderPreviewFile = ({
     onRemoveAnnotation,
     onAnnotationError
   }
+  if (
+    getFileExtension(item.name) === 'ipynb' ||
+    item.mimeType?.split(';')[0] === 'application/x-ipynb+json'
+  )
+    return <NotebookFilePreview {...props} />
   switch (item.format) {
     case 'code':
       return <CodePreviewRenderer {...props} />
     case 'csv':
-      return <CsvPreviewRenderer item={item} />
+      return <CsvPreviewRenderer {...props} />
     case 'fasta':
       return <FastaPreviewRenderer {...props} />
     case 'html':
@@ -55,7 +90,7 @@ export const renderPreviewFile = ({
     case 'pdb':
       return <PdbPreviewRenderer item={item} />
     case 'molecule':
-      return <MoleculePreviewRenderer item={item} />
+      return <MoleculePreviewRenderer {...props} />
     case 'text':
       return <TextPreviewRenderer {...props} />
     case 'tiff':

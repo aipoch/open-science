@@ -1,0 +1,56 @@
+[
+  {
+    "runId": "0",
+    "kernelKind": "bash",
+    "status": "completed",
+    "script": "pwd && echo \"---\" && ls -la"
+  },
+  {
+    "runId": "1",
+    "kernelKind": "bash",
+    "status": "completed",
+    "script": "ls -la inputs/ && echo \"---\" && head -3 inputs/expression-matrix-444444444444.csv && echo \"---\" && wc -l inputs/expression-matrix-444444444444.csv"
+  },
+  {
+    "runId": "2",
+    "kernelKind": "r",
+    "status": "failed",
+    "script": "if (!requireNamespace(\"readxl\", quietly = TRUE)) install.packages(\"readxl\", repos = \"https://cloud.r-project.org/\")\nif (!requireNamespace(\"openxlsx\", quietly = TRUE)) install.packages(\"openxlsx\", repos = \"https://cloud.r-project.org/\")\nlibrary(readxl)\nlibrary(openxlsx)\nxlsx_file <- \"inputs/differential-results-333333333333.xlsx\"\nsheets <- excel_sheets(xlsx_file)\ncat(\"Sheets:\", sheets, \"\\n\")\nfor (s in sheets) {\n  cat(\"--- Sheet:\", s, \"---\\n\")\n  df <- read_excel(xlsx_file, sheet = s)\n  cat(\"Dimensions:\", nrow(df), \"x\", ncol(df), \"\\n\")\n  cat(\"Columns:\", paste(colnames(df), collapse=\", \"), \"\\n\")\n  print(head(df, 3))\n}"
+  },
+  {
+    "runId": "3",
+    "kernelKind": "r",
+    "status": "completed",
+    "script": "library(readxl)\nlibrary(openxlsx)\nxlsx_file <- \"inputs/differential-results-333333333333.xlsx\"\nsheets <- excel_sheets(xlsx_file)\ncat(\"Sheets:\", paste(sheets, collapse=\", \"), \"\\n\\n\")\nfor (s in sheets) {\n  cat(\"--- Sheet:\", s, \"---\\n\")\n  df <- read_excel(xlsx_file, sheet = s)\n  cat(\"Dimensions:\", nrow(df), \"x\", ncol(df), \"\\n\")\n  cat(\"Columns:\", paste(colnames(df), collapse=\", \"), \"\\n\")\n  print(head(df, 3))\n  cat(\"\\n\")\n}"
+  },
+  {
+    "runId": "4",
+    "kernelKind": "r",
+    "status": "completed",
+    "script": "library(readxl)\nlibrary(dplyr)\n# Read xlsx (differential analysis results)\nxlsx_file <- \"inputs/differential-results-333333333333.xlsx\"\ndiff_df <- read_excel(xlsx_file, sheet = 1)\ncat(\"Differential analysis rows:\", nrow(diff_df), \"\\n\")\ncat(\"Columns:\", paste(colnames(diff_df), collapse=\", \"), \"\\n\")\n# Read CSV (normalized expression matrix)\ncsv_file <- \"inputs/expression-matrix-444444444444.csv\"\nexpr <- read.csv(csv_file, header = TRUE, check.names = FALSE)\ncat(\"\\nExpression matrix dimensions:\", nrow(expr), \"x\", ncol(expr), \"\\n\")\ncat(\"First 5 columns:\", paste(colnames(expr)[1:5], collapse=\", \"), \"\\n\")\n# Quick check: column 1 is \"#group\" annotation row, second line is sample IDs\n# Re-read with correct structure\nline1 <- readLines(csv_file, n = 1)\nline2 <- readLines(csv_file, n = 2)[2]\ncat(\"\\nLine1:\", line1, \"\\n\")\ncat(\"Line2:\", line2, \"\\n\")"
+  },
+  {
+    "runId": "5",
+    "kernelKind": "r",
+    "status": "completed",
+    "script": "library(readxl)\nlibrary(dplyr)\ncsv_file <- \"inputs/expression-matrix-444444444444.csv\"\n# Read CSV with sample IDs as header (line 2)\nexpr <- read.csv(csv_file, header = FALSE, skip = 1, check.names = FALSE)\nsample_ids <- as.character(expr[1, -1])\ngene_ids <- as.character(expr[-1, 1])\nexpr_mat <- as.matrix(expr[-1, -1])\nstorage.mode(expr_mat) <- \"numeric\"\nrownames(expr_mat) <- gene_ids\ncolnames(expr_mat) <- sample_ids\ncat(\"Expression matrix:\", nrow(expr_mat), \"genes x\", ncol(expr_mat), \"samples\\n\")\ncat(\"Sample IDs:\", paste(sample_ids, collapse=\", \"), \"\\n\")\n# Group definitions from the #group row\ngroups <- read.csv(csv_file, header = FALSE, nrows = 1, check.names = FALSE)\ngroup_labels <- as.character(groups[1, -1])\ncat(\"Group labels:\", paste(group_labels, collapse=\", \"), \"\\n\")\n# Define sample groups\ng1_samples <- sample_ids[grepl(\"CohortA\", sample_ids, ignore.case = TRUE)]\ng2_samples <- sample_ids[grepl(\"CohortB\", sample_ids, ignore.case = TRUE)]\ncat(\"Group1 (CohortA):\", paste(g1_samples, collapse=\", \"), \"\\n\")\ncat(\"Group2 (CohortB):\", paste(g2_samples, collapse=\", \"), \"\\n\")"
+  },
+  {
+    "runId": "6",
+    "kernelKind": "r",
+    "status": "completed",
+    "script": "library(readxl)\nlibrary(dplyr)\ncsv_file <- \"inputs/expression-matrix-444444444444.csv\"\nexpr <- read.csv(csv_file, header = FALSE, skip = 1, check.names = FALSE)\nsample_ids <- as.character(expr[1, -1])\ngene_ids <- as.character(expr[-1, 1])\nexpr_mat <- as.matrix(expr[-1, -1])\nstorage.mode(expr_mat) <- \"numeric\"\nrownames(expr_mat) <- gene_ids\ncolnames(expr_mat) <- sample_ids\n# Check duplicate genes\ndup_genes <- gene_ids[duplicated(gene_ids)]\ncat(\"Duplicate gene IDs:\", paste(dup_genes, collapse=\", \"), \"\\n\")\n# Read differential analysis\nxlsx_file <- \"inputs/differential-results-333333333333.xlsx\"\ndiff_df <- read_excel(xlsx_file, sheet = 1)\ncat(\"Diff analysis rows:\", nrow(diff_df), \"unique:\", length(unique(diff_df$id)), \"\\n\")\n# Compare first few genes from expression data and differential analysis\ncat(\"\\n--- Expression data first 3 rows ---\\n\")\nprint(head(expr_mat, 3))\ncat(\"\\n--- Differential analysis first 3 rows ---\\n\")\nprint(head(diff_df, 3))\n# Compute group means\ng1_samples <- c(\"CohortActrl1\", \"CohortActrl2\", \"CohortActrl4\", \"CohortAsi1\", \"CohortAsi2\", \"CohortAsi5\")\ng2_samples <- c(\"CohortBctrl1\", \"CohortBctrl2\", \"CohortBctrl4\", \"CohortBsi1\", \"CohortBsi2\", \"CohortBsi3\")\n# Take unique genes (first occurrence) from expr matrix\nexpr_unique <- expr_mat[!duplicated(gene_ids), ]\ncat(\"\\nUnique genes in expression matrix:\", nrow(expr_unique), \"\\n\")\n# Compute mean expression for first 3 genes\ncat(\"\\n--- Manual log2FC calculation for first 3 unique genes ---\\n\")\nfor (g in rownames(expr_unique)[1:3]) {\n  m1 <- mean(expr_unique[g, g1_samples])\n  m2 <- mean(expr_unique[g, g2_samples])\n  cat(g, \": g1_mean =\", m1, \", g2_mean =\", m2, \", diff =\", m2 - m1, \"\\n\")\n}\ncat(\"\\n--- Differential analysis values for same genes ---\\n\")\nprint(head(diff_df[diff_df$id %in% rownames(expr_unique)[1:3], ]))"
+  },
+  {
+    "runId": "7",
+    "kernelKind": "r",
+    "status": "completed",
+    "script": "library(readxl)\nlibrary(dplyr)\nlibrary(ggplot2)\nlibrary(ggrepel)\n# Load differential analysis\nxlsx_file <- \"inputs/differential-results-333333333333.xlsx\"\ndiff_df <- read_excel(xlsx_file, sheet = 1) %>% as.data.frame()\ncat(\"Total genes:\", nrow(diff_df), \"\\n\")\n# Significance thresholds\nfc_cut <- 1\np_cut  <- 0.05\n# Add -log10(p) and classification\ndiff_df$negLog10P <- -log10(diff_df$pvalue)\ndiff_df$Status <- \"NS\"\ndiff_df$Status[diff_df$pvalue < p_cut & diff_df$log2FoldChange >  fc_cut] <- \"Up\"\ndiff_df$Status[diff_df$pvalue < p_cut & diff_df$log2FoldChange < -fc_cut] <- \"Down\"\ndiff_df$Status <- factor(diff_df$Status, levels = c(\"Down\", \"NS\", \"Up\"))\ncat(\"\\nCounts by status:\\n\")\nprint(table(diff_df$Status))\n# Top up & down genes by significance\ntop_up <- diff_df %>% filter(Status == \"Up\") %>% arrange(pvalue) %>% head(15)\ntop_down <- diff_df %>% filter(Status == \"Down\") %>% arrange(pvalue) %>% head(15)\nlabeled <- bind_rows(top_up, top_down)\ncat(\"\\nTop up genes:\\n\")\nprint(head(top_up[, c(\"id\",\"log2FoldChange\",\"pvalue\")], 5))\ncat(\"\\nTop down genes:\\n\")\nprint(head(top_down[, c(\"id\",\"log2FoldChange\",\"pvalue\")], 5))"
+  },
+  {
+    "runId": "8",
+    "kernelKind": "r",
+    "status": "completed",
+    "script": "library(readxl)\nlibrary(dplyr)\nlibrary(ggplot2)\nlibrary(ggrepel)\n# Load differential analysis\nxlsx_file <- \"inputs/differential-results-333333333333.xlsx\"\ndiff_df <- read_excel(xlsx_file, sheet = 1) %>% as.data.frame()\n# Significance thresholds\nfc_cut <- 1\np_cut  <- 0.05\ndiff_df$negLog10P <- -log10(diff_df$pvalue)\ndiff_df$Status <- \"NS\"\ndiff_df$Status[diff_df$pvalue < p_cut & diff_df$log2FoldChange >  fc_cut] <- \"Up\"\ndiff_df$Status[diff_df$pvalue < p_cut & diff_df$log2FoldChange < -fc_cut] <- \"Down\"\ndiff_df$Status <- factor(diff_df$Status, levels = c(\"Down\", \"NS\", \"Up\"))\n# Cap -log10(p) at finite value (some p = 0 -> Inf)\nmax_p <- max(diff_df$negLog10P[is.finite(diff_df$negLog10P)])\ndiff_df$negLog10P[diff_df$negLog10P > max_p] <- max_p\n# Top labeled genes\ntop_up <- diff_df %>% filter(Status == \"Up\") %>% arrange(pvalue) %>% head(10)\ntop_down <- diff_df %>% filter(Status == \"Down\") %>% arrange(pvalue) %>% head(10)\nlabeled <- bind_rows(top_up, top_down)\n# Cap x-axis to a reasonable range for visualization\nxlim_max <- max(c(abs(diff_df$log2FoldChange[is.finite(diff_df$log2FoldChange)]), fc_cut + 1))\nxlim_max <- ceiling(xlim_max / 2) * 2\ncat(\"xlim_max =\", xlim_max, \"\\n\")\ncat(\"ymax =\", max(diff_df$negLog10P), \"\\n\")\n# Build the diagonal volcano plot (a rotated volcano: -log10(p) vs log2FC with diagonal lines)\np <- ggplot(diff_df, aes(x = log2FoldChange, y = negLog10P, color = Status)) +\n  geom_point(data = subset(diff_df, Status == \"NS\"),\n             color = \"grey70\", alpha = 0.55, size = 0.9) +\n  geom_point(data = subset(diff_df, Status != \"NS\"),\n             aes(color = Status), alpha = 0.85, size = 1.4) +\n  scale_color_manual(values = c(\"Down\" = \"#2c7fb8\", \"NS\" = \"grey70\", \"Up\" = \"#d7301f\")) +\n  geom_vline(xintercept = c(-fc_cut, fc_cut), linetype = \"dashed\", color = \"grey30\") +\n  geom_hline(yintercept = -log10(p_cut), linetype = \"dashed\", color = \"grey30\") +\n  # diagonal trend line (rotated 45° effect) representing log10(p) ~ -|log2FC|\n  geom_abline(slope = -1 / (xlim_max / max_p), intercept = max_p,\n              linetype = \"solid\", color = \"black\", linewidth = 0.5) +\n  geom_text_repel(data = labeled,\n                  aes(label = id),\n                  size = 3, max.overlaps = 25, box.padding = 0.35,\n                  segment.color = \"grey40\", segment.size = 0.25) +\n  scale_x_continuous(limits = c(-xlim_max, xlim_max),\n                     breaks = seq(-xlim_max, xlim_max, by = 2)) +\n  scale_y_continuous(expand = expansion(mult = c(0, 0.05))) +\n  labs(title = \"Diagonal Volcano Plot\",\n       subtitle = paste0(\"Group2 vs Group1  |  |log2FC| > \", fc_cut,\n                         \" & p < \", p_cut),\n       x = expression(log[2]*\" Fold Change\"),\n       y = expression(-log[10]*\"(\"*italic(p)*\"-value)\"),\n       color = NULL) +\n  theme_bw(base_size = 12) +\n  theme(panel.grid.minor = element_blank(),\n        plot.title = element_text(face = \"bold\", hjust = 0.5),\n        plot.subtitle = element_text(hjust = 0.5, color = \"grey30\"),\n        legend.position = \"top\")\nggsave(\"diagonal_volcano.png\", p, width = 9, height = 7, dpi = 300)\ncat(\"Saved: diagonal_volcano.png\\n\")\n# Also save the result table for inspection\nwrite.csv(diff_df, \"volcano_data.csv\", row.names = FALSE)\ncat(\"Saved: volcano_data.csv\\n\")"
+  }
+]

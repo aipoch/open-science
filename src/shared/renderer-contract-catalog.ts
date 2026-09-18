@@ -1,11 +1,31 @@
+import type { MessageSearchRequest, MessageSearchPage } from './message-search'
+import type {
+  SkillMarketplaceCatalog,
+  SkillMarketplaceCatalogRequest,
+  SkillMarketplaceBatch,
+  SkillMarketplaceBatchRequest,
+  SkillMarketplaceBatchStartResult,
+  SkillMarketplaceDetail,
+  SkillMarketplaceDetailRequest,
+  SkillMarketplaceInstallRequest,
+  SkillMarketplaceInstallResult,
+  SkillMarketplaceResult
+} from './skill-marketplace'
 import type {
   LiteratureExportRecordRequest,
   LiteratureExportRecordResult
 } from './literature-export'
 import type { LiteratureChangedEvent } from './literature'
+import type {
+  ParsePdfStructureRequest,
+  ReadCachedPdfStructureRequest,
+  ReadPdfStructureThumbnailRequest,
+  PdfStructureResult
+} from './pdf-structure'
 import type { ProvenanceReadResult } from './provenance-read-result'
 import type { LiteratureJobRequest, LiteratureJobsResult } from './literature-jobs'
 import type { LiteratureFullTextRequest, LiteratureFullTextResult } from './literature'
+import type { LocalModelSnapshot } from './local-models'
 import type {
   AcpCancelPromptRequest,
   AcpAgentRuntimeUpdate,
@@ -45,6 +65,20 @@ import type {
   SideChatStartRequest,
   SideChatStartResponse
 } from './side-chat'
+import type {
+  InstallMissingWslDependenciesRequest,
+  InstallWslDistroRequest,
+  OpenWslTerminalRequest,
+  LocalShellRuntimePreference,
+  SelectWslProfileRequest,
+  SwitchToPowerShellResult,
+  UseWsl2BashResult,
+  WslPlatformInstallResult,
+  Wsl2BashPreviewStatus,
+  WslSetupSnapshot,
+  WslSetupStatus,
+  WslSetupConversationBootstrap
+} from './wsl-setup'
 import type { SourcePreviewLoadState } from './source-preview'
 import type { ArtifactLiteratureManifest } from './artifact-literature'
 import type {
@@ -67,6 +101,30 @@ import type {
   GetArtifactLineageRequest,
   GetArtifactVersionProvenanceRequest
 } from './artifact-provenance'
+import type {
+  ArtifactReproducibilityCheckRequest,
+  ArtifactReproducibilityCheckLogRecord,
+  ArtifactReproducibilityCheckState,
+  ArtifactEnvironmentLockBundleInfo,
+  ArtifactReproducibilityReceiptPage,
+  CancelArtifactReproducibilityCheckRequest,
+  ExportArtifactEnvironmentLockRequest,
+  ExportArtifactEnvironmentLockResult,
+  DescribeArtifactEnvironmentLockRequest,
+  ExportArtifactReproducibilityReceiptRequest,
+  ReadArtifactReproducibilityOutputRequest,
+  ArtifactReproducibilityReceiptScope,
+  ArtifactReproducibilityOutputStorage,
+  ArtifactReproducibilityOutputPreview,
+  ExportArtifactReproducibilityReceiptResult,
+  GetArtifactReproducibilityCheckLogRequest,
+  GetArtifactReproducibilityCheckRequest,
+  ImportArtifactEnvironmentLockRequest,
+  ImportArtifactEnvironmentLockResult,
+  CreateArtifactEnvironmentFromLockRequest,
+  CreateArtifactEnvironmentFromLockResult,
+  ListArtifactReproducibilityReceiptsRequest
+} from './artifact-reproducibility'
 import type {
   ArtifactCodeReconstructionState,
   GenerateArtifactCodeReconstructionRequest,
@@ -101,6 +159,7 @@ import type {
 } from './specialist-package'
 import type {
   CancelComputeJobRequest,
+  RetryComputeJobHarvestRequest,
   ComputeApprovalDecision,
   ComputeApprovalRequest,
   ComputeJobsListFilter,
@@ -251,6 +310,17 @@ import type {
   UpdateTagRequest
 } from './tags'
 import type {
+  Bookmark,
+  BookmarkListResult,
+  BookmarkPdfSourceResult,
+  ResolvePdfBookmarkSourceRequest,
+  CreateBookmarkRequest,
+  DeleteBookmarkRequest,
+  DeleteBookmarkResult,
+  ListBookmarksRequest,
+  UpdateBookmarkNoteRequest
+} from './bookmarks'
+import type {
   LiteratureCatalogCommand,
   LiteratureCatalogReceipt,
   LiteratureCatalogSearchPage,
@@ -322,6 +392,12 @@ import type {
   SessionPersistenceFlushResponse
 } from './session-persistence-flush'
 import type { ExportConversationRequest, ExportConversationResult } from './conversation-export'
+import type {
+  SessionPackageRequest,
+  SessionPackageExportResult,
+  SessionPackageImportRequest,
+  SessionPackageImportResult
+} from './session-package'
 import type {
   ClaudeDetectResult,
   ClaudeInstallEvent,
@@ -416,6 +492,7 @@ import type {
   RespondApprovalRequest,
   RespondConnectorCredentialRequest,
   UpsertProviderRequest,
+  SaveValidatedProviderResult,
   ValidateProviderRequest,
   ValidateProviderResult
 } from './settings'
@@ -426,6 +503,7 @@ import type { NetworkInfo } from './network'
 import type {
   ActiveSessionInfo,
   DataRootInspection,
+  DataRootSelection,
   DataRootValidationResult,
   DiscardMigratedCopyResult,
   MigrationOutcome,
@@ -435,7 +513,7 @@ import type {
   StorageStatus
 } from './storage'
 import type { CliLauncherStatus } from './cli'
-import type { AppInfo, DownloadProgress, UpdateStatus } from './update'
+import type { AppInfo, DownloadProgress, UpdateApplyOptions, UpdateStatus } from './update'
 import type {
   AppendUploadTransferRequest,
   BeginUploadTransferRequest,
@@ -851,6 +929,43 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'acp.steerFollowUp': callable<
     (request: AcpSteerFollowUpRequest) => Promise<AcpSteerFollowUpResult>
   >()('acp', ['acp:steer-follow-up']),
+  'artifacts.cancelReproducibilityCheck': callable<
+    (request: CancelArtifactReproducibilityCheckRequest) => Promise<void>
+  >()('artifacts', ['artifacts:cancel-reproducibility-check', ELECTRON], { optionalMember: true }),
+  'artifacts.exportEnvironmentLock': callable<
+    (request: ExportArtifactEnvironmentLockRequest) => Promise<ExportArtifactEnvironmentLockResult>
+  >()('artifacts', ['artifacts:export-environment-lock', ELECTRON], { optionalMember: true }),
+  'artifacts.describeEnvironmentLock': callable<
+    (request: DescribeArtifactEnvironmentLockRequest) => Promise<ArtifactEnvironmentLockBundleInfo>
+  >()('artifacts', ['artifacts:describe-environment-lock', ELECTRON], { optionalMember: true }),
+  'artifacts.importEnvironmentLock': callable<
+    (request: ImportArtifactEnvironmentLockRequest) => Promise<ImportArtifactEnvironmentLockResult>
+  >()('artifacts', ['artifacts:import-environment-lock', ELECTRON], { optionalMember: true }),
+  'artifacts.createEnvironmentFromLock': callable<
+    (
+      request: CreateArtifactEnvironmentFromLockRequest
+    ) => Promise<CreateArtifactEnvironmentFromLockResult>
+  >()('artifacts', ['artifacts:create-environment-from-lock', ELECTRON], { optionalMember: true }),
+  'artifacts.readReproducibilityOutput': callable<
+    (
+      request: ReadArtifactReproducibilityOutputRequest
+    ) => Promise<ArtifactReproducibilityOutputPreview>
+  >()('artifacts', ['artifacts:read-reproducibility-output', ELECTRON], { optionalMember: true }),
+  'artifacts.getReproducibilityOutputStorage': callable<
+    (request: ArtifactReproducibilityReceiptScope) => Promise<ArtifactReproducibilityOutputStorage>
+  >()('artifacts', ['artifacts:get-reproducibility-output-storage', ELECTRON], {
+    optionalMember: true
+  }),
+  'artifacts.clearReproducibilityOutputs': callable<
+    (request: ArtifactReproducibilityReceiptScope) => Promise<ArtifactReproducibilityOutputStorage>
+  >()('artifacts', ['artifacts:clear-reproducibility-outputs', ELECTRON], { optionalMember: true }),
+  'artifacts.exportReproducibilityReceipt': callable<
+    (
+      request: ExportArtifactReproducibilityReceiptRequest
+    ) => Promise<ExportArtifactReproducibilityReceiptResult>
+  >()('artifacts', ['artifacts:export-reproducibility-receipt', ELECTRON], {
+    optionalMember: true
+  }),
   'artifacts.finalizeRunArtifacts': callable<
     (request: FinalizeRunArtifactsRequest) => Promise<FinalizeRunArtifactsResult>
   >()('artifacts', ['artifacts:finalize-run']),
@@ -865,6 +980,18 @@ export const RENDERER_API_CONTRACT = Object.freeze({
       request: GetArtifactLineageRequest
     ) => Promise<ProvenanceReadResult<ArtifactLineageProvenance | undefined>>
   >()('artifacts', ['artifacts:get-lineage']),
+  'artifacts.getReproducibilityCheck': callable<
+    (
+      request: GetArtifactReproducibilityCheckRequest
+    ) => Promise<ArtifactReproducibilityCheckState | undefined>
+  >()('artifacts', ['artifacts:get-reproducibility-check', ELECTRON], { optionalMember: true }),
+  'artifacts.getReproducibilityCheckLog': callable<
+    (
+      request: GetArtifactReproducibilityCheckLogRequest
+    ) => Promise<ArtifactReproducibilityCheckLogRecord | undefined>
+  >()('artifacts', ['artifacts:get-reproducibility-check-log', ELECTRON], {
+    optionalMember: true
+  }),
   'artifacts.getVersionExecution': callable<
     (
       request: GetArtifactVersionProvenanceRequest
@@ -890,10 +1017,22 @@ export const RENDERER_API_CONTRACT = Object.freeze({
       request: GetArtifactVersionProvenanceRequest
     ) => Promise<ProvenanceReadResult<ArtifactVersionReviewProvenance>>
   >()('artifacts', ['artifacts:get-version-review']),
+  'artifacts.listReproducibilityReceipts': callable<
+    (
+      request: ListArtifactReproducibilityReceiptsRequest
+    ) => Promise<ArtifactReproducibilityReceiptPage>
+  >()('artifacts', ['artifacts:list-reproducibility-receipts', ELECTRON], {
+    optionalMember: true
+  }),
   'artifacts.openFile': callable<(request: OpenArtifactFileRequest) => Promise<void>>()(
     'artifacts',
     ['artifacts:open-file', LOCAL]
   ),
+  'artifacts.onReproducibilityCheckChanged': callable<
+    (listener: (state: ArtifactReproducibilityCheckState) => void) => RemoveListener
+  >()('artifacts', ['artifacts:reproducibility-check-changed', ELECTRON_EVENT], {
+    optionalMember: true
+  }),
   'artifacts.readPreview': callable<
     (request: ReadArtifactPreviewRequest) => Promise<ArtifactPreviewResult>
   >()('artifacts', ['artifacts:read-preview']),
@@ -903,6 +1042,14 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'artifacts.resolveVersionDescriptors': callable<
     (request: ResolveArtifactVersionDescriptorsRequest) => Promise<ArtifactVersionDescriptor[]>
   >()('artifacts', ['artifacts:resolve-version-descriptors']),
+  'artifacts.startReproducibilityCheck': callable<
+    (request: ArtifactReproducibilityCheckRequest) => Promise<ArtifactReproducibilityCheckState>
+  >()('artifacts', ['artifacts:start-reproducibility-check', ELECTRON], { optionalMember: true }),
+  'artifacts.sessionReproducibility': callable<
+    (
+      request: import('./session-reproducibility').SessionReproducibilityCommand
+    ) => Promise<import('./session-reproducibility').SessionReproducibilityBatch | undefined>
+  >()('artifacts', ['artifacts:session-reproducibility', ELECTRON], { optionalMember: true }),
   'cli.getStatus': callable<() => Promise<CliLauncherStatus>>()('cli', ['cli:get-status']),
   'cli.install': callable<() => Promise<CliLauncherStatus>>()('cli', ['cli:install', LOCAL]),
   'cli.uninstall': callable<() => Promise<CliLauncherStatus>>()('cli', ['cli:uninstall', LOCAL]),
@@ -969,6 +1116,10 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'compute.jobsCancel': callable<(request: CancelComputeJobRequest) => Promise<JobStatusResult>>()(
     'compute',
     ['compute:jobs:cancel']
+  ),
+  'compute.jobsRetryHarvest': callable<(request: RetryComputeJobHarvestRequest) => Promise<void>>()(
+    'compute',
+    ['compute:jobs:retry-harvest']
   ),
   'compute.jobsSetRemoteCleanup': callable<
     (request: SetComputeJobRemoteCleanupRequest) => Promise<void>
@@ -1653,7 +1804,12 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     ) => Promise<RuntimeEnablement>
   >()('runtime', ['runtime:set-environment-enabled', LOCAL, RUNTIME_ENABLEMENT]),
   'runtime.setInstallAuthorized': callable<
-    (language: NotebookLanguage, envId: string, authorized: boolean) => Promise<RuntimeEnablement>
+    (
+      language: NotebookLanguage,
+      envId: string,
+      authorized: boolean,
+      library?: string
+    ) => Promise<RuntimeEnablement>
   >()('runtime', ['runtime:set-install-authorized', LOCAL, RUNTIME_INSTALL_AUTH]),
   'runtime.unregisterInterpreter': callable<
     (language: NotebookLanguage, path: string) => Promise<string[]>
@@ -1681,6 +1837,43 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'sessions.exportConversation': callable<
     (request: ExportConversationRequest) => Promise<ExportConversationResult>
   >()('sessions', ['sessions:export-conversation', MAPPED_ELECTRON]),
+  'sessions.fork': callable<
+    (request: SessionPackageRequest) => Promise<SessionPackageRequest | null>
+  >()('sessions', ['sessions:fork', MAPPED_ELECTRON, undefined, undefined, RUNTIME_VALIDATED]),
+  'sessions.exportPackage': callable<
+    (request: SessionPackageRequest) => Promise<SessionPackageExportResult>
+  >()('sessions', [
+    'sessions:export-package',
+    MAPPED_ELECTRON,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'sessions.importPackage': callable<
+    (request?: SessionPackageImportRequest, file?: File) => Promise<SessionPackageImportResult>
+  >()('sessions', [
+    'sessions:import-package',
+    MAPPED_ELECTRON,
+    'session-package-import-file',
+    POSITIONAL,
+    RUNTIME_VALIDATED
+  ]),
+  'sessions.packageOperation': callable<
+    (
+      request: import('./session-package').PackageOperationRequest
+    ) => Promise<import('./session-package').PackageOperationSnapshot | null>
+  >()('sessions', [
+    'sessions:package-operation',
+    MAPPED_ELECTRON,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'sessions.onPackageOperation': callable<
+    (
+      listener: (snapshot: import('./session-package').PackageOperationSnapshot) => void
+    ) => RemoveListener
+  >()('sessions', ['sessions:package-operation-changed', EVENT]),
   'sessions.list': callable<() => Promise<ListSessionSummariesResult>>()('sessions', [
     'sessions:list'
   ]),
@@ -1701,6 +1894,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'sessions.loadAll': callable<() => Promise<LoadAllSessionsResult>>()('sessions', [
     'sessions:load-all'
   ]),
+  'sessions.searchMessages': callable<
+    (request: MessageSearchRequest) => Promise<MessageSearchPage>
+  >()('sessions', ['sessions:search-messages']),
   'sessions.loadOne': callable<
     (request: LoadSessionRequest) => Promise<PersistedChatSession | undefined>
   >()('sessions', ['sessions:load-one']),
@@ -1847,6 +2043,29 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'settings.getSettings': callable<() => Promise<SettingsSnapshot>>()('settings', [
     'settings:get-settings'
   ]),
+  'settings.listSkillMarketplace': callable<
+    (
+      request?: SkillMarketplaceCatalogRequest
+    ) => Promise<SkillMarketplaceResult<SkillMarketplaceCatalog>>
+  >()('settings', ['settings:list-skill-marketplace']),
+  'settings.getSkillMarketplaceDetail': callable<
+    (
+      request: SkillMarketplaceDetailRequest
+    ) => Promise<SkillMarketplaceResult<SkillMarketplaceDetail>>
+  >()('settings', ['settings:get-skill-marketplace-detail']),
+  'settings.installSkillMarketplace': callable<
+    (request: SkillMarketplaceInstallRequest) => Promise<SkillMarketplaceInstallResult>
+  >()('settings', ['settings:install-skill-marketplace']),
+  'settings.startSkillMarketplaceBatch': callable<
+    (request: SkillMarketplaceBatchRequest) => Promise<SkillMarketplaceBatchStartResult>
+  >()('settings', ['settings:start-skill-marketplace-batch']),
+  'settings.getSkillMarketplaceBatch': callable<() => Promise<SkillMarketplaceBatch | null>>()(
+    'settings',
+    ['settings:get-skill-marketplace-batch']
+  ),
+  'settings.stopSkillMarketplaceBatch': callable<(id: string) => Promise<boolean>>()('settings', [
+    'settings:stop-skill-marketplace-batch'
+  ]),
   'settings.getSkillDetail': callable<(id: string) => Promise<SkillDetailView>>()('settings', [
     'settings:get-skill-detail'
   ]),
@@ -1942,6 +2161,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     'settings',
     ['settings:changed', EVENT]
   ),
+  'settings.onWslSetupChanged': callable<
+    (listener: (status: WslSetupStatus) => void) => () => void
+  >()('settings', ['settings:wsl-setup-changed', ELECTRON_EVENT]),
   'settings.onConnectorApprovalRequest': callable<
     (listener: AcpListener<ConnectorApprovalRequest>) => RemoveListener
   >()('settings', ['connectors:approval-request', EVENT]),
@@ -2082,6 +2304,49 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     'settings',
     ['settings:get-notebook-network-status', LOCAL]
   ),
+  'settings.getWsl2BashPreviewStatus': callable<() => Promise<Wsl2BashPreviewStatus>>()(
+    'settings',
+    ['settings:get-wsl2-bash-preview-status', LOCAL]
+  ),
+  'settings.getWslSetupStatus': callable<() => Promise<WslSetupStatus>>()('settings', [
+    'settings:get-wsl-setup-status',
+    LOCAL
+  ]),
+  'settings.getLocalShellRuntimePreference': callable<
+    () => Promise<LocalShellRuntimePreference | undefined>
+  >()('settings', ['settings:get-local-shell-runtime-preference', LOCAL]),
+  'settings.probeWslSetup': callable<() => Promise<WslSetupSnapshot>>()('settings', [
+    'settings:probe-wsl-setup',
+    LOCAL
+  ]),
+  'settings.installWslPlatform': callable<() => Promise<WslPlatformInstallResult>>()('settings', [
+    'settings:install-wsl-platform',
+    LOCAL
+  ]),
+  'settings.installMissingWslDependencies': callable<
+    (request: InstallMissingWslDependenciesRequest) => Promise<WslSetupSnapshot>
+  >()('settings', ['settings:install-missing-wsl-dependencies', LOCAL]),
+  'settings.createWslSupportHandoff': callable<() => Promise<WslSetupConversationBootstrap>>()(
+    'settings',
+    ['settings:create-wsl-support-handoff', LOCAL]
+  ),
+  'settings.selectWslProfile': callable<
+    (request: SelectWslProfileRequest) => Promise<WslSetupSnapshot>
+  >()('settings', ['settings:select-wsl-profile', LOCAL]),
+  'settings.switchLocalShellToPowerShell': callable<() => Promise<SwitchToPowerShellResult>>()(
+    'settings',
+    ['settings:switch-local-shell-to-powershell', LOCAL]
+  ),
+  'settings.useWsl2Bash': callable<() => Promise<UseWsl2BashResult>>()('settings', [
+    'settings:use-wsl2-bash',
+    LOCAL
+  ]),
+  'settings.installRecommendedWslDistro': callable<
+    (request: InstallWslDistroRequest) => Promise<WslSetupSnapshot>
+  >()('settings', ['settings:install-recommended-wsl-distro', LOCAL]),
+  'settings.openWslTerminal': callable<
+    (request: OpenWslTerminalRequest) => Promise<WslSetupSnapshot>
+  >()('settings', ['settings:open-wsl-terminal', LOCAL]),
   'settings.installNotebookNetwork': callable<() => Promise<NotebookNetworkStatus>>()('settings', [
     'settings:install-notebook-network',
     LOCAL
@@ -2156,6 +2421,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'settings.upsertProvider': callable<
     (request: UpsertProviderRequest) => Promise<SettingsSnapshot>
   >()('settings', ['settings:upsert-provider']),
+  'settings.saveValidatedProvider': callable<
+    (request: UpsertProviderRequest) => Promise<SaveValidatedProviderResult>
+  >()('settings', ['settings:save-validated-provider']),
   'settings.validateProvider': callable<
     (request: ValidateProviderRequest) => Promise<ValidateProviderResult>
   >()('settings', ['settings:validate-provider']),
@@ -2343,11 +2611,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     'storage',
     ['storage:inspect-data-root', LOCAL, STORAGE_PARENT]
   ),
-  'storage.migrate': callable<(parent: string) => Promise<MigrationOutcome>>()('storage', [
-    'storage:migrate',
-    LOCAL,
-    STORAGE_PARENT
-  ]),
+  'storage.migrate': callable<
+    (parent: string, selection?: DataRootSelection) => Promise<MigrationOutcome>
+  >()('storage', ['storage:migrate', LOCAL, STORAGE_PARENT]),
   'storage.onProgress': callable<(listener: AcpListener<MigrationProgress>) => RemoveListener>()(
     'storage',
     ['storage:migrate-progress', EVENT]
@@ -2361,11 +2627,34 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     LOCAL
   ]),
   'storage.setDataRootAndRelaunch': callable<
-    (parent: string, markOnboarding?: boolean) => Promise<DataRootValidationResult>
+    (
+      parent: string,
+      markOnboarding?: boolean,
+      selection?: DataRootSelection
+    ) => Promise<DataRootValidationResult>
   >()('storage', ['storage:set-data-root-and-relaunch', LOCAL, STORAGE_ROOT]),
   'storage.validateDataRoot': callable<(parent: string) => Promise<DataRootValidationResult>>()(
     'storage',
     ['storage:validate-data-root', LOCAL, STORAGE_PARENT]
+  ),
+  'bookmarks.resolvePdfSource': callable<
+    (request: ResolvePdfBookmarkSourceRequest) => Promise<BookmarkPdfSourceResult>
+  >()('bookmarks', ['bookmarks:resolve-pdf-source', WEB, undefined, undefined, RUNTIME_VALIDATED]),
+  'bookmarks.list': callable<(request: ListBookmarksRequest) => Promise<BookmarkListResult>>()(
+    'bookmarks',
+    ['bookmarks:list', WEB, undefined, undefined, RUNTIME_VALIDATED]
+  ),
+  'bookmarks.create': callable<(request: CreateBookmarkRequest) => Promise<Bookmark>>()(
+    'bookmarks',
+    ['bookmarks:create', WEB, undefined, undefined, RUNTIME_VALIDATED]
+  ),
+  'bookmarks.updateNote': callable<(request: UpdateBookmarkNoteRequest) => Promise<Bookmark>>()(
+    'bookmarks',
+    ['bookmarks:update-note', WEB, undefined, undefined, RUNTIME_VALIDATED]
+  ),
+  'bookmarks.delete': callable<(request: DeleteBookmarkRequest) => Promise<DeleteBookmarkResult>>()(
+    'bookmarks',
+    ['bookmarks:delete', WEB, undefined, undefined, RUNTIME_VALIDATED]
   ),
   'tags.create': callable<(request: CreateTagRequest) => Promise<TagSnapshot>>()('tags', [
     'tags:create',
@@ -2410,12 +2699,68 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     undefined,
     RUNTIME_VALIDATED
   ]),
-  'update.apply': callable<() => Promise<UpdateStatus>>()('update', ['update:apply', LOCAL]),
+  'update.apply': callable<(options?: UpdateApplyOptions) => Promise<UpdateStatus>>()('update', [
+    'update:apply',
+    LOCAL
+  ]),
   'update.cancel': callable<() => Promise<UpdateStatus>>()('update', ['update:cancel', LOCAL]),
   'update.check': callable<() => Promise<UpdateStatus>>()('update', ['update:check']),
   'update.download': callable<() => Promise<UpdateStatus>>()('update', ['update:download', LOCAL]),
   'update.getAppInfo': callable<() => Promise<AppInfo>>()('update', ['update:get-app-info']),
   'update.getStatus': callable<() => Promise<UpdateStatus>>()('update', ['update:get-status']),
+  'pdfStructure.readCached': callable<
+    (request: ReadCachedPdfStructureRequest) => Promise<PdfStructureResult | undefined>
+  >()('pdf-structure', [
+    'pdf-structure:read-cached',
+    LOCAL,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'pdfStructure.parse': callable<
+    (request: ParsePdfStructureRequest) => Promise<PdfStructureResult>
+  >()('pdf-structure', ['pdf-structure:parse', LOCAL, undefined, undefined, RUNTIME_VALIDATED]),
+  'pdfStructure.cancel': callable<(requestId: string) => Promise<void>>()('pdf-structure', [
+    'pdf-structure:cancel',
+    LOCAL,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'pdfStructure.readThumbnail': callable<
+    (request: ReadPdfStructureThumbnailRequest) => Promise<string | undefined>
+  >()('pdf-structure', [
+    'pdf-structure:read-thumbnail',
+    LOCAL,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'pdfStructure.clearCache': callable<
+    () => Promise<{ removedBytes: number; retainedEntries: number }>
+  >()('pdf-structure', [
+    'pdf-structure:clear-cache',
+    LOCAL,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'localModels.getSnapshot': callable<() => Promise<LocalModelSnapshot>>()('local-models', [
+    'local-models:get-snapshot',
+    LOCAL
+  ]),
+  'localModels.install': callable<() => Promise<LocalModelSnapshot>>()('local-models', [
+    'local-models:install',
+    LOCAL
+  ]),
+  'localModels.cancel': callable<() => Promise<LocalModelSnapshot>>()('local-models', [
+    'local-models:cancel',
+    LOCAL
+  ]),
+  'localModels.remove': callable<() => Promise<LocalModelSnapshot>>()('local-models', [
+    'local-models:remove',
+    LOCAL
+  ]),
   'update.onProgress': callable<
     (listener: (progress: DownloadProgress) => void) => RemoveListener
   >()('update', ['update:progress', EVENT]),
@@ -2453,6 +2798,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'uploads.onTransferProgress': callable<
     (listener: AcpListener<UploadTransferProgress>) => RemoveListener
   >()('uploads', ['uploads:transfer-progress', ELECTRON_EVENT], { optionalMember: true }),
+  'uploads.recoverDraft': callable<
+    (request: { receipt: string }) => Promise<UploadedAttachment | null>
+  >()('uploads', ['uploads:recover-draft', WEB, undefined, undefined, RUNTIME_VALIDATED]),
   'uploads.readPreview': callable<
     (request: ReadArtifactPreviewRequest) => Promise<ArtifactPreviewResult>
   >()('uploads', ['uploads:read-preview']),
@@ -2588,6 +2936,8 @@ const RENDERER_CAPABILITY_ORDER = Object.freeze([
   'specialist',
   'storage',
   'update',
+  'local-models',
+  'pdf-structure',
   'uploads',
   'window'
 ] as const)

@@ -128,7 +128,7 @@ const callRememberMemoryThroughMcp = async (
 describe('notebook MCP server config', () => {
   it('builds an ACP stdio MCP server config scoped to the notebook runtime RPC endpoint', () => {
     const config = createNotebookMcpServerConfig({
-      command: '/Applications/Open Science.app/Contents/MacOS/Open Science',
+      command: '/Applications/Open-Science.app/Contents/MacOS/Open-Science',
       entryPath: '/app/out/main/index.js',
       endpoint: 'http://127.0.0.1:4567',
       token: 'secret-token',
@@ -140,7 +140,7 @@ describe('notebook MCP server config', () => {
 
     expect(config).toEqual({
       name: 'open-science-notebook',
-      command: '/Applications/Open Science.app/Contents/MacOS/Open Science',
+      command: '/Applications/Open-Science.app/Contents/MacOS/Open-Science',
       args: ['/app/out/main/index.js', '--open-science-notebook-mcp'],
       env: [
         { name: 'ELECTRON_RUN_AS_NODE', value: '1' },
@@ -178,7 +178,7 @@ describe('notebook MCP server config', () => {
 
   it('passes the Windows named-pipe path to the notebook MCP process', () => {
     const config = createNotebookMcpServerConfig({
-      command: 'C:\\Open Science.exe',
+      command: 'C:\\Open-Science.exe',
       entryPath: 'C:\\app\\main.js',
       endpoint: 'http://localhost',
       socketPath: '\\\\.\\pipe\\open-science-notebook',
@@ -197,6 +197,41 @@ describe('notebook MCP server config', () => {
       name: 'OPEN_SCIENCE_NOTEBOOK_MEMORY_TOOLS',
       value: '0'
     })
+  })
+
+  it('serializes the immutable shell binding into the capability process', () => {
+    const binding = {
+      kind: 'wsl2-bash' as const,
+      profileId: 'profile-1',
+      distro: 'Ubuntu-22.04',
+      user: 'researcher'
+    }
+    const config = createNotebookMcpServerConfig({
+      command: 'Open-Science.exe',
+      entryPath: 'main.js',
+      endpoint: 'http://localhost',
+      token: 'secret-token',
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: 'C:\\workspace',
+      memoryTools: false,
+      shellRuntime: binding
+    })
+
+    expect(config.env).toContainEqual({
+      name: 'OPEN_SCIENCE_NOTEBOOK_SHELL_RUNTIME',
+      value: JSON.stringify(binding)
+    })
+    expect(
+      createNotebookMcpEnvironmentFromProcess({
+        OPEN_SCIENCE_NOTEBOOK_RPC_ENDPOINT: 'http://localhost',
+        OPEN_SCIENCE_NOTEBOOK_RPC_TOKEN: 'secret-token',
+        OPEN_SCIENCE_NOTEBOOK_PROJECT_ID: 'default-project',
+        OPEN_SCIENCE_NOTEBOOK_SESSION_ID: 'session-1',
+        OPEN_SCIENCE_NOTEBOOK_WORKSPACE_CWD: 'C:\\workspace',
+        OPEN_SCIENCE_NOTEBOOK_SHELL_RUNTIME: JSON.stringify(binding)
+      }).shellRuntime
+    ).toEqual(binding)
   })
 
   it('advertises memory tools only to an eligible main-agent environment', () => {
@@ -265,8 +300,10 @@ describe('notebook MCP server config', () => {
   })
 
   it('bounds recovery after repeated kernel-process failures', () => {
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toMatch(/repeated kernel-process failures/i)
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toMatch(/retry once at most/i)
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toMatch(/repeated kernel failures/i)
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toMatch(/retry at most once when safe/i)
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('check possible side effects before replaying')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('absent means unknown')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toMatch(/stop Notebook tools/i)
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toMatch(/report the failure/i)
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('then revise/rerun')
@@ -347,18 +384,139 @@ describe('notebook MCP server config', () => {
     ])
   })
 
-  it('ties network access requests to a real sandbox denial and an approved retry', () => {
+  it('allows explicit network approval before a connection while preserving scoped grants', () => {
     const tool = NOTEBOOK_RPC_TOOLS.find((candidate) => candidate.name === 'request_network_access')
 
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('A failed connection is not required')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('call `request_network_access`')
     expect(tool?.description).toContain(
-      'Call only after Notebook execution reports OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED'
+      'before connecting or after OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED'
     )
-    expect(tool?.description).toContain(
-      'Retry the failed execution only when the result is allowed'
-    )
+    expect(tool?.description).toContain('Execute or retry only when the result is allowed')
   })
+
+  it.each(['aborted', 'user-decision', 'approval-surface-unavailable'])(
+    'preserves network decision information in the agent result: %s',
+    async (decisionSource) => {
+      const result = {
+        hostname: 'data.example.org',
+        status: decisionSource === 'approval-surface-unavailable' ? 'unavailable' : 'denied',
+        decisionSource,
+        message: 'Decision-specific recovery information.'
+      }
+      const server = createNotebookMcpServer({
+        endpoint: 'http://127.0.0.1:4567',
+        token: 'secret-token',
+        projectId: 'default-project',
+        sessionId: 'session-1',
+        workspaceCwd: '/workspace'
+      })
+      const client = new ModelContextProtocolClient({
+        name: 'network-result-test',
+        version: '1.0.0'
+      })
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+      const originalFetch = globalThis.fetch
+      globalThis.fetch = vi.fn(
+        async () =>
+          new Response(JSON.stringify({ result }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' }
+          })
+      ) as typeof fetch
+      try {
+        await Promise.all([server.connect(serverTransport), client.connect(clientTransport)])
+        const delivered = await client.callTool({
+          name: 'request_network_access',
+          arguments: {
+            hostname: 'data.example.org',
+            reason: 'Download the dataset.',
+            runtime: 'python'
+          }
+        })
+        expect(delivered.content).toEqual([{ type: 'text', text: JSON.stringify(result, null, 2) }])
+      } finally {
+        globalThis.fetch = originalFetch
+        await client.close()
+        await server.close()
+      }
+    }
+  )
+
+  it.each(['decision', 'cancellation'])(
+    'keeps network approval pending past the MCP inactivity timeout until %s',
+    async (outcome) => {
+      const server = createNotebookMcpServer({
+        endpoint: 'http://127.0.0.1:4567',
+        token: 'secret-token',
+        projectId: 'default-project',
+        sessionId: 'session-1',
+        workspaceCwd: '/workspace'
+      })
+      const client = new ModelContextProtocolClient({ name: 'network-wait-test', version: '1.0.0' })
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+      await Promise.all([server.connect(serverTransport), client.connect(clientTransport)])
+      const originalFetch = globalThis.fetch
+      const cancellation = new AbortController()
+      let rpcSignal: AbortSignal | null | undefined
+      let finishRpc: ((response: Response) => void) | undefined
+      globalThis.fetch = vi.fn(
+        (_input, init) =>
+          new Promise<Response>((resolve, reject) => {
+            finishRpc = resolve
+            rpcSignal = init?.signal
+            rpcSignal?.addEventListener('abort', () => reject(new Error('RPC cancelled')), {
+              once: true
+            })
+          })
+      )
+      vi.useFakeTimers()
+      let failure: unknown
+      const onprogress = vi.fn()
+      const call = client
+        .callTool(
+          {
+            name: 'request_network_access',
+            arguments: {
+              hostname: 'tcga-xena-hub.s3.us-east-1.amazonaws.com',
+              runtime: 'python',
+              reason: 'Download the dataset.'
+            }
+          },
+          undefined,
+          { onprogress, signal: cancellation.signal, timeout: 60_000, resetTimeoutOnProgress: true }
+        )
+        .catch((error) => {
+          failure = error
+        })
+      try {
+        await vi.advanceTimersByTimeAsync(61_000)
+        expect(failure).toBeUndefined()
+        expect(onprogress).toHaveBeenCalledTimes(2)
+        if (outcome === 'cancellation') {
+          cancellation.abort()
+          await call
+          await vi.advanceTimersByTimeAsync(0)
+          expect(failure).toBeDefined()
+          expect(rpcSignal?.aborted).toBe(true)
+        } else {
+          finishRpc?.(
+            new Response(JSON.stringify({ result: { status: 'allowed' } }), { status: 200 })
+          )
+          await expect(call).resolves.toMatchObject({ content: [{ type: 'text' }] })
+        }
+        await vi.advanceTimersByTimeAsync(60_000)
+        expect(onprogress).toHaveBeenCalledTimes(2)
+      } finally {
+        finishRpc?.(new Response(JSON.stringify({ result: { status: 'denied' } }), { status: 200 }))
+        await call
+        vi.useRealTimers()
+        globalThis.fetch = originalFetch
+        await client.close()
+        await server.close()
+      }
+    }
+  )
 
   it('exposes bounded memory discovery, search, and append-only agent tools', () => {
     const tools = Object.fromEntries(NOTEBOOK_RPC_TOOLS.map((tool) => [tool.name, tool]))
@@ -379,6 +537,31 @@ describe('notebook MCP server config', () => {
     expect(NOTEBOOK_RPC_TOOLS.map((tool) => tool.name)).not.toEqual(
       expect.arrayContaining(['update_memory', 'forget_memory', 'set_memory_enabled'])
     )
+  })
+
+  it('exposes WSL setup tools only to an explicitly scoped setup Session', () => {
+    const environment = {
+      endpoint: 'http://127.0.0.1:4567',
+      token: 'secret-token',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace',
+      memoryTools: true
+    }
+    const names = (wslSetupTools: boolean): string[] =>
+      notebookRpcToolsForEnvironment({ ...environment, wslSetupTools }).map(({ name }) => name)
+
+    expect(names(false)).not.toEqual(expect.arrayContaining(['wsl_setup_diagnostics']))
+    expect(names(true)).toEqual(
+      expect.arrayContaining([
+        'wsl_setup_diagnostics',
+        'wsl_setup_install_platform',
+        'wsl_setup_install_recommended_distro',
+        'wsl_setup_select_profile',
+        'wsl_setup_open_terminal'
+      ])
+    )
+    expect(names(true)).not.toEqual(expect.arrayContaining(['wsl_setup_activate']))
   })
 
   it('publishes remember_memory with a root object output schema', async () => {
@@ -796,6 +979,7 @@ describe('notebook_execute tool', () => {
   })
 
   it.each([
+    ['requestNetworkAccess', true],
     ['execute', true],
     ['executeControl', true],
     ['executeShell', true],
@@ -1573,6 +1757,35 @@ describe('bash_execute tool', () => {
     expect(windowsDoc).not.toContain("generated file's absolute local path")
   })
 
+  it('derives the WSL2 Bash tool contract from the same captured binding', () => {
+    const binding = {
+      kind: 'wsl2-bash' as const,
+      profileId: 'profile-1',
+      distro: 'Ubuntu-22.04',
+      user: 'researcher'
+    }
+    const tools = notebookRpcToolsForEnvironment({
+      endpoint: 'http://127.0.0.1:4567',
+      token: 'secret-token',
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: 'C:\\workspace',
+      shellRuntime: binding
+    })
+    const wslTool = tools.find((entry) => entry.name === 'bash_execute')
+
+    expect(wslTool?.description).toContain('WSL2 Bash')
+    expect(wslTool?.description).toContain('Bash syntax')
+    expect(wslTool?.description).toContain('$OPEN_SCIENCE_HANDOFF_DIR')
+    expect(wslTool?.description).not.toContain('Windows PowerShell')
+    expect(wslTool?.inputSchema.command.description).toBe(
+      'WSL2 Bash command using POSIX syntax; do not use PowerShell syntax.'
+    )
+    expect(wslTool?.inputSchema.command.description).not.toMatch(
+      /profile-1|Ubuntu-22\.04|researcher/
+    )
+  })
+
   it('forwards bash_execute input to the executeShell RPC method', async () => {
     const environment = {
       endpoint: 'http://127.0.0.1:4567',
@@ -1604,6 +1817,37 @@ describe('bash_execute tool', () => {
     } finally {
       globalThis.fetch = originalFetch
     }
+  })
+
+  it('injects the advertised binding and ignores a forged per-call binding', async () => {
+    const binding = {
+      kind: 'wsl2-bash' as const,
+      profileId: 'profile-1',
+      distro: 'Ubuntu-22.04',
+      user: 'researcher'
+    }
+    let body: { params: Record<string, unknown> } | undefined
+    await callNotebookRpc(
+      {
+        endpoint: 'http://127.0.0.1:4567',
+        token: 'secret-token',
+        projectId: 'default-project',
+        sessionId: 'session-1',
+        workspaceCwd: 'C:\\workspace',
+        shellRuntime: binding
+      },
+      'executeShell',
+      { command: 'echo hi', shellRuntime: { kind: 'powershell', version: '5.1' } },
+      async (_environment, init) => {
+        body = JSON.parse(String(init.body)) as { params: Record<string, unknown> }
+        return {
+          ok: true,
+          json: async () => ({ result: { stdout: '', stderr: '', exitCode: 0 } })
+        } as Response
+      }
+    )
+
+    expect(body?.params.shellRuntime).toEqual(binding)
   })
 })
 
@@ -1823,6 +2067,47 @@ describe('inspect_packages tool', () => {
 })
 
 describe('compactManagePackagesResult', () => {
+  it('delivers one pip missing-distribution diagnosis with index and version context', () => {
+    const index = 'Looking in indexes: https://pypi.tuna.tsinghua.edu.cn/simple'
+    const cause =
+      'ERROR: Could not find a version that satisfies the requirement scikit (from versions: none)'
+    const raw = {
+      ok: false,
+      needsRestart: false,
+      method: 'pip',
+      error: 'pip install failed.',
+      log: `${index}\n${cause}\nERROR: No matching distribution found for scikit`,
+      attempts: [{ groupOrdinal: 0, installer: 'pip', status: 'failed', mutationRisk: 'possible' }]
+    }
+    const projected = compactManagePackagesResult(raw)
+    expect(projected).toMatchObject({ diagnostics: `${index}\n${cause}`, attempts: raw.attempts })
+    const delivered = serializeNotebookToolResult(projected, NOTEBOOK_MCP_CONTROL_RESULT_LIMIT)
+    expect(delivered).toContain('from versions: none')
+    expect(delivered).not.toContain('No matching distribution found')
+    expect(raw.log).toContain('No matching distribution found')
+  })
+
+  it.each([
+    'ERROR: Could not find a version that satisfies the requirement pkg>=2 (from versions: 1.0)\nERROR: No matching distribution found for other',
+    'ERROR: Could not find a version that satisfies the requirement pkg (from versions: none)\nWARNING: retrying another index\nERROR: No matching distribution found for pkg',
+    'ERROR: No matching distribution found for pkg'
+  ])('retains independent installer evidence: %s', (log) => {
+    expect(compactManagePackagesResult({ ok: false, log })).toMatchObject({ diagnostics: log })
+  })
+
+  it('marks incomplete attempt coverage without implying later installers were not attempted', () => {
+    const attempts = Array.from({ length: 10 }, (_, groupOrdinal) => ({
+      groupOrdinal,
+      installer: 'pip',
+      status: 'failed',
+      mutationRisk: 'possible'
+    }))
+    expect(compactManagePackagesResult({ ok: false, attempts })).toMatchObject({
+      attempts: attempts.slice(0, 8),
+      omittedAttempts: 2
+    })
+  })
+
   it('preserves an external target alongside a changed package outcome', () => {
     expect(
       compactManagePackagesResult({
@@ -1905,7 +2190,8 @@ describe('compactManagePackagesResult', () => {
             type: 'github',
             repository: 'r-lib/cli',
             ref: 'main',
-            commit: 'abc123'
+            commit: 'abc123',
+            subdirectory: 'packages/cli'
           }
         }
       ],
@@ -1961,13 +2247,62 @@ describe('compactManagePackagesResult', () => {
             type: 'github',
             repository: 'r-lib/cli',
             ref: 'main',
-            commit: 'abc123'
+            commit: 'abc123',
+            subdirectory: 'packages/cli'
           }
         }
       ]
     })
     expect(JSON.stringify(compact)).not.toContain('FETCH')
     expect(JSON.stringify(compact)).not.toContain('r-dplyr')
+  })
+
+  it.each([
+    'ERROR: No matching distribution found for unavailable-package',
+    'ERROR: Permission denied: /runtime/site-packages'
+  ])('preserves the installer diagnosis on failure: %s', (diagnosis) => {
+    const result = compactManagePackagesResult({
+      ok: false,
+      needsRestart: false,
+      error: 'pip install failed.',
+      log: diagnosis,
+      attempts: [{ groupOrdinal: 0, installer: 'pip', status: 'failed', mutationRisk: 'possible' }]
+    })
+    expect(result).toMatchObject({
+      diagnostics: diagnosis,
+      attempts: [{ groupOrdinal: 0, installer: 'pip', status: 'failed', mutationRisk: 'possible' }]
+    })
+  })
+
+  it('bounds and redacts failure output while retaining the final installer diagnosis', () => {
+    const result = compactManagePackagesResult({
+      ok: false,
+      needsRestart: false,
+      fallbackUsed: true,
+      error: 'conda and pip install both failed.',
+      log:
+        'password="FAKE_TEST_SECRET"\nghp_FAKEtest1234567890\n' +
+        'https://user:credential@example.org/t/FAKE_PATH_SECRET/simple?channel=FAKE_QUERY_SECRET#FAKE_FRAGMENT_SECRET\n' +
+        'x'.repeat(20000) +
+        '\nERROR: No matching distribution found for unavailable-package',
+      attempts: [
+        {
+          groupOrdinal: 0,
+          installer: 'conda',
+          status: 'failed',
+          mutationRisk: 'none',
+          reason: 'package-not-found'
+        },
+        { groupOrdinal: 1, installer: 'pip', status: 'failed', mutationRisk: 'possible' }
+      ]
+    }) as Record<string, unknown>
+    expect(result.attempts).toHaveLength(2)
+    expect(result.diagnostics).toContain('No matching distribution found')
+    expect(result.diagnostics).toContain('omitted')
+    expect(JSON.stringify(result)).not.toMatch(
+      /credential|FAKE_TEST_SECRET|ghp_FAKEtest1234567890|FAKE_PATH_SECRET|FAKE_QUERY_SECRET|FAKE_FRAGMENT_SECRET/
+    )
+    expect(JSON.stringify(result, null, 2).length).toBeLessThan(NOTEBOOK_MCP_CONTROL_RESULT_LIMIT)
   })
 
   it('retains a concise failure reason and passes through non-object results', () => {
@@ -1999,7 +2334,8 @@ describe('compactManagePackagesResult', () => {
         label: 'default-python',
         prefix: '/runtime/envs/default-python'
       },
-      error: 'Package installation could not be verified: dplyr.'
+      error: 'Package installation could not be verified: dplyr.',
+      diagnostics: 'very verbose diagnostics'
     })
     expect(compactManagePackagesResult(null)).toBeNull()
     expect(compactManagePackagesResult('x')).toBe('x')
@@ -2266,6 +2602,61 @@ describe('manage_environments tool', () => {
 })
 
 describe('compactNotebookExecutionResult', () => {
+  it.each([false, true, undefined])(
+    'preserves dispatch evidence without inferring legacy state: %s',
+    (kernelDispatched) => {
+      const run = {
+        runId: 'failed-run',
+        status: 'timeout',
+        kernelDispatched,
+        stderr: 'kernel stopped'
+      }
+      const foreground = compactNotebookExecutionResult(run)
+      const background = NOTEBOOK_RPC_TOOLS.find((tool) => tool.name === 'background_run')!
+        .mapResult!({ run }, { action: 'result' })
+      const state = compactNotebookStateResult({ recentRuns: [run] }) as { recentRuns: unknown[] }
+      for (const result of [foreground, background, state.recentRuns[0]]) {
+        const received = JSON.parse(
+          serializeNotebookToolResult(result, NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT)
+        )
+        if (kernelDispatched === undefined) expect(received).not.toHaveProperty('kernelDispatched')
+        else expect(received.kernelDispatched).toBe(kernelDispatched)
+        expect(received.runId).toBe('failed-run')
+        expect(received.status).toBe('timeout')
+      }
+    }
+  )
+
+  it('preserves recovery prerequisites ahead of truncated output for foreground and background failures', () => {
+    const recovery = { execution: 'may-have-run', retryAfter: 'cleanup-verified' }
+    const run = {
+      kernelKind: 'bash',
+      status: 'failed',
+      recovery,
+      stdout: 'x'.repeat(100_000),
+      stderr: 'cleanup failed',
+      exitCode: null
+    }
+    const foreground = compactNotebookExecutionResult(run) as Record<string, unknown>
+    const background = NOTEBOOK_RPC_TOOLS.find((tool) => tool.name === 'background_run')!
+      .mapResult!({ run }, { action: 'result' }) as Record<string, unknown>
+    expect(foreground.recovery).toMatchObject(recovery)
+    expect(background.recovery).toEqual(foreground.recovery)
+    for (const result of [foreground, background]) {
+      const serialized = serializeNotebookToolResult(result, NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT)
+      expect(JSON.parse(serialized).recovery).toEqual(foreground.recovery)
+    }
+    expect(foreground.truncated).toBe(true)
+  })
+
+  it('does not treat command output or historical error codes as current recovery facts', () => {
+    expect(
+      compactNotebookExecutionResult({ stdout: 'SHELL_CLEANUP_INCOMPLETE', exitCode: 0 })
+    ).not.toHaveProperty('recovery')
+    expect(
+      compactNotebookExecutionResult({ errorCode: 'shell-cleanup-incomplete', exitCode: null })
+    ).not.toHaveProperty('recovery')
+  })
   const runSummary = (text: {
     stdout?: string
     stderr?: string
@@ -2415,6 +2806,17 @@ describe('compactNotebookExecutionResult', () => {
     expect(JSON.stringify(compact)).not.toContain('repl_loop.js')
     expect((summary.text as { traceback: string }).traceback).toBe(traceback)
     expect(raw.outputs[0].traceback).toBe(traceback)
+  })
+
+  it('preserves multiline diagnostic text and structured fields while stripping stack frames', () => {
+    const message =
+      'Error: diagnostic sentinel\n' + JSON.stringify({ code: 'TEST_FAILURE', retryable: false })
+    const traceback = `${message}\n    at async <repl>:3:20`
+    const replTool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'repl_execute')!
+    const compact = replTool.mapResult!({ ...runSummary({ traceback }), status: 'failed' }, {})
+    const serialized = serializeNotebookToolResult(compact, NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT)
+    expect(JSON.parse(serialized).traceback).toBe(message)
+    expect(serialized).not.toContain('<repl>')
   })
 
   it('keeps connector guidance while omitting host MCP stack frames from the agent-facing error', () => {
@@ -2667,6 +3069,21 @@ describe('compactNotebookExecutionResult', () => {
 })
 
 describe('compactNotebookStateResult', () => {
+  it('keeps recovery on the latest attempt without repeating historical guidance', () => {
+    const recovery = { execution: 'not-started', retryAfter: 'cleanup-verified' }
+    const state = {
+      recentRuns: [
+        { runId: 'old', status: 'failed', recovery },
+        { runId: 'latest', status: 'failed', recovery }
+      ]
+    }
+    const compact = compactNotebookStateResult(state)
+    const parsed = JSON.parse(serializeNotebookToolResult(compact, NOTEBOOK_MCP_STATE_RESULT_LIMIT))
+    expect(parsed.recentRuns[0]).not.toHaveProperty('recovery')
+    expect(parsed.recentRuns[1].recovery).toMatchObject(recovery)
+    expect(parsed.recentRuns[1].recovery.guidance).toContain('not started')
+  })
+
   it('applies the state projection and smaller global budget to notebook_state', () => {
     const tool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'notebook_state')
     expect(tool?.mapResult).toBe(compactNotebookStateResult)

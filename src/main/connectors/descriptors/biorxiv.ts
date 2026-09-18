@@ -489,10 +489,14 @@ export const BIORXIV_TOOLS: ToolDescriptor[] = [
         )) as BiorxivPayload
         const status = String(firstMessage(payload).status ?? '')
         const versions = payload.collection ?? []
-        if (status === 'no posts found' || versions.length === 0) {
+        if (status === 'no posts found' || (status === 'ok' && versions.length === 0)) {
           throw new Error(`DOI ${doi} not found on ${server}`)
         }
-        if (status !== 'ok') throw new Error(`API status '${status}' for DOI ${doi} on ${server}`)
+        if (status !== 'ok') {
+          throw new Error(
+            `Unable to confirm DOI ${doi} on ${server}: API status '${status || 'missing'}'.`
+          )
+        }
         return preprintResponse(versions, server)
       } catch (err) {
         return { success: false, preprint: null, error: errMsg(err) }

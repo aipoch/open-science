@@ -61,7 +61,7 @@ describe('SessionCatalogRecoveryAlert', () => {
     expect(container.textContent).toContain('Project archive needs attention')
     expect(container.textContent).toContain('A damaged saved conversation was moved aside')
     expect(container.textContent).toContain('You can still permanently delete the project')
-    expect(container.textContent).toContain('New Compute jobs may remain queued')
+    expect(container.textContent).toContain('Compute jobs in affected Sessions may remain queued')
     const retry = container.querySelector<HTMLButtonElement>(
       '[data-testid="session-persistence-retry"]'
     )
@@ -172,9 +172,9 @@ describe('SessionCatalogRecoveryAlert', () => {
       )
     )
 
-    expect(container.textContent).toContain('Open Science update required')
+    expect(container.textContent).toContain('Open-Science update required')
     expect(container.textContent).toContain(
-      'A saved conversation requires a newer version of Open Science'
+      'A saved conversation requires a newer version of Open-Science'
     )
     expect(container.textContent).toContain('files stay unchanged')
     expect(container.querySelector('[data-testid="session-persistence-retry"]')).toBeNull()

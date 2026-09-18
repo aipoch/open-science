@@ -31,7 +31,68 @@ const createPort = (): MockPort => ({
   getPathForFile: vi.fn<(file: unknown) => string>()
 })
 
+it('carries the inspected target and intent across the Electron storage boundary', async () => {
+  const port = createPort()
+  port.invoke.mockResolvedValue({ ok: true, result: { ok: true } })
+  const selection = {
+    pickedPath: '/picked',
+    dataRoot: '/picked/Open-Science',
+    kind: 'move',
+    identity: 'inspection'
+  }
+  const adapter = createElectronRendererContractAdapter(port)
+  await adapter.invoke('storage.migrate', selection.dataRoot, selection)
+  await adapter.invoke('storage.setDataRootAndRelaunch', selection.dataRoot, false, selection)
+  expect(port.invoke.mock.calls).toEqual([
+    ['storage:migrate', { parent: selection.dataRoot, selection }],
+    [
+      'storage:set-data-root-and-relaunch',
+      { parent: selection.dataRoot, markOnboarding: false, selection }
+    ]
+  ])
+})
+
 describe('electron renderer contract adapter', () => {
+  it('delivers a committed private bookmark without leaking the command envelope', async () => {
+    const port = createPort()
+    const result = { id: 'bookmark-1', note: 'Keep this result' }
+    port.invoke.mockResolvedValue({ ok: true, result })
+    const request = {
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      id: 'bookmark-1',
+      note: 'Keep this result'
+    }
+    await expect(
+      createElectronRendererContractAdapter(port).invoke('bookmarks.updateNote', request)
+    ).resolves.toEqual(result)
+    expect(port.invoke).toHaveBeenCalledWith('bookmarks:update-note', request)
+  })
+  it('resolves dropped packages through the native File boundary', async () => {
+    const port = createPort()
+    port.invoke.mockResolvedValue({ ok: true, result: null })
+    port.getPathForFile.mockReturnValue('/data/research.science')
+    const adapter = createElectronRendererContractAdapter(port)
+    const file = { name: 'research.science' }
+    await adapter.invoke('sessions.importPackage', { projectId: 'target' }, file)
+    expect(port.getPathForFile).toHaveBeenCalledExactlyOnceWith(file)
+    expect(port.invoke).toHaveBeenCalledExactlyOnceWith(
+      'sessions:import-package',
+      { projectId: 'target' },
+      '/data/research.science'
+    )
+  })
+
+  it('rejects a dropped File without a native path instead of opening a picker', async () => {
+    const port = createPort()
+    port.getPathForFile.mockReturnValue('')
+    const adapter = createElectronRendererContractAdapter(port)
+    await expect(
+      adapter.invoke('sessions.importPackage', { projectId: 'target' }, {})
+    ).rejects.toThrow()
+    expect(port.invoke).not.toHaveBeenCalled()
+  })
+
   it.each([
     {
       publicPath: 'diagnostics.reportRendererFailure',
@@ -138,6 +199,18 @@ describe('electron renderer contract adapter', () => {
     expect(port.invoke).toHaveBeenNthCalledWith(2, 'acp:connect', {})
     expect(port.invoke).toHaveBeenNthCalledWith(3, 'acp:create-session', {})
     expect(port.invoke).toHaveBeenNthCalledWith(4, 'acp:create-session', {})
+  })
+
+  it('forwards the explicitly authorized external R library', async () => {
+    const port = createPort()
+    const adapter = createElectronRendererContractAdapter(port)
+    await adapter.invoke('runtime.setInstallAuthorized', 'r', 'external-r', true, '/user/R/library')
+    expect(port.invoke).toHaveBeenCalledWith('runtime:set-install-authorized', {
+      language: 'r',
+      envId: 'external-r',
+      authorized: true,
+      library: '/user/R/library'
+    })
   })
 
   it('preserves positional request arguments and result identity', async () => {

@@ -30,6 +30,7 @@ export const literatureReadingDocument = (
         title: version.filename,
         type: 'file',
         source: 'literature',
+        managedFileId: attachment.id,
         path: createLiteratureAttachmentVersionReference(version.id),
         format: 'pdf',
         name: version.filename,
@@ -37,7 +38,11 @@ export const literatureReadingDocument = (
         size: version.sizeBytes,
         versionNumber: version.versionNumber
       },
-      source: { sourceKind: 'literature-attachment-version', sourceVersionId: version.id }
+      source: {
+        sourceKind: 'literature-attachment-version',
+        sourceFileId: attachment.id,
+        sourceVersionId: version.id
+      }
     }
   }
   return undefined

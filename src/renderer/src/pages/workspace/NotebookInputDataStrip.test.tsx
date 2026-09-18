@@ -61,4 +61,49 @@ describe('NotebookInputDataStrip', () => {
       })
     )
   })
+
+  it('does not render inputs that were available to the turn but never accessed', async () => {
+    const { NotebookInputDataStrip } = await import('./NotebookInputDataStrip')
+    const input: NotebookInputFileSummary = {
+      inputFileVersionId: 'upload-version-1',
+      sourceKind: 'upload-version',
+      sourceFileId: 'upload-1',
+      sourceProjectId: 'project-1',
+      sourceSessionId: 'source-session',
+      filename: 'unused.csv',
+      sizeBytes: 42,
+      checksum: 'a'.repeat(64),
+      association: 'turn-attached'
+    }
+
+    await act(async () => {
+      root.render(<NotebookInputDataStrip inputFiles={[input]} />)
+    })
+
+    expect(container.querySelector('[data-testid="notebook-input-data"]')).toBeNull()
+    expect(container.textContent).not.toContain('unused.csv')
+  })
+
+  it('renders a turn attachment whose read was confirmed by file evidence', async () => {
+    const { NotebookInputDataStrip } = await import('./NotebookInputDataStrip')
+    const input: NotebookInputFileSummary = {
+      inputFileVersionId: 'upload-version-1',
+      sourceKind: 'upload-version',
+      sourceFileId: 'upload-1',
+      sourceProjectId: 'project-1',
+      sourceSessionId: 'source-session',
+      filename: 'used.csv',
+      sizeBytes: 42,
+      checksum: 'a'.repeat(64),
+      association: 'turn-attached',
+      accessEvidence: 'file-evidence'
+    }
+
+    await act(async () => {
+      root.render(<NotebookInputDataStrip inputFiles={[input]} />)
+    })
+
+    expect(container.querySelector('[data-testid="notebook-input-data"]')).not.toBeNull()
+    expect(container.textContent).toContain('used.csv')
+  })
 })

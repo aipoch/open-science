@@ -1,6 +1,9 @@
-import { safeStorage } from 'electron'
-
-import { isSecureStorageAvailable } from '../secure-storage'
+import { isSecureStorageAvailable, protectedSafeStorage as safeStorage } from '../secure-storage'
+import { CredentialIdentityError } from '../credential-identity/selection'
+import {
+  assertCredentialAccessAllowed,
+  assertCredentialReadAllowed
+} from '../credential-identity/runtime'
 import { getCredentialStore } from './credential-store-mode'
 
 // Settings refs use OS encryption by default. Explicit Linux headless file mode stores
@@ -20,10 +23,12 @@ const isCredentialStorageAvailable = (): boolean =>
 
 // Encodes a ref using the explicitly selected backend; OS writes still fail closed.
 const encryptKey = (plaintext: string): string => {
+  assertCredentialAccessAllowed()
   if (getCredentialStore() === 'file') {
     return `${FILE_REF_PREFIX}${Buffer.from(plaintext, 'utf8').toString('base64')}`
   }
   if (!isEncryptionAvailable()) {
+    assertCredentialAccessAllowed()
     throw new Error(
       'Secure credential storage is unavailable. Unlock the system keychain and retry.'
     )
@@ -36,6 +41,7 @@ const encryptKey = (plaintext: string): string => {
 
 // Reads legacy plain refs in explicit file mode or with an available OS vault.
 const decryptKey = (keyRef: string): string => {
+  assertCredentialAccessAllowed()
   if (keyRef.startsWith(FILE_REF_PREFIX)) {
     if (getCredentialStore() !== 'file') {
       throw new Error(
@@ -52,7 +58,9 @@ const decryptKey = (keyRef: string): string => {
     return Buffer.from(keyRef.slice(PLAIN_REF_PREFIX.length), 'base64').toString('utf8')
   }
 
+  assertCredentialReadAllowed()
   if (!isEncryptionAvailable()) {
+    assertCredentialAccessAllowed()
     throw new Error(
       'Secure credential storage is unavailable. Unlock the system keychain and retry.'
     )
@@ -73,7 +81,8 @@ const tryDecryptKey = (keyRef: string | undefined): string | undefined => {
 
   try {
     return decryptKey(keyRef)
-  } catch {
+  } catch (error) {
+    if (error instanceof CredentialIdentityError) throw error
     return undefined
   }
 }

@@ -106,6 +106,15 @@ const decodeProbeResult = (value: unknown): ProbeResult | undefined => {
   ) {
     return undefined
   }
+  for (const field of [
+    'sshConnected',
+    'commandExecutable',
+    'scratchWritable',
+    'schedulerAvailable'
+  ] as const) {
+    if (value[field] !== undefined && typeof value[field] !== 'boolean') return undefined
+  }
+  if (value.scratchPath !== undefined && typeof value.scratchPath !== 'string') return undefined
   if (value.os !== undefined && typeof value.os !== 'string') return undefined
   for (const numericField of ['cpus', 'memMib'] as const) {
     if (
@@ -139,6 +148,17 @@ const decodeProbeResult = (value: unknown): ProbeResult | undefined => {
   }
 
   return {
+    ...(typeof value.sshConnected === 'boolean' ? { sshConnected: value.sshConnected } : {}),
+    ...(typeof value.commandExecutable === 'boolean'
+      ? { commandExecutable: value.commandExecutable }
+      : {}),
+    ...(typeof value.scratchWritable === 'boolean'
+      ? { scratchWritable: value.scratchWritable }
+      : {}),
+    ...(typeof value.schedulerAvailable === 'boolean'
+      ? { schedulerAvailable: value.schedulerAvailable }
+      : {}),
+    ...(typeof value.scratchPath === 'string' ? { scratchPath: value.scratchPath } : {}),
     ok: value.ok,
     probedAt: value.probedAt,
     exitCode: value.exitCode,

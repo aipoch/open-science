@@ -13,7 +13,8 @@ const markdownHarness = vi.hoisted(() => ({
 const previewResourceHarness = vi.hoisted(() => ({
   status: 'ready' as 'ready' | 'error',
   enabled: undefined as boolean | undefined,
-  dimensions: undefined as { width: number; height: number } | undefined
+  dimensions: undefined as { width: number; height: number } | undefined,
+  request: undefined as unknown
 }))
 
 vi.mock('@/components/streamdown/AgentMarkdown', () => ({
@@ -51,19 +52,17 @@ vi.mock('./artifact-preview', () => ({
   ArtifactPreview: () => <span data-artifact-preview="" />
 }))
 
-vi.mock('./previews/useManagedPreviewResource', () => ({
-  useManagedPreviewResource: (_request: unknown, enabled = true) => {
+vi.mock('./previews/useCachedPreviewImage', () => ({
+  useCachedPreviewImage: (request: unknown, enabled = true) => {
+    previewResourceHarness.request = request
     previewResourceHarness.enabled = enabled
     return !enabled
       ? { status: 'idle' }
       : previewResourceHarness.status === 'ready'
         ? {
             status: 'ready',
-            resource: {
-              id: 'resource-1',
-              url: 'preview-resource://sin-curve',
-              ...(previewResourceHarness.dimensions ?? {})
-            }
+            url: 'preview-resource://sin-curve',
+            ...(previewResourceHarness.dimensions ?? {})
           }
         : { status: 'error', error: new Error('Preview unavailable') }
   }
@@ -123,6 +122,7 @@ describe('SessionMessageMarkdown', () => {
     previewResourceHarness.status = 'ready'
     previewResourceHarness.enabled = undefined
     previewResourceHarness.dimensions = undefined
+    previewResourceHarness.request = undefined
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)
@@ -163,6 +163,10 @@ describe('SessionMessageMarkdown', () => {
     expect(artifactImage?.querySelector('img')?.getAttribute('src')).toBe(
       'preview-resource://sin-curve'
     )
+    expect(previewResourceHarness.request).toMatchObject({
+      managedFileId: 'artifact-1',
+      selectedVersionId: 'version-1'
+    })
 
     await act(async () => {
       artifactLink?.click()
@@ -238,6 +242,7 @@ describe('SessionMessageMarkdown', () => {
 
   it('shows an error state when the artifact preview resource cannot be acquired', async () => {
     previewResourceHarness.status = 'error'
+    const onPreview = vi.fn()
 
     await act(async () => {
       root.render(
@@ -245,7 +250,7 @@ describe('SessionMessageMarkdown', () => {
           content="![Sine curve](sin_curve.png)"
           artifacts={[artifact]}
           onPreviewArtifact={vi.fn()}
-          onPreviewArtifactModal={vi.fn()}
+          onPreviewArtifactModal={onPreview}
         />
       )
     })
@@ -254,6 +259,12 @@ describe('SessionMessageMarkdown', () => {
     expect(
       container.querySelector('[data-session-artifact-image-status]')?.getAttribute('data-state')
     ).toBe('error')
+    const fallback = container.querySelector<HTMLButtonElement>(
+      'button[data-session-artifact-image-status]'
+    )
+    expect(fallback?.textContent).toContain("Image couldn't be loaded for preview")
+    await act(async () => fallback?.click())
+    expect(onPreview).toHaveBeenCalledWith(artifact)
   })
 
   it('degrades to the alt text for artifacts without a logical identity', async () => {

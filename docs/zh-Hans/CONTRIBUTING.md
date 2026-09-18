@@ -1,4 +1,4 @@
-# 为 Open Science 贡献
+# 为 Open-Science 贡献
 
 感谢你有意参与贡献。本文档说明如何设置项目、我们遵循的工作流，以及变更在合并前必须通过的检查。
 
@@ -156,7 +156,7 @@ ci/ai-pr-review
 
 仅目录相近不能作为影响证据。如果文件混合多项职责，应将其视为影响接口，或使用完整回退。
 
-`test:module` 仅支持 `scripts/ci/module-impact.json` 中声明的模块 ID。它运行该模块精心选择的所有者、契约和代表性使用方测试；对于接口变更，它不是完整的下游验证。接口或其使用方可能发生变化时，使用 `test:affected` 或准确 head 的 PR Gate 计划。
+`test:module` 仅支持由 `scripts/ci/module-impact/` 下文件名定义的模块 ID。它运行该模块精心选择的所有者、契约和代表性使用方测试；对于接口变更，它不是完整的下游验证。接口或其使用方可能发生变化时，使用 `test:affected` 或准确 head 的 PR Gate 计划。
 
 ### 完整回退
 

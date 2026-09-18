@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { ipcMain, type IpcMainEvent } from 'electron'
 
 import type { UnreadTaskViewState } from '../../shared/notifications'
 
@@ -49,12 +49,15 @@ const normalizeViewState = (input: unknown): UnreadTaskViewState | undefined => 
 
 // Registers one bidirectional legacy-named channel: ordinary renderer projections update message
 // read state, while numbered challenges provide a fresh, fail-closed visibility acknowledgement.
-export const registerUnreadTaskIpc = (deps: UnreadTaskIpcDeps): UnreadTaskVisibilityProbe => {
+export const registerUnreadTaskIpc = (
+  deps: UnreadTaskIpcDeps
+): UnreadTaskVisibilityProbe & { dispose(): void } => {
   const pendingChallenges = new Map<
     number,
     { sessionId: string; resolve: (visible: boolean) => void; timer: ReturnType<typeof setTimeout> }
   >()
   let nextChallengeId = 0
+  let disposed = false
 
   // Every challenge settles once and releases its timeout regardless of response order.
   const settleChallenge = (challengeId: number, visible: boolean): void => {
@@ -66,7 +69,8 @@ export const registerUnreadTaskIpc = (deps: UnreadTaskIpcDeps): UnreadTaskVisibi
     pending.resolve(visible)
   }
 
-  ipcMain.on('notifications:sync-unread-view', (event, input: unknown) => {
+  const onViewState = (event: IpcMainEvent, input: unknown): void => {
+    if (disposed) return
     // Ignore preview/devtools/forged senders: only the current main window owns navigation state.
     if (event.sender !== deps.getMainWindow()?.webContents) return
 
@@ -90,12 +94,20 @@ export const registerUnreadTaskIpc = (deps: UnreadTaskIpcDeps): UnreadTaskVisibi
         deps.onError?.(error)
       }
     )
-  })
+  }
+  ipcMain.on('notifications:sync-unread-view', onViewState)
 
   return {
+    dispose: () => {
+      if (disposed) return
+      disposed = true
+      ipcMain.removeListener('notifications:sync-unread-view', onViewState)
+      for (const challengeId of pendingChallenges.keys()) settleChallenge(challengeId, false)
+    },
     // Ask the renderer for current visibility rather than trusting an earlier projection that may
     // predate a modal, navigation change, or focus transition. Timeout and send failures mean false.
     confirmSessionVisible: (sessionId) => {
+      if (disposed) return Promise.resolve(false)
       const webContents = deps.getMainWindow()?.webContents as
         | {
             isDestroyed?: () => boolean

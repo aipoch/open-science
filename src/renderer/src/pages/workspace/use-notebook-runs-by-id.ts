@@ -43,6 +43,7 @@ const useNotebookRunsById = (
   const [snapshot, setSnapshot] = useState<NotebookRunSnapshot>({
     runsById: EMPTY_RUNS_BY_ID
   })
+  const [historicalRevision, setHistoricalRevision] = useState(0)
   const sessionId = reference?.sessionId
   const projectId = reference ? resolveProjectId(reference) : undefined
   const workspaceCwd = reference?.workspaceCwd
@@ -85,6 +86,7 @@ const useNotebookRunsById = (
     let active = true
     let loading = false
     let reloadQueued = false
+    let refreshHistorical = false
     const load = async (): Promise<void> => {
       if (loading) {
         reloadQueued = true
@@ -108,6 +110,10 @@ const useNotebookRunsById = (
           cache.recentRunsById = nextRecentRunsById
           trimHistoricalRuns(cache, cache.protectedRunIds)
           publish(cache)
+          if (refreshHistorical) {
+            refreshHistorical = false
+            setHistoricalRevision((revision) => revision + 1)
+          }
         } catch (error) {
           if (!active) return
           console.warn('Notebook run preview hydration failed', error)
@@ -118,7 +124,10 @@ const useNotebookRunsById = (
 
     void load()
     const stopChanged = window.api.notebook.onChanged((event) => {
-      if (event.sessionId === sessionId) void load()
+      if (event.sessionId === sessionId) {
+        refreshHistorical = true
+        void load()
+      }
     })
 
     return () => {
@@ -137,9 +146,11 @@ const useNotebookRunsById = (
     cache.protectedRunIds = protectedRunIds
     trimHistoricalRuns(cache, protectedRunIds)
     publish(cache)
-    const missingRunIds = requestedRunIds.filter(
-      (runId) => !cache.recentRunsById.has(runId) && !cache.historicalRunsById.has(runId)
-    )
+    const missingRunIds = requestedRunIds.filter((runId) => {
+      if (cache.recentRunsById.has(runId)) return false
+      const historical = cache.historicalRunsById.get(runId)
+      return !historical || historical.status === 'queued' || historical.status === 'running'
+    })
     if (missingRunIds.length === 0) return undefined
 
     let active = true
@@ -177,7 +188,15 @@ const useNotebookRunsById = (
     return () => {
       active = false
     }
-  }, [projectId, publish, referencedRunIdsKey, scopeKey, sessionId, workspaceCwd])
+  }, [
+    historicalRevision,
+    projectId,
+    publish,
+    referencedRunIdsKey,
+    scopeKey,
+    sessionId,
+    workspaceCwd
+  ])
 
   return snapshot.scopeKey === scopeKey ? snapshot.runsById : EMPTY_RUNS_BY_ID
 }

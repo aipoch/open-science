@@ -1,112 +1,69 @@
-import { existsSync } from 'node:fs'
-import { basename, isAbsolute, join, normalize, resolve, sep } from 'node:path'
+import { basename, isAbsolute, join, resolve, sep } from 'node:path'
 
 import { app } from 'electron'
+import { directoryHasFiles } from './storage/location-evidence'
+import { MANAGED_WORKSPACE_OWNERSHIP_DIR } from './storage/managed-workspace-ownership-dir'
 
-import {
-  DEV_SESSION_DIR_NAME,
-  PROD_SESSION_DIR_NAME,
-  getSessionPersistenceDir
-} from './session-persistence/paths'
-import { MIGRATABLE_DATA_DIRS } from './storage/data-directories'
+import { resolveBootstrapConfigRoot, resolveConfigRootOverride } from './storage/config-root'
+import { DataLocationSelectionError, hasDataRootContent } from './storage/data-location-selection'
+export { DataLocationSelectionError } from './storage/data-location-selection'
 
-const resolveE2eStorageRoot = (): string | undefined => {
-  const root = process.env.OPEN_SCIENCE_E2E_STORAGE_ROOT?.trim()
-  if (!root) return undefined
-  if (!isAbsolute(root)) {
-    throw new Error('OPEN_SCIENCE_E2E_STORAGE_ROOT must be an absolute path.')
-  }
-  return normalize(root)
-}
-
-// Fixed, dev-aware config root (DB, sessions, claude, skills, settings live here). Never relocated.
-// A development-only absolute override supports truly isolated onboarding previews without changing
-// HOME — changing HOME breaks the macOS default-keychain lookup and can trigger a dangerous "restore
-// default keychain" dialog. Packaged certification uses its own explicit, disposable E2E root.
-const resolveConfigRoot = (): string => {
-  const e2eRoot = resolveE2eStorageRoot()
-  if (e2eRoot) return e2eRoot
-
-  const previewRoot = process.env.OPEN_SCIENCE_STORAGE_ROOT?.trim()
-
-  if (!app.isPackaged && previewRoot) {
-    if (!isAbsolute(previewRoot)) {
-      throw new Error('OPEN_SCIENCE_STORAGE_ROOT must be an absolute path.')
-    }
-
-    return normalize(previewRoot)
-  }
-
-  return getSessionPersistenceDir(
-    app.getPath('home'),
-    app.isPackaged ? PROD_SESSION_DIR_NAME : DEV_SESSION_DIR_NAME
-  )
-}
+// Fixed config root shared with the pre-Electron bootstrap. Never relocated with research data.
+const resolveConfigRoot = (): string =>
+  resolveBootstrapConfigRoot(() => app.getPath('home'), app.isPackaged)
 
 // Legacy alias retained for source compatibility. New production call sites use resolveConfigRoot.
 const resolveStorageRoot = resolveConfigRoot
 
 // Visible, no-space data folder name. NO space: runtime/ holds conda/venv whose tools break on
 // spaced paths. dev gets a suffix so it never shares data with a packaged build.
-const dataFolderName = (): string => (app.isPackaged ? 'OpenScience' : 'OpenScience-DEV')
+const dataFolderName = (): string => (app.isPackaged ? 'Open-Science' : 'Open-Science-DEV')
+const legacyDataFolderName = (): string => (app.isPackaged ? 'OpenScience' : 'OpenScience-DEV')
 
 // The data root the app derives from a user-picked (or default) parent directory: always
-// `<parent>/<dataFolderName()>`. The app never lets the user point directly at a data root - only
-// at its parent - so this join is the single source of truth for the final path.
+// `<parent>/<dataFolderName()>` for a new location. Verified existing roots are adopted directly
+// by dataRootForPicked without appending a second product folder.
 const dataRootForParent = (parent: string): string => join(parent, dataFolderName())
 
-const defaultDataParent = (): string => resolveE2eStorageRoot() ?? app.getPath('home')
+const defaultDataParent = (): string =>
+  resolveConfigRootOverride(app.isPackaged) ?? app.getPath('home')
 
-// Converts a user-PICKED directory into the data root. Normally appends the data folder name
-// (`<picked>/OpenScience`), but when the user navigated INTO and selected the OpenScience folder
-// itself (its basename already equals the data folder name), it is used as-is. Without this,
-// picking the existing/default data folder would derive `<picked>/OpenScience/OpenScience` — a
-// doubled, non-existent path that reports "data folder not found" on the next launch. The name
-// match is case-insensitive on Windows (its filesystem is), so `...\openscience` is still
-// recognized as the data folder rather than doubled.
+// Explicitly picked old and custom roots are validated by the migration/adoption owner. Preserve
+// their exact location; selecting a root must not append a second brand directory.
 const dataRootForPicked = (picked: string): string => {
   const resolved = resolve(picked)
   const name = basename(resolved)
   const folder = dataFolderName()
-  const isDataFolder =
-    process.platform === 'win32' ? name.toLowerCase() === folder.toLowerCase() : name === folder
-  return isDataFolder ? resolved : join(resolved, folder)
+  const isDataFolder = [folder, legacyDataFolderName()].some((candidate) =>
+    process.platform === 'win32'
+      ? name.toLowerCase() === candidate.toLowerCase()
+      : name === candidate
+  )
+  if (isDataFolder) return resolved
+  const candidates = [join(resolved, folder), join(resolved, legacyDataFolderName())].filter(
+    hasDataRootContent
+  )
+  // A generic models/uploads/runtime directory is common outside this application. Only saved
+  // choices or application ownership receipts can make an unbranded selection a root itself.
+  // The adoption owner validates receipt contents before allowing a pointer switch.
+  const direct =
+    (configuredDataRoot !== undefined && samePath(resolved, resolve(configuredDataRoot))) ||
+    samePath(resolved, resolveConfigRoot()) ||
+    directoryHasFiles(join(resolved, 'workspaces', MANAGED_WORKSPACE_OWNERSHIP_DIR))
+  if (candidates.length > 1 || (direct && candidates.length))
+    throw new DataLocationSelectionError(
+      `Multiple data locations exist. Select the exact data folder:\n${[...(direct ? [resolved] : []), ...candidates].join('\n')}`
+    )
+  if (!direct && !candidates.length && hasDataRootContent(resolved))
+    throw new DataLocationSelectionError(
+      `Cannot verify existing data locations. Select or recover the original folder before restarting:\n${resolved}`
+    )
+  return direct ? resolved : (candidates[0] ?? join(resolved, folder))
 }
 
-// Migratable directories also mark an existing (pre-§20) config root with user data. runtime/ is
-// excluded because it is rebuildable and remains behind after relocation; counting it would keep
-// the legacy fallback stuck on the config root after the user's real data had moved away.
-// Default data root for a fresh install is `~/OpenScience` (dev `~/OpenScience-DEV`). A legacy
-// install - config root already holds data and never got an OpenScience subdir - keeps its data
-// where it is instead of silently splitting an existing user's data across two locations. But this
-// legacy fallback applies ONLY while settings.dataRoot is unset. A migration becomes committed when
-// settings explicitly points at `<home>/OpenScience`; directory existence alone is not evidence,
-// because a failed copy cleanup may leave a markerless partial tree behind.
-const computeDefaultDataRoot = (): string => {
-  const configRoot = resolveConfigRoot()
-  const homeDefault = dataRootForParent(defaultDataParent())
-  // The explicit setting is the commit record. A marker may remain after that commit while old-root
-  // cleanup is retried, so it must not make the live homeDefault look like uncommitted staging. Without
-  // an explicit setting, neither a marker-bearing nor a markerless partial homeDefault is enough to
-  // strand a legacy user's live data in the config root.
-  const homeDefaultIsCommitted =
-    configuredDataRoot !== undefined &&
-    samePath(configuredDataRoot, homeDefault) &&
-    existsSync(homeDefault)
-  const isLegacyInstall =
-    MIGRATABLE_DATA_DIRS.some((dir) => existsSync(join(configRoot, dir))) &&
-    !existsSync(join(configRoot, dataFolderName())) &&
-    !homeDefaultIsCommitted
+// The new default is only an onboarding choice; never infer a saved root from directory content.
+const computeDefaultDataRoot = (): string => dataRootForParent(defaultDataParent())
 
-  return isLegacyInstall ? configRoot : homeDefault
-}
-
-// The parent directory whose derived data root is the default location. Feeding this back through
-// the parent-based relocation flow (inspect/migrate) reproduces the default `<home>/OpenScience`
-// exactly, which is how Settings offers a one-click "return to default" from a custom root. The
-// only default that is NOT `<parent>/dataFolderName()` is an untouched legacy install (default =
-// config root), and that case never reaches the reset UI — it is already the default, so no reset
-// is offered.
 // Path equality that respects the platform filesystem: case-insensitive on Windows (NTFS paths are
 // case-insensitive), exact elsewhere. Used for the isDefault check and the same/inside-folder
 // guards so a differently-cased path to the SAME folder on Windows isn't mistaken for a different
@@ -130,9 +87,21 @@ const isPathInsideOrEqual = (parent: string, child: string): boolean => {
 let cachedDataRoot: string | undefined
 let configuredDataRoot: string | undefined
 
-const initDataRoot = (settingsDataRoot: string | undefined): void => {
-  configuredDataRoot = settingsDataRoot && settingsDataRoot.trim() ? settingsDataRoot : undefined
-  cachedDataRoot = configuredDataRoot ?? computeDefaultDataRoot()
+const initDataRoot = (settingsDataRoot: unknown, onboardingCompletedAt?: number): void => {
+  const unset =
+    settingsDataRoot == null ||
+    (typeof settingsDataRoot === 'string' && settingsDataRoot.trim() === '')
+  if (!unset && (typeof settingsDataRoot !== 'string' || !isAbsolute(settingsDataRoot)))
+    throw new DataLocationSelectionError(
+      'The saved data location (dataRoot) is invalid. Restore its absolute path before restarting.'
+    )
+  configuredDataRoot = unset ? undefined : (settingsDataRoot as string)
+  // 历史数据路径，属于品牌改名豁免项，禁止随展示品牌修改。
+  const legacyDefault = (): string =>
+    join(app.getPath('home'), app.isPackaged ? 'OpenScience' : 'OpenScience-dev')
+  cachedDataRoot =
+    configuredDataRoot ??
+    (onboardingCompletedAt !== undefined ? legacyDefault() : computeDefaultDataRoot())
 }
 
 // Before initDataRoot has run (early callers, tests), fall back to computeDefaultDataRoot()
@@ -150,5 +119,6 @@ export {
   computeDefaultDataRoot,
   defaultDataParent,
   samePath,
-  isPathInsideOrEqual
+  isPathInsideOrEqual,
+  hasDataRootContent
 }

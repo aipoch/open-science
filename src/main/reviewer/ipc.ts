@@ -15,7 +15,7 @@ import type {
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { REVIEWER_IPC } from '../../shared/reviewer'
 import { createLogger } from '../logger'
-import { runReview } from './orchestrator'
+import type { runReview as RunReview } from './orchestrator'
 import { flagStaleReviews } from './stale-reviews'
 import { ReviewRepository } from './repository'
 import type { ReviewerAcpRuntime } from './acp-runtime'
@@ -39,6 +39,8 @@ import type { ReviewerPagedContentResolver } from './host-sdk'
 import type { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
 
 const log = createLogger('reviewer:ipc')
+// Share first-use module loading across concurrent review commands; allow retry on load failure.
+let reviewerExecutor: Promise<typeof RunReview> | undefined
 
 // Sends a review update event to every open renderer window.
 const broadcastReviewUpdate = (event: ReviewUpdateEvent): void => {
@@ -125,6 +127,7 @@ type ReviewerIpcOptions = {
     >
   }>
   projectRuntime?: Pick<ReviewerProjectRuntimeOwner, 'admit'>
+  admitSessionWork?: (projectId: string, sessionId: string) => () => void
   withProjectAvailable?: <Result>(
     projectId: string,
     operation: () => Promise<Result>
@@ -409,6 +412,11 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
       return finishBeforeBackground({ started: false, reason: 'not-found' })
     }
 
+    if (session.packageOrigin) {
+      log.info('review refused: imported research history is read-only', { sessionId })
+      return finishBeforeBackground({ started: false, reason: 'run-failed' })
+    }
+
     let agentTarget
     try {
       agentTarget = await options.resolveSessionAgentTarget?.(session)
@@ -432,6 +440,19 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
     }
 
     log.info('review triggered', { sessionId, turnMessageId })
+
+    let runReview: typeof RunReview
+    try {
+      runReview = await (reviewerExecutor ??= import('./orchestrator')
+        .then((module) => module.runReview)
+        .catch((error) => {
+          reviewerExecutor = undefined
+          throw error
+        }))
+    } catch (error) {
+      log.error('review start failed: could not load executor', { error: toErrorMessage(error) })
+      return finishBeforeBackground({ started: false, reason: 'run-failed' })
+    }
 
     let modelAdmission: Awaited<
       ReturnType<NonNullable<ReviewerIpcOptions['modelRuntime']>['admit']>
@@ -625,11 +646,26 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
   const triggerReview = (request: ReviewRunRequest): Promise<ReviewRunResult> => {
     const admitReview = (): Promise<ReviewRunResult> => {
       let projectAdmission: ReviewerProjectAdmission
+      const releases: (() => void)[] = []
       try {
+        for (const sessionId of new Set(
+          [request.sessionId, request.mainSessionId].filter((id): id is string => !!id)
+        )) {
+          const release = options.admitSessionWork?.(request.projectId, sessionId)
+          if (release) releases.push(release)
+        }
         // Admission is acquired synchronously before session/repository/model work begins. Once
         // Project deletion closes it, no new Reviewer operation can slip into the quiescence snapshot.
-        projectAdmission = projectRuntime.admit(request.projectId)
+        const admitted = projectRuntime.admit(request.projectId)
+        projectAdmission = {
+          ...admitted,
+          release: () => {
+            admitted.release()
+            releases.forEach((release) => release())
+          }
+        }
       } catch (error) {
+        releases.forEach((release) => release())
         return Promise.reject(error)
       }
       return triggerAdmittedReview(request, projectAdmission).catch((error: unknown) => {

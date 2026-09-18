@@ -95,6 +95,10 @@ export type ChatSession = Omit<
   activePlanProjection?: ActivePlanProjection
   planHistoryProjections?: ActivePlanProjection[]
   isPending?: boolean
+  // Transient presentation hint returned from Main's durable WSL setup binding. It carries no
+  // authority and is refreshed from startup summaries and create/resume responses rather than
+  // persisted by renderer.
+  wslSetup?: true
   // Transient: the first send has captured Delegation, but Main has not acknowledged the new
   // Session policy yet. Binding an Agent Session does not make this policy authoritative.
   delegationPolicyAuthorityPending?: true
@@ -317,6 +321,7 @@ export const toPersistedSession = (
     activities,
     activityGroups,
     isPending,
+    wslSetup,
     delegationPolicyAuthorityPending,
     unsavedTitle,
     interrupted,
@@ -346,6 +351,7 @@ export const toPersistedSession = (
   } = session
 
   void isPending
+  void wslSetup
   void delegationPolicyAuthorityPending
   void unsavedTitle
   void interrupted
@@ -453,6 +459,7 @@ const hydrateSessionSummary = (summary: SessionSummary): ChatSession => ({
   contentLoaded: false,
   activeMessageCount: summary.activeMessageCount,
   artifactCount: summary.artifactCount,
+  ...(summary.wslSetup ? { wslSetup: true as const } : {}),
   ...(summary.presentedActivityAt !== undefined
     ? { presentedActivityAt: summary.presentedActivityAt }
     : {}),
@@ -532,6 +539,7 @@ const withTransientSessionState = (
       sortIndex: sourceMessages.get(message.id)?.sortIndex
     })),
     isPending: source.isPending,
+    wslSetup: source.wslSetup,
     interrupted: source.interrupted ?? hydrated.interrupted,
     fixLoopActive: source.fixLoopActive,
     compacting: source.compacting,
@@ -673,6 +681,7 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
         const authority = selectedById.get(summary.id)
         if (!authority) return hydrateSessionSummary(summary)
         const hydrated = hydrateSession(authority)
+        if (summary.wslSetup) hydrated.wslSetup = true
         markExternallyHydratedSession(hydrated, authority)
         return hydrated
       })
@@ -690,7 +699,7 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
     set((state) => {
       const existing = state.sessions.find((candidate) => candidate.id === session.id)
       if (existing?.contentLoaded === false) {
-        const loaded = hydrateSession(session)
+        const loaded = withTransientSessionState(session, existing)
         const archive = projectSessionMetadataAuthority(existing, session)
         const incomingIsNewer = sessionRevision(session) > sessionRevision(existing)
         const hydrated: ChatSession = {
@@ -702,6 +711,7 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
           revision: Math.max(existing.revision ?? 0, loaded.revision ?? 0),
           filesRevision: Math.max(existing.filesRevision ?? 0, loaded.filesRevision ?? 0),
           updatedAt: Math.max(existing.updatedAt, loaded.updatedAt),
+          ...(existing.wslSetup ? { wslSetup: true } : {}),
           ...(existing.unsavedTitle ? { unsavedTitle: true } : {})
         }
         markExternallyHydratedSession(hydrated, session)
@@ -810,6 +820,19 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
         existing?.unsavedTitle === true && existing.title !== session.title
           ? { title: existing.title, unsavedTitle: true as const }
           : {}
+      // A newer idle snapshot may have been captured before this client's prompt was appended.
+      // Its missing prompt cannot acknowledge or cancel that local run. Check the complete graph,
+      // since a terminal snapshot can acknowledge the prompt while displaying a different Branch.
+      const unacknowledgedRun =
+        existing?.status === 'running' &&
+        existing.activeRun &&
+        session.status === 'idle' &&
+        !session.archivedAt &&
+        !(session.conversationGraph?.messages ?? session.messages).some(
+          (message) => message.id === existing.activeRun?.promptMessageId
+        )
+          ? { activeRun: existing.activeRun, status: existing.status }
+          : {}
       const hydratedWithTransientState = {
         ...hydratedSession,
         archivedAt: existing
@@ -817,7 +840,8 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
           : session.archivedAt,
         ...retainedPlanHistory,
         ...currentPlanProjection,
-        ...unsavedLocalTitle
+        ...unsavedLocalTitle,
+        ...unacknowledgedRun
       }
       markExternallyHydratedSession(hydratedWithTransientState, session)
       const nextSessions = [
@@ -1006,10 +1030,41 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
         } as Partial<State>
       }
 
+      const preserveLocalBranch =
+        mode === 'merge-upload-identities' &&
+        current.conversationGraph &&
+        session.conversationGraph &&
+        current.conversationGraph.frames.find(
+          (frame) => frame.id === current.conversationGraph?.rootFrameId
+        )?.activeBranchId !==
+          session.conversationGraph.frames.find(
+            (frame) => frame.id === session.conversationGraph?.rootFrameId
+          )?.activeBranchId
       let projected: ChatSession
       if (current === source && mode === 'replace-persisted-if-current') {
         projected = withTransientSessionState(session, current)
-      } else if (current === source) {
+      } else if (
+        current !== source &&
+        externallyHydratedSessionAuthorities.has(current) &&
+        sessionRevision(session) >= sessionRevision(current)
+      ) {
+        // A Task snapshot can arrive while a renderer save is queued. Its newer
+        // receipt must reconcile the conversation too, not just its revision.
+        const merged = withTransientSessionState(
+          mergeNewerPersistedSessionByIdentity(current, session),
+          current
+        )
+        projected = projectDurablePlanAuthority(
+          {
+            ...current,
+            messages: merged.messages,
+            activities: merged.activities,
+            activityGroups: merged.activityGroups,
+            conversationGraph: merged.conversationGraph
+          },
+          session
+        )
+      } else if (current === source && !preserveLocalBranch) {
         const flat = mergeDurableUploadProjection(
           source.messages,
           source.messages,

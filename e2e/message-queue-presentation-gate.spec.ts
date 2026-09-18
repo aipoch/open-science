@@ -1,4 +1,6 @@
 import { expect } from '@playwright/test'
+import { writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 
 import { test } from './fixtures/electron-app'
 
@@ -13,7 +15,9 @@ const FOLLOW_UP = 'Follow-up after the reveal.'
 // The fake agent replies with this fixed text for any prompt without a journey route.
 const AGENT_REPLY = 'Deterministic reply: Summarize the deterministic fixture.'
 
-test('holds the queued message until the previous reply finishes revealing', async ({ app }) => {
+test('holds the queued message until the previous reply finishes revealing', async ({
+  app
+}, testInfo) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
 
@@ -34,7 +38,8 @@ test('holds the queued message until the previous reply finishes revealing', asy
   await sendButton.click()
   await expect(conversation.getByText(AGENT_REPLY, { exact: true })).toHaveCount(1)
 
-  await textbox.fill(GATE_PROMPT)
+  const releaseFile = join(await app.createTestDirectory('queue-stream'), 'release')
+  await textbox.fill(`${GATE_PROMPT} Release file: ${JSON.stringify(releaseFile)}`)
   await expect(sendButton).toBeEnabled()
   await sendButton.click()
 
@@ -46,6 +51,8 @@ test('holds the queued message until the previous reply finishes revealing', asy
   const queueTrigger = page.getByTestId('composer-queue-trigger')
   await expect(queueTrigger).toBeVisible()
 
+  await writeFile(releaseFile, '')
+
   // The fake agent's stream ends almost immediately (the session goes idle), but the giant
   // final chunk keeps the paced reveal busy for seconds afterwards. Well past store-complete
   // the follow-up must still be queued — an ungated queue dispatches the moment the session
@@ -53,8 +60,62 @@ test('holds the queued message until the previous reply finishes revealing', asy
   await page.waitForTimeout(2000)
   await expect(queueTrigger).toBeVisible()
   await expect(conversation.getByText(FOLLOW_UP)).toHaveCount(0)
+  await page.screenshot({ path: testInfo.outputPath('queued-during-reveal.png') })
 
   // Once the reveal settles, the queue drains and the follow-up turn completes.
   await expect(conversation.getByText(FOLLOW_UP)).toBeVisible({ timeout: 30000 })
   await expect(conversation.getByText(AGENT_REPLY, { exact: true }).last()).toBeVisible()
+})
+
+test('Send now returns to a usable queue when the provider cannot inject into the current turn', async ({
+  app
+}) => {
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
+  await page.getByRole('button', { name: 'New project' }).click()
+  const dialog = page.getByRole('dialog', { name: 'New project' })
+  await dialog.getByLabel('Name').fill('Send now lifecycle project')
+  await dialog.getByRole('button', { name: 'Create project' }).click()
+  const textbox = page.getByRole('textbox', { name: 'Ask anything' })
+  const send = page.getByRole('button', { name: 'Send message' })
+  const conversation = page.getByRole('region', { name: 'Conversation' })
+  await textbox.fill(WARMUP_PROMPT)
+  await send.click()
+  await expect(conversation.getByText(AGENT_REPLY, { exact: true })).toHaveCount(1)
+
+  const releaseFile = join(await app.createTestDirectory('send-now'), 'release')
+  await textbox.fill(`${GATE_PROMPT} Release file: ${JSON.stringify(releaseFile)}`)
+  await expect(send).toBeEnabled()
+  await send.click()
+  const queueSubmit = page.getByTestId('composer-queue-submit')
+  await expect(queueSubmit).toBeVisible()
+  await textbox.fill(FOLLOW_UP)
+  await queueSubmit.click()
+  await page.getByTestId('composer-queue-trigger').click()
+  const sendNow = page.getByRole('button', { name: 'Send now', exact: true })
+  await expect(sendNow).toBeVisible()
+  // The deterministic provider deliberately has no mid-turn injection capability.
+  // Each click must settle without interrupting the current turn or losing the queued text.
+  await sendNow.click()
+  await expect(
+    page
+      .getByRole('region', { name: 'Message queue' })
+      .getByText('Queued message will send after the current run finishes.', { exact: true })
+  ).toBeVisible()
+  await expect(sendNow).toBeEnabled()
+  await sendNow.click()
+  await expect(sendNow).toBeEnabled()
+  await expect(conversation.getByText(FOLLOW_UP, { exact: true })).toHaveCount(0)
+
+  await writeFile(releaseFile, '')
+  await expect(conversation.getByText(FOLLOW_UP, { exact: true })).toHaveCount(1, {
+    timeout: 30000
+  })
+  await expect(page.getByTestId('composer-queue-trigger')).toHaveCount(0)
+  await textbox.fill('Next message after Send now')
+  await expect(send).toBeEnabled()
+  await send.click()
+  await expect(conversation.getByText('Next message after Send now', { exact: true })).toHaveCount(
+    1
+  )
 })

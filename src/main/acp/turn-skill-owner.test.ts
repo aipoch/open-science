@@ -24,6 +24,57 @@ const reloadTestScope = {
 }
 
 describe('AcpTurnSkillOwner', () => {
+  it.each(['completed', 'failed', 'cancelled', 'reload-restored'] as const)(
+    'clears bound-only force loading on %s without turning bindings into explicit inputs',
+    async (outcome) => {
+      const needForceLoad = vi.fn(async (ids: string[]) => ids.filter((id) => id === 'disabled'))
+      const descriptorsForIds = vi.fn(async () => [])
+      const requestSkillsReload = vi.fn()
+      const owner = new AcpTurnSkillOwner({
+        resolveSpecialistSkills: async () => ({
+          kind: 'specialist',
+          skillIds: ['enabled', 'disabled'],
+          frameworkNames: ['enabled', 'disabled'],
+          missingSkillIds: []
+        }),
+        skills: { needForceLoad, namesForIds: async (ids) => ids, descriptorsForIds },
+        requestSkillsReload
+      })
+      const handle = await owner.authorize({ specialistId: 'specialist' })
+      expect(needForceLoad).toHaveBeenCalledWith(['enabled', 'disabled'])
+      expect(handle.reloadDecision).toEqual({ kind: 'reload' })
+      expect(owner.backendPreparation()).toEqual({ forcedSkillIds: ['disabled'] })
+      const prepared = await handle.prepareProvider({
+        frameworkId: 'codex',
+        selectionText: 'continue',
+        promptText: 'continue'
+      })
+      expect(prepared.codexSkillInputs).toEqual([])
+      expect(descriptorsForIds).not.toHaveBeenCalled()
+      handle.close(outcome)
+      handle.close(outcome)
+      expect(owner.backendPreparation()).toEqual({ forcedSkillIds: [] })
+      expect(requestSkillsReload).toHaveBeenCalledOnce()
+    }
+  )
+
+  it('discards unused forced authorization without scheduling a provider reload', async () => {
+    const requestSkillsReload = vi.fn()
+    const owner = new AcpTurnSkillOwner({
+      resolveSpecialistSkills: async () => reloadTestScope,
+      skills: { needForceLoad: async () => ['disabled'], namesForIds: async (ids) => ids },
+      requestSkillsReload
+    })
+    const handle = await owner.authorize({ specialistId: 'specialist' })
+    expect(owner.backendPreparation().forcedSkillIds).toEqual(['disabled'])
+
+    handle.close('failed', { reload: false })
+    handle.close('reload-restored')
+
+    expect(owner.backendPreparation().forcedSkillIds).toEqual([])
+    expect(requestSkillsReload).not.toHaveBeenCalled()
+  })
+
   it('keeps ordinary Main turns synchronous when no Skill work can yield', () => {
     const owner = new AcpTurnSkillOwner({ requestSkillsReload: vi.fn() })
 
@@ -245,7 +296,7 @@ describe('AcpTurnSkillOwner', () => {
       const owner = new AcpTurnSkillOwner({
         resolveSpecialistSkills: async () => reloadTestScope,
         skills: {
-          needForceLoad: async (ids) => [...ids],
+          needForceLoad: async (ids) => ids.filter((id) => id === 'disabled'),
           namesForIds: async (ids) => [...ids]
         },
         requestSkillsReload
@@ -269,7 +320,7 @@ describe('AcpTurnSkillOwner', () => {
     const owner = new AcpTurnSkillOwner({
       resolveSpecialistSkills: async () => reloadTestScope,
       skills: {
-        needForceLoad: async (ids) => [...ids],
+        needForceLoad: async (ids) => ids.filter((id) => id === 'disabled'),
         namesForIds: async (ids) => [...ids]
       },
       requestSkillsReload: vi.fn()
@@ -656,7 +707,7 @@ describe('AcpTurnSkillOwner', () => {
     expect(prepared.codexSkillInputs).toEqual([])
     expect(prepared.skillActivityInputs).toEqual([{ name: 'mcp-pubmed', path: pubmedPath }])
     expect(prepared.skillScopeGuidance).toContain('mcp-pubmed')
-    expect(prepared.skillScopeGuidance).toContain('already loaded by Open Science')
+    expect(prepared.skillScopeGuidance).toContain('already loaded by Open-Science')
     expect(prepared.skillScopeGuidance).toContain('PUBMED_ROUTE_SENTINEL')
     expect(prepared.skillScopeGuidance).toContain(
       'PACKAGE_DIR=${CODEBUDDY_CONFIG_DIR}/skill-runtime/.claude/skills/mcp-pubmed'

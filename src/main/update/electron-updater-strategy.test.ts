@@ -1,9 +1,10 @@
+import { UPDATE_INSTALLATION_REQUIRED } from '../../shared/update'
 import { EventEmitter } from 'node:events'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { Logger } from '../logger'
-import { ElectronUpdaterStrategy } from './electron-updater-strategy'
+import { ElectronUpdaterStrategy, type ElectronUpdaterDeps } from './electron-updater-strategy'
 import { createActiveResearchSafeInstallGate, createDurableInstallGate } from './strategy'
 import {
   clearApplicationShutdownTrigger,
@@ -16,6 +17,8 @@ afterEach(() => clearApplicationShutdownTrigger())
 // so importing the strategy doesn't pull a real Electron runtime into the test process. A stub
 // CancellationToken stands in for the real class so the default token factory works in download().
 vi.mock('electron-updater', () => ({
+  AppImageUpdater: class {},
+  DebUpdater: class {},
   autoUpdater: {},
   CancellationToken: class {
     cancelled = false
@@ -101,6 +104,10 @@ const diagnosticRecords = (log: Logger): Record<string, unknown>[] =>
     vi.mocked(log[level]).mock.calls.map(([, data]) => data as Record<string, unknown>)
   )
 
+// Generic fixtures use a macOS ZIP feed; keep their platform deterministic on Linux/Windows CI.
+const createStrategy = (deps: ElectronUpdaterDeps): ElectronUpdaterStrategy =>
+  new ElectronUpdaterStrategy({ platform: 'darwin', arch: 'arm64', ...deps })
+
 describe('ElectronUpdaterStrategy', () => {
   it.each(['up-to-date', 'error'])(
     'releases a waiting download after a provider check returns %s',
@@ -116,7 +123,7 @@ describe('ElectronUpdaterStrategy', () => {
         if (outcome === 'error') throw new Error('offline')
         updater.emit('update-not-available', { version: '0.2.0' })
       })
-      const strategy = new ElectronUpdaterStrategy({
+      const strategy = createStrategy({
         updater,
         currentVersion: '0.2.0',
         broadcast: vi.fn(),
@@ -146,7 +153,7 @@ describe('ElectronUpdaterStrategy', () => {
       await gate
       updater.emit('update-available', { version: '0.3.0' })
     })
-    const strategy = new ElectronUpdaterStrategy({
+    const strategy = createStrategy({
       updater,
       currentVersion: '0.2.0',
       broadcast: vi.fn(),
@@ -174,7 +181,7 @@ describe('ElectronUpdaterStrategy', () => {
       await checkGate
       updater.emit('update-available', { version: '0.3.0' })
     })
-    const strategy = new ElectronUpdaterStrategy({
+    const strategy = createStrategy({
       updater,
       currentVersion: '0.2.0',
       broadcast: vi.fn(),
@@ -195,7 +202,7 @@ describe('ElectronUpdaterStrategy', () => {
 
   it('disables auto download/install on construction', () => {
     const updater = new FakeUpdater()
-    new ElectronUpdaterStrategy({ updater, currentVersion: '0.2.0', broadcast: vi.fn() })
+    createStrategy({ updater, currentVersion: '0.2.0', broadcast: vi.fn() })
     expect(updater.autoDownload).toBe(false)
     expect(updater.autoInstallOnAppQuit).toBe(false)
   })
@@ -203,7 +210,7 @@ describe('ElectronUpdaterStrategy', () => {
   it('maps check → available with restart applyKind', async () => {
     const broadcast = vi.fn()
     const updater = new FakeUpdater()
-    const strategy = new ElectronUpdaterStrategy({
+    const strategy = createStrategy({
       updater,
       currentVersion: '0.2.0',
       broadcast,
@@ -222,7 +229,7 @@ describe('ElectronUpdaterStrategy', () => {
   it('records a completed in-place check without release notes or feed URLs', async () => {
     const updater = new FakeUpdater()
     const log = createLogSpy()
-    const strategy = new ElectronUpdaterStrategy({
+    const strategy = createStrategy({
       updater,
       currentVersion: '0.2.0',
       broadcast: vi.fn(),
@@ -252,7 +259,7 @@ describe('ElectronUpdaterStrategy', () => {
     const broadcast = vi.fn()
     const updater = new FakeUpdater()
     const log = createLogSpy()
-    const strategy = new ElectronUpdaterStrategy({
+    const strategy = createStrategy({
       updater,
       currentVersion: '0.2.0',
       broadcast,
@@ -311,7 +318,7 @@ describe('ElectronUpdaterStrategy', () => {
       await downloadGate
       updater.emit('update-downloaded', { version: '0.3.0' })
     }
-    const strategy = new ElectronUpdaterStrategy({
+    const strategy = createStrategy({
       updater,
       currentVersion: '0.2.0',
       broadcast: vi.fn(),
@@ -377,7 +384,7 @@ describe('ElectronUpdaterStrategy', () => {
       await checkGate
       updater.emit('update-available', { version: '0.3.0', releaseNotes: 'notes' })
     })
-    const strategy = new ElectronUpdaterStrategy({
+    const strategy = createStrategy({
       updater,
       currentVersion: '0.2.0',
       broadcast: vi.fn(),
@@ -405,7 +412,7 @@ describe('ElectronUpdaterStrategy', () => {
       await checkGate
       updater.emit('update-available', { version: '0.3.0', releaseNotes: 'notes' })
     })
-    const strategy = new ElectronUpdaterStrategy({
+    const strategy = createStrategy({
       updater,
       currentVersion: '0.2.0',
       broadcast: vi.fn(),
@@ -442,7 +449,7 @@ describe('ElectronUpdaterStrategy', () => {
         { status: 200 }
       )
     }) as unknown as typeof fetch
-    const strategy = new ElectronUpdaterStrategy({
+    const strategy = createStrategy({
       updater,
       currentVersion: '0.2.0',
       broadcast: vi.fn(),
@@ -550,7 +557,7 @@ describe('ElectronUpdaterStrategy', () => {
       if (token?.cancelled) throw new Error('cancelled')
     }
     const log = createLogSpy()
-    const strategy = new ElectronUpdaterStrategy({
+    const strategy = createStrategy({
       updater,
       currentVersion: '0.2.0',
       broadcast: vi.fn(),
@@ -596,7 +603,7 @@ describe('ElectronUpdaterStrategy', () => {
 
   it('cancel is a no-op when nothing is downloading', async () => {
     const updater = new FakeUpdater()
-    const strategy = new ElectronUpdaterStrategy({
+    const strategy = createStrategy({
       updater,
       currentVersion: '0.2.0',
       broadcast: vi.fn(),
@@ -616,7 +623,7 @@ describe('ElectronUpdaterStrategy', () => {
       await new Promise<void>((resolve) => (release = resolve))
       updater.emit('update-downloaded', { version: '0.3.0' })
     }
-    const strategy = new ElectronUpdaterStrategy({
+    const strategy = createStrategy({
       updater,
       currentVersion: '0.2.0',
       broadcast: vi.fn(),
@@ -636,7 +643,7 @@ describe('ElectronUpdaterStrategy', () => {
 
   it('does not download an installer again after the lifecycle is ready', async () => {
     const updater = new FakeUpdater()
-    const strategy = new ElectronUpdaterStrategy({
+    const strategy = createStrategy({
       updater,
       currentVersion: '0.2.0',
       broadcast: vi.fn(),
@@ -669,7 +676,7 @@ describe('ElectronUpdaterStrategy', () => {
         updater.emit('update-downloaded', { version: '0.3.0' })
       }
     }
-    const strategy = new ElectronUpdaterStrategy({
+    const strategy = createStrategy({
       updater,
       currentVersion: '0.2.0',
       broadcast: vi.fn(),
@@ -697,7 +704,7 @@ describe('ElectronUpdaterStrategy', () => {
     updater.checkForUpdates = vi.fn(async () => {
       updater.emit('update-not-available', { version: '0.2.0' })
     })
-    const strategy = new ElectronUpdaterStrategy({
+    const strategy = createStrategy({
       updater,
       currentVersion: '0.2.0',
       broadcast: vi.fn()
@@ -712,7 +719,7 @@ describe('ElectronUpdaterStrategy', () => {
       updater.emit('error', new Error('raw provider diagnostic detail'))
     })
     const log = createLogSpy()
-    const strategy = new ElectronUpdaterStrategy({
+    const strategy = createStrategy({
       updater,
       currentVersion: '0.2.0',
       broadcast: vi.fn(),
@@ -751,7 +758,7 @@ describe('ElectronUpdaterStrategy', () => {
     const broadcast = vi.fn()
     const installGate = vi.fn(async () => ({ completed: true, reaped: true }))
     const markUpdateShutdown = vi.fn(() => vi.fn())
-    const strategy = new ElectronUpdaterStrategy({
+    const strategy = createStrategy({
       updater,
       currentVersion: '0.2.0',
       broadcast,
@@ -787,7 +794,7 @@ describe('ElectronUpdaterStrategy', () => {
   it('apply installs silently and relaunches (quitAndInstall(true, true))', async () => {
     const updater = new FakeUpdater()
     const log = createLogSpy()
-    const strategy = new ElectronUpdaterStrategy({
+    const strategy = createStrategy({
       updater,
       currentVersion: '0.2.0',
       broadcast: vi.fn(),
@@ -811,7 +818,7 @@ describe('ElectronUpdaterStrategy', () => {
 
   it('can install silently without relaunching for a headless caller', async () => {
     const updater = new FakeUpdater()
-    const strategy = new ElectronUpdaterStrategy({
+    const strategy = createStrategy({
       updater,
       currentVersion: '0.2.0',
       broadcast: vi.fn()
@@ -829,7 +836,7 @@ describe('ElectronUpdaterStrategy', () => {
     updater.quitAndInstall.mockImplementation(() => {
       throw new Error('installer unavailable')
     })
-    const strategy = new ElectronUpdaterStrategy({
+    const strategy = createStrategy({
       updater,
       currentVersion: '0.2.0',
       broadcast: vi.fn(),
@@ -850,7 +857,7 @@ describe('ElectronUpdaterStrategy', () => {
     const updater = new FakeUpdater()
     const backendTeardownGate = vi.fn(async () => ({ completed: true, reaped: true }))
     const confirmRendererDurability = vi.fn(async () => true)
-    const strategy = new ElectronUpdaterStrategy({
+    const strategy = createStrategy({
       updater,
       currentVersion: '0.2.0',
       broadcast: vi.fn(),
@@ -872,7 +879,7 @@ describe('ElectronUpdaterStrategy', () => {
     const updater = new FakeUpdater()
     const backendTeardownGate = vi.fn(async () => ({ completed: true, reaped: true }))
     const confirmRendererDurability = vi.fn(async () => false)
-    const strategy = new ElectronUpdaterStrategy({
+    const strategy = createStrategy({
       updater,
       currentVersion: '0.2.0',
       broadcast: vi.fn(),
@@ -894,10 +901,67 @@ describe('ElectronUpdaterStrategy', () => {
     })
   })
 
+  it('forces active work through teardown and durability before installing', async () => {
+    const updater = new FakeUpdater()
+    let active = true
+    const teardown = vi.fn(async () => {
+      active = false
+      return { completed: true, reaped: true }
+    })
+    const durability = vi.fn(async () => true)
+    const strategy = createStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast: vi.fn(),
+      installGate: createActiveResearchSafeInstallGate(
+        () => (active ? ['agent'] : []),
+        createDurableInstallGate(teardown, durability)
+      )
+    })
+    await markUpdateReady(strategy, updater)
+    await strategy.apply()
+    expect(teardown).not.toHaveBeenCalled()
+    await strategy.apply({ force: true })
+    expect(teardown).toHaveBeenCalledOnce()
+    expect(durability).toHaveBeenCalledOnce()
+    expect(teardown.mock.invocationCallOrder[0]).toBeLessThan(
+      durability.mock.invocationCallOrder[0]
+    )
+    expect(durability.mock.invocationCallOrder[0]).toBeLessThan(
+      updater.quitAndInstall.mock.invocationCallOrder[0]
+    )
+    expect(updater.quitAndInstall).toHaveBeenCalledOnce()
+  })
+
+  it.each(['migration', 'durability', 'unreaped', 'remaining-work'] as const)(
+    'does not force through %s refusal',
+    async (reason) => {
+      const updater = new FakeUpdater()
+      const teardown = vi.fn(async () => ({ completed: true, reaped: reason !== 'unreaped' }))
+      const durability = vi.fn(async () => reason !== 'durability')
+      const strategy = createStrategy({
+        updater,
+        currentVersion: '0.2.0',
+        broadcast: vi.fn(),
+        installGate: createActiveResearchSafeInstallGate(
+          () => (reason === 'remaining-work' ? ['agent'] : []),
+          createDurableInstallGate(teardown, durability),
+          () => reason === 'migration'
+        )
+      })
+      await markUpdateReady(strategy, updater)
+      const status = await strategy.apply({ force: true })
+      expect(status.state).toBe('ready')
+      expect(updater.quitAndInstall).not.toHaveBeenCalled()
+      if (reason === 'migration') expect(teardown).not.toHaveBeenCalled()
+      if (reason === 'unreaped') expect(durability).not.toHaveBeenCalled()
+    }
+  )
+
   it('blocks restart before backend teardown when delegated work is running', async () => {
     const updater = new FakeUpdater()
     const backendTeardownGate = vi.fn(async () => ({ completed: true, reaped: true }))
-    const strategy = new ElectronUpdaterStrategy({
+    const strategy = createStrategy({
       updater,
       currentVersion: '0.2.0',
       broadcast: vi.fn(),
@@ -919,7 +983,7 @@ describe('ElectronUpdaterStrategy', () => {
   it('blocks restart while an Agent Runtime installation is active', async () => {
     const updater = new FakeUpdater()
     const backendTeardownGate = vi.fn(async () => ({ completed: true, reaped: true }))
-    const strategy = new ElectronUpdaterStrategy({
+    const strategy = createStrategy({
       updater,
       currentVersion: '0.2.0',
       broadcast: vi.fn(),
@@ -945,7 +1009,7 @@ describe('ElectronUpdaterStrategy', () => {
   it('blocks restart for root-agent, notebook, and reviewer work without tearing them down', async () => {
     const updater = new FakeUpdater()
     const backendTeardownGate = vi.fn(async () => ({ completed: true, reaped: true }))
-    const strategy = new ElectronUpdaterStrategy({
+    const strategy = createStrategy({
       updater,
       currentVersion: '0.2.0',
       broadcast: vi.fn(),
@@ -977,7 +1041,7 @@ describe('ElectronUpdaterStrategy', () => {
           finishGate = () => resolve({ completed: true, reaped: true })
         })
     )
-    const strategy = new ElectronUpdaterStrategy({
+    const strategy = createStrategy({
       updater,
       currentVersion: '0.2.0',
       broadcast,
@@ -1012,7 +1076,7 @@ describe('ElectronUpdaterStrategy', () => {
     const gate = vi.fn(async () => ({ completed: false, reaped: false }))
     const releaseInstallHandoff = vi.fn()
     const log = createLogSpy()
-    const strategy = new ElectronUpdaterStrategy({
+    const strategy = createStrategy({
       updater,
       currentVersion: '0.2.0',
       broadcast: vi.fn(),
@@ -1044,7 +1108,7 @@ describe('ElectronUpdaterStrategy', () => {
   it('records a thrown install-gate failure without its error message', async () => {
     const updater = new FakeUpdater()
     const log = createLogSpy()
-    const strategy = new ElectronUpdaterStrategy({
+    const strategy = createStrategy({
       updater,
       currentVersion: '0.2.0',
       broadcast: vi.fn(),
@@ -1074,7 +1138,7 @@ describe('ElectronUpdaterStrategy', () => {
   it('ignores stale updater errors during preparation', async () => {
     const updater = new FakeUpdater()
     let finishGate: (() => void) | undefined
-    const strategy = new ElectronUpdaterStrategy({
+    const strategy = createStrategy({
       updater,
       currentVersion: '0.2.0',
       broadcast: vi.fn(),
@@ -1099,7 +1163,7 @@ describe('ElectronUpdaterStrategy', () => {
     const updater = new FakeUpdater()
     const releaseInstallHandoff = vi.fn()
     const log = createLogSpy()
-    const strategy = new ElectronUpdaterStrategy({
+    const strategy = createStrategy({
       updater,
       currentVersion: '0.2.0',
       broadcast: vi.fn(),
@@ -1134,7 +1198,7 @@ describe('ElectronUpdaterStrategy', () => {
     updater.quitAndInstall.mockImplementationOnce(() => {
       throw new Error('installer launch failed')
     })
-    const strategy = new ElectronUpdaterStrategy({
+    const strategy = createStrategy({
       updater,
       currentVersion: '0.2.0',
       broadcast: vi.fn()
@@ -1149,7 +1213,7 @@ describe('ElectronUpdaterStrategy', () => {
 
   it('restores an actionable error when the install gate throws', async () => {
     const updater = new FakeUpdater()
-    const strategy = new ElectronUpdaterStrategy({
+    const strategy = createStrategy({
       updater,
       currentVersion: '0.2.0',
       broadcast: vi.fn(),
@@ -1170,7 +1234,7 @@ describe('ElectronUpdaterStrategy', () => {
   it('apply refuses to install when the teardown completed but a tree was not cleanly reaped', async () => {
     const updater = new FakeUpdater()
     const gate = vi.fn(async () => ({ completed: true, reaped: false }))
-    const strategy = new ElectronUpdaterStrategy({
+    const strategy = createStrategy({
       updater,
       currentVersion: '0.2.0',
       broadcast: vi.fn(),
@@ -1186,7 +1250,7 @@ describe('ElectronUpdaterStrategy', () => {
 
   it('hydrates notes from the CDN manifest when the version matches', async () => {
     const updater = new FakeUpdater()
-    const strategy = new ElectronUpdaterStrategy({
+    const strategy = createStrategy({
       updater,
       currentVersion: '0.2.0',
       broadcast: vi.fn(),
@@ -1204,7 +1268,7 @@ describe('ElectronUpdaterStrategy', () => {
     updater.checkForUpdates = vi.fn(async () => {
       updater.emit('update-available', { version: '0.3.0' })
     })
-    const strategy = new ElectronUpdaterStrategy({
+    const strategy = createStrategy({
       updater,
       currentVersion: '0.2.0',
       broadcast: vi.fn(),
@@ -1219,7 +1283,7 @@ describe('ElectronUpdaterStrategy', () => {
     updater.checkForUpdates = vi.fn(async () => {
       updater.emit('update-available', { version: '0.3.0' })
     })
-    const strategy = new ElectronUpdaterStrategy({
+    const strategy = createStrategy({
       updater,
       currentVersion: '0.2.0',
       broadcast: vi.fn(),
@@ -1240,7 +1304,7 @@ describe('ElectronUpdaterStrategy', () => {
         ]
       })
     })
-    const strategy = new ElectronUpdaterStrategy({
+    const strategy = createStrategy({
       updater,
       currentVersion: '0.2.0',
       platform: 'darwin',
@@ -1265,7 +1329,7 @@ describe('ElectronUpdaterStrategy', () => {
         ]
       })
     })
-    const strategy = new ElectronUpdaterStrategy({
+    const strategy = createStrategy({
       updater,
       currentVersion: '0.2.0',
       platform: 'darwin',
@@ -1290,7 +1354,7 @@ describe('ElectronUpdaterStrategy', () => {
         ]
       })
     })
-    const strategy = new ElectronUpdaterStrategy({
+    const strategy = createStrategy({
       updater,
       currentVersion: '0.2.0',
       platform: 'darwin',
@@ -1316,7 +1380,7 @@ describe('ElectronUpdaterStrategy', () => {
         ]
       })
     })
-    const strategy = new ElectronUpdaterStrategy({
+    const strategy = createStrategy({
       updater,
       currentVersion: '0.2.0',
       platform: 'darwin',
@@ -1341,7 +1405,7 @@ describe('ElectronUpdaterStrategy', () => {
         ]
       })
     })
-    const strategy = new ElectronUpdaterStrategy({
+    const strategy = createStrategy({
       updater,
       currentVersion: '0.2.0',
       platform: 'darwin',
@@ -1368,7 +1432,7 @@ describe('ElectronUpdaterStrategy', () => {
         ]
       })
     })
-    const strategy = new ElectronUpdaterStrategy({
+    const strategy = createStrategy({
       updater,
       currentVersion: '0.2.0',
       platform: 'darwin',
@@ -1416,7 +1480,7 @@ describe('ElectronUpdaterStrategy', () => {
     updater.checkForUpdates = vi.fn(async () => {
       updater.emit('update-available', { version: '0.3.0' })
     })
-    const strategy = new ElectronUpdaterStrategy({
+    const strategy = createStrategy({
       updater,
       currentVersion: '0.2.0',
       broadcast: vi.fn(),
@@ -1441,7 +1505,7 @@ describe('ElectronUpdaterStrategy', () => {
         updater.emit('update-downloaded', { version: '0.3.0' })
       }
     }
-    const strategy = new ElectronUpdaterStrategy({
+    const strategy = createStrategy({
       updater,
       currentVersion: '0.2.0',
       broadcast: vi.fn(),
@@ -1461,5 +1525,82 @@ describe('ElectronUpdaterStrategy', () => {
     // The retry's progress event should report fresh transferred, not stale bytes.
     expect(retry.downloadedBytes).toBe(5500)
     await first
+  })
+})
+
+describe('read-only installation update admission', () => {
+  it('blocks repeated downloads without starting a transfer and publishes actionable status', async () => {
+    const updater = new FakeUpdater()
+    const broadcast = vi.fn()
+    const installationGuard = vi.fn(() => true)
+    const strategy = createStrategy({
+      updater,
+      installationGuard,
+      broadcast,
+      fetchImpl: offlineFetch()
+    })
+    updater.emit('update-available', { version: '0.3.0' })
+    for (let attempt = 0; attempt < 3; attempt++) {
+      expect(await strategy.download({ nonInteractive: true })).toMatchObject({
+        state: 'error',
+        error: UPDATE_INSTALLATION_REQUIRED,
+        latest: '0.3.0'
+      })
+    }
+    expect(updater.downloadUpdate).not.toHaveBeenCalled()
+    expect(installationGuard).toHaveBeenLastCalledWith(false, false)
+    expect(broadcast).toHaveBeenLastCalledWith(
+      'update:status',
+      expect.objectContaining({ error: UPDATE_INSTALLATION_REQUIRED })
+    )
+    installationGuard.mockReturnValue(false)
+    expect((await strategy.download()).state).toBe('ready')
+    expect(updater.downloadUpdate).toHaveBeenCalledOnce()
+  })
+
+  it('rechecks before apply and force cannot stop work or launch the installer on read-only media', async () => {
+    const updater = new FakeUpdater()
+    const installationGuard = vi.fn(() => false)
+    const installGate = vi.fn(async () => ({ completed: true, reaped: true }))
+    const strategy = createStrategy({
+      updater,
+      installationGuard,
+      installGate,
+      broadcast: () => {}
+    })
+    await markUpdateReady(strategy, updater)
+    installationGuard.mockReturnValue(true)
+    expect(await strategy.apply({ force: true, relaunch: false })).toMatchObject({
+      state: 'error',
+      error: UPDATE_INSTALLATION_REQUIRED
+    })
+    expect(installationGuard).toHaveBeenLastCalledWith(false, false)
+    expect(installGate).not.toHaveBeenCalled()
+    expect(updater.quitAndInstall).not.toHaveBeenCalled()
+  })
+
+  it('normalizes a native read-only handoff error at the broadcast boundary', async () => {
+    const updater = new FakeUpdater()
+    const broadcast = vi.fn()
+    const releaseInstallHandoff = vi.fn()
+    const strategy = createStrategy({
+      updater,
+      installationGuard: () => false,
+      broadcast,
+      releaseInstallHandoff
+    })
+    await markUpdateReady(strategy, updater)
+    await strategy.apply()
+    updater.emit(
+      'error',
+      Object.assign(new Error('Cannot update while running on a read-only volume. detail'), {
+        code: 8
+      })
+    )
+    expect(releaseInstallHandoff).toHaveBeenCalledOnce()
+    expect(broadcast).toHaveBeenLastCalledWith(
+      'update:status',
+      expect.objectContaining({ state: 'error', error: UPDATE_INSTALLATION_REQUIRED })
+    )
   })
 })

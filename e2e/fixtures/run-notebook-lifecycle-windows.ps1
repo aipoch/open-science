@@ -20,6 +20,8 @@ $node = (Get-Command node -ErrorAction Stop).Source
 $playwrightCli = Join-Path $repoRoot 'node_modules\@playwright\test\cli.js'
 $previousMicromamba = $env:OPEN_SCIENCE_MICROMAMBA_BIN
 $previousEvents = $env:OPEN_SCIENCE_E2E_MICROMAMBA_EVENTS
+$previousReport = $env:PLAYWRIGHT_JSON_OUTPUT_NAME
+$reportPath = Join-Path $repoRoot 'test-results\notebook-mutations.json'
 
 New-Item -ItemType Directory -Force (Split-Path $fixtureBin) | Out-Null
 & $rustc (Join-Path $PSScriptRoot 'fake-micromamba.rs') -O -o $fixtureBin
@@ -27,9 +29,14 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 Push-Location $repoRoot
 try {
+  New-Item -ItemType Directory -Force (Split-Path $reportPath) | Out-Null
+  Remove-Item -LiteralPath $reportPath -ErrorAction SilentlyContinue
+  $env:PLAYWRIGHT_JSON_OUTPUT_NAME = $reportPath
   $env:OPEN_SCIENCE_MICROMAMBA_BIN = $fixtureBin
   $env:OPEN_SCIENCE_E2E_MICROMAMBA_EVENTS = 'enabled'
-  & $node $playwrightCli test e2e/certification/notebook-lifecycle.spec.ts --grep mutation --workers=1
+  & $node $playwrightCli test e2e/certification/notebook-lifecycle.spec.ts --grep mutation --workers=1 --reporter=line,json --fail-on-flaky-tests --global-timeout=600000
+  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  & $node (Join-Path $repoRoot 'scripts\ci\verify-notebook-mutations.mjs') $reportPath
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 } finally {
   if ($null -eq $previousMicromamba) {
@@ -41,6 +48,11 @@ try {
     Remove-Item Env:OPEN_SCIENCE_E2E_MICROMAMBA_EVENTS -ErrorAction SilentlyContinue
   } else {
     $env:OPEN_SCIENCE_E2E_MICROMAMBA_EVENTS = $previousEvents
+  }
+  if ($null -eq $previousReport) {
+    Remove-Item Env:PLAYWRIGHT_JSON_OUTPUT_NAME -ErrorAction SilentlyContinue
+  } else {
+    $env:PLAYWRIGHT_JSON_OUTPUT_NAME = $previousReport
   }
   Pop-Location
 }

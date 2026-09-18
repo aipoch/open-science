@@ -1,5 +1,7 @@
+import { fieldErrorClassName } from '@/components/ui/notice-chrome'
+import { InlineNotice } from '@/components/ui/inline-notice'
+import { ErrorNotice } from '@/components/error-notice'
 import {
-  AlertTriangle,
   ChevronDown,
   ChevronUp,
   Cpu,
@@ -477,62 +479,69 @@ export function ComputeHostDetail({
 
       {/* Probe failed banner — shown when the last probe returned ok:false */}
       {status === 'failed' && probed ? (
-        <div
+        <ErrorNotice
           role="alert"
-          className="mt-5 rounded-xl border border-status-failure-border bg-status-failure-subtle/50 px-3 py-3 dark:border-status-failure-dark-border/50 dark:bg-status-failure-dark-surface/20"
-        >
-          <div className="flex items-center gap-2">
-            <AlertTriangle
-              className="size-4 shrink-0 text-status-failure-accent dark:text-status-failure-dark-foreground"
-              aria-hidden="true"
-            />
-            <span className="text-sm font-semibold text-status-failure-foreground dark:text-status-failure-dark-emphasis">
-              {t('Probe failed')}
-            </span>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => void handleProbe()}
-              disabled={isProbing}
-              aria-label={t('Retry probe')}
-              className="ml-auto text-status-failure-accent hover:bg-status-failure-surface dark:text-status-failure-dark-foreground"
-            >
-              <RefreshCw
-                className={cn('size-3.5', isProbing && 'animate-spin')}
-                aria-hidden="true"
-              />
-            </Button>
-          </div>
-          <p className="mt-2 text-xs text-status-failure-strong dark:text-status-failure-dark-emphasis">
-            {probed.authenticationCode
+          className="mt-4"
+          title={t('Probe failed')}
+          description={
+            probed.authenticationCode
               ? computeRuntimeRecoveryCopy(probed.authenticationCode, t)
-              : t(
-                  'The Compute Host connection failed. Check the Host and network, then try again.'
-                )}
-          </p>
-          {probed.authenticationCode ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="mt-2"
-              onClick={() =>
-                openSettingsToComputeAuthentication(providerId, probed.authenticationCode!)
-              }
-            >
-              {computeRuntimeRecoveryAction(probed.authenticationCode, t)}
-            </Button>
-          ) : null}
-        </div>
+              : probed.sshConnected === false
+                ? t(
+                    'The Compute Host connection failed. Check the Host and network, then try again.'
+                  )
+                : t(
+                    'A connection check failed. Review the recent checks, update the Host configuration, then probe again.'
+                  )
+          }
+          primaryButton={{
+            label: t('Retry probe'),
+            loading: isProbing,
+            onClick: () => void handleProbe()
+          }}
+          secondaryButton={
+            probed.authenticationCode
+              ? {
+                  label: computeRuntimeRecoveryAction(probed.authenticationCode, t),
+                  onClick: () =>
+                    openSettingsToComputeAuthentication(providerId, probed.authenticationCode!)
+                }
+              : undefined
+          }
+        />
       ) : null}
 
       {/* IPC / unexpected probe error banner */}
       {probeError ? (
-        <p role="alert" className="mt-4 text-sm text-destructive">
+        <InlineNotice level="error" role="alert" className="mt-4">
           {errorText(probeError)}
-        </p>
+        </InlineNotice>
       ) : null}
+
+      <SettingsSection
+        className="mt-6"
+        title={t('Recent connection checks')}
+        description={t(
+          'These are past observations. Each operation checks the current connection again.'
+        )}
+      >
+        <dl className="grid grid-cols-2 gap-2 text-sm">
+          {[
+            [t('SSH connection'), probed?.sshConnected],
+            [t('Command execution'), probed?.commandExecutable],
+            [t('Scratch write check'), probed?.scratchWritable],
+            [t('Slurm query'), probed?.schedulerAvailable]
+          ].map(([label, value]) => (
+            <div key={String(label)}>
+              <dt className="text-muted-foreground">{label}</dt>
+              <dd>{value === true ? t('Passed') : value === false ? t('Failed') : t('Unknown')}</dd>
+            </div>
+          ))}
+        </dl>
+        {probed?.scratchPath ? (
+          <p className="mt-2 break-all font-mono text-xs">{probed.scratchPath}</p>
+        ) : null}
+      </SettingsSection>
 
       {/* Resource summary — shown only when a successful probe has populated resource fields */}
       {status === 'last_probe_ok' && probed ? (
@@ -640,60 +649,63 @@ export function ComputeHostDetail({
           <div
             ref={authenticationAlertRef}
             data-compute-authentication-alert
-            role="alert"
             tabIndex={-1}
-            className="mt-3 rounded-lg border border-status-failure-border bg-status-failure-subtle/50 px-3 py-2 text-sm text-status-failure-strong outline-none"
+            className="mt-3 outline-none"
           >
-            <p>{computeRuntimeRecoveryCopy(authenticationFocus, t)}</p>
-            {authenticationFocus === 'secure_storage_unavailable' ||
-            passwordCapability?.available === false ? (
-              <Button
-                ref={authenticationTestRef}
-                type="button"
-                variant="outline"
-                size="sm"
-                className="mt-2"
-                disabled={isProbing}
-                onClick={() => void handleProbe()}
-              >
-                {t('Test connection')}
-              </Button>
-            ) : null}
+            <ErrorNotice
+              role="alert"
+              description={computeRuntimeRecoveryCopy(authenticationFocus, t)}
+            >
+              {authenticationFocus === 'secure_storage_unavailable' ||
+              passwordCapability?.available === false ? (
+                <Button
+                  ref={authenticationTestRef}
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="mt-2"
+                  disabled={isProbing}
+                  onClick={() => void handleProbe()}
+                >
+                  {t('Test connection')}
+                </Button>
+              ) : null}
+            </ErrorNotice>
           </div>
         ) : null}
         {host.authentication?.mode === 'password' &&
         host.authentication.credentialStatus === 'missing' ? (
-          <p role="alert" className="mt-3 text-sm text-destructive">
+          <InlineNotice level="error" role="alert" className="mt-3">
             {t(
               'The saved credential is missing. Password authentication is blocked and does not fall back to SSH configuration.'
             )}
-          </p>
+          </InlineNotice>
         ) : null}
         {host.authentication?.mode === 'password' &&
         host.authentication.credentialStatus === 'unavailable' ? (
-          <p role="alert" className="mt-3 text-sm text-destructive">
+          <InlineNotice level="error" role="alert" className="mt-3">
             {t(
               'The encrypted credential cannot be used on this device. Password authentication is blocked and does not fall back to SSH configuration.'
             )}
-          </p>
+          </InlineNotice>
         ) : null}
         {host.authentication?.mode === 'password' &&
         passwordCapability?.available === false &&
         passwordCapability.reason === 'unsupported_platform' ? (
-          <p role="alert" className="mt-3 text-sm text-destructive">
+          <InlineNotice level="error" role="alert" className="mt-3">
             {t(
               'Password authentication is disabled because this platform cannot provide secure credential storage and constrained password delivery.'
             )}
-          </p>
+          </InlineNotice>
         ) : null}
         {host.authentication?.mode === 'password' &&
         passwordCapability?.available === false &&
         passwordCapability.reason !== 'unsupported_platform' ? (
-          <p role="alert" className="mt-3 text-sm text-destructive">
+          <InlineNotice level="error" role="alert" className="mt-3">
             {t(
               'Secure credential storage is locked or unavailable. Unlock the system credential store and retry.'
             )}
-          </p>
+          </InlineNotice>
         ) : null}
         {host.authentication?.mode !== 'password' ||
         host.authentication.credentialStatus !== 'unavailable' ||
@@ -807,9 +819,9 @@ export function ComputeHostDetail({
           </div>
         )}
         {executionModeError ? (
-          <p role="alert" className="mt-2 text-xs text-destructive">
+          <InlineNotice level="error" role="alert" className="mt-2">
             {errorText(executionModeError)}
-          </p>
+          </InlineNotice>
         ) : null}
       </SettingsSection>
 
@@ -818,7 +830,7 @@ export function ComputeHostDetail({
         className="mt-5"
         title={t('Details')}
         description={t(
-          'Free-form notes about this provider. Open Science reads and adds to them as it learns.'
+          'Free-form notes about this provider. Open-Science reads and adds to them as it learns.'
         )}
         action={
           !isEditingDetails ? (
@@ -904,7 +916,7 @@ export function ComputeHostDetail({
               </div>
             </div>
             {detailsError ? (
-              <p id="details-error" role="alert" className="text-xs text-destructive">
+              <p id="details-error" role="alert" className={fieldErrorClassName}>
                 {errorText(detailsError)}
               </p>
             ) : null}
@@ -1046,7 +1058,7 @@ export function ComputeHostDetail({
           </p>
         )}
         {scratchError ? (
-          <p id="scratch-error" role="alert" className="mt-2 text-xs text-destructive">
+          <p id="scratch-error" role="alert" className={`mt-2 ${fieldErrorClassName}`}>
             {errorText(scratchError)}
           </p>
         ) : null}
@@ -1093,7 +1105,7 @@ export function ComputeHostDetail({
               aria-describedby={concurrencyError ? 'concurrency-error' : undefined}
             />
             {concurrencyError ? (
-              <p id="concurrency-error" role="alert" className="text-xs text-destructive">
+              <p id="concurrency-error" role="alert" className={fieldErrorClassName}>
                 {errorText(concurrencyError)}
               </p>
             ) : null}

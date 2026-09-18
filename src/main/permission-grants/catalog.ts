@@ -74,6 +74,12 @@ const familyFor = (record: PermissionGrantRecord): PermissionGrantFamily => {
 }
 
 const capabilityLabelFor = (record: PermissionGrantRecord): string => {
+  if (record.capability.kind === 'builtin_tool' && record.capability.key === 'builtin:web_fetch') {
+    return 'Read web pages'
+  }
+  if (record.capability.kind === 'builtin_tool' && record.capability.key === 'builtin:web_search') {
+    return 'Search the web'
+  }
   if (record.capability.kind === 'customize_mutation') {
     return CUSTOMIZE_LABELS[record.capability.key] ?? titleFromKey(record.capability.key)
   }

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { chmod, rm } from 'node:fs/promises'
+import { chmod, mkdtemp, rm } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { platform, tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -214,10 +214,19 @@ const createAskpassEnvironment = async (
 ): Promise<AskpassEnvironment> => {
   const currentPlatform = platform()
   const capability = randomUUID()
+  // Leave room for sockaddr_un on macOS (104 bytes including the terminator).
+  // A private mkdtemp directory also prevents other users from reaching the socket before chmod.
+  const socketPrefix = join(tmpdir(), 'os-ap-')
+  const socketDirectory =
+    currentPlatform === 'win32'
+      ? undefined
+      : await mkdtemp(
+          Buffer.byteLength(`${socketPrefix}XXXXXX/s`) < 104 ? socketPrefix : '/tmp/os-ap-'
+        )
   const socketPath =
     currentPlatform === 'win32'
       ? `\\\\.\\pipe\\open-science-askpass-${randomUUID()}`
-      : join(tmpdir(), `os-askpass-${randomUUID()}.sock`)
+      : join(socketDirectory!, 's')
   let answered = false
   let unsupportedPromptRejected = false
   const server = createServer((socket) => {
@@ -253,18 +262,17 @@ const createAskpassEnvironment = async (
       if (!responded) socket.end('{}')
     })
   })
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject)
-    server.listen(socketPath, resolve)
-  })
-  if (currentPlatform !== 'win32') {
-    try {
-      await chmod(socketPath, 0o600)
-    } catch {
-      await new Promise<void>((resolve) => server.close(() => resolve()))
-      await rm(socketPath, { force: true })
-      throw new ComputeConnectionError('credential_unavailable')
-    }
+  try {
+    if (socketDirectory) await chmod(socketDirectory, 0o700)
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject)
+      server.listen(socketPath, resolve)
+    })
+    if (socketDirectory) await chmod(socketPath, 0o600)
+  } catch {
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+    if (socketDirectory) await rm(socketDirectory, { recursive: true, force: true })
+    throw new ComputeConnectionError('credential_unavailable')
   }
   const sharedEnvironment = {
     ...askpassBaseEnvironment(),
@@ -296,7 +304,7 @@ const createAskpassEnvironment = async (
     wasUnsupportedPromptRejected: () => unsupportedPromptRejected,
     dispose: async () => {
       await new Promise<void>((resolve) => server.close(() => resolve()))
-      if (currentPlatform !== 'win32') await rm(socketPath, { force: true })
+      if (socketDirectory) await rm(socketDirectory, { recursive: true, force: true })
     }
   }
 }

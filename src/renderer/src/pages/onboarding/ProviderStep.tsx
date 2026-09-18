@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
+import { ErrorNotice } from '@/components/error-notice'
 import { CardContent, CardDescription, CardFooter, CardHeader } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import type {
@@ -10,7 +11,11 @@ import type {
   XaiOAuthDeviceAuthorization
 } from '../../../../shared/settings'
 import { isProviderUsableByFramework } from '../../../../shared/settings'
-import { selectFrameworkApiEndpoints, useSettingsStore } from '@/stores/settings-store'
+import {
+  selectActiveAgentFramework,
+  selectFrameworkApiEndpoints,
+  useSettingsStore
+} from '@/stores/settings-store'
 import { ClaudeIsolatedSignInModal } from '../settings/ClaudeIsolatedSignInModal'
 import { ProviderForm } from '../settings/ProviderForm'
 import { XaiOAuthSignInDialog } from '../settings/XaiOAuthSignInDialog'
@@ -78,7 +83,6 @@ const ProviderStep = ({
   // step holds a second, settings-scoped t for describeValidation.
   const { t: tSettings } = useTranslation()
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
-  const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
   const frameworkEndpoints = useSettingsStore(selectFrameworkApiEndpoints)
   const encryptionAvailable = useSettingsStore((state) => state.encryptionAvailable)
   const saveAndActivateProvider = useSettingsStore((state) => state.saveAndActivateProvider)
@@ -117,6 +121,7 @@ const ProviderStep = ({
   const [validationMessage, setValidationMessage] = useState<string | undefined>(undefined)
   const [validationOk, setValidationOk] = useState(false)
   const customApiEndpoint = defaultCustomApiEndpoint(frameworkEndpoints)
+  const activeFramework = useSettingsStore(selectActiveAgentFramework)
   // Mirrors the Settings teardown: a pending isolated sign-in lives in the main process for up to
   // five minutes, and its guard rejects a second attempt as "already in progress". If the wizard
   // unmounts mid-flow (app quit, relaunch, forced navigation), cancel it so the next attempt starts
@@ -226,9 +231,7 @@ const ProviderStep = ({
         { id: agentFrameworkId, supportedApiTypes: frameworkEndpoints }
       )
     ) {
-      const label =
-        agentFrameworks.find((framework) => framework.id === agentFrameworkId)?.displayName ??
-        t('The selected agent')
+      const label = activeFramework?.displayName ?? t('The selected agent')
       setValidationOk(false)
       setValidationMessage(
         t(
@@ -420,7 +423,7 @@ const ProviderStep = ({
           {t('Connect a model')}
         </h2>
         <CardDescription className="text-xs leading-5">
-          {t('Choose the provider Open Science should use for new research sessions.')}
+          {t('Choose the provider Open-Science should use for new research sessions.')}
         </CardDescription>
       </CardHeader>
       <Separator className="bg-border-200" />
@@ -428,11 +431,14 @@ const ProviderStep = ({
       <CardContent className="flex-1 px-6 py-5">
         <section aria-label={t('Configure model')}>
           {!encryptionAvailable ? (
-            <p className="mb-4 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
-              {t(
+            <ErrorNotice
+              inline
+              className="mb-4"
+              tone="amber"
+              description={t(
                 'Secure key storage is unavailable. API keys cannot be saved until the system keychain is unlocked or authorized.'
               )}
-            </p>
+            />
           ) : null}
           <ProviderForm
             value={formValue}
@@ -445,6 +451,7 @@ const ProviderStep = ({
             showCodexSubscriptions={agentFrameworkId === 'codex'}
             showClaudeIsolated={agentFrameworkId === 'claude-code'}
             defaultCustomApiEndpoint={customApiEndpoint}
+            framework={activeFramework}
           />
           {formValue.type === 'claude-isolated' ? (
             <p className="mt-4 text-sm text-muted-foreground">
@@ -505,14 +512,17 @@ const ProviderStep = ({
           onClick={() => void handleSaveProvider()}
           disabled={isSaving}
           className="px-4"
+          aria-busy={Boolean(isSaving)}
         >
-          {isSaving
-            ? isBrowserSignInProvider(formValue.type)
-              ? t('Waiting for sign-in…')
-              : t('Testing connection…')
-            : isBrowserSignInProvider(formValue.type)
-              ? t('Sign in & continue')
-              : t('Test & continue')}
+          <span key={String(isSaving)} className="button-feedback">
+            {isSaving
+              ? isBrowserSignInProvider(formValue.type)
+                ? t('Waiting for sign-in…')
+                : t('Testing connection…')
+              : isBrowserSignInProvider(formValue.type)
+                ? t('Sign in & continue')
+                : t('Test & continue')}
+          </span>
         </Button>
       </CardFooter>
       <ClaudeIsolatedSignInModal

@@ -205,22 +205,25 @@ export function LiteratureDuplicateBatch({
           variant={batch ? 'default' : 'outline'}
           disabled={busy || groups.length === 0 || Boolean(batch && batch.eligible === 0) || error}
           onClick={() => void run(batch ? 'commit' : 'preview')}
+          aria-busy={Boolean(busy)}
         >
-          {busy ? (
-            <LoaderCircle
-              className="size-4 animate-spin motion-reduce:animate-none"
-              aria-hidden="true"
-            />
-          ) : null}
-          {busy
-            ? batch
-              ? t('Merging references…')
-              : t('Checking duplicate groups…')
-            : batch
-              ? strategy === 'conflict-free'
-                ? t('Merge conflict-free groups')
-                : t('Merge references')
-              : t('Preview batch merge')}
+          <span key={String(busy)} className="button-feedback">
+            {busy ? (
+              <LoaderCircle
+                className="size-4 animate-spin motion-reduce:animate-none"
+                aria-hidden="true"
+              />
+            ) : null}
+            {busy
+              ? batch
+                ? t('Merging references…')
+                : t('Checking duplicate groups…')
+              : batch
+                ? strategy === 'conflict-free'
+                  ? t('Merge conflict-free groups')
+                  : t('Merge references')
+                : t('Preview batch merge')}
+          </span>
         </Button>
       ) : null}
     </div>

@@ -1,3 +1,5 @@
+import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
+import { InlineNotice } from '@/components/ui/inline-notice'
 import { TooltipProvider } from '@/components/ui/tooltip'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
 /* Hallmark · component: Tag master-detail + reorder · genre: modern-minimal · tone: technical/utilitarian
@@ -13,7 +15,6 @@ import {
   Pencil,
   Plus,
   ScrollText,
-  Search,
   Trash2,
   Users,
   X
@@ -59,6 +60,8 @@ import { useSpecialistStore } from '@/stores/specialist-store'
 import { useTagStore } from '@/stores/tag-store'
 import { ConnectorsNavIcon } from './connector-icons'
 import { SettingsIconAction } from './SettingsLayout'
+import { SettingsSearchInput } from './SettingsSearchInput'
+import { SettingsPanelHeader } from './SettingsPanelHeader'
 import { TAG_COLORS, TAG_ICONS, tagPresentation } from './tag-presentation'
 import { TagBadge } from './tag-visuals'
 import { ArtifactLiteratureDetailDialog } from '../workspace/ArtifactLiteratureDetailDialog'
@@ -301,9 +304,9 @@ const TagForm = ({
         </div>
       </fieldset>
       {formError ? (
-        <p role="alert" className="text-xs text-destructive">
+        <InlineNotice level="error" role="alert">
           {formError}
-        </p>
+        </InlineNotice>
       ) : null}
       <div className="mt-auto flex justify-end gap-2 pt-2">
         <Button type="button" variant="ghost" onClick={onCancel}>
@@ -392,6 +395,9 @@ const TagsList = ({
   const setScrollTop = useTagStore((state) => state.setBrowserScrollTop)
   const resourceListRef = useRef<HTMLElement>(null)
   const [deleting, setDeleting] = useState<TagView>()
+  const dialogDeleteCount = useRetainedDialogValue(
+    deleting ? assignments.filter(({ tagId }) => tagId === deleting.id).length : undefined
+  )
   const [deleteBusy, setDeleteBusy] = useState(false)
   const [deleteError, setDeleteError] = useState<string>()
   const [assignmentError, setAssignmentError] = useState<string>()
@@ -709,10 +715,29 @@ const TagsList = ({
   return (
     <TooltipProvider delayDuration={200}>
       <div data-slot="tags-panel" className="flex h-full min-h-0 flex-col px-3 py-3 md:px-4">
+        <SettingsPanelHeader
+          className="mb-3"
+          search={
+            <SettingsSearchInput
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder={t('Search resources…')}
+              aria-label={t('Search tagged resources')}
+              className="h-8"
+              containerClassName="w-52 flex-none"
+            />
+          }
+          action={
+            <Button type="button" size="sm" onClick={onCreate}>
+              <Plus className="size-4" aria-hidden="true" />
+              {t('New Tag')}
+            </Button>
+          }
+        />
         {error ? (
-          <p role="alert" className="mb-3 text-xs text-destructive">
+          <InlineNotice level="error" role="alert" className="mb-3">
             {t('Tags could not be loaded.')}
-          </p>
+          </InlineNotice>
         ) : null}
         <div
           data-slot="tag-master-detail"
@@ -723,9 +748,9 @@ const TagsList = ({
             aria-busy={reorderBusy || undefined}
           >
             {reorderError ? (
-              <p role="alert" className="mb-2 px-2 text-xs text-destructive">
+              <InlineNotice level="error" role="alert" className="mb-2">
                 {reorderError}
-              </p>
+              </InlineNotice>
             ) : null}
             <p className="sr-only" aria-live="polite" aria-atomic="true">
               {reorderAnnouncement}
@@ -839,16 +864,6 @@ const TagsList = ({
                   </li>
                 )
               })}
-              <li>
-                <button
-                  type="button"
-                  onClick={onCreate}
-                  className="flex h-9 w-full cursor-pointer items-center gap-2 rounded-lg px-2 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground active:bg-muted/80 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 [@media(pointer:coarse)]:min-h-11"
-                >
-                  <Plus className="size-4 shrink-0" aria-hidden="true" />
-                  <span className="truncate">{t('New Tag')}</span>
-                </button>
-              </li>
             </ol>
           </aside>
 
@@ -923,25 +938,11 @@ const TagsList = ({
                       </SelectItem>
                     </SelectContent>
                   </Select>
-                  <div className="relative min-w-40 flex-1">
-                    <Search
-                      className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground"
-                      aria-hidden="true"
-                    />
-                    <Input
-                      type="search"
-                      aria-label={t('Search tagged resources')}
-                      placeholder={t('Search resources…')}
-                      className="pl-8"
-                      value={query}
-                      onChange={(event) => setQuery(event.target.value)}
-                    />
-                  </div>
                 </div>
                 {assignmentError ? (
-                  <p role="alert" className="mb-3 text-xs text-destructive">
+                  <InlineNotice level="error" role="alert" className="mb-3">
                     {assignmentError}
-                  </p>
+                  </InlineNotice>
                 ) : null}
                 {visibleCatalogTypes.map((type) => {
                   const catalog = catalogLoads[type]
@@ -1104,14 +1105,14 @@ const TagsList = ({
                 </AlertDialog.Description>
                 <p className="mt-2 text-xs text-muted-foreground">
                   {t('Assignments to remove: {{count}}.', {
-                    count: deleting ? (counts.get(deleting.id) ?? 0) : 0,
+                    count: dialogDeleteCount ?? 0,
                     defaultValue_one: 'Assignment to remove: {{count}}.'
                   })}
                 </p>
                 {deleteError ? (
-                  <p role="alert" className="mt-3 text-xs text-destructive">
+                  <InlineNotice level="error" role="alert" className="mt-3">
                     {deleteError}
-                  </p>
+                  </InlineNotice>
                 ) : null}
               </div>
               <div className={dialogFooterClassName}>

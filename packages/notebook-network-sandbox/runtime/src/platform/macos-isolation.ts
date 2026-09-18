@@ -38,6 +38,7 @@ const seatbeltProfile = (request: MacLaunchRequest): string => {
   })
   const readable = [...layout.readOnlyRoots, ...layout.readWriteRoots]
   const rules = ['(version 1)', '(allow default)', '(deny network*)']
+  // Seatbelt accepts only `localhost` or `*` here. proxyEnvironment must advertise the same host.
   rules.push(`(allow network-outbound (remote ip "localhost:${request.gatewayPort}"))`)
   if (request.localRpcSocketPath) {
     rules.push(
@@ -99,7 +100,7 @@ const macosLaunch = (request: MacLaunchRequest): { argv: string[]; env: NodeJS.P
     ],
     env: {
       ...request.env,
-      ...proxyEnvironment(request.gatewayPort, request.gatewayCredentials)
+      ...proxyEnvironment(request.gatewayPort, request.gatewayCredentials, 'localhost')
     }
   }
 }

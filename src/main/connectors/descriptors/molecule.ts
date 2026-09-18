@@ -43,12 +43,14 @@ export const renderMoleculeStructure = async (
   args: Record<string, unknown>
 ): Promise<MoleculeRenderResult> => {
   const smiles = typeof args.smiles === 'string' ? args.smiles.trim() : ''
-  const molfileInput = typeof args.molfile === 'string' ? args.molfile.trim() : ''
+  // Molfile headers are positional: an empty title line must not be trimmed away.
+  const molfileInput = typeof args.molfile === 'string' ? args.molfile : ''
+  const hasMolfile = molfileInput.trim().length > 0
 
-  if (!smiles && !molfileInput) {
+  if (!smiles && !hasMolfile) {
     throw new Error('render_molecule requires either smiles or molfile.')
   }
-  if (smiles && molfileInput) {
+  if (smiles && hasMolfile) {
     throw new Error('render_molecule takes only one of smiles or molfile, not both.')
   }
 
@@ -59,6 +61,9 @@ export const renderMoleculeStructure = async (
     molecule = smiles ? ocl.Molecule.fromSmiles(smiles) : ocl.Molecule.fromMolfile(molfileInput)
   } catch (error) {
     return { valid: false, error: error instanceof Error ? error.message : 'Invalid structure' }
+  }
+  if (molecule.getAllAtoms() === 0) {
+    return { valid: false, error: 'Invalid structure: no atoms found.' }
   }
 
   // Compute the string/atom outputs BEFORE reading descriptors: on a molfile-parsed molecule,

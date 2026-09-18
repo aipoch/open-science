@@ -6,6 +6,7 @@ import type {
 } from '../../shared/project-files'
 import type { ArtifactPreviewResult } from '../../shared/artifacts'
 import { ipcMainHandle } from '../ipc-handler-registry'
+import { createFileContentSearch, type SearchFileOpener } from './content-search'
 
 import type {
   ArtifactGroupPage,
@@ -60,67 +61,79 @@ const createProjectFilesHandlers = (
   repository: ProjectFilesQueryRepository,
   repairBackend: ProjectFilesRepairBackend,
   recoveryBackend: ProjectFilesRecoveryBackend,
-  visibility?: {
-    readHiddenArtifact(request: ReadHiddenArtifactRequest): Promise<ArtifactPreviewResult>
-    onChanged(event: ProjectFilesChangedEvent): void
+  visibilityOrOpenSearch?:
+    | {
+        readHiddenArtifact(request: ReadHiddenArtifactRequest): Promise<ArtifactPreviewResult>
+        onChanged(event: ProjectFilesChangedEvent): void
+      }
+    | SearchFileOpener,
+  openSearchFile?: SearchFileOpener
+): ProjectFilesHandlers => {
+  const visibility =
+    typeof visibilityOrOpenSearch === 'function' ? undefined : visibilityOrOpenSearch
+  const searchOpener =
+    typeof visibilityOrOpenSearch === 'function' ? visibilityOrOpenSearch : openSearchFile
+  const searchContent = searchOpener ? createFileContentSearch(repository, searchOpener) : undefined
+  return {
+    setArtifactHidden: async (request) => {
+      await recoveryBackend.waitForProjectOperations([request.projectId])
+      if (!repository.setArtifactHidden || !visibility)
+        throw new Error('Artifact visibility is unavailable.')
+      await repository.setArtifactHidden(request)
+      visibility.onChanged({
+        projectId: request.projectId,
+        sources: ['artifact'],
+        kind: 'reset',
+        artifactVisibilityChanged: true
+      })
+    },
+    getHiddenArtifactIds: async ({ projectId }) => {
+      await recoveryBackend.waitForProjectOperations([projectId])
+      if (!repository.getHiddenArtifactIds) throw new Error('Artifact visibility is unavailable.')
+      return repository.getHiddenArtifactIds(projectId)
+    },
+    readHiddenArtifact: async (request) => {
+      await recoveryBackend.waitForProjectOperations([request.projectId])
+      if (!visibility) throw new Error('Hidden artifact reader is unavailable.')
+      return visibility.readHiddenArtifact(request)
+    },
+    getOverview: async (request) => {
+      await recoveryBackend.waitForProjectOperations([request.projectId])
+      return repository.getOverview(request)
+    },
+    listFiles: async (request) => {
+      await recoveryBackend.waitForProjectOperations([request.projectId])
+      return repository.listFiles(request)
+    },
+    readExportFiles: async (request) => {
+      await recoveryBackend.waitForProjectOperations([request.projectId])
+      return repository.readExportFiles(request)
+    },
+    resolveFile: async (request) => {
+      await recoveryBackend.waitForProjectOperations([request.projectId])
+      return repository.resolveFile(request)
+    },
+    listArtifactGroups: async (request) => {
+      await recoveryBackend.waitForProjectOperations([request.projectId])
+      return repository.listArtifactGroups(request)
+    },
+    searchArtifacts: async (request) => {
+      await recoveryBackend.waitForProjectOperations([
+        ...request.primaryProjectIds,
+        ...request.otherProjectIds
+      ])
+      return request.searchContent && request.filenameContains?.trim() && searchContent
+        ? searchContent(request)
+        : repository.searchArtifacts(request)
+    },
+    repairIndex: async ({ projectId }) => {
+      // repairProjectFiles performs a complete Session scan and global projection reconciliation.
+      // Keep it behind strict recovery so it cannot touch another Project with a failed deletion tail.
+      await recoveryBackend.recoverPendingDeletions()
+      return repairBackend.repairProjectFiles(projectId)
+    }
   }
-): ProjectFilesHandlers => ({
-  setArtifactHidden: async (request) => {
-    await recoveryBackend.waitForProjectOperations([request.projectId])
-    if (!repository.setArtifactHidden || !visibility)
-      throw new Error('Artifact visibility is unavailable.')
-    await repository.setArtifactHidden(request)
-    visibility.onChanged({
-      projectId: request.projectId,
-      sources: ['artifact'],
-      kind: 'reset',
-      artifactVisibilityChanged: true
-    })
-  },
-  getHiddenArtifactIds: async ({ projectId }) => {
-    await recoveryBackend.waitForProjectOperations([projectId])
-    if (!repository.getHiddenArtifactIds) throw new Error('Artifact visibility is unavailable.')
-    return repository.getHiddenArtifactIds(projectId)
-  },
-  readHiddenArtifact: async (request) => {
-    await recoveryBackend.waitForProjectOperations([request.projectId])
-    if (!visibility) throw new Error('Hidden artifact reader is unavailable.')
-    return visibility.readHiddenArtifact(request)
-  },
-  getOverview: async (request) => {
-    await recoveryBackend.waitForProjectOperations([request.projectId])
-    return repository.getOverview(request)
-  },
-  listFiles: async (request) => {
-    await recoveryBackend.waitForProjectOperations([request.projectId])
-    return repository.listFiles(request)
-  },
-  readExportFiles: async (request) => {
-    await recoveryBackend.waitForProjectOperations([request.projectId])
-    return repository.readExportFiles(request)
-  },
-  resolveFile: async (request) => {
-    await recoveryBackend.waitForProjectOperations([request.projectId])
-    return repository.resolveFile(request)
-  },
-  listArtifactGroups: async (request) => {
-    await recoveryBackend.waitForProjectOperations([request.projectId])
-    return repository.listArtifactGroups(request)
-  },
-  searchArtifacts: async (request) => {
-    await recoveryBackend.waitForProjectOperations([
-      ...request.primaryProjectIds,
-      ...request.otherProjectIds
-    ])
-    return repository.searchArtifacts(request)
-  },
-  repairIndex: async ({ projectId }) => {
-    // repairProjectFiles performs a complete Session scan and global projection reconciliation.
-    // Keep it behind strict recovery so it cannot touch another Project with a failed deletion tail.
-    await recoveryBackend.recoverPendingDeletions()
-    return repairBackend.repairProjectFiles(projectId)
-  }
-})
+}
 
 // All Files operations wait on Project-scoped deletion recovery before reading or repairing metadata.
 // This prevents a query from observing its Project midway through crash recovery without coupling it

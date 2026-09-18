@@ -1,8 +1,34 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { SessionPlanInteractionOwner } from './session-plan-interaction-owner'
 
 describe('SessionPlanInteractionOwner', () => {
+  it('keeps pause ownership after a decision and ignores stale Provider stops', async () => {
+    const owner = new SessionPlanInteractionOwner()
+    const approval = owner.parkApproval('session-1', 'prompt-1')
+    const dispose = vi.fn()
+    owner.suspendProvider('session-1', 7, approval, () => dispose)
+    const pause = owner.providerPauseFor('session-1', 7)!
+    owner.resolveApproval(
+      'session-1',
+      { decision: 'approved' },
+      owner.approvalTokenFor('session-1')
+    )
+    expect(owner.providerPauseFor('session-1', 7)).toBe(pause)
+    expect(owner.observeProviderStop('session-1', 6)).toBeUndefined()
+    expect(dispose).not.toHaveBeenCalled()
+    owner.observeProviderStop('session-1', 7)
+    await expect(pause.response).resolves.toEqual({ decision: 'approved' })
+    expect(dispose).toHaveBeenCalledOnce()
+    expect(owner.releaseProviderPause('session-1', pause)).toBe(true)
+    const replacement = owner.parkApproval('session-1', 'prompt-1')
+    void replacement.catch(() => undefined)
+    owner.suspendProvider('session-1', 8, replacement, () => vi.fn())
+    expect(owner.releaseProviderPause('session-1', pause)).toBe(false)
+    owner.clearAll('closed')
+    expect(owner.providerPauseFor('session-1')).toBeUndefined()
+  })
+
   it('resolves only the current Artifact Version interaction', () => {
     const owner = new SessionPlanInteractionOwner()
 
@@ -221,4 +247,21 @@ describe('SessionPlanInteractionOwner', () => {
     })
     expect(owner.interactionIdFor('session-1', 'version-1')).toBeUndefined()
   })
+})
+
+it('blocks advisories from approval reservation until provider pause is released', async () => {
+  const owner = new SessionPlanInteractionOwner()
+  owner.reserveApproval('main', 'approval')
+  expect(owner.hasPendingApproval('main')).toBe(true)
+  expect(owner.hasPendingApproval('other')).toBe(false)
+  owner.releaseApprovalReservation('main', 'approval')
+  expect(owner.hasPendingApproval('main')).toBe(false)
+  const response = owner.parkApproval('main', 'approval')
+  owner.suspendProvider('main', 1, response, () => vi.fn())
+  owner.resolveApproval('main', { decision: 'approved' }, owner.approvalTokenFor('main'))
+  await response
+  expect(owner.hasPendingApproval('main')).toBe(true)
+  const pause = owner.providerPauseFor('main')!
+  owner.releaseProviderPause('main', pause)
+  expect(owner.hasPendingApproval('main')).toBe(false)
 })

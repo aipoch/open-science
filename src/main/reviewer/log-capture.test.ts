@@ -1080,13 +1080,13 @@ describe('ReviewRepository — reviewerLog round-trip', () => {
     await client.$disconnect()
   })
 
-  it('tolerates legacy/unknown entry kinds in the persisted JSON without throwing', async () => {
+  it('isolates unsupported legacy log kinds without treating them as a verified Review', async () => {
     const client = createProjectDbClient(temporaryRoot!)
     await migrateApplicationDatabase(client)
     const repository = new ReviewRepository(() => Promise.resolve(client))
 
     // Simulate a legacy log that still uses the old tool_call/tool_result split (or unknown kind).
-    // The repository parses defensively; unknown kinds should be returned as-is (no crash).
+    // Unsupported historical log shapes remain on disk and degrade this Review safely.
     const legacyLog = [
       { kind: 'thought', text: 'old thought' },
       { kind: 'tool_call', toolName: 'read_turn', title: 'read_turn()' }, // legacy
@@ -1111,8 +1111,14 @@ describe('ReviewRepository — reviewerLog round-trip', () => {
     // Must not throw on reload.
     const reviews = await repository.getReviewsForSession('session-legacy')
     expect(reviews).toHaveLength(1)
-    // The legacy entries are returned as-is (parseJson just returns the raw array).
-    expect(reviews[0]?.reviewerLog).toHaveLength(4)
+    expect(reviews[0]).toMatchObject({
+      reviewerLog: [],
+      lifecycle: 'error',
+      outcome: null,
+      verificationUnavailable: true
+    })
+    const stored = await client.review.findUniqueOrThrow({ where: { id: reviews[0]!.id } })
+    expect(JSON.parse(stored.reviewerLog)).toEqual(legacyLog)
 
     await client.$disconnect()
   })

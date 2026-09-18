@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, readFile, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
@@ -15,7 +15,14 @@ const createModule = async (
   const root = await mkdtemp(join(tmpdir(), 'settings-preferences-'))
   roots.push(root)
   const repository = new SettingsRepository(root)
-  return { preferences: new SettingsPreferencesModule(repository, () => now), repository }
+  return {
+    preferences: new SettingsPreferencesModule(
+      repository,
+      () => now,
+      () => join(root, 'Open-Science')
+    ),
+    repository
+  }
 }
 
 afterEach(async () => {
@@ -23,6 +30,38 @@ afterEach(async () => {
 })
 
 describe('SettingsPreferencesModule', () => {
+  it('commits the default and completion together only when Finish is requested', async () => {
+    const { preferences, repository } = await createModule(3000)
+    expect((await repository.getSettings()).dataRoot).toBeUndefined()
+    expect((await repository.getSettings()).onboardingCompletedAt).toBeUndefined()
+    const complete = await preferences.markOnboardingComplete()
+    const persisted = JSON.parse(await readFile(join(roots.at(-1)!, 'settings.json'), 'utf8'))
+    expect(complete).toMatchObject({
+      dataRoot: join(roots.at(-1)!, 'Open-Science'),
+      onboardingCompletedAt: 3000
+    })
+    expect(persisted).toMatchObject({ dataRoot: complete.dataRoot, onboardingCompletedAt: 3000 })
+  })
+
+  it('does not mark completion or recreate a saved root removed during onboarding', async () => {
+    const { preferences, repository } = await createModule()
+    const selected = join(roots.at(-1)!, 'Open-Science')
+    await repository.setDataRoot({ dataRoot: selected })
+    await expect(preferences.markOnboardingComplete()).rejects.toThrow(/missing/)
+    expect((await repository.getSettings()).onboardingCompletedAt).toBeUndefined()
+    expect((await repository.getSettings()).dataRoot).toBe(selected)
+  })
+
+  it('does not commit a different saved choice over the running root at Finish', async () => {
+    const { preferences, repository } = await createModule()
+    const other = join(roots.at(-1)!, 'other-research')
+    await mkdir(other)
+    await repository.setDataRoot({ dataRoot: other })
+    await expect(preferences.markOnboardingComplete()).rejects.toThrow(/location changed/)
+    expect((await repository.getSettings()).onboardingCompletedAt).toBeUndefined()
+    expect((await repository.getSettings()).dataRoot).toBe(other)
+  })
+
   it('resolves preference defaults without exposing the stored document', async () => {
     const { preferences } = await createModule()
 

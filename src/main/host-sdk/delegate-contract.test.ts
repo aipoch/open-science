@@ -147,6 +147,11 @@ describe('Agent-facing collect contract', () => {
     expect(COLLECT_AGENT_CONTRACT.returns.items.oneOf[0].required).toContain('attemptId')
   })
 
+  it('reports invalid selectors using public handle names', () => {
+    expect(() => parseCollectRpcCall({ selectors: [] })).toThrow('{frameId, attemptId}')
+    expect(() => parseCollectRpcCall({ selectors: [42] })).toThrow('{frameId, attemptId}')
+  })
+
   it('parses private snake-case wire selectors with bounded options', () => {
     expect(
       parseCollectRpcCall({
@@ -185,7 +190,7 @@ describe('Agent-facing collect contract', () => {
     ).toThrow('private RPC options use timeout_seconds')
     expect(() =>
       parseCollectRpcCall({ selectors: ['frame-1'], options: { return_when: 'first' } })
-    ).toThrow('return_when must be all or any')
+    ).toThrow('returnWhen must be all or any')
   })
 })
 

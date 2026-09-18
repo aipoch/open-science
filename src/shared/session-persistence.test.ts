@@ -6,6 +6,7 @@ import { MAX_ELICITATION_OPTIONS_PER_FIELD } from './elicitation'
 
 import {
   SESSION_FILE_VERSION,
+  sanitizePersistedSideChat,
   sessionDeletionResultSchema,
   collectSessionReferences,
   createSessionFile,
@@ -50,6 +51,28 @@ const createSessionWithActivity = (activity: unknown): Record<string, unknown> =
 })
 
 describe('Session file envelope versions', () => {
+  it('round-trips a local fork head without inferring it for historical Sessions', () => {
+    const session = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      forkOrigin: {
+        importId: 'copy',
+        sourceProjectId: 'project-a',
+        sourceSessionId: 'source',
+        importedAt: 2,
+        manifestChecksum: 'a'.repeat(64)
+      },
+      forkHeadMessageId: 'copied-head'
+    })!
+    const reopened = normalizeSessionFile(JSON.parse(JSON.stringify(createSessionFile(session))))!
+    expect(reopened.forkHeadMessageId).toBe('copied-head')
+    expect(
+      normalizeSessionFile({ ...session, forkHeadMessageId: undefined })?.forkHeadMessageId
+    ).toBeUndefined()
+    expect(
+      normalizeSessionFile({ ...session, forkOrigin: undefined })?.forkHeadMessageId
+    ).toBeUndefined()
+  })
+
   const legacySession = (): Record<string, unknown> => createSessionWithActivity(undefined)
 
   it.each([
@@ -5305,4 +5328,26 @@ describe('Session deletion result', () => {
       }).success
     ).toBe(false)
   })
+})
+
+describe('Side chat reasoning effort compatibility', () => {
+  it.each([undefined, 'high'])(
+    'round-trips an optional effort without migrating history: %s',
+    (reasoningEffort) => {
+      const saved = {
+        version: 1,
+        id: 'side-chat-effort',
+        lifecycle: 'open',
+        frameworkId: 'codex',
+        providerId: 'provider',
+        model: 'model',
+        ...(reasoningEffort ? { reasoningEffort } : {}),
+        historyPreamble: 'Main context',
+        entries: [{ id: 'user-1', kind: 'message', role: 'user', text: 'Keep history' }],
+        createdAt: 1,
+        updatedAt: 2
+      }
+      expect(sanitizePersistedSideChat(JSON.parse(JSON.stringify(saved)))).toEqual(saved)
+    }
+  )
 })

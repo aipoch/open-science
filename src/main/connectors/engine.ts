@@ -14,7 +14,7 @@ const DEFAULT_BACKOFF_MS = 400
 
 // Some public APIs (e.g. AlphaFold EBI) reject requests without a User-Agent; send a stable one.
 const USER_AGENT =
-  'Mozilla/5.0 (compatible; OpenScience/1.0; +https://github.com/aipoch/open-science)'
+  'Mozilla/5.0 (compatible; Open-Science/1.0; +https://github.com/aipoch/open-science)'
 
 // Builds the NCBI E-utilities etiquette query suffix; empty when unset (calls still work).
 export function ncbiEtiquette(credentials: ConnectorCredentials): string {
@@ -154,7 +154,9 @@ export class ParserEngine {
     const doFetch = async (
       url: string,
       accept: string,
-      init?: RequestInit
+      init?: RequestInit,
+      retries = this.retries,
+      allowHttpStatuses: readonly number[] = []
     ): Promise<{ response: Response; bodyText?: string }> => {
       for (let attempt = 0; ; attempt++) {
         signal.throwIfAborted()
@@ -181,7 +183,7 @@ export class ParserEngine {
             headers: { accept, 'user-agent': USER_AGENT, ...init?.headers },
             signal: requestSignal
           })
-          if (res.ok && res.body) {
+          if ((res.ok || allowHttpStatuses.includes(res.status)) && res.body) {
             const reader = res.body.getReader()
             // Native fetch observes abort too; explicitly cancel injected/independent streams.
             const cancelReader = (): void => {
@@ -237,14 +239,14 @@ export class ParserEngine {
             throw new ConnectorRequestTimeoutError(url, this.timeoutMs, attempt + 1)
           }
           // Immediate network failures may be transient, so retry them within the bounded budget.
-          if (attempt < this.retries) {
+          if (attempt < retries) {
             await abortableDelay(connectorRetryDelay(attempt, null, this.backoffMs), signal)
             continue
           }
           throw failure
         }
         if (!res) throw new Error(`No response for ${redactUrl(url)}`)
-        if (res.ok) {
+        if (res.ok || allowHttpStatuses.includes(res.status)) {
           signal?.throwIfAborted()
           return { response: res, ...(bodyText !== undefined ? { bodyText } : {}) }
         }
@@ -253,7 +255,7 @@ export class ParserEngine {
         const retryAfter = res.headers?.get?.('retry-after') ?? null
         const delay = retryable ? connectorRetryDelay(attempt, retryAfter, this.backoffMs) : 0
         const insufficientBudget = delay >= deadline - Date.now()
-        if (attempt < this.retries && retryable && !(retryAfter && insufficientBudget)) {
+        if (attempt < retries && retryable && !(retryAfter && insufficientBudget)) {
           await abortableDelay(delay, signal)
           continue
         }
@@ -271,16 +273,33 @@ export class ParserEngine {
         const { response, bodyText } = await doFetch(url, 'application/json')
         return bodyText === undefined ? response.json() : JSON.parse(bodyText)
       },
-      fetchJsonWithHeaders: async (url) => {
-        const { response, bodyText } = await doFetch(url, 'application/json')
+      fetchJsonWithHeaders: async (url, options) => {
+        const { response, bodyText } = await doFetch(
+          url,
+          'application/json',
+          undefined,
+          this.retries,
+          options?.allowHttpStatuses
+        )
         return {
           body: bodyText === undefined ? await response.json() : JSON.parse(bodyText),
-          headers: response.headers
+          headers: response.headers,
+          status: response.status
         }
       },
-      fetchText: async (url) => {
-        const { response, bodyText } = await doFetch(url, 'text/plain, application/xml, */*')
+      fetchText: async (url, accept = 'text/plain, application/xml, */*') => {
+        const { response, bodyText } = await doFetch(url, accept)
         return bodyText === undefined ? response.text() : bodyText
+      },
+      postForm: async (url, body) => {
+        // Native fetch supplies the multipart boundary. Do not resubmit a job after a lost reply.
+        const { response, bodyText } = await doFetch(
+          url,
+          'application/json',
+          { method: 'POST', body },
+          0
+        )
+        return bodyText === undefined ? response.json() : JSON.parse(bodyText)
       },
       postJson: async (url, body) => {
         const { response, bodyText } = await doFetch(url, 'application/json', {

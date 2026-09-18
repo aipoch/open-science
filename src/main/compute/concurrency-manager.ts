@@ -1,6 +1,7 @@
+import type { SessionComputePolicyAuthority } from '../session-persistence/compute-policy'
 import type { ComputeJobOwner, ComputeJobRepository } from './job-repository'
 import type { ComputeHostRepository } from './repository'
-import type { ComputeJob } from '../../shared/compute'
+import type { ComputeJob, ComputeQueueBlockedReason } from '../../shared/compute'
 import { createLogger, errorLogFields } from '../logger'
 import { ComputeJobLifecycle } from './compute-job-lifecycle'
 import { sharedDispatchTracker, type DispatchTracker } from './dispatch-tracker'
@@ -10,7 +11,7 @@ export type SessionStatus = {
   active_count: number
   queued_count: number
   provider_ceilings: Record<string, number>
-  queue_blocked_reason?: 'session_limits_unavailable'
+  queue_blocked_reason?: ComputeQueueBlockedReason
 }
 
 // Default provider ceiling when ComputeHost.concurrencyLimit is null/undefined.
@@ -28,13 +29,8 @@ const TERMINAL_JOB_STATUSES: ReadonlySet<ComputeJob['status']> = new Set([
 
 type DispatchQueuedJob = (jobId: string, onJobUpdated: (job: ComputeJob) => void) => Promise<void>
 
-type SessionConcurrencyLimitPersistence = {
-  load(): Promise<readonly (readonly [sessionId: string, limit: number])[]>
-  save(sessionId: string, limit: number): Promise<void>
-}
-
 // Enforces session-level and provider-level concurrency limits for compute jobs.
-// Restores durable session limits into memory, decides whether jobs should queue or dispatch, and
+// Reads each owner’s durable policy, decides whether jobs should queue or dispatch, and
 // automatically dispatches queued jobs when slots become available.
 export class ConcurrencyManager {
   private sessionLimits: Map<string, number> = new Map()
@@ -43,7 +39,10 @@ export class ConcurrencyManager {
   private reconciliationTask: Promise<void> | undefined
   private queueStopped: boolean
   private queueLifecycleRevision = 0
-  private sessionLimitRestorationFailed = false
+  private retryTimer: ReturnType<typeof setTimeout> | undefined
+  private policyBlocks = new Map<string, ComputeQueueBlockedReason>()
+  private publishedQueueBlocks = new Map<string, ComputeQueueBlockedReason>()
+  private policyWrites = new Map<string, Promise<void>>()
 
   // In-process serialization lock for admit(). The decision (read counts → pick status) and the
   // job-row commit must be atomic: without this, two concurrent submitJob calls could both read the
@@ -66,11 +65,11 @@ export class ConcurrencyManager {
       DispatchTracker,
       'begin' | 'end'
     > = sharedDispatchTracker,
-    private readonly sessionLimitPersistence?: SessionConcurrencyLimitPersistence
+    private readonly sessionLimitPersistence?: SessionComputePolicyAuthority
   ) {
     this.lifecycle = lifecycle ?? new ComputeJobLifecycle(jobRepository, this.handleJobUpdated)
-    // A production manager with durable Session limits fails closed until startup restoration has
-    // completed. Isolated callers without persistence retain the existing immediately-active seam.
+    // A production manager remains stopped until the runtime starts. Each admission and promotion
+    // then independently verifies its owner’s durable policy. Isolated callers without persistence retain the existing immediately-active seam.
     this.queueStopped = sessionLimitPersistence !== undefined
   }
 
@@ -78,29 +77,34 @@ export class ConcurrencyManager {
   // free and refill queue capacity for terminal states. Dispatcher and poller both receive this bound
   // handler, and the manager's own fallback persistence uses it below.
   handleJobUpdated = (job: ComputeJob): void => {
+    if (job.status !== 'queued') this.publishedQueueBlocks.delete(job.job_id)
     this.publishJobUpdated(job)
     if (TERMINAL_JOB_STATUSES.has(job.status)) this.requestQueueReconciliation()
   }
 
-  // Serialize the durable write and live projection with admissions so a successful setting cannot
-  // be followed by a late admission made against the previous value.
+  // Block this owner while its durable write is pending. Do not hold the admission lock across
+  // Session mutations: catalog/deletion recovery may call back into projection cleanup. Other owners
+  // remain schedulable, and successful settings become visible before this promise resolves.
   async setSessionLimit(sessionId: string, limit: number): Promise<void> {
     if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
       throw new Error(
         `Session concurrency limit must be an integer in the range 1..500 (got ${limit}).`
       )
     }
-
-    let previousLimit: number | undefined
-    await this.runExclusive(async () => {
+    const write = async (): Promise<void> => {
       await this.sessionLimitPersistence?.save(sessionId, limit)
-      previousLimit = this.sessionLimits.get(sessionId)
-      this.sessionLimits.set(sessionId, limit)
-    })
-
-    if (previousLimit !== undefined && limit > previousLimit) {
-      this.requestQueueReconciliation()
+      await this.runExclusive(async () => {
+        this.sessionLimits.set(sessionId, limit)
+        this.policyBlocks.delete(sessionId)
+      })
     }
+    const previous = this.policyWrites.get(sessionId) ?? Promise.resolve()
+    const operation = previous.then(write, write).finally(() => {
+      if (this.policyWrites.get(sessionId) === operation) this.policyWrites.delete(sessionId)
+      this.requestQueueReconciliation()
+    })
+    this.policyWrites.set(sessionId, operation)
+    return operation
   }
 
   // Projects a limit that was already committed through Session persistence. Session creation uses
@@ -117,16 +121,20 @@ export class ConcurrencyManager {
     await this.runExclusive(async () => {
       previousLimit = this.sessionLimits.get(sessionId)
       this.sessionLimits.set(sessionId, limit)
+      this.policyBlocks.delete(sessionId)
     })
 
-    if (previousLimit !== undefined && limit > previousLimit) {
+    if (previousLimit === undefined || limit > previousLimit) {
       this.requestQueueReconciliation()
     }
   }
 
   async clearProjectedSessionLimits(sessionIds: readonly string[]): Promise<void> {
     await this.runExclusive(async () => {
-      for (const sessionId of sessionIds) this.sessionLimits.delete(sessionId)
+      for (const sessionId of sessionIds) {
+        this.sessionLimits.delete(sessionId)
+        this.policyBlocks.delete(sessionId)
+      }
     })
   }
 
@@ -201,12 +209,25 @@ export class ConcurrencyManager {
   // pass the same slot. Returns the committed status, or 'queue_full' WITHOUT committing when the
   // global queue is at capacity (the caller must not create a row in that case).
   async admit(
-    params: { sessionId: string; providerId: string },
+    params: { sessionId: string; providerId: string; projectId?: string },
     commit: (status: 'submitted' | 'queued') => Promise<void>
   ): Promise<'submitted' | 'queued' | 'queue_full'> {
     return this.runExclusive(async () => {
+      const owner = { projectId: params.projectId ?? '', sessionId: params.sessionId }
       const shouldQueue =
-        this.queueStopped || (await this.overActiveLimits(params.sessionId, params.providerId))
+        this.queueStopped ||
+        this.isOwnerPaused(owner) ||
+        !(await this.refreshPolicy(params.sessionId, params.projectId)) ||
+        (await this.overActiveLimits(params.sessionId, params.providerId)) ||
+        this.queueStopped ||
+        this.isOwnerPaused(owner)
+      if (
+        !this.queueStopped &&
+        !this.isOwnerPaused(owner) &&
+        this.policyBlocks.get(params.sessionId) === 'session_policy_identity_conflict'
+      ) {
+        throw new Error('Compute Session ownership conflicts with the submitting Project.')
+      }
       if (!shouldQueue) {
         await commit('submitted')
         return 'submitted'
@@ -215,6 +236,7 @@ export class ConcurrencyManager {
       const globalQueuedCount = await this.jobRepository.countQueuedJobs()
       if (globalQueuedCount >= GLOBAL_QUEUE_LIMIT) return 'queue_full'
       await commit('queued')
+      if (this.policyBlocks.has(params.sessionId)) this.schedulePolicyRetry()
       return 'queued'
     })
   }
@@ -234,14 +256,23 @@ export class ConcurrencyManager {
     jobId: string
     sessionId: string
     providerId: string
+    projectId?: string
   }): Promise<'can_dispatch' | 'should_queue' | 'queue_full'> {
-    const { sessionId, providerId } = params
-
-    if (!this.queueStopped && !(await this.overActiveLimits(sessionId, providerId))) {
-      return 'can_dispatch'
-    }
-    const globalQueuedCount = await this.jobRepository.countQueuedJobs()
-    return globalQueuedCount >= GLOBAL_QUEUE_LIMIT ? 'queue_full' : 'should_queue'
+    const { sessionId, providerId, projectId } = params
+    return this.runExclusive(async () => {
+      const owner = { projectId: projectId ?? '', sessionId }
+      if (
+        !this.queueStopped &&
+        !this.isOwnerPaused(owner) &&
+        (await this.refreshPolicy(sessionId, projectId)) &&
+        !(await this.overActiveLimits(sessionId, providerId)) &&
+        !this.queueStopped &&
+        !this.isOwnerPaused(owner)
+      )
+        return 'can_dispatch'
+      const globalQueuedCount = await this.jobRepository.countQueuedJobs()
+      return globalQueuedCount >= GLOBAL_QUEUE_LIMIT ? 'queue_full' : 'should_queue'
+    })
   }
 
   // Called when a job reaches a terminal state. Attempts to dispatch the next eligible queued job.
@@ -250,34 +281,15 @@ export class ConcurrencyManager {
   }
 
   async startQueueReconciliation(options: { retryFailedOnly?: boolean } = {}): Promise<void> {
-    // Catalog reads may retry a failed startup, but must not start an uninitialized or stopped runtime.
-    if (options.retryFailedOnly && !this.sessionLimitRestorationFailed) return
-    const lifecycleRevision = ++this.queueLifecycleRevision
-    let limits: Map<string, number> | undefined
-    try {
-      const restoredLimits = await this.sessionLimitPersistence?.load()
-      if (restoredLimits) {
-        limits = new Map<string, number>()
-        for (const [sessionId, limit] of restoredLimits) {
-          if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
-            throw new Error(
-              `Session concurrency limit must be an integer in the range 1..500 (got ${limit}).`
-            )
-          }
-          limits.set(sessionId, limit)
-        }
-      }
-    } catch (error) {
-      if (lifecycleRevision === this.queueLifecycleRevision && this.queueStopped) {
-        this.sessionLimitRestorationFailed = true
-      }
-      throw error
+    // A catalog recovery notification can wake a running queue, never start a stopped runtime.
+    if (options.retryFailedOnly) {
+      if (!this.queueStopped) await this.reconcileQueuedJobs()
+      return
     }
+    const lifecycleRevision = ++this.queueLifecycleRevision
     let shouldReconcile = false
     await this.runExclusive(async () => {
       if (lifecycleRevision !== this.queueLifecycleRevision) return
-      if (limits) this.sessionLimits = limits
-      this.sessionLimitRestorationFailed = false
       this.queueStopped = false
       shouldReconcile = true
     })
@@ -287,7 +299,8 @@ export class ConcurrencyManager {
   async stopQueueReconciliation(): Promise<void> {
     this.queueLifecycleRevision += 1
     this.queueStopped = true
-    this.sessionLimitRestorationFailed = false
+    if (this.retryTimer) clearTimeout(this.retryTimer)
+    this.retryTimer = undefined
     this.reconciliationRequested = false
     await this.reconciliationTask
   }
@@ -310,9 +323,67 @@ export class ConcurrencyManager {
     })
   }
 
+  // Fresh reads share the decision/write lock. There is no startup snapshot that can overwrite a
+  // later setting or resurrect a deleted owner. This adapter cannot invoke catalog reconciliation.
+  private async refreshPolicy(sessionId: string, projectId?: string): Promise<boolean> {
+    if (this.policyWrites.has(sessionId)) {
+      this.policyBlocks.set(sessionId, 'session_policy_unavailable')
+      return false
+    }
+    if (!this.sessionLimitPersistence) return true
+    let reason: ComputeQueueBlockedReason | undefined
+    try {
+      const policy = await this.sessionLimitPersistence.resolve(sessionId, projectId)
+      if (policy.status === 'ready') {
+        if (policy.limit === null) this.sessionLimits.delete(sessionId)
+        else if (Number.isInteger(policy.limit) && policy.limit >= 1 && policy.limit <= 500)
+          this.sessionLimits.set(sessionId, policy.limit)
+        else reason = 'session_policy_invalid'
+      } else {
+        const reasons = {
+          unavailable: 'session_policy_unavailable',
+          'identity-conflict': 'session_policy_identity_conflict',
+          missing: 'session_policy_missing',
+          deleted: 'session_policy_deleted',
+          'unsupported-version': 'session_policy_unsupported_version',
+          'invalid-policy': 'session_policy_invalid'
+        } as const
+        reason = reasons[policy.reason]
+      }
+    } catch {
+      reason = 'session_policy_unavailable'
+    }
+    if (reason) {
+      this.sessionLimits.delete(sessionId)
+      this.policyBlocks.set(sessionId, reason)
+      return false
+    }
+    this.policyBlocks.delete(sessionId)
+    return true
+  }
+
+  private schedulePolicyRetry(): void {
+    if (this.queueStopped || this.retryTimer) return
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = undefined
+      this.requestQueueReconciliation()
+    }, 5_000)
+    this.retryTimer.unref?.()
+  }
+
+  async getQueueBlockedReason(
+    sessionId: string,
+    projectId: string
+  ): Promise<ComputeQueueBlockedReason | undefined> {
+    return this.runExclusive(async () => {
+      if (this.queueStopped) return 'runtime_stopped'
+      await this.refreshPolicy(sessionId, projectId)
+      return this.policyBlocks.get(sessionId)
+    })
+  }
+
   // Query session status (active/queued counts, limits, provider ceilings).
   async getStatus(sessionId: string): Promise<SessionStatus> {
-    const sessionLimit = this.sessionLimits.get(sessionId) ?? null
     const activeCount = await this.jobRepository.countActiveBySession(sessionId)
 
     // Read only status/provider metadata, including historical and needs-attention jobs.
@@ -329,14 +400,17 @@ export class ConcurrencyManager {
       providerCeilings[providerId] = host?.concurrencyLimit ?? DEFAULT_PROVIDER_CEILING
     }
 
+    await this.runExclusive(() => this.refreshPolicy(sessionId))
     return {
-      session_limit: sessionLimit,
+      session_limit: this.sessionLimits.get(sessionId) ?? null,
       active_count: activeCount,
       queued_count: queuedCount,
       provider_ceilings: providerCeilings,
-      ...(this.sessionLimitRestorationFailed
-        ? { queue_blocked_reason: 'session_limits_unavailable' as const }
-        : {})
+      ...(this.queueStopped
+        ? { queue_blocked_reason: 'runtime_stopped' as const }
+        : this.policyBlocks.has(sessionId)
+          ? { queue_blocked_reason: this.policyBlocks.get(sessionId)! }
+          : {})
     }
   }
 
@@ -355,6 +429,18 @@ export class ConcurrencyManager {
         if (this.isOwnerPaused(owner)) continue
         const reservation = this.runExclusive(async () => {
           if (this.queueStopped || this.isOwnerPaused(owner)) return false
+          const previousReason = this.publishedQueueBlocks.get(job.job_id)
+          const ready = await this.refreshPolicy(job.session_id, job.project_id)
+          const reason = this.policyBlocks.get(job.session_id)
+          if (previousReason !== reason) {
+            if (reason) this.publishedQueueBlocks.set(job.job_id, reason)
+            else this.publishedQueueBlocks.delete(job.job_id)
+            this.publishJobUpdated(job)
+          }
+          if (!ready) {
+            this.schedulePolicyRetry()
+            return false
+          }
           if (await this.overActiveLimits(job.session_id, job.provider_id)) return false
           if (this.queueStopped || this.isOwnerPaused(owner)) return false
           this.dispatchTracker.begin(job.job_id)
@@ -418,5 +504,3 @@ export class ConcurrencyManager {
     return JSON.stringify([projectId, sessionId])
   }
 }
-
-export type { SessionConcurrencyLimitPersistence }

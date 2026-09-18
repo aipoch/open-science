@@ -40,6 +40,8 @@ const sourceFileFor = (path: string): SourceFile =>
 const productionSources = (): readonly string[] => listProductionSources(projectRoot)
 
 const importsOwner = (path: string): boolean => {
+  // The AST predicate below requires this literal module name; skip unrelated files before parsing.
+  if (!readSource(path).includes('provider-transport-owner')) return false
   let imports = false
   const sourceFile = sourceFileFor(path)
   const visit = (node: Node): void => {

@@ -33,6 +33,7 @@ const mocks = vi.hoisted(() => {
       load: vi.fn().mockResolvedValue(true),
       checkEnvironment: vi.fn().mockResolvedValue(undefined),
       openSettings: vi.fn(),
+      openSettingsToPanel: vi.fn(),
       closeSettings: vi.fn()
     },
     skillImport: { enqueue: vi.fn(), dismiss: vi.fn(), pending: [] as unknown[] },
@@ -389,8 +390,19 @@ vi.mock('@/pages/settings/SettingsPage', () => ({
   )
 }))
 vi.mock('@/pages/workspace/EnvStatusBanner', () => ({
-  EnvStatusBanner: ({ onRetry }: { onRetry?: () => void }): React.JSX.Element => (
-    <button type="button" data-testid="env-banner" onClick={onRetry} />
+  EnvStatusBanner: ({
+    onRetry,
+    onOpenRuntimes
+  }: {
+    onRetry?: () => void
+    onOpenRuntimes?: () => void
+  }): React.JSX.Element => (
+    <>
+      <button type="button" data-testid="env-banner" onClick={onRetry} />
+      {onOpenRuntimes ? (
+        <button type="button" data-testid="env-open-runtimes" onClick={onOpenRuntimes} />
+      ) : null}
+    </>
   )
 }))
 vi.mock('@/pages/workspace/WorkspacePage', () => ({
@@ -904,17 +916,17 @@ describe('App startup routing', () => {
     expect(mocks.presentationProps.workspace?.isPreviewPresentationActive).toBe(false)
   })
 
-  it('does not let Side Chat-owned approvals block workspace visibility or global search', async () => {
+  it('presents main approvals even when a Side chat is open', async () => {
     mocks.settings.isLoaded = true
     mocks.navigation.view = 'workspace'
     mocks.sideChatParentSessionIds.add('side-chat-session')
     mocks.compute.pendingApprovals = [{ id: 'compute', sessionId: 'side-chat-session' }]
     await render()
 
-    expect(mocks.presentationProps.computeApproval?.active).toBe(false)
-    expect(mocks.presentationProps.workspace?.isPreviewPresentationActive).toBe(true)
+    expect(mocks.presentationProps.computeApproval?.active).toBe(true)
+    expect(mocks.presentationProps.workspace?.isPreviewPresentationActive).toBe(false)
     expect(mocks.syncUnreadTaskView).toHaveBeenLastCalledWith({
-      isSessionContentVisible: true
+      isSessionContentVisible: false
     })
 
     await act(async () => {
@@ -923,7 +935,7 @@ describe('App startup routing', () => {
       )
     })
 
-    expect(mocks.globalSearch.props?.open).toBe(true)
+    expect(mocks.globalSearch.props?.open).not.toBe(true)
   })
 
   it('consumes the close shortcut while a decision-required approval is active', async () => {
@@ -1207,7 +1219,9 @@ describe('App startup routing', () => {
 
     const alert = container.querySelector('[data-testid="session-persistence-alert"]')
     expect(alert).not.toBeNull()
-    expect(alert?.classList.contains('bg-card')).toBe(true)
+    expect(alert?.closest('[data-action-toast-stack]')).toBeNull()
+    expect(alert?.classList.contains('bottom-3')).toBe(true)
+    expect(alert?.querySelector('section')?.classList.contains('bg-card')).toBe(true)
     expect(alert?.classList.contains('bg-bg-000')).toBe(false)
     expect(alert?.classList.contains('bg-bg-100')).toBe(false)
     expect(container.querySelector('[data-testid="home-page"]')).not.toBeNull()
@@ -1311,6 +1325,16 @@ describe('App startup routing', () => {
     expect(mocks.syncUnreadTaskView).toHaveBeenLastCalledWith({
       isSessionContentVisible: false
     })
+  })
+
+  it('opens the Runtimes settings panel from the home recovery banner', async () => {
+    mocks.settings.isLoaded = true
+    mocks.startupView = 'app'
+    await render()
+    const action = container.querySelector<HTMLButtonElement>('[data-testid="env-open-runtimes"]')
+    expect(action).not.toBeNull()
+    await act(async () => action?.click())
+    expect(mocks.settings.openSettingsToPanel).toHaveBeenCalledWith('runtimes')
   })
 
   it('routes first-run users to onboarding after settings hydration', async () => {
@@ -1486,14 +1510,14 @@ describe('App startup routing', () => {
   it('warns that in-memory conversation changes are not durable and retries them', async () => {
     mocks.settings.isLoaded = true
     mocks.sessionPersistence.writeError =
-      'Open Science could not save the latest conversation changes. Retry before closing the app.'
+      'Open-Science could not save the latest conversation changes. Retry before closing the app.'
 
     await render()
 
     const alert = container.querySelector('[data-testid="session-persistence-alert"]')
     expect(alert?.textContent).toContain('Conversation storage needs attention')
     expect(alert?.textContent).toContain(
-      'Open Science could not save the latest conversation changes. Retry before closing the app.'
+      'Open-Science could not save the latest conversation changes. Retry before closing the app.'
     )
     expect(alert?.textContent).not.toContain('could not confirm')
     expect(alert?.querySelector('[data-testid="session-persistence-dismiss"]')).not.toBeNull()
@@ -1554,7 +1578,7 @@ describe('App startup routing', () => {
     mocks.sessionPersistence.hasCompleteSessionCatalog = false
     mocks.sessionPersistence.catalogRecovery = { kind: 'repairable', reason: 'session-scan' }
     mocks.sessionPersistence.writeError =
-      'Open Science could not save the latest conversation changes. Retry before closing the app.'
+      'Open-Science could not save the latest conversation changes. Retry before closing the app.'
 
     await render()
 
@@ -1562,8 +1586,14 @@ describe('App startup routing', () => {
       container.querySelectorAll('[data-testid="session-persistence-alert"]')
     )
     expect(alerts).toHaveLength(2)
-    expect(alerts[0]?.textContent).toContain('Project index needs repair')
-    expect(alerts[1]?.textContent).toContain('Conversation storage needs attention')
+    const catalogAlert = alerts.find((alert) =>
+      alert.textContent?.includes('Project index needs repair')
+    )
+    const writeAlert = alerts.find((alert) =>
+      alert.textContent?.includes('Conversation storage needs attention')
+    )
+    expect(catalogAlert?.closest('[data-bottom-notice-stack]')).toBeTruthy()
+    expect(writeAlert?.closest('[data-action-toast-stack]')).toBeTruthy()
 
     const retries = Array.from(
       container.querySelectorAll<HTMLButtonElement>('[data-testid="session-persistence-retry"]')
@@ -1592,7 +1622,7 @@ describe('App startup routing', () => {
     expect(alert?.textContent).toContain('Project archive needs attention')
     expect(alert?.textContent).toContain('A damaged saved conversation was moved aside')
     expect(alert?.textContent).toContain('You can still permanently delete the project')
-    expect(alert?.textContent).toContain('New Compute jobs may remain queued')
+    expect(alert?.textContent).toContain('Compute jobs in affected Sessions may remain queued')
     const recheck = container.querySelector<HTMLButtonElement>(
       '[data-testid="session-persistence-retry"]'
     )
@@ -1812,6 +1842,53 @@ describe('App startup routing', () => {
     expect(mocks.openSessionById).toHaveBeenCalledWith('s-9', 'notification')
   })
 
+  it('retries a notification peek after the desktop handler is installed', async () => {
+    mocks.settings.isLoaded = true
+    mocks.sessions = [{ id: 's-late' }]
+    mocks.notifications.peekPendingOpenSession
+      .mockRejectedValueOnce(
+        new Error("No handler registered for 'notifications:peek-pending-open-session'")
+      )
+      .mockResolvedValue({ sessionId: 's-late', token: 5 })
+    mocks.notifications.takePendingOpenSession.mockResolvedValue({
+      sessionId: 's-late',
+      token: 5
+    })
+
+    await render()
+    expect(mocks.openSessionById).not.toHaveBeenCalled()
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 150))
+    })
+
+    expect(mocks.notifications.peekPendingOpenSession).toHaveBeenCalledTimes(2)
+    expect(mocks.notifications.takePendingOpenSession).toHaveBeenCalledWith(5)
+    expect(mocks.openSessionById).toHaveBeenCalledWith('s-late', 'notification')
+  })
+
+  it('does not retry a notification peek after unmount', async () => {
+    let rejectPeek: ((error: Error) => void) | undefined
+    mocks.settings.isLoaded = true
+    mocks.notifications.peekPendingOpenSession.mockImplementation(
+      () =>
+        new Promise<null>((_resolve, reject) => {
+          rejectPeek = reject
+        })
+    )
+
+    await render()
+    expect(mocks.notifications.peekPendingOpenSession).toHaveBeenCalledOnce()
+
+    await act(async () => root.unmount())
+    await act(async () => {
+      rejectPeek?.(new Error("No handler registered for 'notifications:peek-pending-open-session'"))
+      await new Promise((resolve) => setTimeout(resolve, 150))
+    })
+
+    expect(mocks.notifications.peekPendingOpenSession).toHaveBeenCalledOnce()
+  })
+
   it('opens an already-hydrated notification target during partial recovery', async () => {
     mocks.settings.isLoaded = true
     mocks.sessionPersistence.isReady = false
@@ -1916,9 +1993,10 @@ describe('App startup routing', () => {
       container.querySelectorAll('[data-testid="session-persistence-alert"]')
     ).find((candidate) => candidate.textContent?.includes('Quit was canceled'))
     expect(alert?.textContent).toContain('Quit was canceled')
+    expect(alert?.closest('[data-bottom-notice-stack]')).toBeNull()
     expect(alert?.closest('[inert]')).toBeNull()
     expect(alert?.closest('[aria-hidden="true"]')).toBeNull()
-    expect(alert?.classList.contains('z-toast')).toBe(true)
+    expect(alert?.classList.contains('z-[70]!')).toBe(true)
   })
 
   it('does not let a later notification peek override navigation while an earlier peek is pending', async () => {

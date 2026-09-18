@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { packageOriginSchema } from './session-package'
 
 import {
   defineApplicationCommandContract,
@@ -414,6 +415,7 @@ export type PersistedSideChat = Readonly<{
   providerSessionId?: string
   providerContinuityToken?: string
   model?: string
+  reasoningEffort?: ReasoningEffort
   historyPreamble: string
   entries: readonly SideChatEntry[]
   createdAt: number
@@ -431,8 +433,17 @@ export type SessionRuntimeContext = Readonly<{
   permission?: SessionPermissionRuntimeContext
   pdfContext?: SessionPdfContext
   sideChat?: PersistedSideChat
+  sideChats?: readonly PersistedSideChat[]
   sideChatRelays?: readonly PersistedSideChatRelay[]
 }>
+
+// Keep the legacy first-chat slot readable while extending a parent to multiple independent chats.
+export const getPersistedSideChats = (
+  context: SessionRuntimeContext | undefined
+): readonly PersistedSideChat[] => [
+  ...(context?.sideChat ? [context.sideChat] : []),
+  ...(context?.sideChats ?? [])
+]
 
 export type SessionRuntimeContextPatch = Readonly<
   Partial<{
@@ -441,6 +452,7 @@ export type SessionRuntimeContextPatch = Readonly<
     permission: SessionPermissionRuntimeContext | undefined
     pdfContext: SessionPdfContext | undefined
     sideChat: PersistedSideChat | undefined
+    sideChats: readonly PersistedSideChat[] | undefined
     sideChatRelays: readonly PersistedSideChatRelay[] | undefined
   }>
 >
@@ -777,6 +789,12 @@ export type EditSessionDetailsRequest = EditSessionDetailsRequestBase &
   )
 
 export type PersistedChatSession = {
+  // Imported history has no execution authority. Absence preserves existing local Session behavior.
+  packageOrigin?: import('./session-package').SessionPackageOrigin
+  // Copy receipt and recovery identity; unlike packageOrigin this grants no read-only status.
+  forkOrigin?: import('./session-package').SessionPackageOrigin
+  // Local message identity at Fork creation; independent of source links and usage attribution.
+  forkHeadMessageId?: string
   id: string
   // App-wide, one-based sequence allocated by SQLite. Historical Session files omit it until the
   // one-time projection backfill assigns numbers in createdAt/id order and rewrites their JSON.
@@ -786,8 +804,8 @@ export type PersistedChatSession = {
   // Whole-Session durable revision used for optimistic concurrency. Historical files omit it and
   // restore as revision 0; Main stamps revision 1 on their next successful state transition.
   revision?: number
-  // Immutable snapshot of the direct Session and active conversation path copied by
-  // Branch in new session. Historical Sessions omit it and remain unrelated.
+  // Immutable source Session and selected conversation path at Branch or Fork creation.
+  // Historical Sessions omit it and remain unrelated.
   branchSource?: PersistedSessionBranchSource
   title: string
   description?: string
@@ -891,6 +909,29 @@ export type PersistedChatSession = {
   updatedAt: number
 }
 
+// Internal Task admission command; not part of the persisted Session format.
+export type BindTaskSessionRequest = Readonly<{
+  session: Pick<
+    PersistedChatSession,
+    | 'id'
+    | 'projectId'
+    | 'cwd'
+    | 'permissionProfile'
+    | 'agentFrameworkId'
+    | 'agentBackendId'
+    | 'providerSessionId'
+    | 'providerContinuityToken'
+    | 'agentConfiguration'
+    | 'updatedAt'
+  >
+  contextReset: boolean
+}>
+
+export type AdmitTaskSessionTurnRequest = Readonly<{
+  session: PersistedChatSession
+  contextReset: boolean
+}>
+
 export type StageTaskSessionCompletionRequest = Readonly<{
   projectId: string
   sessionId: string
@@ -936,6 +977,9 @@ export type SessionSummary = Readonly<{
   updatedAt: number
   presentedActivityAt?: number
   needsStartupRecovery: boolean
+  // Transient presentation hint projected from Main's durable WSL setup binding owner. It is not
+  // stored in Session JSON and never carries the one-time setup token.
+  wslSetup?: true
 }>
 
 export type SessionUsageProjection = Readonly<{
@@ -1420,6 +1464,7 @@ const sanitizePersistedSideChatWithLegacyRelays = (
       'providerSessionId',
       'providerContinuityToken',
       'model',
+      'reasoningEffort',
       'historyPreamble',
       'entries',
       'pendingRelays',
@@ -1497,6 +1542,7 @@ const sanitizePersistedSideChatWithLegacyRelays = (
     ...(providerSessionId !== undefined ? { providerSessionId } : {}),
     ...(providerContinuityToken !== undefined ? { providerContinuityToken } : {}),
     ...(model !== undefined ? { model } : {}),
+    ...(isReasoningEffort(value.reasoningEffort) ? { reasoningEffort: value.reasoningEffort } : {}),
     historyPreamble,
     entries: entries as SideChatEntry[],
     createdAt,
@@ -2748,6 +2794,7 @@ export const sanitizeSessionRuntimeContext = (
     permission?: SessionPermissionRuntimeContext
     pdfContext?: SessionPdfContext
     sideChat?: PersistedSideChat
+    sideChats?: readonly PersistedSideChat[]
     sideChatRelays?: readonly PersistedSideChatRelay[]
   } = {
     version: 1,
@@ -2796,6 +2843,14 @@ export const sanitizeSessionRuntimeContext = (
       }
       continue
     }
+    if (owner === 'sideChats') {
+      if (ownerValue === undefined) continue
+      if (!Array.isArray(ownerValue) || ownerValue.length > 100) return undefined
+      const chats = ownerValue.map(sanitizePersistedSideChat)
+      if (chats.some((chat) => !chat)) return undefined
+      result.sideChats = chats as PersistedSideChat[]
+      continue
+    }
     if (owner === 'sideChatRelays') {
       if (!Array.isArray(ownerValue) || ownerValue.length > MAX_SIDE_CHAT_RELAYS) continue
       const relays = ownerValue.map((relay) => sanitizePersistedSideChatRelay(relay))
@@ -2805,6 +2860,8 @@ export const sanitizeSessionRuntimeContext = (
     }
     return undefined
   }
+  const chatIds = getPersistedSideChats(result).map((chat) => chat.id)
+  if (new Set(chatIds).size !== chatIds.length) return undefined
   const sideChatRelays = [...directRelays, ...legacyRelays]
   if (sideChatRelays.length > MAX_SIDE_CHAT_RELAYS) return undefined
   const relayIds = new Set<string>()
@@ -4421,6 +4478,18 @@ const sanitizeSession = (
   if (taskRunCommitId) sanitized.taskRunCommitId = taskRunCommitId
   if (resumeRecovery) sanitized.resumeRecovery = resumeRecovery
   if (branchSource) sanitized.branchSource = branchSource
+  if (session.packageOrigin !== undefined) {
+    const origin = packageOriginSchema.safeParse(session.packageOrigin)
+    if (!origin.success) return undefined
+    sanitized.packageOrigin = origin.data
+  }
+  if (session.forkOrigin !== undefined) {
+    const origin = packageOriginSchema.safeParse(session.forkOrigin)
+    if (!origin.success) return undefined
+    sanitized.forkOrigin = origin.data
+    const forkHeadMessageId = asString(session.forkHeadMessageId)
+    if (forkHeadMessageId) sanitized.forkHeadMessageId = forkHeadMessageId
+  }
   if (pendingHistoryReplay) sanitized.pendingHistoryReplay = pendingHistoryReplay
   if (session.branchContextResetRequired === true) sanitized.branchContextResetRequired = true
   if (error) sanitized.error = error
@@ -4676,10 +4745,11 @@ export const createSessionFile = (session: PersistedChatSession): PersistedSessi
 
 // Decodes one Session file without treating a valid future envelope as corrupt. Bare Sessions and
 // v1 envelopes are released historical formats; every other past or malformed version fails closed.
-export const decodeSessionFile = (
-  value: unknown,
-  options: SessionFileReadOptions = {}
-): SessionFileDecodeResult => {
+export const decodeSessionEnvelope = (
+  value: unknown
+):
+  | { status: 'ok'; session: Record<string, unknown> }
+  | { status: 'invalid' | 'unsupported-version' } => {
   if (!isRecord(value)) return { status: 'invalid' }
 
   const hasEnvelopeField = Object.hasOwn(value, 'version') || Object.hasOwn(value, 'session')
@@ -4693,7 +4763,19 @@ export const decodeSessionFile = (
     }
   }
 
-  const rawSession = hasEnvelopeField ? (value.session as Record<string, unknown>) : value
+  return {
+    status: 'ok',
+    session: hasEnvelopeField ? (value.session as Record<string, unknown>) : value
+  }
+}
+
+export const decodeSessionFile = (
+  value: unknown,
+  options: SessionFileReadOptions = {}
+): SessionFileDecodeResult => {
+  const envelope = decodeSessionEnvelope(value)
+  if (envelope.status !== 'ok') return envelope
+  const rawSession = envelope.session
 
   // A persisted Session needs one authoritative conversation representation. The compatibility
   // message list may be absent or malformed only when a canonical graph can replace it; otherwise

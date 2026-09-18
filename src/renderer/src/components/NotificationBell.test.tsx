@@ -242,7 +242,7 @@ describe('NotificationBell', () => {
     )
     expect(chip?.className).toContain('rounded-full')
     expect(chip?.className).toContain('border')
-    expect(chip?.className).toContain('text-text-300')
+    expect(chip?.className).toContain('text-text-100')
   })
 
   it('dims read titles and clamps detail previews to two lines', async () => {
@@ -750,6 +750,28 @@ describe('NotificationBell', () => {
         expect(openSessionById).not.toHaveBeenCalled()
       }
       expect(container.querySelector('[aria-label="Message center"]')).toBeNull()
+    }
+  )
+
+  it.each(['inert', 'aria-hidden'])(
+    'closes the desktop panel when its source becomes %s',
+    async (attribute) => {
+      await act(async () => root.render(<NotificationBell />))
+      const trigger = container.querySelector<HTMLButtonElement>('[aria-label^="Messages,"]')
+      await act(async () => trigger?.click())
+      expect(document.body.querySelector('[aria-label="Message center"]')).not.toBeNull()
+
+      await act(async () => {
+        container.setAttribute(attribute, attribute === 'inert' ? '' : 'true')
+        await Promise.resolve()
+      })
+      expect(document.body.querySelector('[aria-label="Message center"]')).toBeNull()
+      expect(trigger?.getAttribute('aria-expanded')).toBe('false')
+
+      await act(async () => container.removeAttribute(attribute))
+      expect(document.body.querySelector('[aria-label="Message center"]')).toBeNull()
+      await act(async () => trigger?.click())
+      expect(document.body.querySelector('[aria-label="Message center"]')).not.toBeNull()
     }
   )
 

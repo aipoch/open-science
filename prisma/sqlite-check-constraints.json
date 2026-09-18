@@ -1,6 +1,26 @@
 {
   "constraints": [
     {
+      "tableName": "bookmarks",
+      "name": "bookmarks_identity_check",
+      "expression": "length(trim(\"id\")) > 0 AND length(trim(\"projectId\")) > 0 AND length(trim(\"sessionId\")) > 0 AND length(trim(\"sourceId\")) > 0"
+    },
+    {
+      "tableName": "bookmarks",
+      "name": "bookmarks_kind_check",
+      "expression": "\"kind\" IN ('text', 'pdf-text', 'pdf-region') AND \"sourceKind\" IN ('agent-message', 'session-item', 'project-file', 'artifact-version', 'upload-version', 'literature-attachment-version')"
+    },
+    {
+      "tableName": "bookmarks",
+      "name": "bookmarks_json_check",
+      "expression": "json_valid(\"sourceJson\") AND json_type(\"sourceJson\") = 'object' AND json_valid(\"selectorJson\") AND json_type(\"selectorJson\") = 'object' AND length(\"sourceJson\") <= 65536 AND length(\"selectorJson\") <= 65536"
+    },
+    {
+      "tableName": "bookmarks",
+      "name": "bookmarks_content_check",
+      "expression": "length(\"note\") <= 2000 AND (\"quote\" IS NULL OR length(\"quote\") BETWEEN 1 AND 4000) AND (\"kind\" != 'text' OR \"quote\" IS NOT NULL)"
+    },
+    {
       "tableName": "SessionNumberSequence",
       "name": "SessionNumberSequence_identity_check",
       "expression": "\"id\" = 'global' AND \"nextNumber\" >= 1"

@@ -1,0 +1,59 @@
+{
+  "ownerPaths": [
+    "src/main/tasks/task-control-ports.ts",
+    "src/main/tasks/task-run-journal.test.ts",
+    "src/main/tasks/task-run-journal.ts",
+    "src/main/tasks/task-runner.test.ts",
+    "src/main/tasks/task-runner.ts"
+  ],
+  "interfacePaths": [
+    "src/main/tasks/task-control-ports.ts",
+    "src/main/tasks/task-run-journal.ts",
+    "src/main/tasks/task-runner.ts"
+  ],
+  "consumerModules": [],
+  "testFiles": {
+    "owner": ["src/main/tasks/task-run-journal.test.ts", "src/main/tasks/task-runner.test.ts"],
+    "contract": [
+      "src/preload/index.test.ts",
+      "src/renderer/web/api-installer.test.ts",
+      "src/shared/renderer-contract-catalog.test.ts"
+    ],
+    "consumer": [
+      "src/main/acp/runtime.test.ts",
+      "src/main/acp/task-agent-port.test.ts",
+      "src/main/application-command-client.test.ts",
+      "src/main/application-command-composition.test.ts",
+      "src/main/application-command-electron-adapter.test.ts",
+      "src/main/host-application-commands.test.ts",
+      "src/main/index-fatal-errors.test.ts",
+      "src/main/index-startup-failure.test.ts",
+      "src/main/literature/scale-regressions.test.ts",
+      "src/main/remote-access/ipc.test.ts",
+      "src/main/remote-access/pairing.test.ts",
+      "src/main/remote-access/service.test.ts",
+      "src/main/runtime-electron-wiring.test.ts",
+      "src/main/session-package/archive.test.ts",
+      "src/main/session-package/deletion.test.ts",
+      "src/main/session-package/desktop-composition.test.ts",
+      "src/main/session-package/desktop.test.ts",
+      "src/main/session-package/export-validation.test.ts",
+      "src/main/session-package/inspection-worker.integration.test.ts",
+      "src/main/session-package/literature.test.ts",
+      "src/main/session-package/portability.test.ts",
+      "src/main/session-package/recovery-diagnostics.test.ts",
+      "src/main/session-package/recovery.test.ts",
+      "src/main/session-package/service.test.ts",
+      "src/main/settings/bootstrap.integration.test.ts",
+      "src/main/web-service/artifact-download.integration.test.ts",
+      "src/main/web-service/controller.test.ts",
+      "src/main/web-service/http-server.test.ts",
+      "src/main/web-service/task-api.test.ts",
+      "src/shared/renderer-surface-inventory.test.ts",
+      "src/shared/renderer-surface-matrix.test.ts",
+      "src/main/session-package/fork.test.ts"
+    ]
+  },
+  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
+  "fallbackCapability": "main_runtime"
+}

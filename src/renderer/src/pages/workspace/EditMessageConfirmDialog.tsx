@@ -23,7 +23,7 @@ type EditMessageConfirmDialogProps = {
 }
 
 const confirmButtonClassName =
-  'border-transparent bg-amber-500 text-white hover:bg-amber-500/90 hover:text-white'
+  'border-transparent bg-status-warning-surface text-status-warning-foreground hover:bg-status-warning-surface/80 dark:bg-status-warning-dark-surface dark:text-status-warning-dark-foreground dark:hover:bg-status-warning-dark-surface/80'
 
 // Confirms that editing starts a new selectable branch while retaining the original downstream path.
 const EditMessageConfirmDialog = ({

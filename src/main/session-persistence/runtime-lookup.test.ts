@@ -1,3 +1,4 @@
+import { initDataRoot } from '../storage-root'
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
@@ -51,6 +52,7 @@ const createLookup = async (
   findSessions: ReturnType<typeof createSessionRuntimeLookup>
 }> => {
   const root = await mkdtemp(join(tmpdir(), 'session-runtime-lookup-'))
+  initDataRoot(root)
   roots.push(root)
   const repository = new SessionRepository(root, dependencies)
   await repository.saveSession(session('current'))
@@ -77,6 +79,52 @@ afterEach(async () => {
 })
 
 describe('runtime Session lookup', () => {
+  it('shares concurrent reads but releases success and failure before delivering settlement', async () => {
+    const loadSession = vi.fn().mockResolvedValue(session('current'))
+    const repository = {
+      loadSession,
+      loadAll: vi.fn(),
+      assertSessionIdentityOwnership: vi.fn().mockResolvedValue(undefined)
+    }
+    const findSessions = createSessionRuntimeLookup({
+      repository,
+      coordinator: { sessionProjectId: vi.fn().mockResolvedValue('project-1') }
+    })
+    await Promise.all(Array.from({ length: 16 }, () => findSessions('current')))
+    expect(loadSession).toHaveBeenCalledTimes(1)
+    loadSession.mockResolvedValueOnce({ ...session('current'), title: 'updated' })
+    expect((await findSessions('current'))[0].title).toBe('updated')
+    loadSession.mockRejectedValueOnce(new Error('read failed'))
+    // Attach the retry directly to the rejection; no extra assertion microtasks hide stale entries.
+    await findSessions('current').catch(() => findSessions('current'))
+    expect(loadSession).toHaveBeenCalledTimes(4)
+  })
+
+  it('bounds opt-in profiling entries and does not record routine lookups', async () => {
+    const { repository } = await createLookup()
+    const prefix = 'open-science:persistence-runtime-lookup-'
+    const names = ['catalog', 'ownership', 'read', 'targeted'].map((stage) => prefix + stage)
+    try {
+      vi.stubEnv('OPEN_SCIENCE_PERF_SESSION_TRACE', '1')
+      const findSessions = createSessionRuntimeLookup({
+        repository,
+        coordinator: { sessionProjectId: async () => 'project-1' }
+      })
+      for (let i = 0; i < 3; i++) await findSessions('current')
+      for (const name of names) expect(performance.getEntriesByName(name)).toHaveLength(1)
+      for (const name of names) performance.clearMeasures(name)
+      vi.stubEnv('OPEN_SCIENCE_PERF_SESSION_TRACE', '0')
+      await createSessionRuntimeLookup({
+        repository,
+        coordinator: { sessionProjectId: async () => 'project-1' }
+      })('current')
+      for (const name of names) expect(performance.getEntriesByName(name)).toHaveLength(0)
+    } finally {
+      vi.unstubAllEnvs()
+      for (const name of names) performance.clearMeasures(name)
+    }
+  })
+
   // Codex Responses and Codex Bridge share this durable framework identity and lookup.
   it.each(
     (['claude-code', 'opencode', 'codex'] as const).flatMap((frameworkId) =>
@@ -88,6 +136,7 @@ describe('runtime Session lookup', () => {
     '%s %s becomes ready without waiting for unrelated Session contents',
     async (frameworkId, boundary) => {
       const root = await mkdtemp(join(tmpdir(), 'session-runtime-lookup-'))
+      initDataRoot(root)
       roots.push(root)
       let holdUnrelatedReads = false
       let release!: () => void

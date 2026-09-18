@@ -94,6 +94,7 @@ describe('default upload repository', () => {
   let homeRoot: string | undefined
 
   afterEach(async () => {
+    vi.unstubAllEnvs()
     ipcHandlers.clear()
     clearMigrationPending()
     if (homeRoot) await rm(homeRoot, { recursive: true, force: true })
@@ -103,6 +104,8 @@ describe('default upload repository', () => {
   it('stores uploads under the default data root', async () => {
     homeRoot = await mkdtemp(join(tmpdir(), 'open-science-upload-ipc-'))
     electronState.homePath = homeRoot
+    vi.stubEnv('OPEN_SCIENCE_CONFIG_ROOT', homeRoot)
+    vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', '')
     const repository = createDefaultUploadRepository()
     const content = 'event,count\nheadache,4\n'
 
@@ -116,7 +119,7 @@ describe('default upload repository', () => {
       ]
     })
 
-    // Uploads follow the configurable data root; a fresh dev install defaults to <home>/OpenScience-DEV.
+    // Uploads follow the configurable data root; a fresh dev install defaults to <home>/Open-Science-DEV.
     expect(attachment.path).toBe(
       join(
         homeRoot,

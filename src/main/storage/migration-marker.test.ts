@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
   MIGRATION_MARKER_FILENAME,
-  hasPendingMigrationMarker,
   newToken,
   readMigrationMarker,
   removeMigrationMarker,
@@ -56,12 +55,11 @@ describe('migration-marker read/write/remove', () => {
     expect(await readMigrationMarker(root)).toEqual(marker)
   })
 
-  it('hasPendingMigrationMarker reflects the marker file presence', async () => {
-    expect(hasPendingMigrationMarker(root)).toBe(false)
+  it('removes a written staging marker idempotently', async () => {
     await writeMigrationMarker(root, sampleMarker())
-    expect(hasPendingMigrationMarker(root)).toBe(true)
     await removeMigrationMarker(root)
-    expect(hasPendingMigrationMarker(root)).toBe(false)
+    expect(await readMigrationMarker(root)).toBeNull()
+    await expect(removeMigrationMarker(root)).resolves.toBeUndefined()
   })
 
   it('returns null when the marker file is missing', async () => {

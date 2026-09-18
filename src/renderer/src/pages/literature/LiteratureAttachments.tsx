@@ -1,3 +1,4 @@
+import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { useRef, useState } from 'react'
 import { FileText, History, MoreHorizontal, RotateCcw, Trash2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -167,10 +168,12 @@ export const LiteratureAttachments = ({
             )
         )
       : undefined
+  const dialogRemovalAttachment = useRetainedDialogValue(removalAttachment)
   const historyAttachment =
     history?.itemId === item.id
       ? item.attachments.find((entry) => entry.id === history.attachmentId)
       : undefined
+  const dialogHistoryAttachment = useRetainedDialogValue(historyAttachment)
   const operations = useAttachmentOperations((state) => state.operations)
   const itemOperations = operations.filter((operation) => operation.itemId === item.id)
   const pending = itemOperations.some((operation) => operation.pending)
@@ -268,11 +271,12 @@ export const LiteratureAttachments = ({
         title={t('Permanently delete attachment')}
         description={[
           t('Permanently delete “{{filename}}”?', {
-            filename: removalAttachment?.versions[0]?.filename ?? removalAttachment?.title ?? ''
+            filename:
+              dialogRemovalAttachment?.versions[0]?.filename ?? dialogRemovalAttachment?.title ?? ''
           }),
-          removalAttachment && removalAttachment.versions.length > 1
+          dialogRemovalAttachment && dialogRemovalAttachment.versions.length > 1
             ? t('All {{count}} versions will be deleted.', {
-                count: removalAttachment.versions.length,
+                count: dialogRemovalAttachment.versions.length,
                 defaultValue_one: 'The only version will be deleted.'
               })
             : '',
@@ -317,7 +321,7 @@ export const LiteratureAttachments = ({
               </div>
             </div>
             <div className={`${dialogBodyClassName} space-y-3 overflow-y-auto`}>
-              {historyAttachment?.versions.map((version) => (
+              {dialogHistoryAttachment?.versions.map((version) => (
                 <div key={version.id} className="rounded-lg border border-border">
                   <div className="flex flex-wrap justify-between gap-2 px-3 pt-3 text-xs text-muted-foreground">
                     <span>{t('Version {{number}}', { number: version.versionNumber })}</span>

@@ -39,6 +39,8 @@ import type { UpdateStatus } from '../shared/update'
 import type { LocalePreferenceSnapshot } from '../shared/locale'
 import type { TagsChangedEvent } from '../shared/tags'
 import type { MemoryChangedEvent } from '../shared/memory'
+import type { WslSetupStatus } from '../shared/wsl-setup'
+import type { PackageOperationSnapshot } from '../shared/session-package'
 import type {
   SessionPersistenceFlushAbortedEvent,
   SessionPersistenceFlushRequest
@@ -51,6 +53,7 @@ const log = createLogger('application-events')
 // signals and generated Web-only channels stay on their existing transports until their owner moves
 // them deliberately.
 export type ApplicationEventMap = {
+  'sessions:package-operation-changed': PackageOperationSnapshot
   'acp:state': AcpStateUpdate
   'acp:event': readonly AcpRuntimeEvent[]
   'acp:agent-runtime-update': AcpAgentRuntimeUpdate
@@ -94,6 +97,7 @@ export type ApplicationEventMap = {
   'settings:connector-runtime-changed': undefined
   'settings:install-log': ClaudeInstallEvent
   'settings:changed': SettingsSnapshot
+  'settings:wsl-setup-changed': WslSetupStatus
   'storage:migrate-progress': MigrationProgress
   'reviewer:updated': ReviewUpdateEvent
   'reviewer:suppress-next-auto-review': ReviewSuppressionEvent
