@@ -2369,7 +2369,9 @@ class TaskRunner {
       })
       const artifacts = [
         ...new Map(
-          [...persistedArtifactFiles, ...emittedArtifacts]
+          // A publication event may omit its Message owner. The exact Version in Main
+          // authority owns the final descriptor; never let an event erase that proof.
+          [...emittedArtifacts, ...persistedArtifactFiles]
             .filter((artifact) => artifactIds.has(artifact.versionId ?? artifact.id))
             .map((artifact) => [artifact.versionId ?? artifact.id, artifact])
         ).values()

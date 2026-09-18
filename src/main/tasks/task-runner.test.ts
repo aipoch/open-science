@@ -3494,128 +3494,131 @@ describe('TaskRunner', () => {
     ])
   })
 
-  it('consumes Main-owned terminal transcript and published artifacts without restaging them', async () => {
-    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
-    let authoritative: PersistedChatSession | undefined
-    let lastSaved: PersistedChatSession | undefined
-    const stageCompletion = vi.fn<TaskSessionPort['stageCompletion']>()
-    const settleCompletion = vi.fn<TaskSessionPort['settleCompletion']>(async (request) => ({
-      ...authoritative!,
-      taskRunCommitId: request.taskRunCommitId
-    }))
-    const finalizeRun = vi.fn<TaskRunnerDependencies['artifacts']['finalizeRun']>()
-    const artifact: ArtifactFile = {
-      id: 'version-main',
-      artifactId: 'artifact-main',
-      versionId: 'version-main',
-      versionNumber: 1,
-      checksum: 'a'.repeat(64),
-      projectId: project.id,
-      sessionId: 'session-main-owner',
-      messageId: 'agent-final',
-      name: 'result.txt',
-      path: '/artifacts/result.txt',
-      fileUrl: 'open-science-preview://version-main/result.txt',
-      size: 6,
-      mtimeMs: 12
-    }
-    const runner = createRunner({
-      sessions: {
-        list: async () => (authoritative ? [authoritative] : []),
-        save: async (session) => {
-          lastSaved = structuredClone({ ...session, runtimeTranscriptOwner: 'main' })
-          return lastSaved
-        },
-        stageCompletion,
-        settleCompletion
-      },
-      agent: {
-        createSession: async () => ({ sessionId: 'session-main-owner' }),
-        prompt: async (request) => {
-          const admitted = lastSaved!
-          const first: PersistedChatMessage = {
-            id: 'agent-first',
-            role: 'agent',
-            content: 'first ',
-            status: 'complete',
-            responseToMessageId: request.promptMessageId,
-            eventIds: ['message-event-1'],
-            createdAt: 10,
-            updatedAt: 10
-          }
-          const final: PersistedChatMessage = {
-            id: 'agent-final',
-            role: 'agent',
-            content: 'second',
-            status: 'complete',
-            responseToMessageId: request.promptMessageId,
-            eventIds: ['message-event-2'],
-            artifactIds: ['version-main'],
-            createdAt: 11,
-            updatedAt: 12
-          }
-          authoritative = materializeSessionConversationGraph({
-            ...admitted,
-            runtimeTranscriptOwner: 'main',
-            status: 'idle',
-            activeRun: undefined,
-            messages: [...admitted.messages, first, final],
-            artifacts: [
-              {
-                id: artifact.id,
-                artifactId: artifact.artifactId,
-                versionId: artifact.versionId,
-                versionNumber: artifact.versionNumber,
-                sha256: artifact.checksum,
-                kind: 'managed-file',
-                path: artifact.path,
-                fileUrl: artifact.fileUrl,
-                name: artifact.name,
-                size: artifact.size,
-                mtimeMs: artifact.mtimeMs
-              }
-            ],
-            updatedAt: 12
-          })
-          emitEvent?.({
-            id: 'published-artifact',
-            timestamp: 12,
-            level: 'info',
-            kind: 'artifact',
-            sessionId: authoritative.id,
-            runId: 'run-main',
-            promptMessageId: request.promptMessageId,
-            artifactClaimId: 'already-finalized',
-            publicationOwner: 'main',
-            messageId: 'agent-final',
-            artifacts: [artifact]
-          } as AcpRuntimeEvent)
-        }
-      },
-      artifacts: { finalizeRun },
-      runtimeEvents: {
-        subscribe: (listener) => {
-          emitEvent = listener
-          return () => undefined
-        }
+  it.each(['agent-final', 'agent-first', undefined])(
+    'consumes Main-owned terminal transcript without restaging artifacts (event owner: %s)',
+    async (eventMessageId) => {
+      let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+      let authoritative: PersistedChatSession | undefined
+      let lastSaved: PersistedChatSession | undefined
+      const stageCompletion = vi.fn<TaskSessionPort['stageCompletion']>()
+      const settleCompletion = vi.fn<TaskSessionPort['settleCompletion']>(async (request) => ({
+        ...authoritative!,
+        taskRunCommitId: request.taskRunCommitId
+      }))
+      const finalizeRun = vi.fn<TaskRunnerDependencies['artifacts']['finalizeRun']>()
+      const artifact: ArtifactFile = {
+        id: 'version-main',
+        artifactId: 'artifact-main',
+        versionId: 'version-main',
+        versionNumber: 1,
+        checksum: 'a'.repeat(64),
+        projectId: project.id,
+        sessionId: 'session-main-owner',
+        messageId: 'agent-final',
+        name: 'result.txt',
+        path: '/artifacts/result.txt',
+        fileUrl: 'open-science-preview://version-main/result.txt',
+        size: 6,
+        mtimeMs: 12
       }
-    })
+      const runner = createRunner({
+        sessions: {
+          list: async () => (authoritative ? [authoritative] : []),
+          save: async (session) => {
+            lastSaved = structuredClone({ ...session, runtimeTranscriptOwner: 'main' })
+            return lastSaved
+          },
+          stageCompletion,
+          settleCompletion
+        },
+        agent: {
+          createSession: async () => ({ sessionId: 'session-main-owner' }),
+          prompt: async (request) => {
+            const admitted = lastSaved!
+            const first: PersistedChatMessage = {
+              id: 'agent-first',
+              role: 'agent',
+              content: 'first ',
+              status: 'complete',
+              responseToMessageId: request.promptMessageId,
+              eventIds: ['message-event-1'],
+              createdAt: 10,
+              updatedAt: 10
+            }
+            const final: PersistedChatMessage = {
+              id: 'agent-final',
+              role: 'agent',
+              content: 'second',
+              status: 'complete',
+              responseToMessageId: request.promptMessageId,
+              eventIds: ['message-event-2'],
+              artifactIds: ['version-main'],
+              createdAt: 11,
+              updatedAt: 12
+            }
+            authoritative = materializeSessionConversationGraph({
+              ...admitted,
+              runtimeTranscriptOwner: 'main',
+              status: 'idle',
+              activeRun: undefined,
+              messages: [...admitted.messages, first, final],
+              artifacts: [
+                {
+                  id: artifact.id,
+                  artifactId: artifact.artifactId,
+                  versionId: artifact.versionId,
+                  versionNumber: artifact.versionNumber,
+                  sha256: artifact.checksum,
+                  kind: 'managed-file',
+                  path: artifact.path,
+                  fileUrl: artifact.fileUrl,
+                  name: artifact.name,
+                  size: artifact.size,
+                  mtimeMs: artifact.mtimeMs
+                }
+              ],
+              updatedAt: 12
+            })
+            emitEvent?.({
+              id: 'published-artifact',
+              timestamp: 12,
+              level: 'info',
+              kind: 'artifact',
+              sessionId: authoritative.id,
+              runId: 'run-main',
+              promptMessageId: request.promptMessageId,
+              artifactClaimId: 'already-finalized',
+              publicationOwner: 'main',
+              messageId: 'agent-final',
+              artifacts: [{ ...artifact, messageId: eventMessageId }]
+            } as AcpRuntimeEvent)
+          }
+        },
+        artifacts: { finalizeRun },
+        runtimeEvents: {
+          subscribe: (listener) => {
+            emitEvent = listener
+            return () => undefined
+          }
+        }
+      })
 
-    const started = await runner.startRun({ project: project.id, prompt: 'Produce output.' })
-    const completed = await runner.waitForRun(started.id)
+      const started = await runner.startRun({ project: project.id, prompt: 'Produce output.' })
+      const completed = await runner.waitForRun(started.id)
 
-    expect(completed).toMatchObject({
-      status: 'completed',
-      output: 'first second',
-      artifacts: [{ id: 'version-main', messageId: 'agent-final' }]
-    })
-    expect(stageCompletion).not.toHaveBeenCalled()
-    expect(finalizeRun).not.toHaveBeenCalled()
-    expect(settleCompletion).toHaveBeenCalledWith(expect.objectContaining({ artifacts: [] }))
-    expect(
-      authoritative?.messages.filter(({ role }) => role === 'agent').map(({ id }) => id)
-    ).toEqual(['agent-first', 'agent-final'])
-  })
+      expect(completed).toMatchObject({
+        status: 'completed',
+        output: 'first second',
+        artifacts: [{ id: 'version-main', messageId: 'agent-final' }]
+      })
+      expect(stageCompletion).not.toHaveBeenCalled()
+      expect(finalizeRun).not.toHaveBeenCalled()
+      expect(settleCompletion).toHaveBeenCalledWith(expect.objectContaining({ artifacts: [] }))
+      expect(
+        authoritative?.messages.filter(({ role }) => role === 'agent').map(({ id }) => id)
+      ).toEqual(['agent-first', 'agent-final'])
+    }
+  )
 
   it.each(['hidden-prompt', 'visible-prompt-hidden-reply'] as const)(
     'completes from the admitted Main-owned graph scope when the active projection has a %s',
