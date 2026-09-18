@@ -10,6 +10,7 @@ import { classifyChanges, platformExecutionPlan } from './classify-pr-changes.mj
 type Step = {
   env?: Record<string, string>
   id?: string
+  if?: string
   name?: string
   run?: string
   uses?: string
@@ -148,11 +149,29 @@ describe('CI Integrity workflow', () => {
       env: {
         EVENT_NAME:
           "${{ github.event_name == 'pull_request_target' && 'pull_request' || github.event_name }}",
-        PR_TITLE: '${{ github.event.pull_request.title }}',
+        PR_TITLE: '${{ github.event.pull_request.title || steps.merge_group_title.outputs.title }}',
         POLICY_SCOPE: 'title'
       },
       run: 'node scripts/ci/check-pr-policy.mjs'
     })
+  })
+
+  it('resolves the squash subject from the queued pull request on merge_group', () => {
+    const resolveTitle = step('Resolve merge-group squash subject')
+
+    expect(resolveTitle.id).toBe('merge_group_title')
+    expect(resolveTitle.if).toBe("${{ github.event_name == 'merge_group' }}")
+    expect(resolveTitle.env).toEqual({
+      GH_TOKEN: '${{ github.token }}',
+      GH_REPO: '${{ github.repository }}',
+      MERGE_HEAD_REF: '${{ github.event.merge_group.head_ref }}'
+    })
+    expect(resolveTitle.run).toContain('set -euo pipefail')
+    expect(resolveTitle.run).toContain('gh-readonly-queue/main/pr-([0-9]+)-[0-9a-f]{40}$')
+    expect(resolveTitle.run).toContain('gh pr view "$pr_number" --json title --jq .title')
+    expect(resolveTitle.run).toContain('exit 1')
+    expect(resolveTitle.run).not.toContain('git checkout')
+    expect(job.permissions).toEqual({ contents: 'read', 'pull-requests': 'read' })
   })
 })
 
