@@ -39,6 +39,10 @@ class ArtifactProvenanceDependencyReader {
     })
 
     return rows
+      .filter(
+        (row) =>
+          !row.artifactVersion.artifact.hiddenAt && !row.sourceArtifactVersion?.artifact.hiddenAt
+      )
       .map((row) => {
         const output = row.artifactVersion
         const commonValid =

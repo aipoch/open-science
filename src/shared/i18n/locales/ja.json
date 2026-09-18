@@ -5933,6 +5933,14 @@
     "Import saves this package before configuration. New bundled Skills stay disabled for the Main Agent; existing Skill settings are preserved.": "インポートすると、設定前にこのパッケージが保存されます。新たに同梱インストールされるスキルはメインエージェントでは無効のままです。既存のスキル設定は保持されます。",
     "This imported Specialist is saved but disabled. Save changes to enable it, or configure it later.": "インポートしたスペシャリストは保存済みですが、無効です。変更を保存して有効にするか、後で設定できます。",
     "Import and configure": "インポートして設定",
-    "Configure later": "後で設定"
+    "Configure later": "後で設定",
+    "Hidden": "非表示",
+    "Hide {{name}}": "{{name}} を非表示にする",
+    "Unhide {{name}}": "{{name}} を再表示する",
+    "Could not change file visibility.": "ファイルの表示設定を変更できませんでした。",
+    "Could not load project files.": "プロジェクトファイルを読み込めませんでした。",
+    "Could not load file preview.": "ファイルのプレビューを読み込めませんでした。",
+    "Download this file to view it.": "このファイルを表示するにはダウンロードしてください。",
+    "Preview truncated.": "プレビューは省略されています。"
   }
 }

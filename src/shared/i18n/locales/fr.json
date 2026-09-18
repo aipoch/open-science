@@ -6265,6 +6265,14 @@
     "Import saves this package before configuration. New bundled Skills stay disabled for the Main Agent; existing Skill settings are preserved.": "L’importation enregistre ce paquet avant sa configuration. Les nouvelles compétences incluses restent désactivées pour l’agent principal ; les paramètres des compétences existantes sont conservés.",
     "This imported Specialist is saved but disabled. Save changes to enable it, or configure it later.": "Ce spécialiste importé est enregistré, mais désactivé. Enregistrez les modifications pour l’activer, ou configurez-le plus tard.",
     "Import and configure": "Importer et configurer",
-    "Configure later": "Configurer plus tard"
+    "Configure later": "Configurer plus tard",
+    "Hidden": "Masqués",
+    "Hide {{name}}": "Masquer {{name}}",
+    "Unhide {{name}}": "Afficher {{name}}",
+    "Could not change file visibility.": "Impossible de modifier la visibilité du fichier.",
+    "Could not load project files.": "Impossible de charger les fichiers du projet.",
+    "Could not load file preview.": "Impossible de charger l’aperçu du fichier.",
+    "Download this file to view it.": "Téléchargez ce fichier pour le consulter.",
+    "Preview truncated.": "Aperçu tronqué."
   }
 }

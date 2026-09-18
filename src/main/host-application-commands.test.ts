@@ -109,7 +109,7 @@ const createDependencies = (): HostApplicationCommandDependencies => ({
       truncated: false
     })),
     removeGrantedRoot: vi.fn(async () => []),
-    revealInFolder: vi.fn(() => undefined),
+    revealInFolder: vi.fn(async () => undefined),
     setGrantedRootAccess: vi.fn(async () => [])
   },
   logs: {

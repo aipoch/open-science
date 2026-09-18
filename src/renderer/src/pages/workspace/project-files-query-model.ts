@@ -33,7 +33,7 @@ type ProjectFilesFilterOption = {
   id: string
   label: string
   count: number
-  kind: 'all' | 'uploads' | 'session'
+  kind: 'all' | 'uploads' | 'session' | 'hidden'
   originSession?: ProjectFileOriginSession
 }
 
@@ -296,6 +296,12 @@ const useProjectFilesQueryModel = (activeProjectId: string | undefined): Project
       })
     }
 
+    options.push({
+      id: 'hidden',
+      label: t('Hidden'),
+      count: catalogIndex.overview.hiddenArtifactCount ?? 0,
+      kind: 'hidden'
+    })
     return options
   }, [
     getArtifactGroupTitle,

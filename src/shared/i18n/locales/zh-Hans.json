@@ -5933,6 +5933,14 @@
     "Import saves this package before configuration. New bundled Skills stay disabled for the Main Agent; existing Skill settings are preserved.": "导入会先保存此包，再进行配置。新打包安装的技能默认不对主智能体启用；已有技能的设置保持不变。",
     "This imported Specialist is saved but disabled. Save changes to enable it, or configure it later.": "此导入的专家已保存，但尚未启用。保存更改即可启用，也可以稍后配置。",
     "Import and configure": "导入并配置",
-    "Configure later": "稍后配置"
+    "Configure later": "稍后配置",
+    "Hidden": "已隐藏",
+    "Hide {{name}}": "隐藏 {{name}}",
+    "Unhide {{name}}": "取消隐藏 {{name}}",
+    "Could not change file visibility.": "无法更改文件可见性。",
+    "Could not load project files.": "无法加载项目文件。",
+    "Could not load file preview.": "无法加载文件预览。",
+    "Download this file to view it.": "请下载此文件以查看。",
+    "Preview truncated.": "预览已截断。"
   }
 }

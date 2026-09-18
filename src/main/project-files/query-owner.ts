@@ -105,6 +105,18 @@ class ProjectFilesQueryOwner {
     private readonly readIndexComplete: ProjectFilesIndexCompletenessReader
   ) {}
 
+  async getHiddenArtifactIds(
+    projectId: string
+  ): Promise<import('../../shared/project-files').HiddenArtifactIdentity[]> {
+    requireIdentifier(projectId, 'projectId')
+    const client = await this.getClient()
+    const rows = await client.artifactLineage.findMany({
+      where: { projectId, hiddenAt: { not: null } },
+      select: { id: true, versions: { select: { id: true } } }
+    })
+    return rows.map((row) => ({ fileId: row.id, versionIds: row.versions.map((v) => v.id) }))
+  }
+
   async getOverview(
     request: string | GetProjectFilesOverviewRequest
   ): Promise<ProjectFilesOverview> {
@@ -113,7 +125,7 @@ class ProjectFilesQueryOwner {
     requireIdentifier(projectId, 'projectId')
     const search = normalizeSearch(rawSearch)
     const client = await this.getClient()
-    const [totalCount, uploadCount, artifactCount, artifactGroupCount] =
+    const [totalCount, uploadCount, artifactCount, artifactGroupCount, hiddenArtifactCount] =
       await getAuthoritativeOverviewCounts(client, projectId, search)
 
     return {
@@ -121,6 +133,7 @@ class ProjectFilesQueryOwner {
       uploadCount,
       artifactCount,
       artifactGroupCount,
+      hiddenArtifactCount,
       isIndexComplete: this.readIndexComplete(projectId)
     }
   }
@@ -131,6 +144,8 @@ class ProjectFilesQueryOwner {
     let normalizedCollection: ListProjectFilesRequest['collection']
     if (collection.kind === 'all') {
       normalizedCollection = { kind: 'all' }
+    } else if (collection.kind === 'hidden') {
+      normalizedCollection = { kind: 'hidden' }
     } else if (collection.kind === 'uploads') {
       normalizedCollection = { kind: 'uploads' }
     } else if (collection.kind === 'sessionArtifacts' && typeof collection.sessionId === 'string') {
@@ -157,6 +172,7 @@ class ProjectFilesQueryOwner {
     const cursor = request.cursor ? decodeFileCursor(request.cursor, normalizedRequest) : undefined
     const [rows, totalCount] = await listAuthoritativeFiles(client, {
       projectIds: [request.projectId],
+      hidden: normalizedCollection.kind === 'hidden',
       source,
       sessionId,
       search,
@@ -174,7 +190,10 @@ class ProjectFilesQueryOwner {
     const originsBySession = new Map(origins.map((origin) => [origin.sessionId, origin]))
 
     return {
-      items: pageRows.map((row) => toProjectFileItem(row, originsBySession.get(row.sessionId))),
+      items: pageRows.map((row) => ({
+        ...toProjectFileItem(row, originsBySession.get(row.sessionId)),
+        ...(normalizedCollection.kind === 'hidden' ? { hidden: true } : {})
+      })),
       totalCount,
       nextCursor:
         rows.length > limit && lastRow
@@ -193,6 +212,11 @@ class ProjectFilesQueryOwner {
 
   async readExportFiles(request: ReadProjectExportFilesRequest): Promise<ProjectFileItem[]> {
     requireIdentifier(request.projectId, 'projectId')
+    if (
+      request.category !== undefined &&
+      (request.category !== 'hidden' || request.sessionId !== undefined)
+    )
+      throw new Error('Invalid export category.')
     if (request.sessionId !== undefined) requireIdentifier(request.sessionId, 'sessionId')
     const client = await this.getClient()
     if (!this.readIndexComplete(request.projectId)) {
@@ -202,11 +226,15 @@ class ProjectFilesQueryOwner {
     // pages here: a new current Version can move an unread file behind an earlier page's cursor.
     const rows = await queryAuthoritativeFiles(client, {
       projectIds: [request.projectId],
+      hidden: request.category === 'hidden',
       ...(request.sessionId === undefined
         ? {}
         : { source: 'artifact', sessionId: request.sessionId })
     })
-    return rows.map((row) => toProjectFileItem(row))
+    return rows.map((row) => ({
+      ...toProjectFileItem(row),
+      ...(request.category === 'hidden' ? { hidden: true } : {})
+    }))
   }
 
   async resolveFile(request: ResolveProjectFileRequest): Promise<ProjectFileItem | undefined> {
@@ -410,7 +438,7 @@ class ProjectFilesQueryOwner {
           where: {
             id: request.versionId,
             state: 'finalized',
-            artifact: { is: { projectId: request.projectId } }
+            artifact: { is: { projectId: request.projectId, hiddenAt: null } }
           },
           include: { artifact: true },
           take: 2
@@ -509,7 +537,7 @@ class ProjectFilesQueryOwner {
             where: {
               id: { in: artifactVersionIds },
               state: { in: ['pending', 'finalized'] },
-              artifact: { is: { projectId: request.projectId } }
+              artifact: { is: { projectId: request.projectId, hiddenAt: null } }
             },
             select: {
               id: true,
