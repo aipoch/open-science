@@ -51,7 +51,13 @@ test('enables the basic password store only for Linux E2E profiles', () => {
     args: ['--user-data-dir=profile-root', '--password-store=basic', expect.any(String)]
   })
   expect(electronLaunchTarget('profile-root', {}, 'darwin')).toEqual({
-    args: ['--user-data-dir=profile-root', '--use-mock-keychain', expect.any(String)]
+    args: [
+      '--user-data-dir=profile-root',
+      '--use-mock-keychain',
+      '--require',
+      expect.stringContaining('mock-credential-identity.cjs'),
+      expect.any(String)
+    ]
   })
   expect(electronLaunchTarget('profile-root', {}, 'win32')).toEqual({
     args: ['--user-data-dir=profile-root', expect.any(String)]
