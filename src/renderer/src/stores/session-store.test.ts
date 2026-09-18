@@ -1506,6 +1506,12 @@ describe('session store', () => {
         runtimeContext: {
           ...source.runtimeContext!,
           revision: 2,
+          plan: {
+            ...source.runtimeContext!.plan!,
+            stepStatuses: {
+              'Step version-1': { status: 'in_progress', updatedAt: 3 }
+            }
+          },
           permission: {
             state: 'pending',
             request: {
