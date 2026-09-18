@@ -53,11 +53,16 @@ const createWal = (path: string): void => {
     const { DatabaseSync } = require('node:sqlite')
     const db = new DatabaseSync(process.argv[1])
     db.exec("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; CREATE TABLE secrets(value TEXT); INSERT INTO secrets VALUES ('wal-ciphertext')")
+    require('node:fs').writeSync(1, 'wal-committed')
     process.kill(process.pid, 'SIGKILL')
   `,
     path
   ])
-  expect(result.signal).toBe('SIGKILL')
+  expect(result.error).toBeUndefined()
+  expect(result.stdout.toString()).toBe('wal-committed')
+  // A self-kill is reported as exit code 1 on Windows, not as a POSIX signal.
+  expect(result.signal).toBe(process.platform === 'win32' ? null : 'SIGKILL')
+  expect(result.status).toBe(process.platform === 'win32' ? 1 : null)
   expect(existsSync(`${path}-wal`)).toBe(true)
 }
 
