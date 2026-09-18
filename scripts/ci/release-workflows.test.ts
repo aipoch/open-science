@@ -94,7 +94,7 @@ describe('release and scheduled workflow topology', () => {
     })
     expect(step(plan, 'Check for untested main changes')).toMatchObject({
       uses: './.github/actions/skip-unchanged-scheduled',
-      with: { 'workflow-file': 'windows-full-test.yml', 'include-dispatch-modes': 'full' }
+      with: { 'workflow-file': 'windows-full-test.yml' }
     })
     expect(job).toMatchObject({
       needs: ['plan', 'windows_dependencies'],

@@ -48,7 +48,7 @@ const callers: Array<{
     file: 'windows-full-test.yml',
     job: 'plan',
     output: 'should_test',
-    with: { 'workflow-file': 'windows-full-test.yml', 'include-dispatch-modes': 'full' }
+    with: { 'workflow-file': 'windows-full-test.yml' }
   },
   {
     file: 'runtime-resource-soak.yml',
@@ -60,48 +60,48 @@ const callers: Array<{
     file: 'nightly.yml',
     job: 'plan',
     output: 'should_build',
-    with: { 'workflow-file': 'nightly.yml' }
+    with: { 'workflow-file': 'nightly.yml', 'require-published-ref': 'nightly' }
   }
 ]
 
 describe('skip-unchanged-scheduled composite action', () => {
   const action = load(read('.github/actions/skip-unchanged-scheduled/action.yml')) as Action
 
-  it('declares the shared interface and documents the dispatch-input limitation', () => {
+  it('declares the shared interface and excludes dispatch runs from coverage', () => {
     expect(action.runs?.using).toBe('composite')
     expect(action.inputs?.['workflow-file']).toMatchObject({ required: true })
-    expect(action.inputs?.['include-dispatch-modes']).toMatchObject({
+    expect(action.inputs?.['require-published-ref']).toMatchObject({
       required: false,
       default: ''
     })
+    expect(action.inputs?.['include-dispatch-modes']).toBeUndefined()
     expect(action.outputs?.should_run?.value).toBe('${{ steps.decide.outputs.should_run }}')
     expect(action.outputs?.last_successful_sha?.value).toBe(
       '${{ steps.decide.outputs.last_successful_sha }}'
     )
+    expect(action.description).toContain('Manual dispatches never count as coverage')
     expect(action.description).toContain('does not expose dispatch inputs')
-    expect(action.description).toContain('any successful dispatch of the same SHA counts')
   })
 
-  it('always runs manual dispatches and compares scheduled runs with successful coverage', () => {
+  it('always runs manual dispatches and requires tested plus published coverage to skip', () => {
     const decide = step(action.runs ?? {}, (candidate) => candidate.id === 'decide')
     const script = decide.run ?? ''
 
     expect(decide.shell).toBe('bash')
     expect(decide.env).toEqual({
       WORKFLOW_FILE: '${{ inputs.workflow-file }}',
-      INCLUDE_DISPATCH_MODES: '${{ inputs.include-dispatch-modes }}'
+      PUBLISHED_REF: '${{ inputs.require-published-ref }}'
     })
     expect(script).toContain('"$GITHUB_EVENT_NAME" == "workflow_dispatch"')
     expect(script).toContain(
-      'actions/workflows/$WORKFLOW_FILE/runs?branch=main&event=$1&status=success&per_page=1'
+      'actions/workflows/$WORKFLOW_FILE/runs?branch=main&event=schedule&status=success&per_page=1'
     )
-    expect(script).toContain('last_successful_sha schedule')
-    expect(script).toContain('last_successful_sha workflow_dispatch')
-    expect(script).toContain('-n "$INCLUDE_DISPATCH_MODES"')
-    expect(script).toContain('"$scheduled_sha" == "$GITHUB_SHA"')
-    expect(script).toContain('"$dispatch_sha" == "$GITHUB_SHA"')
-    expect(script.match(/should_run=false/g)).toHaveLength(2)
-    expect(script.match(/should_run=true/g)).toHaveLength(2)
+    expect(script).not.toContain('event=workflow_dispatch')
+    expect(script).toContain('"$scheduled_sha" != "$GITHUB_SHA"')
+    expect(script).toContain('commits/$PUBLISHED_REF')
+    expect(script).toContain('"$published_sha" != "$GITHUB_SHA"')
+    expect(script.match(/should_run=false/g)).toHaveLength(1)
+    expect(script.match(/should_run=true/g)).toHaveLength(3)
   })
 
   it.each(callers)(

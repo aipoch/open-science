@@ -54,7 +54,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         with:
           workflow-file: windows-full-test.yml
-          include-dispatch-modes: full
 
   windows_dependencies:
     name: Prepare Windows test dependencies

@@ -1,8 +1,9 @@
 name: Nightly
 
-# Batch main into one build per day, skipping heads the last successful scheduled build already
-# covered. A newer scheduled build may supersede an older build, while publication is delegated to
-# nightly-publish.yml and is never cancelled once it starts.
+# Batch main into one build per day, skipping heads that the last successful scheduled build
+# already covered and that the rolling nightly tag already publishes. A newer scheduled build may
+# supersede an older build, while publication is delegated to nightly-publish.yml and is never
+# cancelled once it starts.
 # Scheduled failures open or refresh a tracking issue labelled ci-scheduled-failure.
 on:
   schedule:
@@ -52,6 +53,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         with:
           workflow-file: nightly.yml
+          require-published-ref: nightly
 
   build:
     needs: plan

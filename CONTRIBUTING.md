@@ -353,7 +353,9 @@ ci(review): unify automated AI reviews
   runner for functional/workspace journeys, browser/visual/accessibility and supplemental suites.
   Nightly packaging, Windows Full Test and Runtime Resource Soak retain their daily 23:17, 00:47
   and 03:23 Singapore schedules and skip a head that the last successful scheduled run already
-  covered (shared `skip-unchanged-scheduled` action). Manual runs always execute.
+  covered (shared `skip-unchanged-scheduled` action); Nightly additionally requires that head to
+  be published under the rolling `nightly` tag, and manual runs never count as coverage because
+  the runs API cannot report which dispatch mode they selected. Manual runs always execute.
   Formal release certification and post-release Windows Upgrade Smoke retain their existing gates.
   Scheduled failures cannot retroactively block an already merged PR; Mac-only failures may first
   be discovered in queue or scheduled validation. A failing scheduled run opens or refreshes one

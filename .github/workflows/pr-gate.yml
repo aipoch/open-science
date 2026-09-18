@@ -380,9 +380,11 @@ jobs:
           show-openssf-scorecard: false
       - name: Validate pull request policy
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          # Preflight already narrowed merge groups to the target branch tip, so the migration set
+          # is validated across every queued change rather than only the trailing entry.
+          BASE_SHA: ${{ github.event.pull_request.base.sha || needs.preflight.outputs.base }}
           EVENT_NAME: ${{ github.event_name }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || needs.preflight.outputs.head || github.sha }}
           POLICY_SCOPE: commits
         run: node scripts/ci/check-pr-policy.mjs
 

@@ -865,11 +865,13 @@ describe('PR Gate workflow', () => {
       ({ name }) => name === 'Validate pull request policy'
     )
 
+    // Merge groups reuse preflight's target-branch narrowing so the migration set covers every
+    // queued entry, not just the trailing pull request.
     expect(policy?.env).toEqual({
-      BASE_SHA: '${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}',
+      BASE_SHA: '${{ github.event.pull_request.base.sha || needs.preflight.outputs.base }}',
       EVENT_NAME: '${{ github.event_name }}',
       HEAD_SHA:
-        '${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}',
+        '${{ github.event.pull_request.head.sha || needs.preflight.outputs.head || github.sha }}',
       POLICY_SCOPE: 'commits'
     })
   })
