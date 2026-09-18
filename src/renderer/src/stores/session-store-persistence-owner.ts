@@ -959,7 +959,10 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
           status,
           interactionState,
           runtimeContext: session.runtimeContext,
-          activePlanProjection: retainRuntimePlanProjection(current, session),
+          // Permission snapshots do not own the Session Plan. They commonly arrive while
+          // step progress is being written and omit runtimeContext.plan; deriving the Plan
+          // from that partial snapshot would briefly clear the Composer progress chip.
+          activePlanProjection: current.activePlanProjection,
           updatedAt: Math.max(current.updatedAt, session.updatedAt)
         }
         markExternallyHydratedSession(projected, session)

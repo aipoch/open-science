@@ -1533,7 +1533,13 @@ describe('session store', () => {
       source: updated,
       session: {
         ...toPersistedSession(updated),
-        runtimeContext: { ...updated.runtimeContext!, revision: 3 },
+        // Permission-authority updates are partial and may omit the Plan while a step
+        // progress write is in flight. The Composer must keep showing the active Plan.
+        runtimeContext: {
+          version: updated.runtimeContext!.version,
+          revision: 3,
+          permission: updated.runtimeContext!.permission
+        },
         updatedAt: 4
       },
       mode: 'permission-authority'
@@ -1541,7 +1547,7 @@ describe('session store', () => {
 
     expect(useSessionStore.getState().sessions[0].activePlanProjection).toEqual({
       ...projection,
-      revision: 3
+      revision: 2
     })
   })
 
