@@ -4,7 +4,7 @@ import * as acp from '@agentclientprotocol/sdk'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import JSZip from 'jszip'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { appendFile, chmod, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Readable, Writable } from 'node:stream'
@@ -25,6 +25,7 @@ const NOTEBOOK_LONG_MUTATION_PROMPT = 'Verify a long Notebook mutation.'
 const NOTEBOOK_REAL_ENVIRONMENT_PROMPT = 'Verify a real Notebook environment.'
 const NOTEBOOK_PACKAGE_CANCELLATION_PROMPT = 'Verify Notebook package cancellation.'
 const ARTIFACT_PROVENANCE_PROMPT = 'Create a provenance artifact.'
+const AUTO_REVIEW_ARTIFACT_MARKER = 'Automatic Reviewer artifact evidence.'
 const PREVIEW_CONTEXT_MENU_ARTIFACTS_PROMPT = 'Create preview context menu artifacts.'
 const PREVIEW_CONTEXT_MENU_DOCX_BASE64 =
   'UEsDBAoAAAAIABQ7HF15bjPX6AAAAK0BAAATAAAAW0NvbnRlbnRfVHlwZXNdLnhtbH1QyU7DMBD9FWuuKHHggBCK0wPLETiUDxjZk8SqN3nc0v49Tlt6QIXjzFv1+tXeO7GjzDYGBbdtB4KCjsaGScHn+rV5AMEFg0EXAyk4EMNq6NeHRCyqNrCCuZT0KCXrmTxyGxOFiowxeyz1zJNMqDc4kbzrunupYygUSlMWDxj6Zxpx64p42df3qUcmxyCeTsQlSwGm5KzGUnG5C+ZXSnNOaKvyyOHZJr6pBJBXExbk74Cz7r0Ok60h8YG5vKGvLPkVs5Em6q2vyvZ/mys94zhaTRf94pZy1MRcF/euvSAebfjpL49zD99QSwMECgAAAAAAFDscXQAAAAAAAAAAAAAAAAYAAABfcmVscy9QSwMECgAAAAgAFDscXZv9N+qtAAAAKQEAAAsAAABfcmVscy8ucmVsc43POw7CMAwG4KtE3mlaBoRQ0y4IqSsqB7ASN61oHkrCo7cnAwNFDIy2f3+W6/ZpZnanECdnBVRFCYysdGqyWsClP232wGJCq3B2lgQsFKFt6jPNmPJKHCcfWTZsFDCm5A+cRzmSwVg4TzZPBhcMplwGzT3KK2ri27Lc8fBpwNpknRIQOlUB6xdP/9huGCZJRydvhmz6ceIrkWUMmpKAhwuKq3e7yCzwpuarF5sXUEsDBAoAAAAAABQ7HF0AAAAAAAAAAAAAAAAFAAAAd29yZC9QSwMECgAAAAgAFDscXX5QYG+1AAAA9wAAABEAAAB3b3JkL2RvY3VtZW50LnhtbEWOO27DMAxAryJob+R2KALDdraszdAeQJHoRIBFGiQdO7ev5AxZHsHfI7vTlifzAJZE2NvPQ2MNYKCY8Nbbv9/zx9EaUY/RT4TQ2yeIPQ3d2kYKSwZUUwQo7drbu+rcOifhDtnLgWbA0huJs9eS8s2txHFmCiBS/HlyX03z7bJPaKvySvFZ41zBFTpcGB4JVhMIFTY15eRifsYxBTBj2nRh6FwdrOSd+7pA0Au7vfDyuvfPwz9QSwECFAAKAAAACAAUOxxdeW4z1+gAAACtAQAAEwAAAAAAAAAAAAAAAAAAAAAAW0NvbnRlbnRfVHlwZXNdLnhtbFBLAQIUAAoAAAAAABQ7HF0AAAAAAAAAAAAAAAAGAAAAAAAAAAAAEAAAABkBAABfcmVscy9QSwECFAAKAAAACAAUOxxdm/036q0AAAApAQAACwAAAAAAAAAAAAAAAAA9AQAAX3JlbHMvLnJlbHNQSwECFAAKAAAAAAAUOxxdAAAAAAAAAAAAAAAABQAAAAAAAAAAABAAAAATAgAAd29yZC9QSwECFAAKAAAACAAUOxxdflBgb7UAAAD3AAAAEQAAAAAAAAAAAAAAAAA2AgAAd29yZC9kb2N1bWVudC54bWxQSwUGAAAAAAUABQAgAQAAGgMAAAAA'
@@ -189,14 +190,96 @@ const parseMcpResponse = (body) => {
   return json ? JSON.parse(json) : {}
 }
 
-const submitReviewerPass = async (mcpServers) => {
-  const server = mcpServers.find(
-    (candidate) =>
-      candidate.type === 'http' &&
-      (candidate.name === 'open-science-reviewer' ||
-        candidate.name === frameworkServerName('open-science-reviewer'))
+const captureReviewerEvidence = async (entry) => {
+  const root = process.env.OPEN_SCIENCE_E2E_HANDOFF_CAPTURE_ROOT
+  if (!root) return
+  await mkdir(root, { recursive: true })
+  await appendFile(join(root, 'reviewer-artifact-evidence.jsonl'), `${JSON.stringify(entry)}\n`)
+}
+
+const readAndSubmitReviewerPass = async (sessionId, callTool) => {
+  const turn = toolResult('read_turn', await callTool('read_turn', {}))
+  const strictArtifactReview = JSON.stringify(turn).includes(AUTO_REVIEW_ARTIFACT_MARKER)
+  const receipt = JSON.stringify(turn).match(
+    /Artifact provenance verified for session ([^,]+), artifact ([^,]+), version ([^.]+)\./u
   )
-  if (!server?.url) return false
+  let check = {
+    status: 'pass',
+    claim: 'The completed turn follows the requested production path.',
+    evidence: 'The Reviewer read the frozen turn through its scoped evidence server.'
+  }
+  if (strictArtifactReview) {
+    if (!receipt) throw new Error('The reviewed turn contains no publication receipt.')
+    const [, appSessionId, artifactId, versionId] = receipt
+    const artifact = toolResult(
+      'read_artifact',
+      await callTool('read_artifact', { id: versionId, view: 'content' })
+    )
+    if (
+      artifact.id !== versionId ||
+      artifact.role !== 'work_product' ||
+      artifact.kind !== 'raw' ||
+      artifact.encoding !== 'utf8' ||
+      artifact.truncated ||
+      artifact.content !== 'artifact provenance e2e'
+    )
+      throw new Error(
+        `Reviewer did not read the exact complete Artifact Version: ${JSON.stringify(artifact)}`
+      )
+    const checksum = createHash('sha256').update(artifact.content, 'utf8').digest('hex')
+    const trace = toolResult(
+      'read_artifact',
+      await callTool('read_artifact', { id: versionId, view: 'trace' })
+    )
+    if (
+      trace.id !== versionId ||
+      trace.role !== 'work_product' ||
+      trace.file?.checksum !== checksum ||
+      trace.file?.contentStatus !== 'available'
+    ) {
+      throw new Error(
+        `Reviewer Version trace does not match its read bytes: ${JSON.stringify(trace)}`
+      )
+    }
+    await captureReviewerEvidence({
+      kind: 'artifact-read',
+      sessionId,
+      appSessionId,
+      artifactId,
+      versionId,
+      checksum,
+      content: artifact.content,
+      descriptor: trace.file,
+      readVersionId: artifact.id,
+      traceVersionId: trace.id
+    })
+    check = {
+      status: 'pass',
+      claim: 'The published Artifact Version contains the expected fixture bytes.',
+      evidence: `Read exact Version ${versionId}; SHA256 ${checksum}; content: ${artifact.content}`,
+      artifactVersionId: versionId
+    }
+  }
+  await callTool('submit_findings', { checks: [check] })
+  return true
+}
+
+const submitReviewerPass = async (sessionId) => {
+  const server = (sessionRoutes.get(sessionId)?.mcpServers ?? []).find(
+    (candidate) =>
+      candidate.name === 'open-science-reviewer' ||
+      candidate.name === frameworkServerName('open-science-reviewer')
+  )
+  if (!server) return false
+  await captureReviewerEvidence({ kind: 'dispatch', sessionId })
+  if (server.command) {
+    return withMcpClient(sessionId, 'open-science-reviewer', (client) =>
+      readAndSubmitReviewerPass(sessionId, (name, args) =>
+        client.callTool({ name, arguments: args })
+      )
+    )
+  }
+  if (!server.url) throw new Error('Reviewer MCP route has no transport.')
   const token =
     server.headers
       ?.find((header) => header.name?.toLowerCase() === 'authorization')
@@ -222,11 +305,11 @@ const submitReviewerPass = async (mcpServers) => {
   })
   if (!initialize.ok) throw new Error(`Reviewer MCP initialize failed: ${initialize.status}`)
   const initialized = parseMcpResponse(await initialize.text())
-  const sessionId = initialize.headers.get('mcp-session-id')
-  if (!sessionId || !initialized.result) {
+  const mcpSessionId = initialize.headers.get('mcp-session-id')
+  if (!mcpSessionId || !initialized.result) {
     throw new Error('Reviewer MCP initialize did not return a session.')
   }
-  const headers = { ...baseHeaders, 'mcp-session-id': sessionId }
+  const headers = { ...baseHeaders, 'mcp-session-id': mcpSessionId }
   await fetch(server.url, {
     method: 'POST',
     headers,
@@ -252,17 +335,7 @@ const submitReviewerPass = async (mcpServers) => {
     }
     return payload.result
   }
-  await callTool('read_turn', {})
-  await callTool('submit_findings', {
-    checks: [
-      {
-        status: 'pass',
-        claim: 'The completed turn follows the requested production path.',
-        evidence: 'The Reviewer read the frozen turn through its scoped evidence server.'
-      }
-    ]
-  })
-  return true
+  return readAndSubmitReviewerPass(sessionId, callTool)
 }
 
 const withMcpClient = async (sessionId, serverName, operation) => {
@@ -1514,9 +1587,7 @@ if (process.argv.includes('--version')) {
         } else if (prompt.includes('Expand a table with source links.')) {
           reply =
             '| PMID | Journal |\n| --- | --- |\n| [42668673](https://citation.example/paper) | Bioact Mater |\n| [42537459](https://unadmitted.example/paper) | Biomaterials |'
-        } else if (
-          await submitReviewerPass(sessionRoutes.get(context.params.sessionId)?.mcpServers ?? [])
-        ) {
+        } else if (await submitReviewerPass(context.params.sessionId)) {
           reply = ''
         } else if (prompt.includes(CONTEXT_COMPACTION_PROMPT)) {
           await context.client.notify(acp.methods.client.session.update, {
