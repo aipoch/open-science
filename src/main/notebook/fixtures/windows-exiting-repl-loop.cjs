@@ -10,7 +10,15 @@ if (fs.existsSync(marker)) {
     process.execPath,
     [
       '-e',
-      "require('node:fs').writeFileSync('descendant.pid', String(process.pid)); console.log('ready'); setInterval(() => {}, 1000)"
+      `const fs = require('node:fs');
+      fs.writeFileSync('descendant.pid', String(process.pid));
+      console.log('ready');
+      setInterval(() => {
+        if (fs.existsSync('descendant.stop')) {
+          fs.writeFileSync('descendant.stopped', 'stopped');
+          process.exit(0);
+        }
+      }, 50)`
     ],
     { stdio: ['ignore', 'pipe', 'ignore'] }
   )

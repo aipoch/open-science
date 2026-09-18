@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { beforeEach, expect, it, vi } from 'vitest'
@@ -96,6 +96,7 @@ it.skipIf(process.platform !== 'win32')(
       processLifecycle: lifecycle,
       laneKey: '["standard-exit","standard-exit","root",null,null]'
     })
+    let descendantReaped = false
     try {
       await expect(
         executor.execute({
@@ -120,6 +121,7 @@ it.skipIf(process.platform !== 'win32')(
       expect(() => process.kill(descendantPid, 0)).toThrow(
         expect.objectContaining({ code: 'ESRCH' })
       )
+      descendantReaped = true
       expect(await readdir(join(root, 'runtime', 'kernel-processes'))).toEqual([])
       for (let attempt = 0; attempt < 3; attempt++) {
         if (attempt === 1) await expect(executor.restart()).resolves.toBeUndefined()
@@ -146,19 +148,37 @@ it.skipIf(process.platform !== 'win32')(
       expect(await readdir(join(root, 'runtime', 'kernel-processes'))).toEqual([])
     } finally {
       await executor.shutdown().catch(() => undefined)
-      // A red run without process-tree supervision can leave this fixture's child alive.
-      const pid = await readFile(join(root, 'descendant.pid'), 'utf8').catch(() => undefined)
-      if (pid) {
-        try {
-          process.kill(Number(pid))
-        } catch {
-          /* Already reaped by the native supervisor. */
+      let fixtureCleanupComplete = false
+      try {
+        // A red run can leave the fixture alive. Only it observes this private stop file;
+        // never kill a saved PID, which may already belong to an unrelated process.
+        if (!descendantReaped) {
+          await writeFile(join(root, 'descendant.stop'), 'stop')
+          const pid = await readFile(join(root, 'descendant.pid'), 'utf8').catch(() => undefined)
+          if (pid) {
+            await vi.waitFor(
+              async () => {
+                const stopped = await readFile(join(root, 'descendant.stopped'), 'utf8').catch(
+                  () => undefined
+                )
+                if (stopped === 'stopped') return
+                // This is a read-only absence check, never permission to signal that PID.
+                expect(() => process.kill(Number(pid), 0)).toThrow(
+                  expect.objectContaining({ code: 'ESRCH' })
+                )
+              },
+              { timeout: 5000, interval: 50 }
+            )
+          }
         }
+        fixtureCleanupComplete = true
+      } finally {
+        await sandbox.dispose().catch(() => undefined)
+        await actual.NotebookNetworkRuntime.reset().catch(() => undefined)
+        vi.unstubAllEnvs()
+        // Preserve the exit signal if the fixture has not acknowledged it yet.
+        if (fixtureCleanupComplete) await rm(root, { recursive: true, force: true })
       }
-      await sandbox.dispose().catch(() => undefined)
-      await actual.NotebookNetworkRuntime.reset().catch(() => undefined)
-      vi.unstubAllEnvs()
-      await rm(root, { recursive: true, force: true })
     }
   },
   30_000
