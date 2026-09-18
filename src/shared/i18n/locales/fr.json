@@ -6265,6 +6265,13 @@
     "Import saves this package before configuration. New bundled Skills stay disabled for the Main Agent; existing Skill settings are preserved.": "L’importation enregistre ce paquet avant sa configuration. Les nouvelles compétences incluses restent désactivées pour l’agent principal ; les paramètres des compétences existantes sont conservés.",
     "This imported Specialist is saved but disabled. Save changes to enable it, or configure it later.": "Ce spécialiste importé est enregistré, mais désactivé. Enregistrez les modifications pour l’activer, ou configurez-le plus tard.",
     "Import and configure": "Importer et configurer",
-    "Configure later": "Configurer plus tard"
+    "Configure later": "Configurer plus tard",
+    "Session information: {{title}}": "Informations de la session : {{title}}",
+    "Source session": "Session source",
+    "Source session unavailable": "Session source indisponible",
+    "Last updated": "Dernière mise à jour",
+    "Messages in current branch": "Messages dans la branche actuelle",
+    "{{total}} from Assistant": "{{total}} de l’assistant",
+    "Loading session information…": "Chargement des informations de la session…"
   }
 }

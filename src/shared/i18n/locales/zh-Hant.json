@@ -5933,6 +5933,13 @@
     "Import saves this package before configuration. New bundled Skills stay disabled for the Main Agent; existing Skill settings are preserved.": "匯入會先儲存此套件，再進行設定。新隨附安裝的技能預設不對主智能體啟用；既有技能的設定保持不變。",
     "This imported Specialist is saved but disabled. Save changes to enable it, or configure it later.": "此匯入的專家已儲存，但尚未啟用。儲存變更即可啟用，也可以稍後設定。",
     "Import and configure": "匯入並設定",
-    "Configure later": "稍後設定"
+    "Configure later": "稍後設定",
+    "Session information: {{title}}": "對話資訊：{{title}}",
+    "Source session": "來源對話",
+    "Source session unavailable": "來源對話無法使用",
+    "Last updated": "最後更新",
+    "Messages in current branch": "目前分支訊息",
+    "{{total}} from Assistant": "其中 {{total}} 則來自助理",
+    "Loading session information…": "正在載入對話資訊…"
   }
 }

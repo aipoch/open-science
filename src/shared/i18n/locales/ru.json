@@ -6406,6 +6406,13 @@
     "Import saves this package before configuration. New bundled Skills stay disabled for the Main Agent; existing Skill settings are preserved.": "При импорте пакет сохраняется до настройки. Новые навыки из пакета остаются отключёнными для главного агента; настройки существующих навыков сохраняются.",
     "This imported Specialist is saved but disabled. Save changes to enable it, or configure it later.": "Этот импортированный специалист сохранён, но отключён. Сохраните изменения, чтобы включить его, или настройте позже.",
     "Import and configure": "Импортировать и настроить",
-    "Configure later": "Настроить позже"
+    "Configure later": "Настроить позже",
+    "Session information: {{title}}": "Информация о сеансе: {{title}}",
+    "Source session": "Исходный сеанс",
+    "Source session unavailable": "Исходный сеанс недоступен",
+    "Last updated": "Последнее обновление",
+    "Messages in current branch": "Сообщения в текущей ветке",
+    "{{total}} from Assistant": "От ассистента: {{total}}",
+    "Loading session information…": "Загрузка информации о сеансе…"
   }
 }

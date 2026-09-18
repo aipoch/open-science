@@ -5931,6 +5931,13 @@
     "Import saves this package before configuration. New bundled Skills stay disabled for the Main Agent; existing Skill settings are preserved.": "가져오면 구성 전에 이 패키지가 저장됩니다. 새로 포함되어 설치되는 스킬은 메인 에이전트에서 비활성화 상태로 유지되며, 기존 스킬 설정은 보존됩니다.",
     "This imported Specialist is saved but disabled. Save changes to enable it, or configure it later.": "가져온 스페셜리스트가 저장되었지만 비활성화되어 있습니다. 변경 사항을 저장하여 활성화하거나 나중에 구성할 수 있습니다.",
     "Import and configure": "가져오고 구성",
-    "Configure later": "나중에 구성"
+    "Configure later": "나중에 구성",
+    "Session information: {{title}}": "세션 정보: {{title}}",
+    "Source session": "원본 세션",
+    "Source session unavailable": "원본 세션을 사용할 수 없음",
+    "Last updated": "마지막 업데이트",
+    "Messages in current branch": "현재 분기의 메시지",
+    "{{total}} from Assistant": "어시스턴트 메시지 {{total}}개",
+    "Loading session information…": "세션 정보 불러오는 중…"
   }
 }

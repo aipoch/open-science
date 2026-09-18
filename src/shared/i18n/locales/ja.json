@@ -5933,6 +5933,13 @@
     "Import saves this package before configuration. New bundled Skills stay disabled for the Main Agent; existing Skill settings are preserved.": "インポートすると、設定前にこのパッケージが保存されます。新たに同梱インストールされるスキルはメインエージェントでは無効のままです。既存のスキル設定は保持されます。",
     "This imported Specialist is saved but disabled. Save changes to enable it, or configure it later.": "インポートしたスペシャリストは保存済みですが、無効です。変更を保存して有効にするか、後で設定できます。",
     "Import and configure": "インポートして設定",
-    "Configure later": "後で設定"
+    "Configure later": "後で設定",
+    "Session information: {{title}}": "セッション情報：{{title}}",
+    "Source session": "元のセッション",
+    "Source session unavailable": "元のセッションを利用できません",
+    "Last updated": "最終更新",
+    "Messages in current branch": "現在のブランチのメッセージ",
+    "{{total}} from Assistant": "アシスタントから {{total}} 件",
+    "Loading session information…": "セッション情報を読み込み中…"
   }
 }
