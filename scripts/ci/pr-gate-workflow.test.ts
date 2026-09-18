@@ -176,6 +176,7 @@ describe('PR Gate workflow', () => {
     expect(selected?.run).toContain('npm run test:affected')
     expect(selected?.run).toContain('--coverage-changed "$BASE_SHA" --')
     expect(selected?.run).toContain('--shard=${{ matrix.shard }}/4')
+    expect(selected?.run).toContain('--reporter=dot')
     expect(selected?.run).toContain('--reporter=blob')
     expect(shards.env?.VITEST_DEFER_COVERAGE_THRESHOLDS).toBe('1')
     const merge = workflow.jobs.unit.steps?.find(({ id }) => id === 'unit_macos_related_merge')
@@ -1050,8 +1051,13 @@ describe('PR Gate workflow', () => {
     })
     expect(unit.if).toContain('always()')
     expect(unit.env?.VITEST_DEFER_COVERAGE_THRESHOLDS).toBeUndefined()
+    expect(shards.env?.VITEST_MAX_WORKERS).toBeUndefined()
     expect(shards).toMatchObject({
-      env: { VITEST_DEFER_COVERAGE_THRESHOLDS: '1', VITEST_PORTABLE_CI: '1' },
+      env: {
+        VITEST_DEFER_COVERAGE_THRESHOLDS: '1',
+        VITEST_PORTABLE_CI: '1',
+        OPEN_SCIENCE_TEST_MAX_WORKERS: '4'
+      },
       name: 'Portable tests (Ubuntu, shard ${{ matrix.shard }}/4)',
       needs: 'preflight',
       'runs-on': 'ubuntu-latest',
@@ -1072,6 +1078,7 @@ describe('PR Gate workflow', () => {
         '--coverage.reporter=text-summary',
         '--testTimeout=30000',
         '--shard=${{ matrix.shard }}/4',
+        '--reporter=dot',
         '--reporter=blob',
         '--reporter=github-actions',
         '--outputFile=vitest-reports/blob-${{ matrix.shard }}.json'

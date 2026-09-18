@@ -121,7 +121,9 @@ it.each([
   ['0', undefined],
   ['1', undefined],
   ['0', '2'],
-  ['1', '2']
+  ['1', '2'],
+  ['0', '4'],
+  ['1', '4']
 ])(
   'resolves real Vitest project budgets with Windows profile %s and worker cap %s',
   (profile, override) => {
