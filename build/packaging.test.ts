@@ -1,7 +1,18 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { spawnSync, type SpawnSyncReturns } from 'node:child_process'
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { createRequire } from 'node:module'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
+import { createPackageWithOptions } from '@electron/asar'
 import { describe, expect, it } from 'vitest'
 
 const repoRoot = join(__dirname, '..')
@@ -10,6 +21,71 @@ const appBuilderLibRoot = dirname(
 )
 
 describe('packaging config', () => {
+  it.each(['module', 'commonjs', undefined])(
+    'runs unpacked notebook scripts beneath an ancestor package with type %s',
+    async (type) => {
+      const root = mkdtempSync(join(tmpdir(), 'notebook-package-scope-'))
+      try {
+        writeFileSync(join(root, 'package.json'), JSON.stringify({ type }))
+        const source = join(root, 'source')
+        const resources = join(root, 'installed', 'resources')
+        mkdirSync(source)
+        mkdirSync(resources, { recursive: true })
+        // The app manifest stays inside app.asar, outside the unpacked scripts' ancestor chain.
+        writeFileSync(join(source, 'package.json'), '{"type":"commonjs"}')
+        cpSync(join(repoRoot, 'resources/notebook'), join(source, 'resources/notebook'), {
+          recursive: true
+        })
+        await createPackageWithOptions(source, join(resources, 'app.asar'), {
+          unpackDir: 'resources'
+        })
+        const notebook = join(resources, 'app.asar.unpacked', 'resources', 'notebook')
+        const run = (script: string, args: string[] = [], input = ''): SpawnSyncReturns<string> =>
+          spawnSync(process.execPath, [join(notebook, script), ...args], {
+            cwd: root,
+            input,
+            encoding: 'utf8',
+            timeout: 10_000,
+            env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
+          })
+
+        const repl = run('repl_loop.js', [], '{"req_id":"scope","code":"return 6 * 7"}\n')
+        expect(repl.stderr).toBe('')
+        expect(repl.status).toBe(0)
+        expect(JSON.parse(repl.stdout)).toMatchObject({
+          req_id: 'scope',
+          error: null,
+          result: '42'
+        })
+
+        const receiptId = 'scope-test'
+        const pending = join(root, `kernel.pending.${receiptId}.json`)
+        writeFileSync(pending, JSON.stringify({ receiptId }))
+        const host = run('kernel_process_host.js', [
+          pending,
+          receiptId,
+          process.execPath,
+          '-e',
+          'process.stdout.write("started")'
+        ])
+        expect(host.stderr).toBe('')
+        expect(host.status).toBe(0)
+        expect(host.stdout).toBe('started')
+
+        // Reach the real worker's protocol validation without creating evidence or requiring Git.
+        const worker = run('file_evidence_worker.js', [], '{"operation":"invalid"}')
+        expect(worker.stderr).toBe('')
+        expect(worker.status).toBe(1)
+        expect(JSON.parse(worker.stdout)).toEqual({
+          ok: false,
+          error: 'Unsupported file-evidence worker operation.'
+        })
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    }
+  )
+
   it('keeps the macOS internal bundle name aligned with generated Helper names', () => {
     const yml = readFileSync(join(repoRoot, 'electron-builder.yml'), 'utf8')
     const productName = yml.match(/^productName: (.+)$/m)?.[1]
