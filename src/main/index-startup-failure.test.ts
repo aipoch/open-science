@@ -867,6 +867,8 @@ it('stops synchronously on a failed credential preflight before Electron ready o
   fixture.prepareCredentialValidation.mockImplementationOnce(() => {
     throw new CredentialIdentityError('windows-profile-key-unavailable')
   })
+  // The native recovery dialog is asserted here, so the launch must be a windowed one.
+  fixture.headless = false
   const readiness = vi.spyOn(fixture.electron.app, 'whenReady')
   try {
     await import('./index')
@@ -998,6 +1000,23 @@ it('prints credential failure details before a native recovery dialog can be sho
       stack: expect.stringContaining('CredentialIdentityError')
     })
   )
+})
+
+it('reports headless credential recovery on stderr without a blocking dialog', async () => {
+  const { CredentialIdentityError } = await import('./credential-identity/selection')
+  fixture.selectCredentialIdentity.mockReset().mockImplementationOnce(() => {
+    throw new CredentialIdentityError('probe-access-blocked')
+  })
+  const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+  try {
+    await import('./index')
+    await fixture.exited
+    expect(fixture.electron.dialog.showErrorBox).not.toHaveBeenCalled()
+    expect(stderr).toHaveBeenCalledWith(expect.stringContaining('CREDENTIAL_IDENTITY'))
+    expect(fixture.electron.app.exit).toHaveBeenCalledWith(1)
+  } finally {
+    stderr.mockRestore()
+  }
 })
 
 it('redacts secrets in detailed startup errors and identifies their phase', async () => {
