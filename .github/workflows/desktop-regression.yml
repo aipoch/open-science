@@ -33,12 +33,19 @@ permissions:
   actions: read
   contents: read
 
+# Keyed by caller workflow + ref (as package-smoke.yml) so Release and Nightly never queue behind
+# each other; an advisory rerun on the same ref supersedes its predecessor.
+concurrency:
+  group: desktop-regression-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   source:
     name: Resolve source build
     if: inputs.suite != 'visual'
     continue-on-error: ${{ inputs.allow_failure == true }}
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       available: ${{ steps.resolve.outputs.available }}
       run_id: ${{ steps.resolve.outputs.run_id }}
@@ -90,6 +97,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.source.outputs.sha }}
+          persist-credentials: false
 
       # Keep business assertions and fake-Agent behavior matched to the immutable package. Only
       # overlay the launch fixture and Keychain runner being diagnosed from the selected branch.
@@ -174,6 +182,7 @@ jobs:
         with:
           # Manual diagnosis tests the selected branch; callers retain the package's source revision.
           ref: ${{ github.event_name == 'workflow_dispatch' && github.sha || needs.source.outputs.sha }}
+          persist-credentials: false
 
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7

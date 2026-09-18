@@ -24,7 +24,7 @@ type Job = {
   'runs-on'?: string
   steps?: Step[]
   strategy?: { matrix?: { shard?: number[] } }
-  'timeout-minutes'?: number
+  'timeout-minutes'?: number | string
   uses?: string
   with?: Record<string, unknown>
 }
@@ -580,6 +580,53 @@ describe('build verification throughput', () => {
       expect(release.jobs[name].if).toBe(
         "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')"
       )
+    }
+  })
+
+  it('keeps reusable build workflows read-only, caller-scoped, and time-bounded', () => {
+    const build = workflow('build.yml')
+    const notarize = workflow('notarize-mac.yml')
+    const regression = workflow('desktop-regression.yml')
+    const dryRun = workflow('notarize-dryrun.yml')
+    const release = workflow('release.yml')
+
+    expect(build.permissions).toEqual({ contents: 'read' })
+    expect(notarize.permissions).toEqual({ contents: 'read' })
+    expect(dryRun.permissions).toEqual({ contents: 'read' })
+    // Packaging and notarization queue instead of cancelling; regression reruns supersede.
+    expect(build.concurrency).toEqual({
+      group: 'build-${{ github.workflow }}-${{ github.ref }}',
+      'cancel-in-progress': false
+    })
+    expect(notarize.concurrency).toEqual({
+      group: 'notarize-mac-${{ github.workflow }}-${{ github.ref }}',
+      'cancel-in-progress': false
+    })
+    expect(regression.concurrency).toEqual({
+      group: 'desktop-regression-${{ github.workflow }}-${{ github.ref }}',
+      'cancel-in-progress': true
+    })
+    expect(build.jobs.verify['timeout-minutes']).toBe(15)
+    expect(build.jobs.setup['timeout-minutes']).toBe(5)
+    expect(build.jobs.build['timeout-minutes']).toBe("${{ matrix.platform == 'mac' && 45 || 30 }}")
+    expect(regression.jobs.source['timeout-minutes']).toBe(5)
+    expect(release.jobs['release-preflight']['timeout-minutes']).toBe(5)
+    expect(release.jobs.publish['timeout-minutes']).toBe(15)
+    const publishSteps = release.jobs.publish.steps ?? []
+    const setupNode = publishSteps.findIndex(({ name }) => name === 'Setup Node')
+    const install = publishSteps.findIndex(
+      ({ name }) => name === 'Install release transform dependencies'
+    )
+    expect(publishSteps[setupNode]?.with).toEqual({ 'node-version': 22 })
+    expect(setupNode).toBeLessThan(install)
+    for (const reusable of [build, regression, workflow('package-smoke.yml')]) {
+      for (const job of Object.values(reusable.jobs)) {
+        for (const checkout of (job.steps ?? []).filter(({ uses }) =>
+          uses?.startsWith('actions/checkout@')
+        )) {
+          expect(checkout.with?.['persist-credentials']).toBe(false)
+        }
+      }
     }
   })
 })
