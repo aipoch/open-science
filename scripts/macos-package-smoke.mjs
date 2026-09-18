@@ -141,6 +141,21 @@ const prepareSmokeKeychain = async (root, run = runProcess) => {
   try {
     await security(['set-keychain-settings', '-lut', '21600', keychain])
     await security(['unlock-keychain', '-p', password, keychain])
+    // The dynamic search list can still include a locked system keychain. A positive match in
+    // our first, unlocked keychain satisfies the production identity contract without unlocking
+    // or excluding any system keychain. This random fixture key has no user secrets; its open ACL
+    // permits the same packaged app to move between the DMG and ZIP without an approval dialog.
+    await security([
+      'add-generic-password',
+      '-a',
+      'Open-Science Key',
+      '-s',
+      'Open-Science Safe Storage',
+      '-w',
+      randomBytes(16).toString('base64'),
+      '-A',
+      keychain
+    ])
     await security(['list-keychains', '-d', 'user', '-s', keychain])
     await security(['default-keychain', '-d', 'user', '-s', keychain])
     return restore

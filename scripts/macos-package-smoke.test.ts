@@ -53,10 +53,21 @@ describe('macOS package smoke', () => {
       }
       if (setupFails) await expect(prepareSmokeKeychain(root, run)).rejects.toThrow('setup failed')
       else await (await prepareSmokeKeychain(root, run))()
-      expect(commands.slice(2, 7)).toEqual([
+      expect(commands.slice(2, 8)).toEqual([
         ['create-keychain', '-p', expect.stringMatching(/^[a-f0-9]{64}$/), keychain],
         ['set-keychain-settings', '-lut', '21600', keychain],
         ['unlock-keychain', '-p', commands[2][2], keychain],
+        [
+          'add-generic-password',
+          '-a',
+          'Open-Science Key',
+          '-s',
+          'Open-Science Safe Storage',
+          '-w',
+          expect.stringMatching(/^[A-Za-z0-9+/]{22}==$/),
+          '-A',
+          keychain
+        ],
         ['list-keychains', '-d', 'user', '-s', keychain],
         ['default-keychain', '-d', 'user', '-s', keychain]
       ])
