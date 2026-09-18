@@ -422,6 +422,7 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/session-plan/adversarial-session-plan.test.ts",
       "src/main/delegation/production-composition.test.ts",
       "src/main/delegation/production-framework-runtime.test.ts",
       "src/main/side-chat/runtime-owner.test.ts",

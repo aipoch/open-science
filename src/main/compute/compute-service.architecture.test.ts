@@ -791,6 +791,7 @@ describe('Compute service architecture', () => {
       'src/shared/renderer-contract-catalog.test.ts'
     ])
     expect(computeService.testFiles.consumer).toEqual([
+      'src/main/session-plan/adversarial-session-plan.test.ts',
       'src/main/compute/job-runtime.test.ts',
       'src/main/compute/enabled-hosts-registry.test.ts',
       'src/main/acp/application-commands.test.ts',

@@ -384,6 +384,7 @@ describe('User Skill repository architecture', () => {
           'src/shared/renderer-contract-catalog.test.ts'
         ],
         consumer: [
+          'src/main/session-plan/adversarial-session-plan.test.ts',
           'src/main/skills/conversation-import.test.ts',
           'src/main/skills/specialist-package-adapter.test.ts',
           'src/main/notebook/local-rpc-server.test.ts',

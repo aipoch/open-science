@@ -74,6 +74,7 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/session-plan/adversarial-session-plan.test.ts",
       "src/main/settings/agent-runtime-manager.test.ts",
       "src/main/settings/backend-resolver.test.ts",
       "src/renderer/src/stores/settings-provider-auth-slice.test.ts",

@@ -514,6 +514,7 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/session-plan/adversarial-session-plan.test.ts",
       "packages/notebook-network-sandbox/src/wsl2-isolation.integration.test.ts",
       "packages/notebook-network-sandbox/src/wsl2-isolation.test.ts",
       "scripts/electron-builder-config.test.ts",

@@ -606,6 +606,7 @@ describe('Artifact Provenance repository architecture', () => {
       'src/shared/renderer-surface-matrix.test.ts'
     ])
     expect(module.testFiles.consumer).toEqual([
+      'src/main/session-plan/adversarial-session-plan.test.ts',
       'src/main/acp/file-reference-resolver.test.ts',
       'src/main/acp/runtime.test.ts',
       'src/main/artifacts/code-reconstruction.test.ts',

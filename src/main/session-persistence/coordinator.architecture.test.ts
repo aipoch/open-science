@@ -1250,6 +1250,7 @@ describe('Session persistence coordinator architecture', () => {
       'src/shared/renderer-contract-catalog.test.ts'
     ])
     expect(sessionPersistence.testFiles.consumer).toEqual([
+      'src/main/session-plan/adversarial-session-plan.test.ts',
       'src/main/delegation/durable-delegated-work.test.ts',
       'src/main/delegation/session-record-adapter.test.ts',
       'src/main/session-persistence/artifact-finalization-recovery.integration.test.ts',

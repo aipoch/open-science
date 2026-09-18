@@ -1059,6 +1059,7 @@ describe('Settings backend ownership architecture', () => {
       'src/main/web-service/task-api.test.ts'
     ])
     expect(manifest.modules.settings_backend_resolution.testFiles.consumer).toEqual([
+      'src/main/session-plan/adversarial-session-plan.test.ts',
       'packages/open-science/cli.test.ts',
       'src/main/acp/artifact-code-reconstruction-runner.test.ts',
       'src/main/acp/backend-generation-owner.test.ts',

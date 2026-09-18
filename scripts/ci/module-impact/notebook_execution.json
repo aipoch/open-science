@@ -336,6 +336,7 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/session-plan/adversarial-session-plan.test.ts",
       "scripts/electron-builder-config.test.ts",
       "scripts/stage-default-envs.test.ts",
       "scripts/windows-runtime-cache-uninstall.test.ts",
