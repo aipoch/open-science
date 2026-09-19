@@ -35,7 +35,7 @@ export const useHorizontalScrollFade = <T extends HTMLElement>(): RefObject<T | 
       element.removeEventListener('scroll', update)
       observer?.disconnect()
     }
-  })
+  }, [])
 
   return ref
 }

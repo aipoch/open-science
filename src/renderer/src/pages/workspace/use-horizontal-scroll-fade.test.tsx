@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { useHorizontalScrollFade } from './use-horizontal-scroll-fade'
 
-const TestStrip = (): React.JSX.Element => {
+const TestStrip = ({ revision = 0 }: { revision?: number }): React.JSX.Element => {
   const ref = useHorizontalScrollFade<HTMLDivElement>()
-  return <div ref={ref} data-testid="strip" />
+  return <div ref={ref} data-testid="strip" data-revision={revision} />
 }
 
 const setScrollGeometry = (
@@ -48,5 +48,22 @@ describe('useHorizontalScrollFade', () => {
     fireEvent.scroll(strip)
 
     expect(strip.dataset.scrollFade).toBe('none')
+  })
+
+  it('does not recreate the resize observer on unrelated rerenders', () => {
+    const observe = vi.fn()
+    const disconnect = vi.fn()
+    const ResizeObserverStub = class {
+      constructor(_callback: ResizeObserverCallback) {}
+      observe = observe
+      disconnect = disconnect
+    }
+    vi.stubGlobal('ResizeObserver', ResizeObserverStub)
+
+    const { rerender } = render(<TestStrip revision={0} />)
+    rerender(<TestStrip revision={1} />)
+
+    expect(observe).toHaveBeenCalledTimes(1)
+    expect(disconnect).toHaveBeenCalledTimes(0)
   })
 })
