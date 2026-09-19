@@ -1527,11 +1527,10 @@ class NotebookExecutionOwner {
       }
       // Register the live run before async lookup to maintain cancellation coverage
       this.liveShellRuns.set(runId, liveRun)
-      try {
-        // Fetch granted roots with cancellation coverage via liveRun lifecycle
-        const grantedRoots = (await this.options.getGrantedLocalRoots?.()) ?? []
-        // Recheck admission after async lookup - shutdown or revocation could have happened
-        this.assertShellAdmissionAvailable(session)
+      // Fetch granted roots with cancellation coverage via liveRun lifecycle
+      const grantedRoots = (await this.options.getGrantedLocalRoots?.()) ?? []
+      // Recheck admission after async lookup - shutdown or revocation could have happened
+      this.assertShellAdmissionAvailable(session)
       const shellProcessRequest = {
         runId,
         executionReference: runId,
