@@ -341,6 +341,29 @@ describe('NotebookRunOutputs', () => {
     expect(openSettingsToPanel).toHaveBeenCalledWith('network')
   })
 
+  it('recognizes the Windows AppContainer diagnostic emitted by the sandbox', () => {
+    render(
+      [
+        {
+          type: 'error',
+          message:
+            'Windows protected mode is not ready for R: Notebook AppContainer profile is not installed',
+          traceback:
+            'Windows protected mode is not ready for R: Notebook AppContainer profile is not installed'
+        }
+      ],
+      {
+        kernelKind: 'r',
+        status: 'failed',
+        kernelDispatched: false
+      }
+    )
+
+    expect(
+      container.querySelector('[data-testid="notebook-network-recovery-notice"]')
+    ).not.toBeNull()
+  })
+
   it('distinguishes cancellation intent, pre-dispatch failure and incomplete evidence', () => {
     render([], { status: 'queued', cancellationRequestedAt: 1, kernelDispatched: false })
     expect(container.textContent).toContain('Cancellation requested. Waiting for the executor')

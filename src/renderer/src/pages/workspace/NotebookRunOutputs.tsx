@@ -337,7 +337,7 @@ const requiresNotebookNetworkRecovery = (run: NotebookRunRecord): boolean => {
     )
   ].join('\n')
 
-  return /Enable protected mode before (?:authorizing|verifying) R access\.|windows(?:Profile|Loopback|NetworkFence|Ownership|Gateway)/iu.test(
+  return /(?:enable protected mode before (?:authorizing|verifying) r access\.|windows protected mode is not ready for r:|windows protection ownership is inconsistent\.|notebook appcontainer (?:profile|loopback|resources|gateway)|windows sandbox gateway port)/iu.test(
     diagnostics
   )
 }
