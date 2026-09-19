@@ -299,6 +299,7 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/delegation/escaped-descendant.test.ts",
       "src/main/session-persistence/runtime-session-owner.test.ts",
       "src/main/session-plan/adversarial-session-plan.test.ts",
       "scripts/electron-app-fixture.test.ts",

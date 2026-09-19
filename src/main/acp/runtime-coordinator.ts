@@ -480,7 +480,7 @@ class AcpRuntimeCoordinator {
     this.supersedeInitializationRequests()
     return this.shutdownAll(
       (runtime) => runtime.shutdownForQuit(),
-      () => this.delegatedWork?.shutdown()
+      () => this.delegatedWork?.shutdownForQuit()
     )
   }
 
@@ -552,7 +552,7 @@ class AcpRuntimeCoordinator {
     this.supersedeInitializationRequests()
     return this.shutdownAll(
       (runtime) => runtime.shutdownForUpdateGate(),
-      () => this.delegatedWork?.stopAll()
+      () => this.delegatedWork?.shutdownForUpdateGate()
     )
   }
 

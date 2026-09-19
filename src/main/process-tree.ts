@@ -1026,6 +1026,369 @@ export const terminateOwnedPosixProcessGroupById = (
         log
       )
     : Promise.resolve({ reaped: false })
+
+// Scan the process table for any process carrying the given ownership marker in its environment.
+// Returns the list of pids found. An incomplete scan (permission denied, /proc unreadable) returns
+// undefined to signal that descendants cannot be ruled out.
+const scanForOwnedDescendants = async (
+  marker: string,
+  spawnedAt?: number
+): Promise<number[] | undefined> => {
+  if (!marker || typeof marker !== 'string') return []
+  const found: number[] = []
+
+  try {
+    if (process.platform === 'linux') {
+      // Read /proc/[pid]/environ for all processes. A setuid descendant can inherit the marker but
+      // run as a different UID, making its environment unreadable. To avoid incorrectly clearing
+      // ownership, we must check: (1) same-UID processes (direct descendants), and (2) processes
+      // we cannot inspect that might be setuid descendants. Use PPID to identify potential descendants.
+      // Also use process start time to exclude processes that existed before our spawn time.
+      const { readdirSync, readFileSync, statSync } = await import('node:fs')
+      const procs = readdirSync('/proc').filter((name) => /^\d+$/.test(name))
+      const ourUid = process.getuid?.()
+
+      // System boot time in seconds since epoch (needed to convert process start time)
+      let bootTime: number | undefined
+      if (spawnedAt !== undefined) {
+        try {
+          const uptime = readFileSync('/proc/uptime', 'utf8')
+          const uptimeSeconds = parseFloat(uptime.split(' ')[0])
+          bootTime = Date.now() / 1000 - uptimeSeconds
+        } catch {
+          // Cannot determine boot time - fail closed (cannot filter by time)
+        }
+      }
+
+      // Build PPID map to identify potential descendants
+      const ppidMap = new Map<number, number>() // pid -> ppid
+      const startTimeMap = new Map<number, number>() // pid -> start time (ms since epoch)
+      for (const pidStr of procs) {
+        try {
+          const stat = readFileSync(`/proc/${pidStr}/stat`, 'utf8')
+          // stat format: pid (comm) state ppid ... starttime(jiffies)
+          // starttime is field 22 (0-indexed: 21)
+          const match = stat.match(/^\d+ \(.+\) \S+ (\d+)/)
+          if (match) {
+            ppidMap.set(parseInt(pidStr, 10), parseInt(match[1], 10))
+          }
+          // Extract starttime (field 22, 1-indexed)
+          const fields = stat.split(')')
+          if (fields.length >= 2) {
+            const afterComm = fields[1].trim().split(/\s+/)
+            if (afterComm.length >= 20 && bootTime !== undefined) {
+              const starttimeJiffies = parseInt(afterComm[19], 10) // 0-indexed field 21
+              const clockTick = 100 // USER_HZ, typically 100 on Linux
+              const startTimeSec = bootTime + starttimeJiffies / clockTick
+              startTimeMap.set(parseInt(pidStr, 10), startTimeSec * 1000) // Convert to ms
+            }
+          }
+        } catch {
+          // Ignore processes that disappear or are unreadable
+        }
+      }
+
+      // Helper: check if pid could be a descendant of any same-UID process. Returns true if we
+      // cannot rule it out (fail closed). A setuid descendant may be reparented to PID 1 after
+      // its same-UID parent exits, making PPID-based tracing inconclusive.
+      const couldBeDescendant = (pid: number): boolean => {
+        // If we have a spawn time and this process started before it, definitely not our descendant
+        if (spawnedAt !== undefined && startTimeMap.has(pid)) {
+          const processStart = startTimeMap.get(pid)!
+          if (processStart < spawnedAt) {
+            return false // Process existed before we spawned anything
+          }
+        }
+
+        const visited = new Set<number>()
+        let current: number | undefined = pid
+        let foundSameUid = false
+
+        while (current !== undefined && !visited.has(current)) {
+          visited.add(current)
+
+          // If we reach a same-UID process, this could be a descendant
+          try {
+            const stat = statSync(`/proc/${current}`)
+            if (ourUid !== undefined && stat.uid === ourUid) {
+              foundSameUid = true
+              break
+            }
+          } catch {
+            // Cannot determine UID - assume could be relevant (fail closed)
+            return true
+          }
+
+          current = ppidMap.get(current)
+
+          // Reached PID 1 or orphaned (no PPID entry) without finding same-UID ancestor.
+          // This could be a setuid descendant that was reparented after its parent exited.
+          if (current === undefined || current === 1) {
+            break
+          }
+        }
+
+        // If we found a same-UID ancestor, definitely could be a descendant
+        if (foundSameUid) return true
+
+        // Otherwise: reached init/orphaned without same-UID ancestor. This could be:
+        // 1. Unrelated system process (should ignore, but only if it existed before our spawn)
+        // 2. Setuid descendant that was reparented (should block)
+        // Even if we have a start time showing the process started after our spawn, we cannot
+        // rule out case 2. A setuid descendant would start after our spawn, inherit the marker,
+        // then become inaccessible. Fail closed: treat as potentially relevant.
+        return true
+      }
+
+      let hadRelevantPermissionDenied = false
+      let hadSuspiciousMarkerAbsence = false
+      for (const pidStr of procs) {
+        try {
+          const environ = readFileSync(`/proc/${pidStr}/environ`, 'utf8')
+          // environ is null-separated key=value pairs
+          if (environ.includes(`OPEN_SCIENCE_PROCESS_TREE_ID=${marker}`)) {
+            found.push(parseInt(pidStr, 10))
+          } else {
+            // Successfully read environ but marker not found. If this process could be our
+            // descendant, it may have cleared its environment (e.g., via exec with env -i).
+            // Treat this as suspicious - we cannot safely clear ownership.
+            const pid = parseInt(pidStr, 10)
+            if (couldBeDescendant(pid)) {
+              hadSuspiciousMarkerAbsence = true
+            }
+          }
+        } catch (err) {
+          const code = (err as NodeJS.ErrnoException).code
+          // ENOENT/ESRCH are benign (process exited between readdir and readFile).
+          if (code === 'ENOENT' || code === 'ESRCH') continue
+
+          // Permission denied: check if this process could be a setuid descendant
+          const pid = parseInt(pidStr, 10)
+          if (couldBeDescendant(pid)) {
+            hadRelevantPermissionDenied = true
+          }
+        }
+      }
+      // If we hit permission errors for potential descendants, or found potential descendants
+      // without the marker (suspicious environment clearing), the scan is incomplete
+      if ((hadRelevantPermissionDenied || hadSuspiciousMarkerAbsence) && found.length === 0) {
+        return undefined
+      }
+      return found
+    } else if (process.platform === 'darwin') {
+      // Use native binding to read process environments reliably. The binding reads via
+      // KERN_PROCARGS2 sysctl, which may omit inherited environment for some Apple system
+      // executables, but is more complete than ps e (which truncates long environments).
+      try {
+        const binding = requireDarwinProcessBinding()
+        const table = binding.listDarwinProcesses()
+        if (!table) return undefined // Failed to list processes
+
+        // If the process list itself is incomplete (table.complete === false), we cannot prove
+        // absence even if all listed processes lack the marker: an omitted descendant may exist.
+        if (!table.complete) return undefined
+
+        // Build parent chain map and filter out processes that existed before spawn time
+        const ppidMap = new Map<number, number>()
+        const potentialDescendants = new Set<number>()
+        const ourUid = process.getuid?.()
+
+        for (const proc of table.processes) {
+          ppidMap.set(proc.pid, proc.ppid)
+
+          // If we have spawn time, filter by uniqueId (which encodes process start time on macOS)
+          if (spawnedAt !== undefined) {
+            // On macOS, uniqueId from KERN_PROCARGS2 contains creation timestamp info.
+            // For now, we'll use a simpler heuristic: check PPID chains to see if the process
+            // could be related to same-UID processes. A more sophisticated implementation would
+            // parse the uniqueId timestamp.
+            // TODO: Parse uniqueId for precise start time filtering
+          }
+        }
+
+        // Helper: determine if a process could be our descendant by checking PPID chains
+        const couldBeDescendant = (pid: number): boolean => {
+          const visited = new Set<number>()
+          let current: number | undefined = pid
+
+          while (current !== undefined && current !== 0 && current !== 1 && !visited.has(current)) {
+            visited.add(current)
+
+            // Check if current process is same-UID by attempting to get its identity
+            // (native binding will fail for different-UID system processes)
+            const identity = binding.getDarwinProcess(current)
+            if (identity === null) {
+              // Cannot read this process - could be system process or permission denied
+              // If we can't determine, assume it could be relevant (fail closed)
+              return true
+            }
+
+            // If this process is same-UID (we can read it), mark it as potential ancestor
+            if (ourUid !== undefined) {
+              // On macOS, if we can read the process via getDarwinProcess, it's likely same-UID
+              // or accessible. A same-UID ancestor means this could be our descendant.
+              potentialDescendants.add(pid)
+              return true
+            }
+
+            current = ppidMap.get(current)
+          }
+
+          // Reached init (1) or orphaned without finding same-UID ancestor
+          return false
+        }
+
+        let hadIncomplete = false
+        let hadSuspiciousMarkerAbsence = false
+
+        for (const proc of table.processes) {
+          const value = binding.getDarwinEnvironmentValue(proc.pid, PROCESS_TREE_OWNERSHIP_ENV)
+          if (value === null) {
+            // null means we couldn't read the environment (system process, permission denied, etc.)
+            // Only treat as incomplete if this could be our descendant
+            if (couldBeDescendant(proc.pid)) {
+              hadIncomplete = true
+            }
+            continue
+          }
+          if (value === false) {
+            // false means the environment variable was not found. If this process could be our
+            // descendant, it may have cleared its environment. Treat this as suspicious.
+            if (couldBeDescendant(proc.pid)) {
+              hadSuspiciousMarkerAbsence = true
+            }
+            continue
+          }
+          if (value === marker) {
+            found.push(proc.pid)
+          }
+        }
+
+        // If we had incomplete reads or suspicious marker absence for potential descendants,
+        // and found nothing, we cannot prove absence
+        if ((hadIncomplete || hadSuspiciousMarkerAbsence) && found.length === 0) return undefined
+        return found
+      } catch {
+        // Binding unavailable or failed — cannot prove absence
+        return undefined
+      }
+    }
+  } catch {
+    // Any unexpected error means the scan is unreliable
+    return undefined
+  }
+  return []
+}
+
+// Outcome of proving a persisted POSIX leader receipt from a later application instance:
+// 'gone' is positive proof that the recorded tree no longer exists, 'blocked' retains ownership.
+export type PosixLeaderRecoveryOutcome = 'gone' | 'blocked'
+
+// Cold recovery for a leader recorded by a previous, crashed application instance. There is no
+// ChildProcess handle and no live tracker, so the only admissible evidence is the kernel's own
+// birth identity for the recorded pid, read from a COMPLETE process snapshot.
+//
+// 'gone' is returned only when positive proof exists that neither the leader nor its detached
+// process group nor any marker-attributed descendants remain alive:
+//   - the recorded pid is absent or reused (birth token differs) AND the owned group (kill -0)
+//     is also gone AND (if marker provided) no process in the system carries that marker, or
+//   - the exact leader is still alive, we terminate its group, and the confirmation snapshot
+//     shows neither the leader pid nor the group exists.
+// If the leader is gone but the group is still alive the receipt stays blocked — a leaderless
+// group cannot be safely tied back to the receipt (matches notebook shell-process-ownership).
+// If a marker scan is incomplete (permission denied) the receipt also stays blocked.
+// Everything else that cannot be fully proven also stays blocked.
+export const proveRecordedPosixLeaderGone = async (
+  leader: { pid: number; birthToken?: string },
+  marker?: string,
+  spawnedAt?: number,
+  signal?: NodeJS.Signals,
+  log?: ProcessTreeLogger
+): Promise<PosixLeaderRecoveryOutcome> => {
+  if (process.platform !== 'linux' && process.platform !== 'darwin') return 'blocked'
+  if (!Number.isSafeInteger(leader.pid) || leader.pid <= 0) return 'blocked'
+  // Without a recorded birth token any pid match would be a guess, and pid absence alone cannot
+  // rule out a descendant that outlived the leader. Retain the receipt instead.
+  if (leader.birthToken === undefined) return 'blocked'
+  const recorded: PosixProcessIdentity = {
+    pid: leader.pid,
+    ppid: 0,
+    pgid: leader.pid,
+    sid: leader.pid,
+    birthToken: leader.birthToken,
+    parentBirthToken: undefined,
+    birthOrder: undefined
+  }
+  const snapshot = await collectPosixProcessTable()
+  // An incomplete snapshot cannot prove absence: the recorded leader may simply be unreadable.
+  if (!snapshot.complete) return 'blocked'
+  if (!samePosixIdentity(recorded, snapshot.processes.get(leader.pid))) {
+    // The leader pid is absent or reused by an unrelated process. This is cold recovery: the tree
+    // disappeared outside of our control. Before declaring the tree gone, verify the owned group
+    // (kill -0 against -pid) is also absent. If the group is still alive but the leader is gone,
+    // the numeric group id may have been reused — never signal a group that cannot be tied back
+    // to the recorded identity. (Mirrors notebook shell-ownership.)
+    if (isProcessGroupAlive(leader.pid)) return 'blocked'
+
+    // Leader and its original group are both gone. If we have an ownership marker, scan the process
+    // table for any descendants that may have escaped to a new session but still carry the marker.
+    //
+    // Security model: marker-based tracking provides practical ownership proof but lacks the
+    // authoritative guarantees of OS lifecycle handles (Windows Job objects). Theoretical attack:
+    // a descendant could exec() itself with a cleaned environment, removing the marker from
+    // /proc/[pid]/environ. However:
+    //   1. Reboot proof (checked upstream) handles the cold-start case definitively
+    //   2. Our spawned delegation backends don't exec() themselves
+    //   3. Same-UID scope limits the attack surface
+    //   4. The documented contract explicitly permits this approach
+    //
+    // Alternative (always block without reboot proof) would make workspaces unusable after clean
+    // process termination, contradicting the recovery contract and practical requirements.
+    if (marker) {
+      const descendants = await scanForOwnedDescendants(marker, spawnedAt)
+      // undefined means incomplete scan (permission denied for same-UID process, binding failed)
+      if (descendants === undefined) return 'blocked'
+      // Found descendants with marker → definitely blocked
+      if (descendants.length > 0) return 'blocked'
+      // Complete same-UID scan with no marker found → sufficient proof per documented contract
+    }
+
+    // Leader and group confirmed absent, and complete marker scan found nothing (if marker provided)
+    return 'gone'
+  }
+  // The exact recorded leader is still alive. Before signaling, verify it is still a process
+  // group leader (pgid == pid). If the process called setpgid() after spawn, the numeric group
+  // id we recorded may have been reused by an unrelated group; fail closed in that case.
+  const liveLeader = snapshot.processes.get(leader.pid)
+  if (!liveLeader || liveLeader.pgid !== leader.pid) {
+    // Leader exists but is no longer a group leader, or pgid was reused. Cannot safely signal.
+    return 'blocked'
+  }
+  // Its detached group is still addressable by the persisted id, so terminate it and require
+  // confirmed exit before releasing ownership.
+  const result = await terminateOwnedPosixProcessGroup(
+    { kind: 'owned-posix-process-group', id: leader.pid },
+    signal,
+    log
+  )
+  if (!result.reaped) return 'blocked'
+  const confirmation = await collectPosixProcessTable()
+  if (!confirmation.complete) return 'blocked'
+  // Leader and group are confirmed gone. Before returning 'gone', scan for escaped descendants
+  // that may have daemonized into a new session before teardown but still carry the marker.
+  // In the live-teardown path (we actively signaled the group), a clean marker scan after
+  // successful termination provides sufficient proof: we killed the recorded group and no
+  // marked descendants remain visible.
+  if (marker) {
+    const descendants = await scanForOwnedDescendants(marker, spawnedAt)
+    if (descendants === undefined) return 'blocked' // incomplete scan
+    if (descendants.length > 0) return 'blocked' // found escaped descendants
+    // Clean scan after live teardown: sufficient proof
+  }
+  // No marker or clean scan: leader confirmation as final check
+  return samePosixIdentity(recorded, confirmation.processes.get(leader.pid)) ? 'blocked' : 'gone'
+}
+
 const terminateTrackedPosixProcessTree = async (
   child: ChildProcess,
   tracker: PosixProcessTracker,

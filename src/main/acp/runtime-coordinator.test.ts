@@ -1415,6 +1415,8 @@ describe('AcpRuntimeCoordinator', () => {
       stopSession: vi.fn(async () => undefined),
       stopAll: vi.fn(async () => undefined),
       shutdown: vi.fn(async () => undefined),
+      shutdownForQuit: vi.fn(async () => undefined),
+      shutdownForUpdateGate: vi.fn(async () => undefined),
       deleteSession: vi.fn(async () => undefined),
       deleteProject: vi.fn(async () => undefined)
     }
@@ -1494,8 +1496,8 @@ describe('AcpRuntimeCoordinator', () => {
   it.each([
     ['prepareForQuit', 'stopAll'],
     ['disconnect', 'stopAll'],
-    ['shutdownForUpdateGate', 'stopAll'],
-    ['shutdownForQuit', 'shutdown'],
+    ['shutdownForUpdateGate', 'shutdownForUpdateGate'],
+    ['shutdownForQuit', 'shutdownForQuit'],
     ['shutdown', 'shutdown']
   ] as const)('uses delegated %s lifecycle with %s', async (operation, cleanup) => {
     const delegated = {
@@ -1506,6 +1508,8 @@ describe('AcpRuntimeCoordinator', () => {
       stopSession: async () => undefined,
       stopAll: vi.fn(async () => undefined),
       shutdown: vi.fn(async () => undefined),
+      shutdownForQuit: vi.fn(async () => undefined),
+      shutdownForUpdateGate: vi.fn(async () => undefined),
       deleteSession: async () => undefined,
       deleteProject: async () => undefined
     }
@@ -1547,6 +1551,8 @@ describe('AcpRuntimeCoordinator', () => {
       stopSession: vi.fn(async () => undefined),
       stopAll: vi.fn(async () => undefined),
       shutdown: vi.fn(async () => undefined),
+      shutdownForQuit: vi.fn(async () => undefined),
+      shutdownForUpdateGate: vi.fn(async () => undefined),
       deleteSession: vi.fn(async () => undefined),
       deleteProject: vi.fn(async () => undefined)
     }
@@ -2139,6 +2145,8 @@ describe('AcpRuntimeCoordinator', () => {
       stopSession: async () => undefined,
       stopAll: async () => undefined,
       shutdown: async () => undefined,
+      shutdownForQuit: async () => undefined,
+      shutdownForUpdateGate: async () => undefined,
       deleteSession: async () => undefined,
       deleteProject: async () => undefined,
       rootTurnStarted,
@@ -2222,6 +2230,8 @@ describe('AcpRuntimeCoordinator', () => {
         stopSession: async () => undefined,
         stopAll: async () => undefined,
         shutdown: async () => undefined,
+        shutdownForQuit: async () => undefined,
+        shutdownForUpdateGate: async () => undefined,
         deleteSession: async () => undefined,
         deleteProject: async () => undefined,
         rootTurnStarted,
@@ -4691,6 +4701,8 @@ describe('AcpRuntimeCoordinator', () => {
       stopSession: async () => undefined,
       stopAll: async () => undefined,
       shutdown: async () => undefined,
+      shutdownForQuit: async () => undefined,
+      shutdownForUpdateGate: async () => undefined,
       deleteSession: vi.fn(() => delegatedDeletion.promise),
       deleteProject: async () => undefined
     }
