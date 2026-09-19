@@ -321,9 +321,26 @@ export class DelegatedProcessOwnership {
           if (!directory) continue
           for (const file of readdirSync(directory)) {
             if (osArtifact(file)) continue
-            // A .pending file is a torn write left by a crash between write and rename; skip it
-            // rather than throwing so one interrupted write does not block the whole scope.
-            if (file.endsWith('.json.pending')) continue
+            // A .pending file is a torn write left by a crash between write and rename. Skip it if
+            // the committed receipt exists (normal torn write). If the committed receipt is missing,
+            // fail closed — we cannot confirm whether ownership was released.
+            if (file.endsWith('.json.pending')) {
+              const committedFile = file.slice(0, -8) // Remove '.pending' suffix
+              const committedPath = join(directory, committedFile)
+              try {
+                lstatSync(committedPath)
+                // Committed receipt exists, pending is stale — skip it
+                continue
+              } catch (error) {
+                if (missing(error)) {
+                  // No committed receipt — cannot confirm ownership state
+                  throw new Error(
+                    `Orphaned pending receipt ${file} without committed receipt — ownership unconfirmed`
+                  )
+                }
+                throw error
+              }
+            }
             if (!file.endsWith('.json') || !uuidLower.test(file.slice(0, -5)))
               throw new Error('Incomplete process receipt')
             const path = join(directory, file)
