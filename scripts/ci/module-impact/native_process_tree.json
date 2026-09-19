@@ -515,6 +515,7 @@
       "src/main/credential-identity/linux.test.ts",
       "src/main/credential-identity/macos.test.ts",
       "src/main/credential-identity/probe-logging.test.ts",
+      "src/main/delegation/escaped-descendant.test.ts",
       "src/main/session-plan/plan-context-file.shell.integration.test.ts",
       "src/main/settings/responses-bridge.plan-tools.test.ts",
       "src/main/settings/provider-runtime-health-owner.test.ts",

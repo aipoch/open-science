@@ -154,6 +154,7 @@
     "src/main/credential-identity/windows-profile-key.ts",
     "src/main/credential-identity/macos.test.ts",
     "src/main/credential-identity/probe-logging.test.ts",
+    "src/main/delegation/escaped-descendant.test.ts",
     "src/main/process-tree-windows.ts",
     "src/main/process-tree.windows.integration.test.ts"
   ],
@@ -291,6 +292,7 @@
       "src/main/credential-identity/windows-profile-key.test.ts",
       "src/main/credential-identity/macos.test.ts",
       "src/main/credential-identity/probe-logging.test.ts",
+      "src/main/delegation/escaped-descendant.test.ts",
       "src/main/process-tree.windows.integration.test.ts"
     ],
     "contract": [
