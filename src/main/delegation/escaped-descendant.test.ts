@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { spawn } from 'node:child_process'
 import { writeFileSync, unlinkSync } from 'node:fs'
-import { proveRecordedPosixLeaderGone } from '../process-tree'
+import { proveRecordedPosixLeaderGone, capturePosixProcessTreeIdentity } from '../process-tree'
 
 describe('Escaped descendant detection', () => {
   it('blocks cold recovery when a detached descendant carries the ownership marker', async () => {
@@ -59,7 +59,10 @@ describe('Escaped descendant detection', () => {
       env: { ...process.env, OPEN_SCIENCE_PROCESS_TREE_ID: marker }
     })
     const pid = proc.pid!
-    const birthToken = 'fake-token'
+
+    // Capture the real birth token before the process exits
+    const identity = capturePosixProcessTreeIdentity(pid)
+    const birthToken = identity?.startTime ?? 'unknown'
 
     await new Promise((resolve) => proc.on('exit', resolve))
 
