@@ -1170,7 +1170,11 @@ export const proveRecordedPosixLeaderGone = async (
     const descendants = await scanForOwnedDescendants(marker)
     if (descendants === undefined) return 'blocked' // incomplete scan
     if (descendants.length > 0) return 'blocked' // found escaped descendants
+    // Marker was provided but no descendants found → ambiguous, cannot prove all descendants gone.
+    // A process could have daemonized and scrubbed the marker. Require reboot proof.
+    return 'blocked'
   }
+  // No marker: fall back to leader confirmation as sufficient proof
   return samePosixIdentity(recorded, confirmation.processes.get(leader.pid)) ? 'blocked' : 'gone'
 }
 

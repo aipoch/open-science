@@ -233,6 +233,17 @@ export class DelegatedProcessOwnership {
     const directory = this.sessionDirectory(receipt, true)!
     const path = join(directory, `${receipt.receiptId}.json`)
     const target = initial ? path : `${path}.pending`
+    // Before creating a pending file, remove any stale pending from a prior crash. A stale pending
+    // blocks the O_EXCL open; safely removing it allows recovery to proceed. The main receipt file
+    // is the source of truth; a pending without a corresponding main receipt is always stale.
+    if (!initial) {
+      try {
+        if (lstatSync(target).isSymbolicLink()) throw new Error('Process receipt is a symlink')
+        unlinkSync(target)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      }
+    }
     const fd = openSync(
       target,
       constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_SYNC,
