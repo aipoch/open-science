@@ -147,9 +147,9 @@ describe('assertShellSearchScope with granted roots', () => {
     const grantedRoots: GrantedLocalRoot[] = [
       { id: 'root-1', path: grantedDir, name: 'Granted', access: 'ro' }
     ]
-    // Use simple command without variable substitution to avoid bash parsing issues
+    // Use platform='linux' to force bash parsing on all platforms
     await expect(
-      assertShellSearchScope(`grep pattern "${outside}"`, cwd, grantedRoots)
+      assertShellSearchScope(`grep pattern "${outside}"`, cwd, grantedRoots, 'linux')
     ).rejects.toThrow(/outside the session cwd/)
   })
 
@@ -170,8 +170,9 @@ describe('assertShellSearchScope with granted roots', () => {
       { id: 'root-1', path: nonexistent, name: 'Nonexistent', access: 'ro' }
     ]
     // Should not crash, should still deny access to outside
+    // Use platform='linux' to force bash parsing on all platforms
     await expect(
-      assertShellSearchScope(`grep pattern "${outside}"`, cwd, grantedRoots)
+      assertShellSearchScope(`grep pattern "${outside}"`, cwd, grantedRoots, 'linux')
     ).rejects.toThrow(/outside the session cwd/)
   })
 
