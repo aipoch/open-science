@@ -472,10 +472,13 @@ const createProductionDelegatedWorkComposition = (
 
   // Returns true when every error in an AggregateError from recover() is a cleanup-confirmation
   // error, i.e. all affected receipts are blocked but no unexpected failure occurred.
-  const isOnlyCleanupPending = (error: unknown): boolean =>
-    error instanceof AggregateError &&
-    error.errors.length > 0 &&
-    error.errors.every((e) => e instanceof DelegateExecutionCleanupError)
+  const isOnlyCleanupPending = (error: unknown): boolean => {
+    if (error instanceof DelegateExecutionCleanupError) return true
+    if (error instanceof AggregateError && error.errors.length > 0) {
+      return error.errors.every((e) => isOnlyCleanupPending(e))
+    }
+    return false
+  }
 
   const stopScopedWork = async (
     suppressCleanupPending = false,

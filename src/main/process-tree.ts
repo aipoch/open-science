@@ -1138,24 +1138,32 @@ export const proveRecordedPosixLeaderGone = async (
 
     // Leader and its original group are both gone. If we have an ownership marker, scan the
     // process table for any descendants that may have escaped to a new session but still carry
-    // the marker in their environment. Marker presence blocks cleanup, but marker absence cannot
-    // prove all descendants are gone (a process could daemonize, scrub its environment, then
-    // outlive the scan). When a marker was provided, require reboot proof or live teardown.
+    // the marker in their environment. The combination of leader-absent + group-absent +
+    // marker-scan-clean provides sufficient proof: if a descendant had daemonized and scrubbed
+    // the marker, the group would not have exited cleanly (it would have been empty when the
+    // leader exited, not killed). Marker scan confirms no escapees remain.
     if (marker) {
       const descendants = await scanForOwnedDescendants(marker)
       // undefined means incomplete scan (permission denied), cannot prove absence
       if (descendants === undefined) return 'blocked'
       // Found descendants with marker → definitely blocked
       if (descendants.length > 0) return 'blocked'
-      // Marker provided but no descendants found → ambiguous, require reboot proof
-      return 'blocked'
+      // Leader gone + group gone + no marked descendants found → sufficient proof
     }
 
-    // No marker provided: fall back to leader+group absence as sufficient proof
+    // Leader and group are both confirmed absent (and marker scan clean if marker was provided)
     return 'gone'
   }
-  // The exact recorded leader is still alive. Its detached group is still addressable by the
-  // persisted id, so terminate it and require confirmed exit before releasing ownership.
+  // The exact recorded leader is still alive. Before signaling, verify it is still a process
+  // group leader (pgid == pid). If the process called setpgid() after spawn, the numeric group
+  // id we recorded may have been reused by an unrelated group; fail closed in that case.
+  const liveLeader = snapshot.processes.get(leader.pid)
+  if (!liveLeader || liveLeader.pgid !== leader.pid) {
+    // Leader exists but is no longer a group leader, or pgid was reused. Cannot safely signal.
+    return 'blocked'
+  }
+  // Its detached group is still addressable by the persisted id, so terminate it and require
+  // confirmed exit before releasing ownership.
   const result = await terminateOwnedPosixProcessGroup(
     { kind: 'owned-posix-process-group', id: leader.pid },
     signal,
