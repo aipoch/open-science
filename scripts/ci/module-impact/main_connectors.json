@@ -156,6 +156,7 @@
       "src/main/connectors/descriptors/genes-ontology.test.ts",
       "src/main/connectors/descriptors/genes-proteins.test.ts",
       "src/main/connectors/descriptors/genes-reactome.test.ts",
+      "src/main/connectors/descriptors/genes-gprofiler.test.ts",
       "src/main/connectors/descriptors/genes.test.ts",
       "src/main/connectors/descriptors/genomes-ensembl.test.ts",
       "src/main/connectors/descriptors/genomes-reference.test.ts",
