@@ -1532,7 +1532,10 @@ class NotebookExecutionOwner {
       let lease: ShellAdmissionLease | undefined
       try {
         // Fetch granted roots with cancellation coverage via liveRun lifecycle
-        const grantedRoots = (await this.options.getGrantedLocalRoots?.()) ?? []
+        // Only await if the function exists to avoid unnecessary async overhead
+        const grantedRoots = this.options.getGrantedLocalRoots
+          ? await this.options.getGrantedLocalRoots()
+          : []
         // Recheck admission after async lookup - shutdown or revocation could have happened
         this.assertShellAdmissionAvailable(session)
         const shellProcessRequest = {
