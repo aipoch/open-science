@@ -816,6 +816,63 @@ describe('AcpRuntimeCoordinator', () => {
     }
   )
 
+  it('does not retire a shared runtime when an earlier duplicate resume fails', async () => {
+    const firstResume = createDeferred<void>()
+    const secondResume = createDeferred<void>()
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks, _permissionGrants, target) => {
+      const fake = createFakeRuntime({
+        frameworkId: target?.frameworkId ?? 'claude-code',
+        sessionIds: [],
+        callbacks
+      })
+      let call = 0
+      fake.resumeSession.mockImplementation(async (request) => {
+        call += 1
+        if (call === 1) {
+          await firstResume.promise
+          throw new Error('earlier resume failed')
+        }
+        await secondResume.promise
+        return {
+          sessionId: request.sessionId,
+          cwd: '/workspace',
+          frameworkId: target?.frameworkId ?? 'claude-code',
+          contextReset: true
+        }
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+    const agentTarget = {
+      frameworkId: 'claude-code',
+      providerId: 'provider-a',
+      model: 'model-a',
+      reasoningEffort: 'high'
+    } as const
+
+    const first = coordinator.resumeSession({
+      sessionId: 'duplicate-session',
+      cwd: '/workspace',
+      agentTarget
+    })
+    await vi.waitFor(() => expect(created[1]?.resumeSession).toHaveBeenCalledOnce())
+    const second = coordinator.resumeSession({
+      sessionId: 'duplicate-session',
+      cwd: '/workspace',
+      agentTarget
+    })
+    await vi.waitFor(() => expect(created[1]?.resumeSession).toHaveBeenCalledTimes(2))
+
+    firstResume.resolve()
+    await expect(first).rejects.toThrow('earlier resume failed')
+    secondResume.resolve()
+    await expect(second).resolves.toMatchObject({ sessionId: 'duplicate-session' })
+    expect(created[1].requestRetirement).not.toHaveBeenCalled()
+    await coordinator.sendPrompt({ sessionId: 'duplicate-session', text: 'continue' })
+    expect(created[1].sendPrompt).toHaveBeenCalledOnce()
+  })
+
   it('keeps a pending creation usable when another creation fails on the shared target', async () => {
     const creation = createDeferred<void>()
     const created: ReturnType<typeof createFakeRuntime>[] = []

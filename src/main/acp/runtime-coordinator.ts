@@ -636,11 +636,16 @@ class AcpRuntimeCoordinator {
     // Keep the prior owner authoritative until adoption finishes. The renderer does not create the
     // incoming optimistic run until this promise resolves, so terminal events emitted while the old
     // generation drains can still settle its own Runtime Segment without touching the next one.
-    if (transfersOwnership) {
-      this.pendingSessionAdoptions.set(request.sessionId, {
-        runtime,
-        projectId: request.projectId ?? owner?.liveSessionProjectId(request.sessionId)
-      })
+    const pendingAdoption = transfersOwnership
+      ? {
+          runtime,
+          projectId: request.projectId ?? owner?.liveSessionProjectId(request.sessionId)
+        }
+      : undefined
+    // A duplicate resume for the same app Session replaces the map entry. Keep the record identity
+    // so an older failure cannot clear or retire the runtime needed by the newer adoption.
+    if (pendingAdoption) {
+      this.pendingSessionAdoptions.set(request.sessionId, pendingAdoption)
     }
 
     let response: AcpCreateSessionResponse
@@ -649,7 +654,7 @@ class AcpRuntimeCoordinator {
     } catch (error) {
       if (
         transfersOwnership &&
-        this.pendingSessionAdoptions.get(request.sessionId)?.runtime === runtime
+        this.pendingSessionAdoptions.get(request.sessionId) === pendingAdoption
       ) {
         this.pendingSessionAdoptions.delete(request.sessionId)
       }
@@ -666,11 +671,11 @@ class AcpRuntimeCoordinator {
 
     if (
       transfersOwnership &&
-      (this.pendingSessionAdoptions.get(request.sessionId)?.runtime !== runtime ||
+      (this.pendingSessionAdoptions.get(request.sessionId) !== pendingAdoption ||
         !this.runtimes.has(runtime) ||
         this.retiredRuntimes.has(runtime))
     ) {
-      if (this.pendingSessionAdoptions.get(request.sessionId)?.runtime === runtime) {
+      if (this.pendingSessionAdoptions.get(request.sessionId) === pendingAdoption) {
         this.pendingSessionAdoptions.delete(request.sessionId)
       }
       throw new Error('ACP session adoption was superseded before ownership could commit')
@@ -678,7 +683,7 @@ class AcpRuntimeCoordinator {
 
     if (
       transfersOwnership &&
-      this.pendingSessionAdoptions.get(request.sessionId)?.runtime === runtime
+      this.pendingSessionAdoptions.get(request.sessionId) === pendingAdoption
     ) {
       this.pendingSessionAdoptions.delete(request.sessionId)
     }
