@@ -471,9 +471,15 @@ const createProductionDelegatedWorkComposition = (
   })
 
   // Returns true when every error in an AggregateError from recover() is a cleanup-confirmation
-  // error, i.e. all affected receipts are blocked but no unexpected failure occurred.
+  // error, i.e. all affected receipts are blocked but no unexpected failure occurred. Storage-read
+  // failures (corrupt receipts, permission denied) have a cause and must propagate even during
+  // quit/update; only suppress per-receipt cleanup-pending errors (no cause).
   const isOnlyCleanupPending = (error: unknown): boolean => {
-    if (error instanceof DelegateExecutionCleanupError) return true
+    if (error instanceof DelegateExecutionCleanupError) {
+      // DelegateExecutionCleanupError with a cause means storage read failure; propagate it.
+      // Without a cause, it's a legitimate cleanup-pending error; suppress during quit/update.
+      return error.cause === undefined
+    }
     if (error instanceof AggregateError && error.errors.length > 0) {
       return error.errors.every((e) => isOnlyCleanupPending(e))
     }
