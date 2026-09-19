@@ -122,6 +122,7 @@ jobs:
           npx vitest run scripts/deb-cli-launcher.test.ts
           trap 'sudo apt-get remove --yes open-science || true' EXIT
           sudo "$(command -v node)" scripts/deb-package-lifecycle-smoke.mjs ./dist/*.deb
+          sudo apt-get update
           sudo apt-get install --yes ./dist/*.deb
           xvfb-run -a node scripts/linux-package-smoke.mjs \
             --artifact-dir dist \

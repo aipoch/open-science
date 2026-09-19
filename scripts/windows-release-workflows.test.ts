@@ -388,6 +388,8 @@ describe('post-merge Windows validation', () => {
     expect(macos.run).toBe('node scripts/macos-package-smoke.mjs --artifact-dir dist')
     expect(windows.run).toBe('node scripts/windows-installer-smoke.mjs --installer-dir dist')
     expect(linux.run).toContain('scripts/linux-package-smoke.mjs')
+    // Hosted runner indexes can reference superseded packages that now return HTTP 404.
+    expect(linux.run).toMatch(/sudo apt-get update\s+sudo apt-get install --yes \.\/dist\/\*\.deb/)
     expect(evidence.run).toContain('--electron-p0 not-applicable')
     expect(evidence.run).toContain('--visual-regression not-applicable')
     expect(evidence.run).toContain('--package-smoke passed')
