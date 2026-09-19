@@ -9,6 +9,8 @@ import { validateAnnotations, type TextAnnotation } from '../../../../../shared/
 import { WorkspaceToolCodeBlock } from '../WorkspaceToolCodeBlock'
 import { requestAnnotationReveal, subscribeAnnotationReveal } from './annotation-reveal'
 import { TextAnnotationSurface } from './TextAnnotationSurface'
+import type { Bookmark } from '../../../../../shared/bookmarks'
+import { BookmarksContext } from '../bookmarks/bookmark-context'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -242,6 +244,114 @@ describe('TextAnnotationSurface highlight restoration', () => {
     ).toContain('const answer = 42')
     expect(scrollIntoView).toHaveBeenCalled()
     delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView
+  })
+
+  it.each(['window resize', 'content resize', 'content mutation'])(
+    'does not force message layout without matching markers on %s',
+    async (trigger) => {
+      let resize: (() => void) | undefined
+      vi.stubGlobal(
+        'ResizeObserver',
+        class {
+          constructor(callback: () => void) {
+            resize = callback
+          }
+          observe = vi.fn()
+          disconnect = vi.fn()
+        }
+      )
+      // An annotation elsewhere in the conversation must not make this surface measure itself.
+      await renderSurface([annotation('other-message', 'repeat')], 'message-2')
+      const surface = container.querySelector<HTMLElement>('[data-annotation-surface]')!
+      const measure = vi.spyOn(surface, 'getBoundingClientRect')
+      await act(async () => {
+        if (trigger === 'window resize') window.dispatchEvent(new Event('resize'))
+        else if (trigger === 'content resize') resize?.()
+        else container.querySelector('p')!.firstChild!.textContent = 'Updated message text'
+      })
+      expect(measure).not.toHaveBeenCalled()
+      expect(container.querySelector('[data-text-annotation-edit]')).toBeNull()
+      measure.mockRestore()
+    }
+  )
+
+  it('keeps active markers positioned on resize and clears the last removed marker without layout', async () => {
+    let rangeRight = 90
+    Object.defineProperty(Range.prototype, 'getClientRects', {
+      configurable: true,
+      value: () => [{ left: 10, right: rangeRight, top: 24, bottom: 40, width: 80, height: 16 }]
+    })
+    await renderSurface([annotation('positioned', 'repeat')])
+    const marker = (): HTMLElement | null =>
+      container.querySelector('[data-text-annotation-edit]')?.parentElement ?? null
+    expect(marker()?.style.left).toBe('90px')
+    rangeRight = 130
+    await act(async () => window.dispatchEvent(new Event('resize')))
+    expect(marker()?.style.left).toBe('130px')
+
+    const surface = container.querySelector<HTMLElement>('[data-annotation-surface]')!
+    const measure = vi.spyOn(surface, 'getBoundingClientRect')
+    await renderSurface([])
+    expect(marker()).toBeNull()
+    expect(measure).not.toHaveBeenCalled()
+    measure.mockRestore()
+  })
+
+  it('positions bookmark-only markers and clears them when their source no longer matches', async () => {
+    let rangeRight = 90
+    Object.defineProperty(Range.prototype, 'getClientRects', {
+      configurable: true,
+      value: () => [{ left: 10, right: rangeRight, top: 24, bottom: 40, width: 80, height: 16 }]
+    })
+    const saved = annotation('saved', 'repeat')
+    const bookmark: Bookmark = {
+      id: 'bookmark-1',
+      version: 1,
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      target: { kind: 'text', source: saved.source, quote: saved.quote, anchor: saved.anchor },
+      note: 'Personal note',
+      createdAt: '2026-09-19T00:00:00.000Z',
+      updatedAt: '2026-09-19T00:00:00.000Z'
+    }
+    const renderBookmarked = async (messageId: string): Promise<void> => {
+      await act(async () =>
+        root.render(
+          <BookmarksContext.Provider
+            value={{
+              scoped: true,
+              available: true,
+              bookmarks: [bookmark],
+              total: 1,
+              loading: false,
+              retryLoad: vi.fn(),
+              create: vi.fn(),
+              updateNote: vi.fn(),
+              remove: vi.fn()
+            }}
+          >
+            <TextAnnotationSurface
+              source={{ kind: 'agent-message', sessionId: 'session-1', messageId }}
+            >
+              <p>repeat then repeat</p>
+            </TextAnnotationSurface>
+          </BookmarksContext.Provider>
+        )
+      )
+    }
+    await renderBookmarked('message-1')
+    const marker = (): HTMLElement | null => container.querySelector('[data-bookmark-marker]')
+    expect(marker()?.style.left).toBe('91px')
+    rangeRight = 130
+    await act(async () => window.dispatchEvent(new Event('resize')))
+    expect(marker()?.style.left).toBe('131px')
+
+    const surface = container.querySelector<HTMLElement>('[data-annotation-surface]')!
+    const measure = vi.spyOn(surface, 'getBoundingClientRect')
+    await renderBookmarked('message-2')
+    expect(marker()).toBeNull()
+    expect(measure).not.toHaveBeenCalled()
+    measure.mockRestore()
   })
 
   it('observes surface and content reflow and disconnects on cleanup', async () => {

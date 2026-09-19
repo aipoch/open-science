@@ -139,6 +139,13 @@ const TextAnnotationSurface = ({
   )
 
   const measureAnnotationControls = useCallback((): void => {
+    // Reading an offscreen message's geometry defeats content-visibility containment.
+    // Most messages have no markers, including when other messages are annotated.
+    if (matchingAnnotations.length === 0 && matchingBookmarks.length === 0) {
+      setAnnotationControls((current) => (current.length === 0 ? current : []))
+      setBookmarkMarkers((current) => (current.length === 0 ? current : []))
+      return
+    }
     const surfaceRect = surfaceRef.current?.getBoundingClientRect()
     if (!surfaceRect) return
     setAnnotationControls(

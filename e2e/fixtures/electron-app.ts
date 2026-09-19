@@ -349,6 +349,7 @@ type ElectronApp = {
   recordResourceTiming: (name: string, durationMs: number) => void
   captureResourceTimings: (prefix?: string) => Promise<void>
   sampleResourceProfileNow: () => Promise<void>
+  setMainWindowSize: (width: number, height: number) => Promise<void>
   setMainWindowZoomFactor: (factor: number) => Promise<void>
   finishResourceProfile: () => Promise<RuntimeProfileResult>
 }
@@ -984,6 +985,15 @@ class ElectronAppHarness implements ElectronApp {
       mainWindow.show()
     })
     await expect.poll(() => this.mainWindowState()).toMatchObject({ visible: true })
+  }
+
+  async setMainWindowSize(width: number, height: number): Promise<void> {
+    await this.runningApplication.evaluate(
+      ({ BrowserWindow }, { width, height }) => {
+        BrowserWindow.getAllWindows()[0].setSize(width, height)
+      },
+      { width, height }
+    )
   }
 
   async setMainWindowZoomFactor(factor: number): Promise<void> {
