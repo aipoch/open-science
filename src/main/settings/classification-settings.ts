@@ -17,6 +17,7 @@ import type { SettingsRepository } from './repository'
 import { fetchProviderRequest } from './provider-fetch'
 import { readBoundedResponseText } from './bounded-response'
 import { netFetchStandard } from '../skills/net-fetch'
+import { createLogger, diagnosticErrorFields } from '../logger'
 import {
   boundedSkillSelectorCatalog,
   selectExplicitConnectorSkills
@@ -30,6 +31,8 @@ import {
 import { CLASSIFICATION_MODELS } from '../../shared/classification'
 import type { ValidateProviderResult } from '../../shared/settings'
 import { classifyFetchError, classifyStatus, extractProviderErrorMessage } from './validate'
+const log = createLogger('classification')
+
 class ClassificationRequestError extends Error {
   constructor(readonly validation: ValidateProviderResult) {
     super('Classification request failed.')
@@ -168,7 +171,7 @@ export class ClassificationSettingsOwner {
         binding?.serviceId === draft.id
           ? (binding.modelId ?? CLASSIFICATION_MODELS[draft.adapter][0].id)
           : CLASSIFICATION_MODELS[draft.adapter][0].id
-      const validation = await this.validate(draft, modelId, original.revision)
+      const validation = await this.validate(draft, modelId, original.revision, 'save-validation')
       if (!validation.ok) return { ...(await this.snapshot()), validation }
     }
     await this.repository.mutateClassification((current, latest) => {
@@ -234,26 +237,30 @@ export class ClassificationSettingsOwner {
       bindingFor(state)?.serviceId === target.id
         ? (bindingFor(state)?.modelId ?? CLASSIFICATION_MODELS[target.adapter][0].id)
         : CLASSIFICATION_MODELS[target.adapter][0].id,
-      state.revision
+      state.revision,
+      'probe'
     )
     return { ok: validation.ok }
   }
   private async validate(
     target: Service,
     modelId: string,
-    revision: number
+    revision: number,
+    purpose: 'save-validation' | 'probe'
   ): Promise<ValidateProviderResult> {
     try {
-      const { result, current } = await this.evaluate(
+      const { result, current, requestId } = await this.evaluate(
         target,
         modelId,
         'A test connection.',
         { test: { type: 'noul', instructions: 'Is this a test connection?' } },
         undefined,
         5000,
-        revision
+        revision,
+        purpose
       )
       const ok = current && result.answers.test?.type === 'noul'
+      log.info('classification validation completed', { requestId, purpose, ok, current })
       return { ok, category: ok ? 'ok' : 'unknown' }
     } catch (error) {
       if (error instanceof ClassificationRequestError) return error.validation
@@ -267,19 +274,35 @@ export class ClassificationSettingsOwner {
     }
   }
   readonly selectSkills: ClassifySkills = async ({ text, catalog, signal, observeUsage }) => {
-    if (signal.aborted) return []
+    if (signal.aborted) {
+      log.info('classification selection skipped', { reason: 'cancelled' })
+      return []
+    }
     const explicit = selectExplicitConnectorSkills(text, catalog)
-    if (explicit.length) return explicit
+    if (explicit.length) {
+      log.info('classification selection skipped', {
+        reason: 'explicit-selection',
+        selectedCount: explicit.length
+      })
+      return explicit
+    }
     const state = (await this.repository.getSettings()).classification
-    if (!state) return undefined
-    const binding = bindingFor(state)
-    const target = state.services.find((service) => service.id === binding?.serviceId)
-    if (!target) return undefined
-    const modelId = binding?.modelId ?? CLASSIFICATION_MODELS[target.adapter][0].id
-    if (!CLASSIFICATION_MODELS[target.adapter].some((model) => model.id === modelId))
+    const binding = state && bindingFor(state)
+    const target = state?.services.find((service) => service.id === binding?.serviceId)
+    if (!state || !target) {
+      log.info('classification selection skipped', { reason: 'not-configured' })
       return undefined
+    }
+    const modelId = binding?.modelId ?? CLASSIFICATION_MODELS[target.adapter][0].id
+    if (!CLASSIFICATION_MODELS[target.adapter].some((model) => model.id === modelId)) {
+      log.info('classification selection skipped', { reason: 'unsupported-model' })
+      return undefined
+    }
     const candidates = boundedSkillSelectorCatalog(catalog)
-    if (!text.trim() || !candidates.length) return []
+    if (!text.trim() || !candidates.length) {
+      log.info('classification selection skipped', { reason: 'empty-input' })
+      return []
+    }
     return this.classify(target, modelId, text, candidates, signal, observeUsage, state.revision)
   }
   private async classify(
@@ -293,7 +316,10 @@ export class ClassificationSettingsOwner {
   ): Promise<{ name: string; path: string }[] | undefined> {
     if (revision === undefined) return undefined
     // Conservative byte budget stays below TypeSafe's context budget even for CJK input.
-    if (Buffer.byteLength(text, 'utf8') > 12000) return undefined
+    if (Buffer.byteLength(text, 'utf8') > 12000) {
+      log.info('classification selection skipped', { reason: 'input-budget' })
+      return undefined
+    }
     const questions = Object.fromEntries(
       candidates.map((candidate, index) => [
         `s${index}`,
@@ -308,16 +334,20 @@ export class ClassificationSettingsOwner {
         }
       ])
     )
-    if (Buffer.byteLength(JSON.stringify(questions), 'utf8') > 48000) return undefined
+    if (Buffer.byteLength(JSON.stringify(questions), 'utf8') > 48000) {
+      log.info('classification selection skipped', { reason: 'catalog-budget' })
+      return undefined
+    }
     try {
-      const { result, current } = await this.evaluate(
+      const { result, current, requestId } = await this.evaluate(
         target,
         modelId,
         text,
         questions,
         signal,
         this.timeoutMs,
-        revision
+        revision,
+        'capability-selection'
       )
       observeUsage?.({
         eventId: randomUUID(),
@@ -330,8 +360,13 @@ export class ClassificationSettingsOwner {
           turnCount: 1
         }
       })
-      if (signal.aborted) return []
-      if (!current) return undefined
+      if (signal.aborted || !current) {
+        log.info('classification decision discarded', {
+          requestId,
+          reason: signal.aborted ? 'cancelled' : 'settings-changed'
+        })
+        return signal.aborted ? [] : undefined
+      }
       const ranked = candidates
         .map((candidate, index) => {
           const answer = result.answers[`s${index}`]
@@ -340,8 +375,10 @@ export class ClassificationSettingsOwner {
             !Number.isFinite(answer.noul) ||
             answer.noul < 0 ||
             answer.noul > 1
-          )
+          ) {
+            log.info('classification decision unavailable', { requestId, reason: 'invalid-answer' })
             throw new Error('Invalid classification answer.')
+          }
           return { candidate, probability: answer.noul }
         })
         .sort((a, b) => b.probability - a.probability)
@@ -349,11 +386,23 @@ export class ClassificationSettingsOwner {
       const relevant = ranked.filter((item) => item.probability >= 0.8)
       // Weaker candidates must not discard clear matches. With no clear match, only
       // an entirely irrelevant catalog can skip the default selector safely.
-      if (!relevant.length && ranked.some((item) => item.probability > 0.2)) return undefined
+      if (!relevant.length && ranked.some((item) => item.probability > 0.2)) {
+        log.info('classification decision unavailable', { requestId, reason: 'ambiguous-answer' })
+        return undefined
+      }
+      log.info('classification decision available', {
+        requestId,
+        catalogCount: candidates.length,
+        selectedCount: Math.min(relevant.length, 3)
+      })
       return relevant
         .slice(0, 3)
         .map(({ candidate }) => ({ name: candidate.name, path: candidate.path }))
-    } catch {
+    } catch (error) {
+      log.warn('classification selection failed', {
+        reason: signal.aborted ? 'cancelled' : 'unavailable-decision',
+        ...diagnosticErrorFields(error)
+      })
       return signal.aborted ? [] : undefined
     }
   }
@@ -364,28 +413,56 @@ export class ClassificationSettingsOwner {
     questions: Record<string, unknown>,
     signal: AbortSignal | undefined,
     timeoutMs: number,
-    revision: number
-  ): Promise<{ result: z.infer<typeof responseSchema>; current: boolean }> {
+    revision: number,
+    purpose: 'save-validation' | 'probe' | 'capability-selection'
+  ): Promise<{ result: z.infer<typeof responseSchema>; current: boolean; requestId: string }> {
+    const requestId = randomUUID()
+    const startedAt = Date.now()
+    const context = {
+      requestId,
+      purpose,
+      adapter: target.adapter,
+      serviceId: target.id,
+      model: modelId
+    }
+    let timedOut = false
+    let phase = 'credentials'
+    let attemptCount = 0
+    let status: number | undefined
     const controller = new AbortController()
     this.pending.add(controller)
     const abort = (): void => controller.abort()
     signal?.addEventListener('abort', abort, { once: true })
     if (signal?.aborted) abort()
-    const timer = setTimeout(abort, timeoutMs)
+    const timer = setTimeout(() => {
+      timedOut = true
+      abort()
+    }, timeoutMs)
     try {
       const initial = await this.repository.getSettings()
       const credential = credentialsFor(target, initial).keyRef
       const key = credential ? tryDecryptKey(credential) : undefined
       if (!key) throw new ClassificationRequestError({ ok: false, category: 'auth' })
+      phase = 'configuration'
       controller.signal.throwIfAborted()
       const body = JSON.stringify({ model: modelId, state, questions })
       for (let attempt = 0; attempt < 2; attempt += 1) {
+        phase = 'settings'
         const current = attempt === 0 ? initial : await this.repository.getSettings()
+        phase = 'configuration'
         if ((current.classification?.revision ?? 0) !== revision)
           throw new Error('Classification settings changed.')
         if (credentialsFor(target, current).keyRef !== credential)
           throw new Error('Credential changed.')
         controller.signal.throwIfAborted()
+        phase = 'fetch'
+        attemptCount = attempt + 1
+        status = undefined
+        log.info('classification request started', {
+          ...context,
+          attempt: attemptCount,
+          questionCount: Object.keys(questions).length
+        })
         const response = await fetchProviderRequest(
           this.fetchImpl,
           target.adapter === 'openrouter'
@@ -398,9 +475,22 @@ export class ClassificationSettingsOwner {
             signal: controller.signal
           }
         )
+        status = response.status
+        log.info('classification response received', {
+          ...context,
+          attempt: attemptCount,
+          status,
+          durationMs: Math.max(0, Date.now() - startedAt)
+        })
+        phase = 'response'
         if (!response.ok) {
           const retryable = response.status === 429 || response.status === 529
           if (retryable && attempt === 0) {
+            log.info('classification request retrying', {
+              ...context,
+              status,
+              attempt: attemptCount
+            })
             await response.body?.cancel()
             await delay(100, undefined, { signal: controller.signal })
             continue
@@ -419,17 +509,48 @@ export class ClassificationSettingsOwner {
         const result = responseSchema.parse(
           JSON.parse(await readBoundedResponseText(response, 128 * 1024, 'Classification response'))
         )
+        phase = 'settings'
         const latest = await this.repository.getSettings()
         controller.signal.throwIfAborted()
+        log.info('classification request completed', {
+          ...context,
+          attempt: attemptCount,
+          status,
+          durationMs: Math.max(0, Date.now() - startedAt),
+          inputTokens: result.usage.input_tokens,
+          outputTokens: result.usage.output_tokens
+        })
         // Keep billed usage even if a completed decision became stale during the request.
         return {
           result,
+          requestId,
           current:
             (latest.classification?.revision ?? 0) === revision &&
             credentialsFor(target, latest).keyRef === credential
         }
       }
       throw new Error('Classification request failed.')
+    } catch (error) {
+      log.warn('classification request failed', {
+        ...context,
+        attempt: attemptCount,
+        status,
+        phase,
+        durationMs: Math.max(0, Date.now() - startedAt),
+        reason: signal?.aborted
+          ? 'cancelled'
+          : timedOut
+            ? 'timeout'
+            : controller.signal.aborted || phase === 'configuration'
+              ? 'settings-changed'
+              : error instanceof ClassificationRequestError
+                ? error.validation.category
+                : phase === 'response'
+                  ? 'invalid-response'
+                  : 'request-error',
+        ...diagnosticErrorFields(error)
+      })
+      throw error
     } finally {
       clearTimeout(timer)
       signal?.removeEventListener('abort', abort)

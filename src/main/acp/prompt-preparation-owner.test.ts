@@ -1,4 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { createLogger, flushLogs, initLogger } from '../logger'
 
 import type { AcpPromptRequest } from '../../shared/acp'
 import type { FileReference } from '../../shared/artifacts'
@@ -1010,4 +1014,71 @@ describe('optional main-prompt classification', () => {
     expect(selectBridgeSkills).toHaveBeenCalledOnce()
     expect(selected).toEqual([[{ name: 'Fallback', path: '/allowed/Fallback/SKILL.md' }]])
   })
+})
+
+it('correlates concurrent classification decisions with their sessions and reports usage failures safely', async () => {
+  const logDir = await mkdtemp(join(tmpdir(), 'classification-prompt-logs-'))
+  initLogger({ logDir, mirrorToConsole: false })
+  try {
+    await Promise.all(
+      ['selected', 'fallback', 'stale'].map(async (mode) => {
+        let current = true
+        const fixture = setup(undefined, undefined, undefined, {
+          classifySkills: async ({ observeUsage }) => {
+            await Promise.resolve()
+            createLogger('classification').info('classification transport test marker')
+            observeUsage?.({
+              eventId: mode,
+              providerId: 'account',
+              model: 'jev-latest',
+              usage: { inputTokens: 1, outputTokens: 1, cacheTokens: 0 }
+            })
+            if (mode === 'stale') current = false
+            return mode === 'fallback' ? undefined : []
+          },
+          recordClassificationUsage: async () => {
+            throw new Error('private-usage-failure')
+          },
+          selectBridgeSkills: vi.fn(async () => [])
+        })
+        fixture.turnSkill.prepareProvider.mockImplementationOnce(async (input) => {
+          await input.codex.selectSkills(input.selectionText, [], input.codex.signal)
+          return { text: 'prepared task', codexSkillInputs: [], skillRuntimeAllowlist: [] }
+        })
+        await fixture.prepare({ request: request({ sessionId: mode }), isCurrent: () => current })
+      })
+    )
+    await flushLogs()
+    const contents = await readFile(join(logDir, 'main.log'), 'utf8')
+    const records = contents
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+    const starts = records.filter((record) => record.msg === 'classification selection started')
+    expect(starts).toHaveLength(3)
+    expect(new Set(starts.map((record) => record.correlationId)).size).toBe(3)
+    for (const start of starts) {
+      expect(start.correlationId).toEqual(expect.any(String))
+      const related = records.filter((record) => record.correlationId === start.correlationId)
+      expect(related.map((record) => record.msg)).toContain('classification transport test marker')
+      expect(related).toContainEqual(
+        expect.objectContaining({
+          msg: 'classification usage recording failed',
+          data: expect.objectContaining({ sessionId: start.data.sessionId, errorCategory: 'error' })
+        })
+      )
+      expect(related.map((record) => record.msg)).toContain(
+        start.data.sessionId === 'selected'
+          ? 'classification selection applied'
+          : start.data.sessionId === 'fallback'
+            ? 'classification selection fallback'
+            : 'classification selection discarded'
+      )
+    }
+    expect(contents).not.toContain('private-usage-failure')
+    expect(contents).not.toContain('Analyze the result.')
+  } finally {
+    await flushLogs()
+    await rm(logDir, { recursive: true, force: true })
+  }
 })

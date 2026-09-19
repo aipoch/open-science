@@ -9,7 +9,12 @@ import type { NotebookPromptInput } from '../../shared/notebook'
 import { resolveFileTextBudget } from '../../shared/history-preamble'
 import type { NotebookHandoffContext } from '../notebook/runtime-service'
 import type { ResolvedAgentBackend, SkillSelectorUsageObservation } from '../agent-framework'
-import { createLogger, errorLogFields } from '../logger'
+import {
+  createLogger,
+  diagnosticErrorFields,
+  errorLogFields,
+  runWithDiagnosticCorrelation
+} from '../logger'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 import type {
   ContextUsageTracker,
@@ -259,30 +264,62 @@ class AcpPromptPreparationOwner {
           this.options.classifySkills
         ) {
           classifierAttempted = true
-          const usage: ClassificationUsage[] = []
-          let classified
-          try {
-            classified = await this.options.classifySkills({
-              text,
-              catalog,
-              signal: input.signal,
-              observeUsage: (entry) => usage.push(entry)
+          return runWithDiagnosticCorrelation(async () => {
+            const context = {
+              projectId: input.projectId,
+              sessionId: input.request.sessionId,
+              frameworkId: input.backend.framework.id
+            }
+            log.info('classification selection started', {
+              ...context,
+              catalogCount: catalog.length
             })
-          } catch {
-            /* Optional classification never blocks the existing selector. */
-          }
-          for (const entry of usage) {
-            await this.options
-              .recordClassificationUsage?.({
-                ...entry,
-                projectId: input.projectId,
-                sessionId: input.request.sessionId,
-                frameworkId: input.backend.framework.id
+            const usage: ClassificationUsage[] = []
+            let classified
+            try {
+              classified = await this.options.classifySkills!({
+                text,
+                catalog,
+                signal: input.signal,
+                observeUsage: (entry) => usage.push(entry)
               })
-              .catch(() => undefined)
-          }
-          if (input.signal.aborted || !input.isCurrent()) return []
-          if (classified !== undefined) return classified
+            } catch (error) {
+              log.warn('classification selection unavailable', {
+                ...context,
+                ...diagnosticErrorFields(error)
+              })
+            }
+            for (const entry of usage) {
+              await this.options
+                .recordClassificationUsage?.({ ...entry, ...context })
+                .catch((error) => {
+                  log.warn('classification usage recording failed', {
+                    ...context,
+                    eventId: entry.eventId,
+                    ...diagnosticErrorFields(error)
+                  })
+                })
+            }
+            if (input.signal.aborted || !input.isCurrent()) {
+              log.info('classification selection discarded', {
+                ...context,
+                reason: input.signal.aborted ? 'cancelled' : 'stale-turn'
+              })
+              return []
+            }
+            if (classified !== undefined) {
+              log.info('classification selection applied', {
+                ...context,
+                selectedCount: classified.length
+              })
+              return classified
+            }
+            log.info('classification selection fallback', {
+              ...context,
+              reason: 'unavailable-decision'
+            })
+            return this.options.selectBridgeSkills(text, catalog, signal, observeUsage)
+          })
         }
         return this.options.selectBridgeSkills(text, catalog, signal, observeUsage)
       }

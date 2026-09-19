@@ -7,6 +7,7 @@ import { SettingsRepository } from './repository'
 import { ClassificationSettingsOwner } from './classification-settings'
 import { classificationSettingsSchema } from './classification-config'
 import { SETTINGS_FILE_VERSION } from '../../shared/settings'
+import { flushLogs, initLogger } from '../logger'
 
 vi.mock('./crypto', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./crypto')>()),
@@ -41,6 +42,7 @@ const response = (noul = 0.95): Response =>
   )
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), 'classification-'))
+  initLogger({ logDir: join(dir, 'logs'), mirrorToConsole: false })
   repository = new SettingsRepository(dir)
   owner = new ClassificationSettingsOwner(repository, fetchMock)
   fetchMock.mockReset()
@@ -60,8 +62,16 @@ beforeEach(async () => {
 afterEach(async () => {
   vi.useRealTimers()
   vi.restoreAllMocks()
+  await flushLogs()
   await rm(dir, { recursive: true, force: true })
 })
+const diagnosticRecords = async (): Promise<{ msg: string; data: Record<string, unknown> }[]> => {
+  await flushLogs()
+  return (await readFile(join(dir, 'logs', 'main.log'), 'utf8'))
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line))
+}
 const configure = async (): Promise<void> => {
   await owner.mutate({
     revision: 0,
@@ -384,6 +394,19 @@ it.each([429, 529])('retries transient TypeSafe responses once for status %s', a
     { name: candidate.name, path: candidate.path }
   ])
   expect(fetchMock).toHaveBeenCalledTimes(2)
+  const records = await diagnosticRecords()
+  const started = records.filter(
+    ({ msg, data }) =>
+      msg === 'classification request started' && data.purpose === 'capability-selection'
+  )
+  expect(started.map(({ data }) => data.attempt)).toEqual([1, 2])
+  expect(new Set(started.map(({ data }) => data.requestId)).size).toBe(1)
+  expect(records).toContainEqual(
+    expect.objectContaining({
+      msg: 'classification request retrying',
+      data: expect.objectContaining({ requestId: started[0].data.requestId, status })
+    })
+  )
 })
 it.each(['cancel', 'timeout'] as const)('interrupts retry backoff on %s', async (reason) => {
   owner = new ClassificationSettingsOwner(repository, fetchMock, 30)
@@ -431,6 +454,17 @@ it.each(['timeout', 'cancel', 'change'] as const)(
     if (reason === 'change') await owner.mutate({ revision: 2, kind: 'remove', id: serviceId })
     expect(await work).toEqual(reason === 'cancel' ? [] : undefined)
     expect(fetchMock).toHaveBeenCalledOnce()
+    expect(await diagnosticRecords()).toContainEqual(
+      expect.objectContaining({
+        msg: 'classification request failed',
+        data: expect.objectContaining({
+          purpose: 'capability-selection',
+          attempt: 1,
+          reason:
+            reason === 'cancel' ? 'cancelled' : reason === 'change' ? 'settings-changed' : 'timeout'
+        })
+      })
+    )
   }
 )
 it('tests the fixed Jev model without sending task content', async () => {
@@ -730,3 +764,94 @@ it.each(['same', 'different', 'skills-only', 'connectors-only'] as const)(
     expect(stored.capabilitySelection).toBeUndefined()
   }
 )
+
+it('distinguishes validation, probe and selection calls without logging private content', async () => {
+  await configure()
+  await owner.probe({ serviceId, revision: 2 })
+  await owner.selectSkills(request())
+  fetchMock.mockResolvedValueOnce(
+    new Response(
+      JSON.stringify({ error: { message: 'private-provider-response secret-api-key' } }),
+      { status: 401 }
+    )
+  )
+  await owner.selectSkills(request())
+  fetchMock.mockRejectedValueOnce(new Error('private-network-message /private/SKILL.md'))
+  await owner.selectSkills(request())
+  const records = await diagnosticRecords()
+  const started = records.filter(({ msg }) => msg === 'classification request started')
+  expect(started.map(({ data }) => data.purpose)).toEqual([
+    'save-validation',
+    'probe',
+    'capability-selection',
+    'capability-selection',
+    'capability-selection'
+  ])
+  expect(new Set(started.map(({ data }) => data.requestId)).size).toBe(5)
+  const selectedRequestId = started[2].data.requestId
+  expect(records).toContainEqual(
+    expect.objectContaining({
+      msg: 'classification request completed',
+      data: expect.objectContaining({
+        requestId: selectedRequestId,
+        model: 'jev-latest',
+        adapter: 'typesafe',
+        status: 200,
+        inputTokens: 20,
+        outputTokens: 1,
+        durationMs: expect.any(Number)
+      })
+    })
+  )
+  expect(records).toContainEqual(
+    expect.objectContaining({
+      msg: 'classification decision available',
+      data: expect.objectContaining({ requestId: selectedRequestId, selectedCount: 1 })
+    })
+  )
+  expect(records).toContainEqual(
+    expect.objectContaining({
+      msg: 'classification request failed',
+      data: expect.objectContaining({ status: 401, reason: 'auth' })
+    })
+  )
+  const serialized = JSON.stringify(records)
+  for (const privateValue of [
+    'secret-api-key',
+    request().text,
+    candidate.description,
+    candidate.path,
+    'private-provider-response',
+    'private-network-message'
+  ]) {
+    expect(serialized).not.toContain(privateValue)
+  }
+})
+it('distinguishes skipped and ambiguous selections from confident empty decisions', async () => {
+  await owner.selectSkills(request())
+  expect(fetchMock).not.toHaveBeenCalled()
+  await configure()
+  fetchMock.mockResolvedValueOnce(response(0.5))
+  expect(await owner.selectSkills(request())).toBeUndefined()
+  fetchMock.mockResolvedValueOnce(response(0.05))
+  expect(await owner.selectSkills(request())).toEqual([])
+  const records = await diagnosticRecords()
+  expect(records).toContainEqual(
+    expect.objectContaining({
+      msg: 'classification selection skipped',
+      data: { reason: 'not-configured' }
+    })
+  )
+  expect(records).toContainEqual(
+    expect.objectContaining({
+      msg: 'classification decision unavailable',
+      data: expect.objectContaining({ reason: 'ambiguous-answer' })
+    })
+  )
+  expect(records).toContainEqual(
+    expect.objectContaining({
+      msg: 'classification decision available',
+      data: expect.objectContaining({ selectedCount: 0 })
+    })
+  )
+})
