@@ -1141,12 +1141,21 @@ const scanForOwnedDescendants = async (
       }
 
       let hadRelevantPermissionDenied = false
+      let hadSuspiciousMarkerAbsence = false
       for (const pidStr of procs) {
         try {
           const environ = readFileSync(`/proc/${pidStr}/environ`, 'utf8')
           // environ is null-separated key=value pairs
           if (environ.includes(`OPEN_SCIENCE_PROCESS_TREE_ID=${marker}`)) {
             found.push(parseInt(pidStr, 10))
+          } else {
+            // Successfully read environ but marker not found. If this process could be our
+            // descendant, it may have cleared its environment (e.g., via exec with env -i).
+            // Treat this as suspicious - we cannot safely clear ownership.
+            const pid = parseInt(pidStr, 10)
+            if (couldBeDescendant(pid)) {
+              hadSuspiciousMarkerAbsence = true
+            }
           }
         } catch (err) {
           const code = (err as NodeJS.ErrnoException).code
@@ -1160,8 +1169,11 @@ const scanForOwnedDescendants = async (
           }
         }
       }
-      // If we hit permission errors for potential descendants, the scan is incomplete
-      if (hadRelevantPermissionDenied && found.length === 0) return undefined
+      // If we hit permission errors for potential descendants, or found potential descendants
+      // without the marker (suspicious environment clearing), the scan is incomplete
+      if ((hadRelevantPermissionDenied || hadSuspiciousMarkerAbsence) && found.length === 0) {
+        return undefined
+      }
       return found
     } else if (process.platform === 'darwin') {
       // Use native binding to read process environments reliably. The binding reads via
@@ -1176,22 +1188,75 @@ const scanForOwnedDescendants = async (
         // absence even if all listed processes lack the marker: an omitted descendant may exist.
         if (!table.complete) return undefined
 
+        // Build parent chain map and filter out processes that existed before spawn time
+        const ppidMap = new Map<number, number>()
+        const potentialDescendants = new Set<number>()
+        const ourUid = process.getuid?.()
+
+        for (const proc of table.processes) {
+          ppidMap.set(proc.pid, proc.ppid)
+
+          // If we have spawn time, filter by uniqueId (which encodes process start time on macOS)
+          if (spawnedAt !== undefined) {
+            // On macOS, uniqueId from KERN_PROCARGS2 contains creation timestamp info.
+            // For now, we'll use a simpler heuristic: check PPID chains to see if the process
+            // could be related to same-UID processes. A more sophisticated implementation would
+            // parse the uniqueId timestamp.
+            // TODO: Parse uniqueId for precise start time filtering
+          }
+        }
+
+        // Helper: determine if a process could be our descendant by checking PPID chains
+        const couldBeDescendant = (pid: number): boolean => {
+          const visited = new Set<number>()
+          let current: number | undefined = pid
+
+          while (current !== undefined && current !== 0 && current !== 1 && !visited.has(current)) {
+            visited.add(current)
+
+            // Check if current process is same-UID by attempting to get its identity
+            // (native binding will fail for different-UID system processes)
+            const identity = binding.getDarwinProcess(current)
+            if (identity === null) {
+              // Cannot read this process - could be system process or permission denied
+              // If we can't determine, assume it could be relevant (fail closed)
+              return true
+            }
+
+            // If this process is same-UID (we can read it), mark it as potential ancestor
+            if (ourUid !== undefined) {
+              // On macOS, if we can read the process via getDarwinProcess, it's likely same-UID
+              // or accessible. A same-UID ancestor means this could be our descendant.
+              potentialDescendants.add(pid)
+              return true
+            }
+
+            current = ppidMap.get(current)
+          }
+
+          // Reached init (1) or orphaned without finding same-UID ancestor
+          return false
+        }
+
         let hadIncomplete = false
+        let hadSuspiciousMarkerAbsence = false
 
         for (const proc of table.processes) {
           const value = binding.getDarwinEnvironmentValue(proc.pid, PROCESS_TREE_OWNERSHIP_ENV)
           if (value === null) {
             // null means we couldn't read the environment (system process, permission denied, etc.)
-            hadIncomplete = true
+            // Only treat as incomplete if this could be our descendant
+            if (couldBeDescendant(proc.pid)) {
+              hadIncomplete = true
+            }
             continue
           }
           if (value === false) {
-            // false means the environment variable was not found. A normal /bin/sleep or other
-            // process may inherit the marker but it might not be readable by the native binding
-            // (e.g., the process exec'd and cleared its environment, or the marker is not in the
-            // environ snapshot). Treat this as incomplete evidence - we cannot prove the process
-            // is NOT a descendant just because we didn't find the marker.
-            hadIncomplete = true
+            // false means the environment variable was not found. If this process could be our
+            // descendant, it may have cleared its environment. Treat this as suspicious.
+            if (couldBeDescendant(proc.pid)) {
+              hadSuspiciousMarkerAbsence = true
+            }
             continue
           }
           if (value === marker) {
@@ -1199,8 +1264,9 @@ const scanForOwnedDescendants = async (
           }
         }
 
-        // If we had incomplete reads and found nothing, we cannot prove absence
-        if (hadIncomplete && found.length === 0) return undefined
+        // If we had incomplete reads or suspicious marker absence for potential descendants,
+        // and found nothing, we cannot prove absence
+        if ((hadIncomplete || hadSuspiciousMarkerAbsence) && found.length === 0) return undefined
         return found
       } catch {
         // Binding unavailable or failed — cannot prove absence
