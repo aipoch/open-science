@@ -2193,6 +2193,69 @@ describe('EnvironmentStateTracker', () => {
     expect(inspectInstalled).toHaveBeenCalledTimes(3)
   })
 
+  it('publishes the newer partial R inventory when the retry still cannot verify the request', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-r-partial-visibility-'))
+    const inspectInstalled = vi
+      .fn()
+      .mockResolvedValueOnce({ runtimeVersion: '4.4.3', packages: [] })
+      .mockResolvedValueOnce({ runtimeVersion: '4.4.3', packages: [] })
+      .mockResolvedValueOnce({
+        runtimeVersion: '4.4.3',
+        packages: [
+          {
+            name: 'scales',
+            version: '1.4.0',
+            versionStatus: 'known',
+            ecosystem: 'r',
+            libraryScope: 'environment',
+            evidenceSources: ['r-installed-packages']
+          }
+        ]
+      })
+    const tracker = new EnvironmentStateTracker({
+      dataRoot,
+      platform: 'win32',
+      inspectInstalled,
+      captureFingerprint: vi.fn().mockResolvedValue('stable-r')
+    })
+    const rTarget = {
+      language: 'r' as const,
+      environmentName: 'default-r',
+      runtimeSource: 'managed' as const,
+      command: 'Rscript.exe',
+      args: []
+    }
+
+    await tracker.markPackageMutationDirty(rTarget, {
+      operationId: 'operation-r-partial-visibility',
+      operation: 'install',
+      packages: ['english']
+    })
+    const verification = await tracker.refreshAfterPackageMutation(rTarget, {
+      operationId: 'operation-r-partial-visibility',
+      operation: 'install',
+      packages: ['english'],
+      result: 'success',
+      attempts: [
+        {
+          groupOrdinal: 0,
+          installer: 'conda',
+          packages: ['r-english'],
+          status: 'succeeded',
+          mutationRisk: 'confirmed'
+        }
+      ]
+    })
+    const inspection = await tracker.inspectPackages(rTarget, ['scales'])
+
+    expect(verification).toMatchObject({ result: 'failure', unsatisfiedPackages: ['english'] })
+    expect(inspection).toMatchObject({
+      inventory: { source: 'cache-reused' },
+      packages: [{ requested: 'scales', status: 'installed', version: '1.4.0' }]
+    })
+    expect(inspectInstalled).toHaveBeenCalledTimes(3)
+  })
+
   it('bounds byte-heavy completed operation history by serialized size', async () => {
     dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-log-bytes-'))
     const maxBytes = 2_500

@@ -1364,10 +1364,10 @@ class EnvironmentStateTracker {
             outcome,
             retriedInventory.packages
           )
-          if (retriedVerification.result === 'success') {
-            inventory = retriedInventory
-            verification = retriedVerification
-          }
+          // Keep the newest observation even when it still cannot verify every requested package;
+          // publishing the older first scan would preserve a stale cache and hide partial progress.
+          inventory = retriedInventory
+          verification = retriedVerification
         }
         const nextInventoryChecksum = this.inventoryChecksum(inventory)
         const inventoryRefresh =
