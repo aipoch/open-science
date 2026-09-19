@@ -47,9 +47,11 @@ type Receipt = ProcessScope & {
     leader?: { pid: number; birthToken?: string }
   }
 }
-// UUID shapes: Linux boot_id is lowercase; macOS kern.bootsessionuuid is uppercase.
+// UUID shapes: Linux boot_id is always lowercase (kernel output); macOS kern.bootsessionuuid is
+// always uppercase (uuid_unparse_upper in IOPMrootDomain). Keep separate patterns so validation
+// is exact for each platform — a case-only difference would be corruption, not a real UUID change.
 const uuidLower = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/u
-const uuidCased = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu
+const uuidUpper = /^[A-F0-9]{8}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{12}$/u
 const segment = (value: string): string => {
   if (
     !value ||
@@ -89,7 +91,7 @@ const bootSessionId = (): string | undefined => {
       if (result.status !== 0 || !result.stdout) return undefined
       const value = result.stdout.trim()
       // macOS emits uppercase; store as-is and compare case-sensitively.
-      return uuidCased.test(value) ? value : undefined
+      return uuidUpper.test(value) ? value : undefined
     }
   } catch {
     // Unreadable boot identity is treated as absent, not as proof of a reboot.
@@ -104,7 +106,7 @@ const bootSessionProvesDifferentBoot = (
   current: string | undefined
 ): boolean => {
   if (!recorded || !current || platform === 'win32') return false
-  const validShape = platform === 'linux' ? uuidLower : uuidCased
+  const validShape = platform === 'linux' ? uuidLower : uuidUpper
   return validShape.test(recorded) && validShape.test(current) && recorded !== current
 }
 const parse = (value: unknown): Receipt => {
@@ -150,7 +152,7 @@ const parse = (value: unknown): Receipt => {
         // linux emits lowercase; darwin emits uppercase; both are valid per-boot UUIDs.
         !(ownership.platform === 'linux'
           ? uuidLower.test(ownership.bootId)
-          : uuidCased.test(ownership.bootId)))
+          : uuidUpper.test(ownership.bootId)))
     )
       throw new Error('Invalid process identity')
     if (ownership.leader !== undefined) {
