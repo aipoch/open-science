@@ -39,6 +39,7 @@ import type {
   RunNotebookCellRequest,
   ShellRuntimeBinding
 } from '../../shared/notebook'
+import type { GrantedLocalRoot } from '../../shared/local-fs'
 import { publishUserFile } from '../user-file-publisher'
 import { NotebookBackgroundRunError } from '../../shared/notebook'
 import {

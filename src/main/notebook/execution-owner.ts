@@ -1525,8 +1525,9 @@ class NotebookExecutionOwner {
           void reason
         }
       }
-      this.liveShellRuns.set(runId, liveRun)
+      // Fetch granted roots before registering the live run to avoid lifecycle leak if fetch fails
       const grantedRoots = (await this.options.getGrantedLocalRoots?.()) ?? []
+      this.liveShellRuns.set(runId, liveRun)
       const shellProcessRequest = {
         runId,
         executionReference: runId,
