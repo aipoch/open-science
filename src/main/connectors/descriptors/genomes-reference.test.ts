@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
 import { ParserEngine } from '../engine'
-import { validateToolArguments } from '../registry'
 import { GENOMES_REFERENCE_TOOLS } from './genomes-reference'
 
 const jsonRes = (body: unknown): Response =>
@@ -75,7 +74,6 @@ describe('ncbi_resolve_taxon', () => {
 describe('ncbi_get_assembly_info', () => {
   it('requires a versioned accession and preserves paired assembly identity', async () => {
     const args = { assembly_accession: 'GCF_000001405.40' }
-    expect(() => validateToolArguments(tool('ncbi_get_assembly_info'), args)).not.toThrow()
     const fetchImpl = vi.fn().mockResolvedValue(
       jsonRes({
         reports: [

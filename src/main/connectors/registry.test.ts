@@ -34,6 +34,19 @@ describe('registry + catalog', () => {
       /invalid tool arguments.*cids.*array/i
     )
   })
+  it.each(['ncbi_get_assembly_info', 'ncbi_get_sequence_aliases'])(
+    'requires a versioned assembly accession for genomes/%s',
+    (method) => {
+      const descriptor = getDescriptor('genomes', method)!
+
+      expect(() =>
+        validateToolArguments(descriptor, { assembly_accession: 'GCF_000001405.40' })
+      ).not.toThrow()
+      expect(() =>
+        validateToolArguments(descriptor, { assembly_accession: 'GCF_000001405' })
+      ).toThrow(/invalid tool arguments.*assembly_accession/i)
+    }
+  )
   it('accepts scalar forms that bundled handlers normalize to one-item lists', () => {
     const cases = [
       ['pubmed', 'get_article_metadata', 'pmids', '35486828'],
