@@ -148,14 +148,9 @@ describe('assertShellSearchScope with granted roots', () => {
       { id: 'root-1', path: grantedDir, name: 'Granted', access: 'ro' }
     ]
     await expect(
-      assertShellSearchScope(
-        `ls ${outside}`,
-        cwd,
-        grantedRoots,
-        process.platform,
-        undefined,
-        { kind: 'native-posix' }
-      )
+      assertShellSearchScope(`ls ${outside}`, cwd, grantedRoots, process.platform, undefined, {
+        kind: 'native-posix'
+      })
     ).rejects.toThrow(/outside the session cwd/)
   })
 
@@ -177,14 +172,9 @@ describe('assertShellSearchScope with granted roots', () => {
     ]
     // Should not crash, should still deny access to outside
     await expect(
-      assertShellSearchScope(
-        `ls ${outside}`,
-        cwd,
-        grantedRoots,
-        process.platform,
-        undefined,
-        { kind: 'native-posix' }
-      )
+      assertShellSearchScope(`ls ${outside}`, cwd, grantedRoots, process.platform, undefined, {
+        kind: 'native-posix'
+      })
     ).rejects.toThrow(/outside the session cwd/)
   })
 
