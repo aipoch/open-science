@@ -543,7 +543,11 @@ export const assertShellSearchScope = async (
     for (const check of checks) await check()
     if (parsed.state !== 'ok') return denied('the shell syntax could not be parsed')
   }
-  if (platform === 'win32' && runtimeBinding?.kind !== 'wsl2-bash' && runtimeBinding?.kind !== 'native-posix') {
+  if (
+    platform === 'win32' &&
+    runtimeBinding?.kind !== 'wsl2-bash' &&
+    runtimeBinding?.kind !== 'native-posix'
+  ) {
     const commands = await parsePowerShellSearchCommands(command, signal)
     if (!commands) {
       // Not a PowerShell command or parse failed, continue with bash analysis
