@@ -1069,6 +1069,10 @@ const scanForOwnedDescendants = async (marker: string): Promise<number[] | undef
         const table = binding.listDarwinProcesses()
         if (!table) return undefined // Failed to list processes
 
+        // If the process list itself is incomplete (table.complete === false), we cannot prove
+        // absence even if all listed processes lack the marker: an omitted descendant may exist.
+        if (!table.complete) return undefined
+
         let hadIncomplete = false
 
         for (const proc of table.processes) {
@@ -1141,7 +1145,7 @@ export const proveRecordedPosixLeaderGone = async (
   if (!snapshot.complete) return 'blocked'
   if (!samePosixIdentity(recorded, snapshot.processes.get(leader.pid))) {
     // The leader pid is absent or reused by an unrelated process. This is cold recovery: the tree
-    // disappeared outside of our control. Before declaring the tree gone, verify the owned group
+    // disappeared outside of our control. Before remaining blocked, verify the owned group
     // (kill -0 against -pid) is also absent. If the group is still alive but the leader is gone,
     // the numeric group id may have been reused — never signal a group that cannot be tied back
     // to the recorded identity. (Mirrors notebook shell-ownership.)
@@ -1149,20 +1153,23 @@ export const proveRecordedPosixLeaderGone = async (
 
     // Leader and its original group are both gone. If we have an ownership marker, scan the process
     // table for any descendants that may have escaped to a new session but still carry the marker.
-    // Marker presence definitively blocks cleanup. A complete scan finding no markers provides
-    // sufficient proof: normal descendants inherit the marker and don't remove it. An incomplete
-    // scan (permission errors, binding unavailable) cannot prove absence.
+    // Marker presence definitively blocks cleanup. However, marker absence cannot prove all
+    // descendants are gone in cold recovery: a process can unsetenv() the marker or daemonize,
+    // making it invisible to scans while still alive and using the workspace. Without an
+    // authoritative OS-owned lifecycle handle (like Windows Job objects), or reboot proof
+    // (checked by the caller before invoking this function), cold recovery must remain blocked.
     if (marker) {
       const descendants = await scanForOwnedDescendants(marker)
       // undefined means incomplete scan (permission denied, binding failed), cannot prove absence
       if (descendants === undefined) return 'blocked'
       // Found descendants with marker → definitely blocked
       if (descendants.length > 0) return 'blocked'
-      // Complete scan with no markers found → sufficient proof in cold recovery
+      // Clean scan in cold recovery → still blocked; marker can be scrubbed
     }
 
-    // Leader and group confirmed absent, and complete marker scan found nothing (if marker provided)
-    return 'gone'
+    // Cold recovery: leader and group gone, but marker absence cannot prove descendants are gone.
+    // Remain blocked until reboot proof (checked upstream) or manual intervention.
+    return 'blocked'
   }
   // The exact recorded leader is still alive. Before signaling, verify it is still a process
   // group leader (pgid == pid). If the process called setpgid() after spawn, the numeric group
