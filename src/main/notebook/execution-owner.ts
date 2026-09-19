@@ -1527,31 +1527,31 @@ class NotebookExecutionOwner {
       }
       // Register the live run before async lookup to maintain cancellation coverage
       this.liveShellRuns.set(runId, liveRun)
-      // Fetch granted roots with cancellation coverage via liveRun lifecycle
-      const grantedRoots = (await this.options.getGrantedLocalRoots?.()) ?? []
-      // Recheck admission after async lookup - shutdown or revocation could have happened
-      this.assertShellAdmissionAvailable(session)
-      const shellProcessRequest = {
-        runId,
-        executionReference: runId,
-        runtimeBinding,
-        command: request.command,
-        cwd: frozenShellContext.cwd,
-        handoffDir: frozenShellContext.handoffDir,
-        runtimeRoot: frozenShellContext.runtimeRoot,
-        notebookSessionRoot: frozenShellContext.notebookSessionRoot,
-        inputRoot: frozenShellContext.inputRoot,
-        protectedDirs: frozenShellContext.protectedDirs,
-        environment: frozenShellContext.environment,
-        sessionId: session.sessionId,
-        projectId: session.projectId,
-        timeoutMs: frozenShellContext.timeoutMs,
-        grantedRoots
-      }
       let preparedShell:
         Awaited<ReturnType<NonNullable<NotebookShellProcess['prepare']>>> | undefined
       let lease: ShellAdmissionLease | undefined
       try {
+        // Fetch granted roots with cancellation coverage via liveRun lifecycle
+        const grantedRoots = (await this.options.getGrantedLocalRoots?.()) ?? []
+        // Recheck admission after async lookup - shutdown or revocation could have happened
+        this.assertShellAdmissionAvailable(session)
+        const shellProcessRequest = {
+          runId,
+          executionReference: runId,
+          runtimeBinding,
+          command: request.command,
+          cwd: frozenShellContext.cwd,
+          handoffDir: frozenShellContext.handoffDir,
+          runtimeRoot: frozenShellContext.runtimeRoot,
+          notebookSessionRoot: frozenShellContext.notebookSessionRoot,
+          inputRoot: frozenShellContext.inputRoot,
+          protectedDirs: frozenShellContext.protectedDirs,
+          environment: frozenShellContext.environment,
+          sessionId: session.sessionId,
+          projectId: session.projectId,
+          timeoutMs: frozenShellContext.timeoutMs,
+          grantedRoots
+        }
         let durableAdmission: Awaited<ReturnType<NotebookRunTerminalizationOwner['admit']>>
         try {
           if (lifecycleSignal.aborted) throw lifecycleSignal.reason
