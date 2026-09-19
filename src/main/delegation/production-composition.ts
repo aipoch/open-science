@@ -131,6 +131,7 @@ type RootDelegatedWorkControl = Readonly<{
   // Cancel current work and notifications while retaining the ability to observe future turns.
   stopAll(): Promise<void>
   shutdown(): Promise<void>
+  shutdownForQuit(): Promise<void>
   deleteSession(sessionId: string): Promise<void>
   deleteProject(projectId: string): Promise<void>
 }>
@@ -475,17 +476,21 @@ const createProductionDelegatedWorkComposition = (
     error.errors.length > 0 &&
     error.errors.every((e) => e instanceof DelegateExecutionCleanupError)
 
-  const stopScopedWork = async (log?: { warn(msg: string, err: unknown): void }): Promise<void> => {
+  const stopScopedWork = async (
+    suppressCleanupPending = false,
+    log?: { warn(msg: string, err: unknown): void }
+  ): Promise<void> => {
     const scoped = await Promise.all([...works.values()])
     const results = await Promise.allSettled(scoped.map(({ key, work }) => work.stopSession(key)))
-    // Recover ownership receipts for all live scoped work. A blocked receipt (process cleanup
-    // unconfirmed) is intentionally NOT propagated into the shutdown aggregate: one unprovable
-    // workspace must not silently block the global quit/update reaping gate. Workspace files remain
-    // protected — deletion and prepare still block until recovery succeeds.
+    // Recover ownership receipts for all live scoped work. When suppressCleanupPending is true
+    // (only at the global quit/update reaping gate), blocked receipts (process cleanup unconfirmed)
+    // are not propagated into the shutdown aggregate: one unprovable workspace must not silently
+    // block app quit. Workspace files remain protected — deletion and prepare still block until
+    // recovery succeeds. For ordinary stopAll/shutdown, cleanup failures propagate normally.
     try {
       await ownership.recover({}, true)
     } catch (error) {
-      if (isOnlyCleanupPending(error)) {
+      if (suppressCleanupPending && isOnlyCleanupPending(error)) {
         log?.warn(
           'Delegated process cleanup is unconfirmed; affected workspace remains protected.',
           error
@@ -637,11 +642,15 @@ const createProductionDelegatedWorkComposition = (
     },
     async stopAll() {
       settlementWake?.invalidateAll()
-      await stopScopedWork()
+      await stopScopedWork(false) // Do not suppress cleanup errors in ordinary stopAll
     },
     async shutdown() {
       settlementWake?.shutdown()
-      await stopScopedWork()
+      await stopScopedWork(false) // Do not suppress cleanup errors in ordinary shutdown
+    },
+    async shutdownForQuit() {
+      settlementWake?.shutdown()
+      await stopScopedWork(true, console) // Suppress cleanup-pending at quit gate
     },
     async deleteSession(sessionId) {
       settlementWake?.invalidateSession(sessionId)

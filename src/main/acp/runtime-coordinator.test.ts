@@ -1415,6 +1415,7 @@ describe('AcpRuntimeCoordinator', () => {
       stopSession: vi.fn(async () => undefined),
       stopAll: vi.fn(async () => undefined),
       shutdown: vi.fn(async () => undefined),
+      shutdownForQuit: vi.fn(async () => undefined),
       deleteSession: vi.fn(async () => undefined),
       deleteProject: vi.fn(async () => undefined)
     }
@@ -1506,6 +1507,7 @@ describe('AcpRuntimeCoordinator', () => {
       stopSession: async () => undefined,
       stopAll: vi.fn(async () => undefined),
       shutdown: vi.fn(async () => undefined),
+      shutdownForQuit: vi.fn(async () => undefined),
       deleteSession: async () => undefined,
       deleteProject: async () => undefined
     }
@@ -1547,6 +1549,7 @@ describe('AcpRuntimeCoordinator', () => {
       stopSession: vi.fn(async () => undefined),
       stopAll: vi.fn(async () => undefined),
       shutdown: vi.fn(async () => undefined),
+      shutdownForQuit: vi.fn(async () => undefined),
       deleteSession: vi.fn(async () => undefined),
       deleteProject: vi.fn(async () => undefined)
     }
@@ -2139,6 +2142,7 @@ describe('AcpRuntimeCoordinator', () => {
       stopSession: async () => undefined,
       stopAll: async () => undefined,
       shutdown: async () => undefined,
+      shutdownForQuit: async () => undefined,
       deleteSession: async () => undefined,
       deleteProject: async () => undefined,
       rootTurnStarted,
@@ -2222,6 +2226,7 @@ describe('AcpRuntimeCoordinator', () => {
         stopSession: async () => undefined,
         stopAll: async () => undefined,
         shutdown: async () => undefined,
+        shutdownForQuit: async () => undefined,
         deleteSession: async () => undefined,
         deleteProject: async () => undefined,
         rootTurnStarted,
@@ -4682,6 +4687,7 @@ describe('AcpRuntimeCoordinator', () => {
       stopSession: async () => undefined,
       stopAll: async () => undefined,
       shutdown: async () => undefined,
+      shutdownForQuit: async () => undefined,
       deleteSession: vi.fn(() => delegatedDeletion.promise),
       deleteProject: async () => undefined
     }
