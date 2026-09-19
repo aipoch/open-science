@@ -147,9 +147,16 @@ describe('assertShellSearchScope with granted roots', () => {
     const grantedRoots: GrantedLocalRoot[] = [
       { id: 'root-1', path: grantedDir, name: 'Granted', access: 'ro' }
     ]
-    await expect(assertShellSearchScope(`ls ${outside}`, cwd, grantedRoots)).rejects.toThrow(
-      /outside the session cwd/
-    )
+    await expect(
+      assertShellSearchScope(
+        `ls ${outside}`,
+        cwd,
+        grantedRoots,
+        process.platform,
+        undefined,
+        { kind: 'native-posix' }
+      )
+    ).rejects.toThrow(/outside the session cwd/)
   })
 
   it('allows search with rw access granted root with absolute path', async () => {
@@ -169,9 +176,16 @@ describe('assertShellSearchScope with granted roots', () => {
       { id: 'root-1', path: nonexistent, name: 'Nonexistent', access: 'ro' }
     ]
     // Should not crash, should still deny access to outside
-    await expect(assertShellSearchScope(`ls ${outside}`, cwd, grantedRoots)).rejects.toThrow(
-      /outside the session cwd/
-    )
+    await expect(
+      assertShellSearchScope(
+        `ls ${outside}`,
+        cwd,
+        grantedRoots,
+        process.platform,
+        undefined,
+        { kind: 'native-posix' }
+      )
+    ).rejects.toThrow(/outside the session cwd/)
   })
 
   it('allows search when multiple granted roots exist with absolute paths', async () => {
