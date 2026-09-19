@@ -17,61 +17,54 @@ const analyzeNotebookSourceFileAccess = async (
     context = { ...context, managedEnvironment: undefined }
   }
   let activeContext: NotebookSourceFileAccessContext | undefined
-  const analyze =
-    language === 'repl'
-      ? analyzeReplNotebookSource
-      : language === 'r'
-        ? analyzeRNotebookSource
-        : analyzePythonNotebookSource
-  const { facts: dependencyFacts, fileAccess } = await analyze(
-    source,
-    context,
-    (dependencyFacts) => {
-      const shadowedNames = new Set([
-        ...(dependencyFacts?.definedNames ?? []),
-        ...(dependencyFacts?.conditionallyDefinedNames ?? [])
-      ])
-      activeContext = context
-        ? {
-            managedEnvironment: context.managedEnvironment,
-            staticStrings: context.staticStrings.filter(({ name }) => !shadowedNames.has(name)),
-            staticCollections: context.staticCollections.filter(
-              ({ name }) => !shadowedNames.has(name)
-            ),
-            localFileWrappers: context.localFileWrappers.filter(
-              ({ name }) => !shadowedNames.has(name)
-            ),
-            // These identities are invalidated in Python statement order.
-            ...(context.pythonBindings ? { pythonBindings: context.pythonBindings } : {}),
-            ...(context.pythonTaintedNamespaces
-              ? { pythonTaintedNamespaces: context.pythonTaintedNamespaces }
-              : {}),
-            ...(context.staticCollectionAliases
-              ? { staticCollectionAliases: context.staticCollectionAliases }
-              : {}),
-            ...(context.resolvedKernelNames
-              ? {
-                  resolvedKernelNames: context.resolvedKernelNames.filter(
-                    (name) =>
-                      !shadowedNames.has(name) || dependencyFacts?.priorUsedNames?.includes(name)
-                  )
-                }
-              : {}),
-            ...(context.rCopyOnModifyNames
-              ? {
-                  rCopyOnModifyNames: context.rCopyOnModifyNames.filter(
-                    (name) => !shadowedNames.has(name)
-                  )
-                }
-              : {}),
-            ...(context.rFunctions
-              ? { rFunctions: context.rFunctions.filter(({ name }) => !shadowedNames.has(name)) }
-              : {})
-          }
-        : undefined
-      return activeContext
-    }
-  )
+  const analyze = language === 'r' ? analyzeRNotebookSource : analyzePythonNotebookSource
+  const { facts: dependencyFacts, fileAccess } = await (language === 'repl'
+    ? analyzeReplNotebookSource(source, context)
+    : analyze(source, context, (dependencyFacts) => {
+        const shadowedNames = new Set([
+          ...(dependencyFacts?.definedNames ?? []),
+          ...(dependencyFacts?.conditionallyDefinedNames ?? [])
+        ])
+        activeContext = context
+          ? {
+              managedEnvironment: context.managedEnvironment,
+              staticStrings: context.staticStrings.filter(({ name }) => !shadowedNames.has(name)),
+              staticCollections: context.staticCollections.filter(
+                ({ name }) => !shadowedNames.has(name)
+              ),
+              localFileWrappers: context.localFileWrappers.filter(
+                ({ name }) => !shadowedNames.has(name)
+              ),
+              // These identities are invalidated in Python statement order.
+              ...(context.pythonBindings ? { pythonBindings: context.pythonBindings } : {}),
+              ...(context.pythonTaintedNamespaces
+                ? { pythonTaintedNamespaces: context.pythonTaintedNamespaces }
+                : {}),
+              ...(context.staticCollectionAliases
+                ? { staticCollectionAliases: context.staticCollectionAliases }
+                : {}),
+              ...(context.resolvedKernelNames
+                ? {
+                    resolvedKernelNames: context.resolvedKernelNames.filter(
+                      (name) =>
+                        !shadowedNames.has(name) || dependencyFacts?.priorUsedNames?.includes(name)
+                    )
+                  }
+                : {}),
+              ...(context.rCopyOnModifyNames
+                ? {
+                    rCopyOnModifyNames: context.rCopyOnModifyNames.filter(
+                      (name) => !shadowedNames.has(name)
+                    )
+                  }
+                : {}),
+              ...(context.rFunctions
+                ? { rFunctions: context.rFunctions.filter(({ name }) => !shadowedNames.has(name)) }
+                : {})
+            }
+          : undefined
+        return activeContext
+      }))
   if (!fileAccess) {
     return {
       readState: 'unavailable',
