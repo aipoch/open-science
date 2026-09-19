@@ -7937,6 +7937,29 @@ const analyzePythonFileAccessTree = (
     }
 
     if (canonicalName === 'json.load' || canonicalName === 'json.dump') {
+      // Named callbacks and custom codecs may perform I/O outside the explicit
+      // stream. **kwargs can hide these hooks, so it cannot establish completeness.
+      if (
+        (node.keywords ?? []).some(
+          (keyword) =>
+            keyword.arg === null ||
+            keyword.arg === undefined ||
+            ([
+              'cls',
+              'object_hook',
+              'object_pairs_hook',
+              'parse_int',
+              'parse_float',
+              'parse_constant',
+              'default'
+            ].includes(keyword.arg) &&
+              !(keyword.value.type === 'Constant' && keyword.value.value === null))
+        )
+      ) {
+        unresolvedReads = true
+        unresolvedWrites = true
+        unsupportedExternalState = true
+      }
       const writing = canonicalName === 'json.dump'
       const args = Array.isArray(node.args) ? node.args : []
       const stream =

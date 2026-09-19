@@ -37,6 +37,16 @@ rows = json.load(open(os.path.join(h, 'rows.json')))
     ['python', 'import os; env = os.environ'],
     ['python', "import os; os.putenv('OPEN_SCIENCE_HANDOFF_DIR', '/elsewhere')"],
     ['python', 'exec(code)'],
+    ['python', "import os; os.environ.update({'OPEN_SCIENCE_HANDOFF_DIR': '/elsewhere'})"],
+    ['python', 'import os; os.environ.clear()'],
+    ['python', "import os; os.environ.pop('OPEN_SCIENCE_HANDOFF_DIR')"],
+    ['python', "import os; os.environ.setdefault('OPEN_SCIENCE_HANDOFF_DIR', '/elsewhere')"],
+    ['python', "import os; os.environ.__setitem__('OPEN_SCIENCE_HANDOFF_DIR', '/elsewhere')"],
+    ['python', "import os; os.environ.__delitem__('OPEN_SCIENCE_HANDOFF_DIR')"],
+    [
+      'python',
+      "import os as envos; envos.environ.update({'OPEN_SCIENCE_HANDOFF_DIR': '/elsewhere'})"
+    ],
     ['repl', "process.env.OPEN_SCIENCE_HANDOFF_DIR = '/elsewhere'"],
     ['repl', 'const env = process.env'],
     ['repl', "process.chdir('/elsewhere')"],

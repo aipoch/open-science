@@ -1287,10 +1287,9 @@ class NotebookExecutionOwner {
               )
             )
           : (async () => {
-              const sourceFileAccessContext = await this.options.sourceFileAccessContext?.(
-                session,
-                queuedRun
-              )
+              const sourceFileAccessContext = await this.options
+                .sourceFileAccessContext?.(session, queuedRun)
+                .catch(() => undefined)
               const releaseControlInvocation = mcpRpc?.beginControlInvocation?.({
                 turnId: runId,
                 controlInvocationGeneration,

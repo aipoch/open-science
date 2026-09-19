@@ -1703,6 +1703,41 @@ describe('notebook runtime service', () => {
     )
   })
 
+  it('executes REPL code when best-effort file-analysis context is unavailable', async () => {
+    const root = await createStorageRoot()
+    const sourceFileAccessContext = vi.fn(async () => {
+      throw new Error('analysis unavailable')
+    })
+    const execute = vi.fn(async (request: NotebookExecutionRequest) => ({
+      status: 'completed' as const,
+      stdout: 'ran',
+      stderr: '',
+      traceback: '',
+      cwdAfter: request.cwd,
+      outputs: []
+    }))
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project',
+      repository: new NotebookRunRepository(root),
+      dependencyAnalyzer: {
+        project: async () => ({ stalenessByRunId: {}, invalidatedByRunId: {} }),
+        sourceFileAccessContext
+      },
+      executorFactory: () => ({ execute, shutdown: async () => ({ reaped: true }) })
+    })
+    const result = await service.executeControl({
+      sessionId: 'session-1',
+      workspaceCwd: root,
+      code: '1 + 1'
+    })
+    expect(sourceFileAccessContext).toHaveBeenCalledOnce()
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({ kind: 'repl', code: '1 + 1' }))
+    expect(execute.mock.calls[0]?.[0].sourceFileAccessContext).toBeUndefined()
+    expect(result).toMatchObject({ status: 'completed', stdout: 'ran' })
+  })
+
   it('streams agent code into a locked cell and runs it through the shared executor', async () => {
     const root = await createStorageRoot()
     const executions: NotebookExecutionRequest[] = []
