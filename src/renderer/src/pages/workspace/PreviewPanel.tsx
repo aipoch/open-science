@@ -415,7 +415,15 @@ const PreviewTabBar = ({
   onLinkReadingContext?: PreviewInteractionPort['onLinkReadingContext']
   onUnlinkReadingContext?: PreviewInteractionPort['onUnlinkReadingContext']
 }): React.JSX.Element => {
-  const tabListRef = useHorizontalScrollFade<HTMLDivElement>()
+  const tabListFadeRef = useHorizontalScrollFade<HTMLDivElement>()
+  const tabListRef = useRef<HTMLDivElement | null>(null)
+  const attachTabListRef = useCallback(
+    (node: HTMLDivElement | null): void => {
+      tabListRef.current = node
+      tabListFadeRef(node)
+    },
+    [tabListFadeRef]
+  )
   const tabContainerRefs = useRef<Array<HTMLDivElement | null>>([])
   const { t } = useTranslation()
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([])
@@ -490,7 +498,7 @@ const PreviewTabBar = ({
 
   return (
     <div
-      ref={tabListRef}
+      ref={attachTabListRef}
       role="tablist"
       aria-label={t('Open previews')}
       aria-orientation="horizontal"

@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type RefObject } from 'react'
+import { useCallback, useRef, type RefCallback } from 'react'
 
 type HorizontalScrollFade = 'none' | 'left' | 'right' | 'both'
 
@@ -16,26 +16,29 @@ const updateHorizontalScrollFade = (element: HTMLElement): void => {
   if (element.dataset.scrollFade !== fade) element.dataset.scrollFade = fade
 }
 
-export const useHorizontalScrollFade = <T extends HTMLElement>(): RefObject<T | null> => {
-  const ref = useRef<T>(null)
+export const useHorizontalScrollFade = <T extends HTMLElement>(): RefCallback<T> => {
+  const bindingRef = useRef<{ element: T; cleanup: () => void } | null>(null)
 
-  useLayoutEffect(() => {
-    const element = ref.current
+  return useCallback((element: T | null): void => {
+    const previous = bindingRef.current
+    if (previous?.element === element) return
+
+    previous?.cleanup()
+    bindingRef.current = null
     if (!element) return
 
     const update = (): void => updateHorizontalScrollFade(element)
     update()
     element.addEventListener('scroll', update, { passive: true })
 
-    const observer =
-      typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(() => update())
+    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(update)
     observer?.observe(element)
-
-    return () => {
-      element.removeEventListener('scroll', update)
-      observer?.disconnect()
+    bindingRef.current = {
+      element,
+      cleanup: () => {
+        element.removeEventListener('scroll', update)
+        observer?.disconnect()
+      }
     }
   }, [])
-
-  return ref
 }
