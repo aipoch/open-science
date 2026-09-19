@@ -1050,8 +1050,11 @@ const scanForOwnedDescendants = async (marker: string): Promise<number[] | undef
           }
         } catch (err) {
           const code = (err as NodeJS.ErrnoException).code
-          // ENOENT is fine (process exited), EACCES/EPERM means incomplete scan
-          if (code === 'EACCES' || code === 'EPERM') hadPermissionDenied = true
+          // ENOENT/ESRCH are benign (process exited between readdir and readFile).
+          // Any other error (EACCES, EPERM, EIO, EBUSY, etc.) means the scan is incomplete.
+          if (code !== 'ENOENT' && code !== 'ESRCH') {
+            hadPermissionDenied = true
+          }
         }
       }
       // If we hit permission errors, the scan is incomplete — cannot prove absence
@@ -1155,6 +1158,13 @@ export const proveRecordedPosixLeaderGone = async (
   if (!result.reaped) return 'blocked'
   const confirmation = await collectPosixProcessTable()
   if (!confirmation.complete) return 'blocked'
+  // Leader and group are confirmed gone. Before returning 'gone', scan for escaped descendants
+  // that may have daemonized into a new session before teardown but still carry the marker.
+  if (marker) {
+    const descendants = await scanForOwnedDescendants(marker)
+    if (descendants === undefined) return 'blocked' // incomplete scan
+    if (descendants.length > 0) return 'blocked' // found escaped descendants
+  }
   return samePosixIdentity(recorded, confirmation.processes.get(leader.pid)) ? 'blocked' : 'gone'
 }
 
