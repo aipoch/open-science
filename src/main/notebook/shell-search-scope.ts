@@ -4,6 +4,22 @@ import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { fieldChildren, withParsedNotebookSource, type Node } from './dependency-analysis-parser'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 
+// Maps WSL2 guest paths (e.g. /mnt/c/data) to Windows host paths (e.g. C:\data).
+// Returns the input path unchanged if not a WSL2 /mnt mount or on non-Windows platforms.
+const mapWsl2GuestPathToHost = (guestPath: string, platform: NodeJS.Platform): string => {
+  if (platform !== 'win32') return guestPath
+
+  // Match /mnt/<drive-letter>/... pattern
+  const match = /^\/mnt\/([a-z])(\/|$)/i.exec(guestPath)
+  if (!match) return guestPath
+
+  const driveLetter = match[1].toUpperCase()
+  const remainder = guestPath.slice(`/mnt/${match[1]}`.length)
+  // Convert forward slashes to backslashes for Windows
+  const windowsPath = remainder.replace(/\//g, '\\')
+  return `${driveLetter}:${windowsPath}`
+}
+
 const denied = (reason: string): never => {
   throw new Error(
     `Shell search scope denied: ${reason}. Search an explicit directory inside the session cwd, or use host.artifacts() for managed files.`
@@ -276,7 +292,9 @@ export const assertShellSearchScope = async (
   const check = async (path: string, state: State): Promise<void> => {
     if (!path || (!isAbsolute(path) && !state.cwd))
       return denied('the search directory cannot be resolved')
-    const target = resolve(state.cwd ?? root, path)
+    // For WSL2, map guest paths like /mnt/c/data to host paths like C:\data before validation
+    const mappedPath = mapWsl2GuestPathToHost(path, platform)
+    const target = resolve(state.cwd ?? root, mappedPath)
     const physicalTarget = await physicalPath(target)
 
     // First check if path is inside session cwd
@@ -525,6 +543,11 @@ export const assertShellSearchScope = async (
   }
   if (platform === 'win32') {
     const commands = await parsePowerShellSearchCommands(command, signal)
+    if (!commands) {
+      // Not a PowerShell command or parse failed, continue with bash analysis
+      await analyze(command, { cwd: undefined, variables: new Map() })
+      return
+    }
     const normalize = (name: string): string =>
       name
         .split(/[\\/]/)

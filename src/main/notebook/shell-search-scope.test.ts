@@ -208,4 +208,28 @@ describe('assertShellSearchScope with granted roots', () => {
       assertShellSearchScope('find ./subdir -type f', cwd, grantedRoots)
     ).resolves.toBeUndefined()
   })
+
+  it('maps WSL2 guest paths to Windows host paths before validation', async () => {
+    // Simulate WSL2 scenario on Windows: granted root is C:\data, command uses /mnt/c/data
+    const root = await mkdtemp(join(tmpdir(), 'wsl2-test-'))
+    const cwd = join(root, 'workspace')
+    const grantedDir = join(root, 'granted')
+    await mkdir(cwd)
+    await mkdir(grantedDir)
+
+    const grantedRoots: GrantedLocalRoot[] = [
+      { id: 'root-1', path: grantedDir, name: 'Granted', access: 'ro' }
+    ]
+
+    // Simulate the path as it would appear in WSL2 bash command
+    // On Windows, grantedDir might be C:\...\granted, but in WSL2 it's /mnt/c/.../granted
+    const wsl2Path = grantedDir
+      .replace(/^([A-Z]):\\/, (_, drive) => `/mnt/${drive.toLowerCase()}/`)
+      .replace(/\\/g, '/')
+
+    // Should work on Windows with WSL2 path mapping
+    await expect(
+      assertShellSearchScope(`ls ${wsl2Path}`, cwd, grantedRoots, 'win32')
+    ).resolves.toBeUndefined()
+  })
 })
