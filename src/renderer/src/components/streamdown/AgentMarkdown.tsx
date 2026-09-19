@@ -23,6 +23,8 @@ import {
 import 'katex/dist/katex.min.css'
 
 import { createMarkdownPluginNeedsScanner } from './code-fence'
+import { createIncrementalMarkdownBlocks } from './incremental-markdown-blocks'
+import { retainMarkdownParser } from './markdown-parser'
 import { AGENT_ALLOWED_TAGS, AGENT_CONTROLS } from './streamdown-config'
 import {
   DeferredImage,
@@ -35,7 +37,7 @@ import {
 import { LinkSafetyModal } from './LinkSafetyModal'
 import { SessionMessageLink } from './SessionMessageLink'
 import { createStreamingBlockquote } from './streaming-blockquote'
-import { StreamingBlock } from './StreamingBlock'
+import { AsyncStreamingBlock } from './AsyncStreamingBlock'
 import { createAgentMarkdownNormalizer } from './normalize-agent-markdown'
 import { useCodeHighlighter } from './use-code-highlighter'
 import { useSmoothStreamingContent } from './use-smooth-streaming-content'
@@ -245,6 +247,8 @@ const RichAgentMarkdown = memo(
   }: RichAgentMarkdownProps): React.JSX.Element => {
     // Append-only streaming re-normalizes just the trailing block instead of the full message.
     const [normalizer] = useState(() => createAgentMarkdownNormalizer())
+    const [splitBlocks] = useState(() => createIncrementalMarkdownBlocks())
+    useEffect(() => (isAnimating ? retainMarkdownParser() : undefined), [isAnimating])
     const renderedContent = useMemo(() => normalizer(content), [normalizer, content])
     const allowedTags = useMemo(
       () => (extension ? { ...AGENT_ALLOWED_TAGS, ...extension.allowedTags } : AGENT_ALLOWED_TAGS),
@@ -284,7 +288,8 @@ const RichAgentMarkdown = memo(
           mode={isAnimating || incrementalBlocks ? 'streaming' : 'static'}
           isAnimating={isAnimating}
           animated={false}
-          BlockComponent={StreamingBlock}
+          BlockComponent={AsyncStreamingBlock}
+          parseMarkdownIntoBlocksFn={splitBlocks}
           parseIncompleteMarkdown={isAnimating}
           normalizeHtmlIndentation={!isAnimating}
           allowedTags={allowedTags}

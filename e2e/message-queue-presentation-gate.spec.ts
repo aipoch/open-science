@@ -119,3 +119,50 @@ test('Send now returns to a usable queue when the provider cannot inject into th
     1
   )
 })
+
+test('renders expensive streamed output through the native parser Worker and completes the reply', async ({
+  app
+}) => {
+  test.setTimeout(180_000)
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
+  await page.evaluate(() => {
+    let parsedSnapshots = 0
+    Object.assign(window, { __nativeMarkdownParses: () => parsedSnapshots })
+    window.Worker = new Proxy(window.Worker, {
+      construct(Target, args: ConstructorParameters<typeof Worker>) {
+        const worker = new Target(...args)
+        if (String(args[0]).includes('markdown-parser')) {
+          worker.addEventListener('message', (event: MessageEvent) => {
+            // An empty warmup alone is not evidence that streamed content used the Worker.
+            if (event.data.tree?.children?.length > 0) parsedSnapshots++
+          })
+        }
+        return worker
+      }
+    })
+  })
+  await page.getByRole('button', { name: 'New project' }).click()
+  const dialog = page.getByRole('dialog', { name: 'New project' })
+  await dialog.getByLabel('Name').fill('Native Markdown streaming')
+  await dialog.getByRole('button', { name: 'Create project' }).click()
+  const conversation = page.getByRole('region', { name: 'Conversation' })
+  await page
+    .getByRole('textbox', { name: 'Ask anything' })
+    .fill('Run the runtime resource stress journey.')
+  await page.getByRole('button', { name: 'Send message' }).click()
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() =>
+          (window as unknown as { __nativeMarkdownParses: () => number }).__nativeMarkdownParses()
+        ),
+      { timeout: 30000 }
+    )
+    .toBeGreaterThan(0)
+  await expect(
+    conversation.getByText('Runtime resource stress journey complete.', { exact: false })
+  ).toBeVisible({ timeout: 60000 })
+  await page.getByRole('textbox', { name: 'Ask anything' }).fill('Next message after streaming')
+  await expect(page.getByRole('button', { name: 'Send message' })).toBeEnabled()
+})

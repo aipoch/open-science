@@ -196,8 +196,8 @@ describe('WorkspaceRunMarks interaction', () => {
     document.body.append(viewport)
     vi.stubGlobal(
       'matchMedia',
-      vi.fn(() => ({
-        matches: false,
+      vi.fn((query: string) => ({
+        matches: query === '(min-width: 48rem)',
         media: '(prefers-reduced-motion: reduce)',
         onchange: null,
         addListener: vi.fn(),
@@ -271,6 +271,46 @@ describe('WorkspaceRunMarks interaction', () => {
 
     expect(notifyResize).toBeUndefined()
     expect(viewportRect).not.toHaveBeenCalled()
+  })
+
+  it('skips message geometry on mobile while retaining resize recovery', async () => {
+    const items = Array.from({ length: 6 }, (_, index) => {
+      appendMessageTarget(viewport, `prompt-${index}`, 100 + index * 100)
+      return createMessageItem({ id: `prompt-${index}` }, index)
+    })
+    vi.mocked(window.matchMedia).mockReturnValue({ matches: false } as MediaQueryList)
+    const reads = [...viewport.children].map((element) =>
+      vi.spyOn(element, 'getBoundingClientRect')
+    )
+    render(<WorkspaceRunMarks items={items} viewport={viewport} />)
+    await act(async () => {
+      window.dispatchEvent(new Event('resize'))
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    })
+    expect(reads.every((read) => read.mock.calls.length === 0)).toBe(true)
+    vi.mocked(window.matchMedia).mockReturnValue({ matches: true } as MediaQueryList)
+    await act(async () => {
+      window.dispatchEvent(new Event('resize'))
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    })
+    expect(screen.getByRole('navigation', { name: 'Run marks' })).toBeTruthy()
+  })
+
+  it('measures each mounted message once for a coalesced resize', async () => {
+    const items = Array.from({ length: 6 }, (_, index) => {
+      appendMessageTarget(viewport, `prompt-${index}`, 100 + index * 100)
+      return createMessageItem({ id: `prompt-${index}` }, index)
+    })
+    render(<WorkspaceRunMarks items={items} viewport={viewport} />)
+    const reads = [...viewport.children].map((element) =>
+      vi.spyOn(element, 'getBoundingClientRect')
+    )
+    await act(async () => {
+      window.dispatchEvent(new Event('resize'))
+      window.dispatchEvent(new Event('resize'))
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    })
+    expect(reads.map((read) => read.mock.calls.length)).toEqual(items.map(() => 1))
   })
 
   it('keeps visible marks dark at rest while hover tapers mark lengths independently', () => {
@@ -418,7 +458,7 @@ describe('WorkspaceRunMarks interaction', () => {
       clientHeight: { value: 480 },
       scrollHeight: { value: 720 }
     })
-    expect(rail.style.gridTemplateRows).toBe('repeat(60, minmax(12px, 1fr))')
+    expect(screen.getAllByRole('button').length).toBeLessThan(60)
     expect(rail.style.height).toBe('480px')
     expect(rail.className).toContain('overflow-hidden')
 

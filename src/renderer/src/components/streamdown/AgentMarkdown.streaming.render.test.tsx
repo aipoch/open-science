@@ -1,5 +1,8 @@
 // @vitest-environment jsdom
 import { act } from 'react'
+import { Lexer } from 'marked'
+import { unified } from 'unified'
+import remarkParse from 'remark-parse'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -59,6 +62,39 @@ describe('AgentMarkdown streaming presentation', () => {
     const visible = container.querySelector('.agent-markdown')?.textContent ?? ''
     expect(visible.length).toBeGreaterThan(0)
     expect(visible.length).toBeLessThan(70)
+  })
+
+  it('does not re-split the completed prefix when only the streaming tail changes', async () => {
+    vi.useRealTimers()
+    const prefix =
+      Array.from(
+        { length: 100 },
+        (_, index) => `Completed paragraph ${index}. ${'Scientific prose. '.repeat(8)}`
+      ).join('\n\n') + '\n\n'
+    await act(async () =>
+      root.render(<PresentedAgentMarkdown content={prefix + 'Live text'} isAnimating />)
+    )
+    const firstParagraph = container.querySelector('p')
+    const lexer = vi.spyOn(Lexer, 'lex')
+    try {
+      for (let count = 1; count <= 20; count++) {
+        await act(async () =>
+          root.render(
+            <PresentedAgentMarkdown
+              content={prefix + 'Live text' + ' continuation'.repeat(count)}
+              isAnimating
+            />
+          )
+        )
+      }
+      expect(container.textContent).toContain('Live text' + ' continuation'.repeat(20))
+      expect(container.querySelector('p')).toBe(firstParagraph)
+      expect(lexer.mock.calls.some(([source]) => source.includes('Completed paragraph 0.'))).toBe(
+        false
+      )
+    } finally {
+      lexer.mockRestore()
+    }
   })
 
   it('keeps completed Markdown blocks mounted when streaming settles', async () => {
@@ -238,5 +274,255 @@ describe('AgentMarkdown streaming presentation', () => {
     expect(quotes).toHaveLength(2)
     expect(quotes[0].className).not.toContain('hidden')
     expect(quotes[1].className).toContain('hidden')
+  })
+})
+
+describe('cost-aware Markdown parsing', () => {
+  let clock = 0
+  let parseCost = 20
+
+  const workers: FakeWorker[] = []
+  class FakeWorker {
+    onmessage: ((event: MessageEvent) => void) | null = null
+    onerror: ((event: ErrorEvent) => void) | null = null
+    messages: { id: number; source: string }[] = []
+    terminated = false
+    constructor() {
+      workers.push(this)
+    }
+    postMessage(message: { id: number; source: string }): void {
+      this.messages.push(message)
+    }
+    complete(index = this.messages.length - 1): void {
+      const { id, source } = this.messages[index]!
+      this.onmessage?.({
+        data: {
+          id,
+          bytes: source.length * 4,
+          tree: unified().use(remarkParse).parse(source)
+        }
+      } as MessageEvent)
+    }
+    terminate(): void {
+      this.terminated = true
+    }
+  }
+  let container: HTMLDivElement
+  let root: Root
+  beforeEach(() => {
+    clock = 0
+    parseCost = 20
+    workers.length = 0
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+    vi.stubGlobal('Worker', FakeWorker)
+    vi.spyOn(performance, 'now').mockImplementation(() => {
+      clock += parseCost
+      return clock
+    })
+    container = document.createElement('div')
+    document.body.append(container)
+    root = createRoot(container)
+  })
+  afterEach(async () => {
+    await act(async () => root.unmount())
+    container.remove()
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  })
+
+  it('prepares the parser before expensive output without pausing text while it starts', async () => {
+    parseCost = 0
+    await act(async () => root.render(<PresentedAgentMarkdown content="Starting" isAnimating />))
+    expect(workers).toHaveLength(1)
+    expect(workers[0]!.messages[0]!.source).toBe('')
+    parseCost = 20
+    const first = 'Scientific prose. '.repeat(2000)
+    await act(async () => root.render(<PresentedAgentMarkdown content={first} isAnimating />))
+    await act(async () =>
+      root.render(<PresentedAgentMarkdown content={first + 'latest'} isAnimating />)
+    )
+    expect(container.textContent).toBe(first + 'latest')
+    expect(workers[0]!.messages).toHaveLength(1)
+    await act(async () => workers[0]!.complete())
+    await act(async () =>
+      root.render(<PresentedAgentMarkdown content={first + 'latest append'} isAnimating />)
+    )
+    expect(workers[0]!.messages.at(-1)!.source).toBe(first + 'latest append')
+    await act(async () => workers[0]!.complete())
+    expect(container.textContent).toBe(first + 'latest append')
+  })
+
+  const finishWarmup = async (): Promise<void> => {
+    expect(workers[0]!.messages[0]!.source).toBe('')
+    await act(async () => workers[0]!.complete(0))
+    // Work-count assertions below concern streamed parsing after initialization.
+    workers[0]!.messages.length = 0
+  }
+
+  it('moves subsequent costly streaming parses off the main thread', async () => {
+    const first = 'Scientific prose. '.repeat(2000)
+    await act(async () => root.render(<PresentedAgentMarkdown content={first} isAnimating />))
+    await finishWarmup()
+    await act(async () =>
+      root.render(<PresentedAgentMarkdown content={first + 'More text.'} isAnimating />)
+    )
+    expect(workers).toHaveLength(1)
+    expect(workers[0]!.messages.at(-1)?.source).toContain('More text.')
+  })
+
+  it('coalesces pending text, keeps making progress, and renders the latest complete snapshot', async () => {
+    const first = 'Scientific prose. '.repeat(2000)
+    await act(async () => root.render(<PresentedAgentMarkdown content={first} isAnimating />))
+    await finishWarmup()
+    for (const tail of ['one', 'one two', 'one two three']) {
+      await act(async () =>
+        root.render(<PresentedAgentMarkdown content={first + tail} isAnimating />)
+      )
+    }
+    const worker = workers[0]!
+    expect(worker.messages).toHaveLength(1)
+    await act(async () => worker.complete(0))
+    expect(container.textContent).toContain('one')
+    expect(worker.messages).toHaveLength(2)
+    expect(worker.messages[1]!.source).toBe(first + 'one two three')
+    await act(async () => worker.complete(1))
+    expect(container.textContent).toBe(first + 'one two three')
+  })
+
+  it('flushes terminal text synchronously and ignores a late Worker result', async () => {
+    const first = 'Scientific prose. '.repeat(2000)
+    await act(async () => root.render(<PresentedAgentMarkdown content={first} isAnimating />))
+    await finishWarmup()
+    await act(async () =>
+      root.render(<PresentedAgentMarkdown content={first + 'pending'} isAnimating />)
+    )
+    const worker = workers[0]!
+    await act(async () => root.render(<PresentedAgentMarkdown content={first + 'final'} />))
+    expect(container.textContent).toBe(first + 'final')
+    expect(worker.terminated).toBe(true)
+    await act(async () => worker.complete())
+    expect(container.textContent).toBe(first + 'final')
+  })
+
+  it('discards pending branch text on replacement and releases the Worker on unmount', async () => {
+    const first = 'Scientific prose. '.repeat(2000)
+    await act(async () => root.render(<PresentedAgentMarkdown content={first} isAnimating />))
+    await finishWarmup()
+    await act(async () =>
+      root.render(<PresentedAgentMarkdown content={first + 'pending'} isAnimating />)
+    )
+    const worker = workers[0]!
+    await act(async () =>
+      root.render(<PresentedAgentMarkdown content="A different branch" isAnimating />)
+    )
+    expect(worker.terminated).toBe(false)
+    await act(async () => worker.complete())
+    expect(container.textContent).toBe('A different branch')
+    await act(async () =>
+      root.render(<PresentedAgentMarkdown content="A different branch continues" isAnimating />)
+    )
+    expect(workers).toHaveLength(1)
+    await act(async () => root.render(null))
+    expect(worker.terminated).toBe(true)
+  })
+
+  it('falls back to full current text when the Worker fails without retrying every update', async () => {
+    const first = 'Scientific prose. '.repeat(2000)
+    await act(async () => root.render(<PresentedAgentMarkdown content={first} isAnimating />))
+    await finishWarmup()
+    await act(async () =>
+      root.render(<PresentedAgentMarkdown content={first + 'pending'} isAnimating />)
+    )
+    const worker = workers[0]!
+    await act(async () => worker.onerror?.(new ErrorEvent('error')))
+    expect(container.textContent).toBe(first + 'pending')
+    await act(async () =>
+      root.render(<PresentedAgentMarkdown content={first + 'pending more'} isAnimating />)
+    )
+    expect(container.textContent).toBe(first + 'pending more')
+    expect(workers).toHaveLength(1)
+  })
+
+  it('leaves inexpensive streaming synchronous', async () => {
+    parseCost = 0
+    await act(async () => root.render(<PresentedAgentMarkdown content="Short text" isAnimating />))
+    await act(async () =>
+      root.render(<PresentedAgentMarkdown content="Short text continues" isAnimating />)
+    )
+    expect(container.textContent).toBe('Short text continues')
+    expect(workers).toHaveLength(1)
+    expect(workers[0]!.messages.map((message) => message.source)).toEqual([''])
+  })
+
+  it('keeps rendering when parser initialization times out', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      await act(async () =>
+        root.render(<PresentedAgentMarkdown content="Initial text" isAnimating />)
+      )
+      await act(async () =>
+        root.render(<PresentedAgentMarkdown content="Initial text grows" isAnimating />)
+      )
+      expect(container.textContent).toBe('Initial text grows')
+      await act(async () => vi.advanceTimersByTime(5001))
+      await act(async () =>
+        root.render(<PresentedAgentMarkdown content="Initial text grows again" isAnimating />)
+      )
+      expect(container.textContent).toBe('Initial text grows again')
+      expect(workers).toHaveLength(1)
+      expect(workers[0]!.terminated).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('recovers from a Worker that never replies', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const first = 'Scientific prose. '.repeat(2000)
+      await act(async () => root.render(<PresentedAgentMarkdown content={first} isAnimating />))
+      await finishWarmup()
+      await act(async () =>
+        root.render(<PresentedAgentMarkdown content={first + 'pending'} isAnimating />)
+      )
+      await act(async () => vi.advanceTimersByTime(5001))
+      expect(container.textContent).toBe(first + 'pending')
+      expect(workers[0]!.terminated).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('shares one Worker across blocks and keeps a surviving owner after another unmounts', async () => {
+    const first = 'First response. '.repeat(2000)
+    const second = 'Second response. '.repeat(2000)
+    await act(async () =>
+      root.render(
+        <>
+          <PresentedAgentMarkdown key="a" content={first} isAnimating />
+          <PresentedAgentMarkdown key="b" content={second} isAnimating />
+        </>
+      )
+    )
+    await finishWarmup()
+    await act(async () =>
+      root.render(
+        <>
+          <PresentedAgentMarkdown key="a" content={first + 'pending A'} isAnimating />
+          <PresentedAgentMarkdown key="b" content={second + 'pending B'} isAnimating />
+        </>
+      )
+    )
+    expect(workers).toHaveLength(1)
+    const worker = workers[0]!
+    expect(worker.messages).toHaveLength(1)
+    await act(async () =>
+      root.render(<PresentedAgentMarkdown key="b" content={second + 'pending B'} isAnimating />)
+    )
+    expect(worker.terminated).toBe(false)
+    await act(async () => worker.complete(0))
+    expect(worker.messages).toHaveLength(2)
+    await act(async () => worker.complete(1))
+    expect(container.textContent).toBe(second + 'pending B')
   })
 })

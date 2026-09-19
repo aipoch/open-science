@@ -14,5 +14,8 @@
     "src/main/uploads/atomic-no-replace-publisher.ts",
     "src/main/storage/remote-data-root.ts",
     "src/main/uploads/atomic-no-replace-publisher.test.ts"
+  ],
+  "src/renderer/src/components/streamdown/markdown-parser.worker.ts": [
+    "src/renderer/src/components/streamdown/markdown-parser.ts"
   ]
 }
