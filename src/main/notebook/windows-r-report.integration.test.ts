@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { expect, it } from 'vitest'
 import {
@@ -46,9 +46,23 @@ it.skipIf(process.platform !== 'win32' || !rscript)(
     try {
       // The same executable must work when its conda DLL directory is supplied explicitly. This
       // separates a broken installation from the production environment construction under test.
-      const controlPrefix = resolve(dirname(rscript!), '../../../..')
+      const executableDirectory = dirname(rscript!)
+      const bin =
+        basename(executableDirectory).toLowerCase() === 'x64'
+          ? dirname(executableDirectory)
+          : executableDirectory
+      const home = dirname(bin)
+      const controlPrefix =
+        basename(home).toLowerCase() === 'r' && basename(dirname(home)).toLowerCase() === 'lib'
+          ? dirname(dirname(home))
+          : undefined
       const control = await run(rscript!, args, {
-        env: { ...env, PATH: condaActivatedPath(controlPrefix, process.env.PATH) },
+        env: {
+          ...env,
+          PATH: controlPrefix
+            ? `${join(controlPrefix, 'Library', 'bin')};${process.env.PATH ?? ''}`
+            : process.env.PATH
+        },
         cwd: root,
         windowsHide: true,
         timeout: 15_000

@@ -775,6 +775,7 @@
       "src/main/notebook/windows-micromamba-runner.test.ts",
       "src/main/notebook/windows-path-access.integration.test.ts",
       "src/main/notebook/windows-r-conda-discovery.integration.test.ts",
+      "src/main/notebook/windows-r-report.integration.test.ts",
       "src/main/notebook/windows-repl-termination.integration.test.ts",
       "src/main/notebook/windows-shell.integration.test.ts",
       "src/main/notebook/working-file-observer.performance.test.ts",

@@ -292,6 +292,7 @@
       "src/main/notebook/windows-first-r-access.integration.test.ts",
       "src/main/notebook/windows-path-access.integration.test.ts",
       "src/main/notebook/windows-r-conda-discovery.integration.test.ts",
+      "src/main/notebook/windows-r-report.integration.test.ts",
       "src/main/notebook/windows-repl-termination.integration.test.ts",
       "src/main/notebook/windows-shell.integration.test.ts",
       "src/main/notebook/wsl-setup-powershell.integration.test.ts",
