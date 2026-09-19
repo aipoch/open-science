@@ -686,6 +686,22 @@ export function hasTableEvidence(table, caption, pageItems = []) {
     })
     if (crossed.length >= 2 && crossed.length >= lines.length * 0.6) return false
   }
+  // A detector can split a long paragraph into one populated cell per row
+  // while leaving the neighboring model column empty. Without a caption or
+  // measured values this is unstructured page prose, not a table.
+  if (
+    !caption &&
+    table.issues.includes('text-crosses-crop-boundary') &&
+    table.grid.length >= 8 &&
+    table.grid.filter((row) => row.filter((text) => text.trim()).length === 1).length >=
+      table.grid.length * 0.75 &&
+    table.grid.filter(
+      (row) => row.filter((text) => text.trim()).length === 1 && words(row.join(' ')) >= 4
+    ).length >=
+      table.grid.length * 0.75 &&
+    !table.grid.some((row) => row.some(measurement))
+  )
+    return false
   const proseRecords = table.grid.filter((row) => row.filter((text) => text.trim()).length >= 2)
   const dividedProse =
     proseRecords.length >= 2 &&

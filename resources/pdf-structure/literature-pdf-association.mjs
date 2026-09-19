@@ -93,6 +93,56 @@ const boundByExternalParagraphs = (rect, bounds, lines) => {
   return rect
 }
 
+// Compact vector flowcharts are often encoded as dozens of separate border
+// paths, so the generic nearest-graphic matcher sees only disconnected strokes.
+// An explicit flowchart caption supplies enough evidence to join nearby boxes
+// and connectors into one crop.
+function associateFlowchart(page, captions, tableRects) {
+  for (const caption of captions.filter(
+    (candidate) =>
+      candidate.page === page.pageNumber &&
+      captionKind(candidate.lines[0]) === 'figure' &&
+      /\b(?:flowchart|flow diagram|CONSORT)\b/i.test(candidate.lines.join(' '))
+  )) {
+    const paths = (page.graphicsBounds ?? [])
+      .filter((graphic) => graphic.kind === 'path')
+      .map((graphic) =>
+        graphic.normalizedRect.map((value, index) => value * (index % 2 ? page.height : page.width))
+      )
+      .filter(
+        (rect) =>
+          rect[3] <= caption.rect[1] &&
+          rect[1] >= caption.rect[1] - page.height * 0.45 &&
+          rect[2] - rect[0] >= 2 &&
+          rect[3] - rect[1] >= 2 &&
+          rect[2] >= caption.rect[0] - 24 &&
+          rect[0] <= caption.rect[2] + 24 &&
+          !tableRects.some((table) => intersection(table, rect) > 0)
+      )
+    if (paths.length < 12) continue
+    const bounds = union(paths)
+    if (
+      page.lines.some(
+        (line) =>
+          line.text.length > 80 && intersection(lineRect(line), bounds) / area(lineRect(line)) > 0.5
+      )
+    )
+      continue
+    const labels = page.lines.filter(
+      (line) =>
+        line.text.length < 80 && intersection(lineRect(line), bounds) / area(lineRect(line)) > 0.5
+    )
+    return [
+      {
+        caption,
+        rect: union([bounds, ...labels.map(lineRect)]),
+        graphicsCount: paths.length
+      }
+    ]
+  }
+  return undefined
+}
+
 export function associateFigures(page, candidates, tableRects = [], rules = []) {
   // Zero-advance PDF tagging tokens have no painted extent.
   page = {
@@ -140,6 +190,8 @@ export function associateFigures(page, candidates, tableRects = [], rules = []) 
     associateRuledFigurePlate(page, pageCaptions, tableRects, rules) ??
     associateStandaloneFigurePlate(page, pageCaptions, tableRects)
   if (standalone) return [standalone]
+  const flowchart = associateFlowchart(page, pageCaptions, tableRects)
+  if (flowchart) return flowchart
   const assigned = captions.map(() => [])
   // A numbered running author head establishes a page-furniture band. Some
   // publisher logos extend slightly below the text baseline or closing rule.
@@ -2046,6 +2098,26 @@ export function associateTableCaptions(page, tables, candidates, rules = []) {
           Math.abs(c[1] - rect[1]) < 24 &&
           c[3] > rect[1] &&
           c[3] <= rect[3]
+        // A caption in the neighboring newspaper column can sit just beyond
+        // this table's edge and look like a marginal title. If another table
+        // owns the caption's horizontal span, keep this marginal interpretation
+        // out of the choices so captions cannot jump across columns.
+        const sideCaptionHasHorizontalOwner =
+          sideCaption &&
+          tables.some((other, otherIndex) => {
+            if (otherIndex === tableIndex) return false
+            const otherRect = other.rect
+            const horizontalOverlap = Math.min(c[2], otherRect[2]) - Math.max(c[0], otherRect[0])
+            if (horizontalOverlap / Math.min(c[2] - c[0], otherRect[2] - otherRect[0]) < 0.5)
+              return false
+            const verticalGap =
+              c[3] <= otherRect[1]
+                ? otherRect[1] - c[3]
+                : c[1] >= otherRect[3]
+                  ? c[1] - otherRect[3]
+                  : 0
+            return verticalGap <= Math.max(24, c[3] - c[1] + 24)
+          })
         // A predicted crop may overlap only the bottom of an above-table title.
         // A full-width source rule below the title distinguishes crop padding
         // from a caption embedded in the data region.
@@ -2092,11 +2164,12 @@ export function associateTableCaptions(page, tables, candidates, rules = []) {
             )
           )
         })
-        return { caption, gap, overlap, blocked, ruledFooter }
+        return { caption, gap, overlap, blocked, ruledFooter, sideCaptionHasHorizontalOwner }
       })
       .filter(
-        ({ caption, gap, overlap, blocked, ruledFooter }) =>
+        ({ caption, gap, overlap, blocked, ruledFooter, sideCaptionHasHorizontalOwner }) =>
           gap >= 0 &&
+          !sideCaptionHasHorizontalOwner &&
           (ruledFooter ||
             gap <= 60 ||
             (tables.length === 1 && captions.length === 1 && gap <= page.height * 0.2)) &&

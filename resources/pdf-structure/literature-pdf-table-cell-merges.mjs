@@ -329,7 +329,9 @@ export function resolveTableCellMerges({
           (colSpan === resourceColumns.length &&
             rows
               .slice(row + 1, row + rowSpan)
-              .some((r) => r.section && r.origin === 'source-text')))
+              .some((r) => r.section && r.origin === 'source-text')) ||
+          (repairs.includes('complete-source-record-recovered') &&
+            repairs.includes('standalone-section-row-recovered')))
       )
         repairs.push('source-record-boundary-restored')
       else issues.add('span-conflicts-with-source-rows')

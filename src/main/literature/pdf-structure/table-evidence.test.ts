@@ -253,6 +253,25 @@ it('rejects two-column prose cut into artificial rows without discarding labelle
   ).toBe(true)
 })
 
+it('rejects an uncaptioned paragraph split into one populated cell per row', () => {
+  const table = {
+    grid: [
+      ['criteria for access to confidential data.', ''],
+      ['Funding: This study is funded by MRC UK.', ''],
+      ['The grant application was subject to peer-review.', ''],
+      ['The funders had no role in study design.', ''],
+      ['Competing interests: The authors have declared', ''],
+      ['that no competing interests exist.', ''],
+      ['Abbreviations: BC, Breast Cancer.', ''],
+      ['BCSS, Breast Cancer Support Society Segamat.', ''],
+      ['CBE, Clinical Breast Examination.', '']
+    ],
+    issues: ['text-crosses-crop-boundary']
+  }
+  expect(hasTableEvidence(table)).toBe(false)
+  expect(hasTableEvidence(table, { text: 'Table 1. Study characteristics' })).toBe(true)
+})
+
 it('rejects an article-info/abstract heading straddling the crop edge', () => {
   const table = {
     cropRect: [40, 441, 850, 734],
