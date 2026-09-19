@@ -227,9 +227,11 @@ describe('assertShellSearchScope with granted roots', () => {
       .replace(/^([A-Z]):\\/, (_, drive) => `/mnt/${drive.toLowerCase()}/`)
       .replace(/\\/g, '/')
 
-    // Should work on Windows with WSL2 path mapping
+    // Should work with WSL2 runtime binding
     await expect(
-      assertShellSearchScope(`ls ${wsl2Path}`, cwd, grantedRoots, 'win32')
+      assertShellSearchScope(`ls ${wsl2Path}`, cwd, grantedRoots, 'linux', undefined, {
+        kind: 'wsl2-bash'
+      })
     ).resolves.toBeUndefined()
   })
 })

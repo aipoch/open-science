@@ -285,15 +285,17 @@ export const assertShellSearchScope = async (
   cwd: string,
   grantedRoots: readonly GrantedLocalRoot[],
   platform: NodeJS.Platform = process.platform,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  runtimeBinding?: { kind: 'wsl2-bash' | 'powershell' | 'native-posix' }
 ): Promise<void> => {
   const root = await physicalPath(resolve(cwd))
   if (dirname(root) === root) return denied('the session cwd must not be a filesystem root')
   const check = async (path: string, state: State): Promise<void> => {
     if (!path || (!isAbsolute(path) && !state.cwd))
       return denied('the search directory cannot be resolved')
-    // For WSL2, map guest paths like /mnt/c/data to host paths like C:\data before validation
-    const mappedPath = mapWsl2GuestPathToHost(path, platform)
+    // For WSL2 only, map guest paths like /mnt/c/data to host paths like C:\data before validation
+    const isWsl2 = runtimeBinding?.kind === 'wsl2-bash'
+    const mappedPath = isWsl2 ? mapWsl2GuestPathToHost(path, 'win32') : path
     const target = resolve(state.cwd ?? root, mappedPath)
     const physicalTarget = await physicalPath(target)
 
