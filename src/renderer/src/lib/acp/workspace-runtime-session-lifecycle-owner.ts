@@ -552,7 +552,9 @@ const processContextOverflowRecovery = (
     void (async () => {
       let recoverySession = workspaceSession(sessionId)
       try {
-        const pending = recover(runtime, sessionId, { skipNativeCompaction: isSessionLost })
+        const pending = isSessionLost
+          ? recover(runtime, sessionId, { skipNativeCompaction: true })
+          : recover(runtime, sessionId)
         recoverySession = workspaceSession(sessionId)
         await pending
       } catch (error) {
