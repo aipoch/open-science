@@ -5,10 +5,8 @@ import { fieldChildren, withParsedNotebookSource, type Node } from './dependency
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 
 // Maps WSL2 guest paths (e.g. /mnt/c/data) to Windows host paths (e.g. C:\data).
-// Returns the input path unchanged if not a WSL2 /mnt mount or on non-Windows platforms.
-const mapWsl2GuestPathToHost = (guestPath: string, platform: NodeJS.Platform): string => {
-  if (platform !== 'win32') return guestPath
-
+// Returns the input path unchanged if not a WSL2 /mnt mount.
+const mapWsl2GuestPathToHost = (guestPath: string): string => {
   // Match /mnt/<drive-letter>/... pattern
   const match = /^\/mnt\/([a-z])(\/|$)/i.exec(guestPath)
   if (!match) return guestPath
@@ -295,7 +293,7 @@ export const assertShellSearchScope = async (
       return denied('the search directory cannot be resolved')
     // For WSL2 only, map guest paths like /mnt/c/data to host paths like C:\data before validation
     const isWsl2 = runtimeBinding?.kind === 'wsl2-bash'
-    const mappedPath = isWsl2 ? mapWsl2GuestPathToHost(path, 'win32') : path
+    const mappedPath = isWsl2 ? mapWsl2GuestPathToHost(path) : path
     const target = resolve(state.cwd ?? root, mappedPath)
     const physicalTarget = await physicalPath(target)
 
@@ -426,7 +424,7 @@ export const assertShellSearchScope = async (
             const dir = values.length === 1 && values[0] ? values[0] : undefined
             context.cwd =
               dir && context.cwd
-                ? resolve(context.cwd, isWsl2 ? mapWsl2GuestPathToHost(dir, 'win32') : dir)
+                ? resolve(context.cwd, isWsl2 ? mapWsl2GuestPathToHost(dir) : dir)
                 : undefined
           } else if (tool && searchTools.has(tool)) {
             if (values.some((value) => value === undefined))
