@@ -1286,7 +1286,11 @@ class NotebookExecutionOwner {
                 session.cwd
               )
             )
-          : (() => {
+          : (async () => {
+              const sourceFileAccessContext = await this.options.sourceFileAccessContext?.(
+                session,
+                queuedRun
+              )
               const releaseControlInvocation = mcpRpc?.beginControlInvocation?.({
                 turnId: runId,
                 controlInvocationGeneration,
@@ -1316,6 +1320,7 @@ class NotebookExecutionOwner {
                   kernelEpochId,
                   code: request.code,
                   kind: 'repl',
+                  ...(sourceFileAccessContext ? { sourceFileAccessContext } : {}),
                   cwd: session.cwd,
                   notebookSessionRoot: session.notebookSessionRoot,
                   inputRoot: this.inputRoot(session),

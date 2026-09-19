@@ -876,7 +876,9 @@
       "src/main/specialist/marketplace/service.test.ts",
       "src/main/specialist/package/release-certification.test.ts",
       "src/main/specialist/package/transaction.test.ts",
-      "src/main/settings/classification-settings.test.ts"
+      "src/main/settings/classification-settings.test.ts",
+      "src/main/notebook/dependency-analysis.repl.test.ts",
+      "src/main/notebook/managed-path-context.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

@@ -725,13 +725,14 @@ class NotebookRuntimeService {
           ...(interpreter ? { interpreter } : {})
         }),
       sourceFileAccessContext: (session, run) =>
-        (run.kernelKind === 'python' || run.kernelKind === 'r') &&
+        (run.kernelKind === 'python' || run.kernelKind === 'r' || run.kernelKind === 'repl') &&
         run.kernelEpochId &&
         this.dependencyAnalyzer.sourceFileAccessContext
           ? this.dependencyAnalyzer.sourceFileAccessContext({
               projectId: session.projectId,
               sessionId: session.sessionId,
               currentRunId: run.runId,
+              includeManagedEnvironment: true,
               language: run.kernelKind,
               environment: run.environment,
               kernelEpochId: run.kernelEpochId

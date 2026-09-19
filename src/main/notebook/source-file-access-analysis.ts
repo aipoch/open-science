@@ -1,4 +1,6 @@
 import type { NotebookLanguage } from '../../shared/notebook'
+import { managedEnvironmentIsReadOnly } from './managed-path-context'
+import { analyzeReplNotebookSource } from './dependency-analysis-repl'
 import { analyzePythonNotebookSource } from './dependency-analysis-python'
 import { analyzeRNotebookSource } from './dependency-analysis-r'
 import type {
@@ -7,12 +9,20 @@ import type {
 } from './dependency-analysis-types'
 
 const analyzeNotebookSourceFileAccess = async (
-  language: NotebookLanguage,
+  language: NotebookLanguage | 'repl',
   source: string,
   context?: NotebookSourceFileAccessContext
 ): Promise<NotebookSourceFileAccessAnalysis> => {
+  if (context?.managedEnvironment && !(await managedEnvironmentIsReadOnly(language, source))) {
+    context = { ...context, managedEnvironment: undefined }
+  }
   let activeContext: NotebookSourceFileAccessContext | undefined
-  const analyze = language === 'r' ? analyzeRNotebookSource : analyzePythonNotebookSource
+  const analyze =
+    language === 'repl'
+      ? analyzeReplNotebookSource
+      : language === 'r'
+        ? analyzeRNotebookSource
+        : analyzePythonNotebookSource
   const { facts: dependencyFacts, fileAccess } = await analyze(
     source,
     context,
@@ -23,6 +33,7 @@ const analyzeNotebookSourceFileAccess = async (
       ])
       activeContext = context
         ? {
+            managedEnvironment: context.managedEnvironment,
             staticStrings: context.staticStrings.filter(({ name }) => !shadowedNames.has(name)),
             staticCollections: context.staticCollections.filter(
               ({ name }) => !shadowedNames.has(name)
@@ -73,6 +84,7 @@ const analyzeNotebookSourceFileAccess = async (
   }
 
   const reasonCodes: NotebookSourceFileAccessAnalysis['reasonCodes'] = []
+  if (language === 'repl') activeContext = context
   const unresolvedPriorNames = new Set(dependencyFacts?.priorUsedNames ?? [])
   if (language === 'r') unresolvedPriorNames.delete('pi')
   for (const safeName of dependencyFacts?.safeCallNames ?? []) unresolvedPriorNames.delete(safeName)
