@@ -4264,7 +4264,8 @@ describe('notebook runtime service', () => {
           profileId: 'profile-1',
           distro: 'Ubuntu-22.04',
           user: 'researcher'
-        }
+        },
+        grantedRoots: []
       })
       expect(result).toEqual({
         stdout: 'partial output',

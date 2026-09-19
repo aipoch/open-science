@@ -1527,6 +1527,8 @@ class NotebookExecutionOwner {
       }
       // Fetch granted roots before registering the live run to avoid lifecycle leak if fetch fails
       const grantedRoots = (await this.options.getGrantedLocalRoots?.()) ?? []
+      // Recheck admission after async lookup - shutdown or revocation could have happened
+      this.assertShellAdmissionAvailable(session)
       this.liveShellRuns.set(runId, liveRun)
       const shellProcessRequest = {
         runId,
