@@ -479,11 +479,20 @@ const createProductionDelegatedWorkComposition = (
       // DelegateExecutionCleanupError with a cause: recursively check if the cause itself is
       // cleanup-pending. This handles wrapping by the execution layer where real cleanup failures
       // are wrapped with context but the root cause is still a cleanup-pending error.
-      // Without a cause, it's a direct cleanup-pending error; suppress during quit/update.
       if (error.cause !== undefined) {
         return isOnlyCleanupPending(error.cause)
       }
-      return true // No cause = cleanup-pending
+      // Without a cause, distinguish between legitimate cleanup-pending (suppressible during
+      // quit/update) and storage errors (must always propagate). Storage validation/read errors
+      // use specific messages that indicate corruption rather than unconfirmed process cleanup.
+      const message = error.message || ''
+      const isStorageError =
+        message.includes('Invalid delegated process ownership scope') ||
+        message.includes('could not be read')
+      if (isStorageError) {
+        return false // Storage corruption must propagate
+      }
+      return true // Cleanup-pending without storage error
     }
     if (error instanceof AggregateError && error.errors.length > 0) {
       return error.errors.every((e) => isOnlyCleanupPending(e))

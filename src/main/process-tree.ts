@@ -1185,6 +1185,15 @@ const scanForOwnedDescendants = async (
             hadIncomplete = true
             continue
           }
+          if (value === false) {
+            // false means the environment variable was not found. A normal /bin/sleep or other
+            // process may inherit the marker but it might not be readable by the native binding
+            // (e.g., the process exec'd and cleared its environment, or the marker is not in the
+            // environ snapshot). Treat this as incomplete evidence - we cannot prove the process
+            // is NOT a descendant just because we didn't find the marker.
+            hadIncomplete = true
+            continue
+          }
           if (value === marker) {
             found.push(proc.pid)
           }
