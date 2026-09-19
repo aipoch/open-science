@@ -15,7 +15,8 @@ const mapWsl2GuestPathToHost = (guestPath: string): string => {
   const remainder = guestPath.slice(`/mnt/${match[1]}`.length)
   // Convert forward slashes to backslashes for Windows
   const windowsPath = remainder.replace(/\//g, '\\')
-  return `${driveLetter}:${windowsPath}`
+  // Ensure absolute path: /mnt/c -> C:\, not C: (which is drive-relative)
+  return windowsPath ? `${driveLetter}:${windowsPath}` : `${driveLetter}:\\`
 }
 
 const denied = (reason: string): never => {

@@ -235,6 +235,13 @@ describe('assertShellSearchScope with granted roots', () => {
           kind: 'wsl2-bash'
         })
       ).resolves.toBeUndefined()
+
+      // Test that /mnt/c (drive root without path) is rejected unless granted
+      await expect(
+        assertShellSearchScope(`ls /mnt/c`, cwd, grantedRoots, 'linux', undefined, {
+          kind: 'wsl2-bash'
+        })
+      ).rejects.toThrow(/outside the session cwd/)
     }
   )
 
