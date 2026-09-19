@@ -1061,25 +1061,35 @@ const scanForOwnedDescendants = async (marker: string): Promise<number[] | undef
       if (hadPermissionDenied && found.length === 0) return undefined
       return found
     } else if (process.platform === 'darwin') {
-      // Use ps e to get environment variables (may be truncated for long env blocks)
-      const { spawnSync } = await import('node:child_process')
-      const result = spawnSync('ps', ['e', '-A', '-o', 'pid,command'], {
-        encoding: 'utf8',
-        timeout: 5000,
-        maxBuffer: 10 * 1024 * 1024
-      })
-      if (result.error || result.status !== 0) {
-        // ps failed — cannot prove absence
+      // Use native binding to read process environments reliably. The binding reads via
+      // KERN_PROCARGS2 sysctl, which may omit inherited environment for some Apple system
+      // executables, but is more complete than ps e (which truncates long environments).
+      try {
+        const binding = requireDarwinProcessBinding()
+        const table = binding.listDarwinProcesses()
+        if (!table) return undefined // Failed to list processes
+
+        let hadIncomplete = false
+
+        for (const proc of table.processes) {
+          const value = binding.getDarwinEnvironmentValue(proc.pid, PROCESS_TREE_OWNERSHIP_ENV)
+          if (value === null) {
+            // null means we couldn't read the environment (system process, permission denied, etc.)
+            hadIncomplete = true
+            continue
+          }
+          if (value === marker) {
+            found.push(proc.pid)
+          }
+        }
+
+        // If we had incomplete reads and found nothing, we cannot prove absence
+        if (hadIncomplete && found.length === 0) return undefined
+        return found
+      } catch {
+        // Binding unavailable or failed — cannot prove absence
         return undefined
       }
-      const lines = result.stdout.split('\n')
-      for (const line of lines) {
-        if (line.includes(`OPEN_SCIENCE_PROCESS_TREE_ID=${marker}`)) {
-          const match = line.trim().match(/^(\d+)/)
-          if (match) found.push(parseInt(match[1], 10))
-        }
-      }
-      return found
     }
   } catch {
     // Any unexpected error means the scan is unreliable
@@ -1130,28 +1140,30 @@ export const proveRecordedPosixLeaderGone = async (
   // An incomplete snapshot cannot prove absence: the recorded leader may simply be unreadable.
   if (!snapshot.complete) return 'blocked'
   if (!samePosixIdentity(recorded, snapshot.processes.get(leader.pid))) {
-    // The leader pid is absent or reused by an unrelated process. Before declaring the tree gone,
-    // verify the owned group (kill -0 against -pid) is also absent. If the group is still alive
-    // but the leader is gone, the numeric group id may have been reused — never signal a group
-    // that cannot be tied back to the recorded identity. (Mirrors notebook shell-ownership.)
+    // The leader pid is absent or reused by an unrelated process. This is cold recovery: the tree
+    // disappeared outside of our control. Before declaring the tree gone, verify the owned group
+    // (kill -0 against -pid) is also absent. If the group is still alive but the leader is gone,
+    // the numeric group id may have been reused — never signal a group that cannot be tied back
+    // to the recorded identity. (Mirrors notebook shell-ownership.)
     if (isProcessGroupAlive(leader.pid)) return 'blocked'
 
-    // Leader and its original group are both gone. If we have an ownership marker, scan the
-    // process table for any descendants that may have escaped to a new session but still carry
-    // the marker in their environment. The combination of group-absent + marker-scan-clean is
-    // sufficient: if a descendant daemonized (setsid), it left the group and would be found by
-    // the marker scan; if the group is gone and no marked descendants exist, cleanup succeeded.
+    // Leader and its original group are both gone. If we have an ownership marker, scan the process
+    // table for any descendants that may have escaped to a new session but still carry the marker.
+    // A positive scan (found descendants) blocks cleanup. However, a clean scan cannot prove all
+    // descendants are gone: a process can remove the marker from its environment, making it invisible
+    // to the scan while still alive and using the workspace. Cold recovery without reboot proof must
+    // remain blocked. (Reboot proof is checked by the caller before invoking this function.)
     if (marker) {
       const descendants = await scanForOwnedDescendants(marker)
       // undefined means incomplete scan (permission denied), cannot prove absence
       if (descendants === undefined) return 'blocked'
       // Found descendants with marker → definitely blocked
       if (descendants.length > 0) return 'blocked'
-      // Group gone + marker scan clean → sufficient proof even in cold recovery
+      // Clean scan in cold recovery → still blocked; marker can be scrubbed
     }
 
-    // Leader and group confirmed absent (and marker scan clean if marker provided)
-    return 'gone'
+    // Cold recovery without reboot proof: remain blocked even if leader+group are gone
+    return 'blocked'
   }
   // The exact recorded leader is still alive. Before signaling, verify it is still a process
   // group leader (pgid == pid). If the process called setpgid() after spawn, the numeric group

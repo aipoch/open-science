@@ -49,7 +49,7 @@ describe('Escaped descendant detection', () => {
     }
   }, 10000)
 
-  it('returns gone in cold recovery when leader is absent, group is absent, and marker scan is clean', async () => {
+  it('remains blocked in cold recovery even when leader, group, and marker scan are all clean', async () => {
     if (process.platform !== 'linux' && process.platform !== 'darwin') return
 
     const marker = `test-gone-${Date.now()}`
@@ -63,11 +63,12 @@ describe('Escaped descendant detection', () => {
 
     await new Promise((resolve) => proc.on('exit', resolve))
 
-    // Process is gone, group is gone, no descendants with marker found. The combination of
-    // group-absent + marker-scan-clean provides sufficient proof: if a descendant had daemonized
-    // (setsid), it would have left the group and be found by the marker scan.
+    // Process is gone, group is gone, no descendants with marker found. However, in cold recovery
+    // (where we did not actively terminate), a descendant could have removed the marker from its
+    // environment, making it invisible to the scan while still alive. Without reboot proof, remain
+    // blocked to prevent workspace deletion while processes may still use it.
     const outcome = await proveRecordedPosixLeaderGone({ pid, birthToken }, marker)
 
-    expect(outcome).toBe('gone')
+    expect(outcome).toBe('blocked')
   })
 })
