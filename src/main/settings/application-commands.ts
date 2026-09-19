@@ -43,6 +43,14 @@ import {
 import type { CallerContext } from '../caller-context'
 import type { SettingsService } from './service'
 import type {
+  ClassificationMutation,
+  ClassificationMutationResult,
+  ClassificationProbe,
+  ClassificationProbeResult,
+  ClassificationSnapshot
+} from '../../shared/classification'
+import type { ClassificationSettingsOwner } from './classification-settings'
+import type {
   SkillMarketplaceCatalogRequest,
   SkillMarketplaceDetailRequest
 } from '../../shared/skill-marketplace'
@@ -127,7 +135,9 @@ type CoreSettingsCommandStore = Pick<
   | 'setSubagentModel'
   | 'setVisionModel'
   | 'validateProvider'
->
+> & {
+  classification: Pick<ClassificationSettingsOwner, 'snapshot' | 'mutate' | 'probe'>
+}
 
 type StoreResult<Method extends keyof CoreSettingsCommandStore> =
   CoreSettingsCommandStore[Method] extends (...args: infer _Args) => infer Result
@@ -210,6 +220,11 @@ const settingsCoreApplicationCommands = Object.freeze({
     readonly [id: string],
     StoreResult<'getConnectorDetail'>
   >('settings:get-connector-detail'),
+  getClassification: defineApplicationCommand<
+    'settings:get-classification',
+    readonly [],
+    ClassificationSnapshot
+  >('settings:get-classification'),
   getPackageMirror: defineApplicationCommand<
     'settings:get-package-mirror',
     readonly [],
@@ -451,6 +466,16 @@ const settingsCoreApplicationCommands = Object.freeze({
     readonly [request: SetVisionModelRequest],
     StoreResult<'setVisionModel'>
   >('settings:set-vision-model'),
+  updateClassification: defineApplicationCommand<
+    'settings:update-classification',
+    readonly [request: ClassificationMutation],
+    ClassificationMutationResult
+  >('settings:update-classification'),
+  testClassification: defineApplicationCommand<
+    'settings:test-classification',
+    readonly [request: ClassificationProbe],
+    ClassificationProbeResult
+  >('settings:test-classification'),
   saveValidatedProvider: defineApplicationCommand<
     'settings:save-validated-provider',
     readonly [request: UpsertProviderRequest],
@@ -473,6 +498,7 @@ const settingsCoreApplicationCommandGroup = defineApplicationCommandGroup('setti
   settingsCoreApplicationCommands.detectCodex,
   settingsCoreApplicationCommands.detectOpencode,
   settingsCoreApplicationCommands.getConnectorDetail,
+  settingsCoreApplicationCommands.getClassification,
   settingsCoreApplicationCommands.getGitHubTokenStatus,
   settingsCoreApplicationCommands.getPackageMirror,
   settingsCoreApplicationCommands.getNotebookNetworkStatus,
@@ -527,6 +553,8 @@ const settingsCoreApplicationCommandGroup = defineApplicationCommandGroup('setti
   settingsCoreApplicationCommands.setSessionDetailsModel,
   settingsCoreApplicationCommands.setSubagentModel,
   settingsCoreApplicationCommands.setVisionModel,
+  settingsCoreApplicationCommands.updateClassification,
+  settingsCoreApplicationCommands.testClassification,
   settingsCoreApplicationCommands.saveValidatedProvider,
   settingsCoreApplicationCommands.validateProvider
 ] as const)
@@ -579,6 +607,10 @@ const registerCoreSettingsApplicationCommands = (
         dependencies.snapshotCommits.currentSnapshotAfter(dependencies.service.detectOpencode()),
       'settings:get-connector-detail': ({ args }) =>
         dependencies.service.getConnectorDetail(args[0]),
+      'settings:get-classification': ({ callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:get-classification')
+        return dependencies.service.classification.snapshot()
+      },
       'settings:get-github-token-status': ({ callerContext }) => {
         requireLocalCaller(callerContext, 'settings:get-github-token-status')
         return dependencies.service.getGitHubTokenStatus()
@@ -772,6 +804,14 @@ const registerCoreSettingsApplicationCommands = (
         dependencies.snapshotCommits.currentSnapshotAfter(
           dependencies.service.setVisionModel(readVisionModel(args[0]))
         ),
+      'settings:update-classification': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:update-classification')
+        return dependencies.service.classification.mutate(args[0])
+      },
+      'settings:test-classification': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:test-classification')
+        return dependencies.service.classification.probe(args[0])
+      },
       'settings:save-validated-provider': ({ args }) =>
         dependencies.snapshotCommits.projectAfter(
           dependencies.runtime.saveValidatedProvider(args[0])

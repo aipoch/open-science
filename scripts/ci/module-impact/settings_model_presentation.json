@@ -35,7 +35,9 @@
     "src/renderer/src/pages/settings/provider-icons.render.test.tsx",
     "src/renderer/src/pages/settings/provider-icons.tsx",
     "src/renderer/src/pages/settings/provider-key-security.ts",
-    "src/renderer/src/pages/settings/skill-marketplace-model.ts"
+    "src/renderer/src/pages/settings/skill-marketplace-model.ts",
+    "src/renderer/src/pages/settings/ClassificationPanel.tsx",
+    "src/renderer/src/pages/settings/ClassificationPanel.render.test.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/settings/AgentHomeImportView.tsx",
@@ -68,7 +70,8 @@
       "src/renderer/src/pages/settings/agent-panel-i18n.render.test.tsx",
       "src/renderer/src/pages/settings/model-panel-i18n.render.test.tsx",
       "src/renderer/src/pages/settings/provider-form-value.test.ts",
-      "src/renderer/src/pages/settings/provider-icons.render.test.tsx"
+      "src/renderer/src/pages/settings/provider-icons.render.test.tsx",
+      "src/renderer/src/pages/settings/ClassificationPanel.render.test.tsx"
     ],
     "contract": [],
     "consumer": [

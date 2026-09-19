@@ -536,7 +536,8 @@
       "src/main/specialist/package/release-certification.test.ts",
       "src/main/specialist/package/reported-regressions.test.ts",
       "src/main/specialist/package/transaction.test.ts",
-      "src/main/session-persistence/runtime-authority.test.ts"
+      "src/main/session-persistence/runtime-authority.test.ts",
+      "src/main/settings/classification-settings.test.ts"
     ]
   },
   "capabilityOverlays": [],

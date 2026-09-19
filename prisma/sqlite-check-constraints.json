@@ -73,7 +73,7 @@
     {
       "tableName": "SessionAuxiliaryTurnUsage",
       "name": "SessionAuxiliaryTurnUsage_source_check",
-      "expression": "\"source\" IN ('reviewer', 'side-chat', 'vision', 'session-details', 'host-llm', 'artifact-code-reconstruction', 'context-compaction')"
+      "expression": "\"source\" IN ('reviewer', 'side-chat', 'vision', 'session-details', 'host-llm', 'artifact-code-reconstruction', 'context-compaction', 'classification')"
     },
     {
       "tableName": "SessionAuxiliaryTurnUsage",

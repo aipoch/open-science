@@ -47,7 +47,8 @@ const contextTurn = (): TestContextTurn => {
 const setup = (
   imageInputCompatibility?: Pick<ImageInputCompatibilityOwner, 'prepare'>,
   memory?: { recallForPrompt(requestText: string): Promise<string | undefined> },
-  isMemoryEnabledForSession?: (sessionId: string) => boolean
+  isMemoryEnabledForSession?: (sessionId: string) => boolean,
+  classificationOptions: Partial<ConstructorParameters<typeof AcpPromptPreparationOwner>[0]> = {}
 ): Fixture => {
   const turn = contextTurn()
   const promptClose = vi.fn()
@@ -90,6 +91,7 @@ const setup = (
     presentation: new AcpSessionPresentationPolicy(),
     contextUsage,
     selectBridgeSkills: vi.fn(async () => []),
+    ...classificationOptions,
     authorizeReferencedUploads,
     memory,
     isMemoryEnabledForSession,
@@ -143,6 +145,7 @@ const setup = (
       specialistPrefix: 'Specialist identity.',
       projectId: 'project-1',
       fallbackPromptMessageId: 'prompt-fallback',
+      classificationEnabled: true,
       bridgeSkillsAvailable: true,
       skillImportEnabled: true,
       skillImportTurnToken: 'turn-1',
@@ -879,5 +882,132 @@ describe('AcpPromptPreparationOwner', () => {
 
     expect(fixture.promptClose).toHaveBeenCalledOnce()
     expect(fixture.releaseGrant).toHaveBeenCalledOnce()
+  })
+})
+
+describe('optional main-prompt classification', () => {
+  const catalog = [{ name: 'Research', description: 'Research', path: '/allowed/SKILL.md' }]
+  it.each(['selected', 'fallback', 'error', 'stale', 'reviewer', 'task'] as const)(
+    'handles %s without misattributing usage or applying stale results',
+    async (mode) => {
+      let current = true
+      const classifySkills = vi.fn(async (input) => {
+        input.observeUsage({
+          eventId: 'classification-1',
+          providerId: 'classification:account',
+          model: 'jev-1.13.0',
+          usage: { inputTokens: 12, outputTokens: 0, cacheTokens: 0, turnCount: 1 }
+        })
+        if (mode === 'stale') current = false
+        if (mode === 'error') throw new Error('classification unavailable')
+        return mode === 'fallback' ? undefined : [{ name: 'Research', path: '/allowed/SKILL.md' }]
+      })
+      const selectBridgeSkills = vi.fn(async () => [
+        { name: 'Fallback', path: '/allowed/Fallback/SKILL.md' }
+      ])
+      const recordClassificationUsage = vi.fn(async () => undefined)
+      const fixture = setup(undefined, undefined, undefined, {
+        classifySkills,
+        selectBridgeSkills,
+        recordClassificationUsage
+      })
+      const selected: unknown[] = []
+      fixture.turnSkill.prepareProvider.mockImplementationOnce(async (input) => {
+        selected.push(
+          await input.codex.selectSkills(
+            input.selectionText,
+            catalog,
+            input.codex.signal,
+            input.codex.observeUsage
+          )
+        )
+        return { text: 'prepared task', codexSkillInputs: [], skillRuntimeAllowlist: [] }
+      })
+      const result = await fixture.prepare({
+        isCurrent: () => current,
+        role: mode === 'reviewer' ? 'reviewer' : 'primary',
+        classificationEnabled: mode !== 'task'
+      })
+      expect(selectBridgeSkills).toHaveBeenCalledTimes(
+        mode === 'fallback' || mode === 'error' || mode === 'reviewer' || mode === 'task' ? 1 : 0
+      )
+      expect(classifySkills).toHaveBeenCalledTimes(mode === 'reviewer' || mode === 'task' ? 0 : 1)
+      expect(recordClassificationUsage).toHaveBeenCalledTimes(
+        mode === 'reviewer' || mode === 'task' ? 0 : 1
+      )
+      if (mode === 'stale') {
+        expect(result.status).toBe('cancelled')
+        expect(selected).toEqual([[]])
+      } else {
+        expect(result).toMatchObject({ status: 'ready' })
+        if (result.status === 'ready') expect(result.preDispatchModelCalls ?? []).toEqual([])
+        expect(selected).toEqual([
+          mode === 'selected'
+            ? [{ name: 'Research', path: '/allowed/SKILL.md' }]
+            : [{ name: 'Fallback', path: '/allowed/Fallback/SKILL.md' }]
+        ])
+      }
+      if (mode !== 'reviewer' && mode !== 'task')
+        expect(classifySkills.mock.calls[0][0].text).not.toContain('replayed history')
+    }
+  )
+
+  it('passes the whole catalog to the default selector with its original usage observer', async () => {
+    const unresolved = [
+      {
+        name: 'mcp-pubmed',
+        description: 'Search papers',
+        path: '/pubmed/SKILL.md',
+        source: 'connector' as const
+      }
+    ]
+    const selectBridgeSkills = vi.fn(async () => [
+      { name: unresolved[0].name, path: unresolved[0].path }
+    ])
+    const classifySkills = vi.fn(async () => undefined)
+    const fixture = setup(undefined, undefined, undefined, { classifySkills, selectBridgeSkills })
+    fixture.turnSkill.prepareProvider.mockImplementationOnce(async (input) => {
+      const selected = await input.codex.selectSkills(
+        input.selectionText,
+        [...catalog, ...unresolved],
+        input.codex.signal,
+        input.codex.observeUsage
+      )
+      expect(selected).toEqual([{ name: unresolved[0].name, path: unresolved[0].path }])
+      expect(selectBridgeSkills).toHaveBeenCalledExactlyOnceWith(
+        input.selectionText,
+        [...catalog, ...unresolved],
+        input.codex.signal,
+        input.codex.observeUsage
+      )
+      return { text: 'prepared task', codexSkillInputs: [], skillRuntimeAllowlist: [] }
+    })
+    expect(await fixture.prepare()).toMatchObject({ status: 'ready' })
+    expect(classifySkills).toHaveBeenCalledOnce()
+  })
+
+  it('uses the existing selector when no classification service is configured', async () => {
+    const selectBridgeSkills = vi.fn(async () => [
+      { name: 'Fallback', path: '/allowed/Fallback/SKILL.md' }
+    ])
+    const fixture = setup(undefined, undefined, undefined, { selectBridgeSkills })
+    const selected: unknown[] = []
+    fixture.turnSkill.prepareProvider.mockImplementationOnce(async (input) => {
+      selected.push(
+        await input.codex.selectSkills(
+          input.selectionText,
+          catalog,
+          input.codex.signal,
+          input.codex.observeUsage
+        )
+      )
+      return { text: 'prepared task', codexSkillInputs: [], skillRuntimeAllowlist: [] }
+    })
+
+    const result = await fixture.prepare({ classificationEnabled: true })
+
+    expect(result).toMatchObject({ status: 'ready' })
+    expect(selectBridgeSkills).toHaveBeenCalledOnce()
+    expect(selected).toEqual([[{ name: 'Fallback', path: '/allowed/Fallback/SKILL.md' }]])
   })
 })

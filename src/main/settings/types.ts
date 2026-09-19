@@ -1,3 +1,24 @@
+import type { ClassificationAdapter, ClassificationBinding } from '../../shared/classification'
+type StoredClassificationService = {
+  id: string
+  adapter: ClassificationAdapter
+  name: string
+  /** Stored catalog; actual selectable models are validated against the shared catalog. */
+  models: string[]
+  keyRef?: string
+  providerId?: string
+  /** Non-secret display hint for the configured key. */
+  keyMask?: string
+}
+type StoredClassificationBinding = ClassificationBinding & { modelId?: string }
+export type StoredClassificationSettings = {
+  revision: number
+  services: StoredClassificationService[]
+  capabilitySelection?: ClassificationBinding
+  /** Read compatibility for the unreleased two-binding configuration. */
+  skillSelection?: StoredClassificationBinding
+  connectorSelection?: StoredClassificationBinding
+}
 import type {
   AppIconVariant,
   ChatApiEndpoint,
@@ -212,6 +233,7 @@ export type StoredCodexInfo = CodexInfo & {
 // The whole settings.json document.
 export type StoredSettings = {
   version: typeof SETTINGS_FILE_VERSION
+  classification?: StoredClassificationSettings
   claude?: ClaudeInfo
   // Selected agent backend. Absent means the default (Claude Code). Switching needs a reconnect.
   agentFrameworkId?: AgentFrameworkId

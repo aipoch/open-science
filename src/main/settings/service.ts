@@ -1,3 +1,4 @@
+import { ClassificationSettingsOwner } from './classification-settings'
 import { ProviderRuntimeHealthOwner } from './provider-runtime-health-owner'
 import { ClaudeCodeSkillMaterializer } from '../skills/materializer'
 import type { SpecialistListItem } from '../../shared/specialist'
@@ -429,6 +430,7 @@ class SettingsService {
     }
   }
 
+  readonly classification: ClassificationSettingsOwner
   private readonly repository: SettingsRepository
   private readonly preferences: SettingsPreferencesModule
   private readonly notebookRuntimeSettings: NotebookRuntimeSettingsModule
@@ -487,6 +489,7 @@ class SettingsService {
     this.configRoot = options.configRoot ?? resolveConfigRoot()
     this.installCoordinator = options.installCoordinator ?? new SettingsInstallCoordinator()
     this.repository = options.repository ?? new SettingsRepository(this.configRoot)
+    this.classification = new ClassificationSettingsOwner(this.repository)
     this.networkProxy = new NetworkProxySettingsOwner({
       repository: this.repository,
       apply: options.applyNetworkProxy ?? (async () => undefined)

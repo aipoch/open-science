@@ -343,6 +343,7 @@ describe('Settings backend ownership architecture', () => {
       'markLegacyDataMovePromptDismissed',
       'markOnboardingComplete',
       'markPathsNormalized',
+      'mutateClassification',
       'publishBootstrapOpenAlex',
       'publishBootstrapProvider',
       'rememberCodexAutoHttpsFallback',
@@ -477,7 +478,7 @@ describe('Settings backend ownership architecture', () => {
     expect(publicOperationsOf(settingsPaths.service, 'SettingsService')).toEqual(
       `
         addCustomServer addManualInterpreter admitReviewerExecutionModel admitSessionDetailsExecutionTarget admitSubagentExecutionModel admitVisionModel allowNotebookNetworkDomain authenticateCustomServer authenticateDeviceCredential bootstrap buildCustomServerTemplateExport
-        buildSkillExport beginXaiOAuthLogin cancelClaudeIsolatedLogin cancelClaudeLogin cancelCodexLogin cancelCustomServerAuthentication cancelDeviceCredentialAuthentication cancelXaiOAuthLogin captureActiveAgentBackendSelection captureActiveExplicitAgentBackendTarget checkEnvironment clearGrantedLocalRoots codeBuddySkillCatalog codexSkillCatalog
+        buildSkillExport beginXaiOAuthLogin cancelClaudeIsolatedLogin cancelClaudeLogin cancelCodexLogin cancelCustomServerAuthentication cancelDeviceCredentialAuthentication cancelXaiOAuthLogin captureActiveAgentBackendSelection captureActiveExplicitAgentBackendTarget checkEnvironment classification clearGrantedLocalRoots codeBuddySkillCatalog codexSkillCatalog
         codexSkillDescriptorsForIds createDeviceCredential createSkill deleteProvider deleteSkill detectClaude detectCodeBuddy detectCodex
         detectOpencode deviceCredentialConsumerIds deviceCredentialIdForServer disconnectCustomServer disconnectDeviceCredential dismissLegacyDataMovePrompt getActiveInstallId getAgentEnvironmentCreationEnabled getAppIconVariant getClosePreference
         getComputeBookmarks getConnectorDetail getConnectors getConversationSkillImportEnabled getGitHubTokenStatus getGrantedLocalRoots getLocalShellRuntimePreference getManualInterpreters getNotebookNetwork getNotebookNetworkStatus getNotificationsEnabled getPackageMirror
@@ -512,6 +513,7 @@ describe('Settings backend ownership architecture', () => {
       'src/main/ipc.ts',
       'src/main/locale/owner.ts',
       'src/main/settings/agent-runtime-manager.ts',
+      'src/main/settings/classification-settings.ts',
       'src/main/settings/compute-grant-port.ts',
       'src/main/settings/connector-settings.ts',
       'src/main/settings/network-proxy-settings-owner.ts',
@@ -675,6 +677,7 @@ describe('Settings backend ownership architecture', () => {
       'agentEnvironmentCreationEnabled',
       'agentFrameworkId',
       'appIconVariant',
+      'classification',
       'claude',
       'claudeSubscriptionProviderId',
       'closePreference',
@@ -835,7 +838,8 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/record-codec.test.ts',
       'src/main/settings/repository.test.ts',
       'src/main/settings/document-read-error.ts',
-      'src/main/settings/document-shape.ts'
+      'src/main/settings/document-shape.ts',
+      'src/main/settings/classification-config.ts'
     ])
     expect(manifest.modules.settings_repository.interfacePaths).toEqual([
       'src/main/settings/repository.ts',
@@ -977,7 +981,9 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/service.connectors.test.ts',
       'src/main/settings/service.providers.test.ts',
       'src/main/settings/service.test.ts',
-      'src/main/settings/settings-snapshot-commit-owner.test.ts'
+      'src/main/settings/settings-snapshot-commit-owner.test.ts',
+      'src/main/settings/classification-settings.ts',
+      'src/main/settings/classification-settings.test.ts'
     ])
     expect(manifest.modules.settings_service_facade.interfacePaths).toEqual([
       'src/main/settings/service.ts',
@@ -1475,7 +1481,8 @@ describe('Settings backend ownership architecture', () => {
       'src/main/delegation/process-ownership.test.ts',
       'src/main/process-tree.windows.integration.test.ts',
       'src/main/delegation/frame-workspace.test.ts',
-      'src/main/acp/agent-process.test.ts'
+      'src/main/acp/agent-process.test.ts',
+      'src/main/settings/classification-settings.test.ts'
     ])
     expect(
       [

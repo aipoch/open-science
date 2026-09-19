@@ -78,7 +78,9 @@
     "src/main/database/sqlite-schema-migrations.ts",
     "src/main/database/startup-diagnostics.test.ts",
     "src/main/database/startup-diagnostics.ts",
-    "src/main/database/tag-ordering-migration.test.ts"
+    "src/main/database/tag-ordering-migration.test.ts",
+    "src/main/database/migrations/0042-classification-usage.ts",
+    "src/main/database/classification-usage.test.ts"
   ],
   "interfacePaths": [
     "src/main/database/database-startup-ipc.ts",
@@ -118,7 +120,8 @@
       "src/main/database/project-archive-revision.test.ts",
       "src/main/database/project-session-defaults-migration.test.ts",
       "src/main/database/startup-diagnostics.test.ts",
-      "src/main/database/tag-ordering-migration.test.ts"
+      "src/main/database/tag-ordering-migration.test.ts",
+      "src/main/database/classification-usage.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

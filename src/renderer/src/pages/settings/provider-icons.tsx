@@ -25,6 +25,7 @@ import kimiLogo from '@/assets/provider-icons/kimi.svg'
 import openrouterLogo from '@/assets/provider-icons/openrouter.svg'
 import xiaomimimoLogo from '@/assets/provider-icons/xiaomimimo.svg'
 import sensenovaLogo from '@/assets/provider-icons/sensenova.svg'
+import typesafeLogo from '@/assets/provider-icons/typesafe.svg'
 import volcengineLogo from '@/assets/provider-icons/volcengine.svg'
 import type { OfficialVendorId } from '../../../../shared/provider-registry'
 import type { AgentFrameworkId } from '../../../../shared/settings'
@@ -48,6 +49,10 @@ export const AgentFrameworkIcon = ({
   }
   return <Codex size={size} className={cn('text-foreground', className)} />
 }
+
+export const TypeSafeIcon = ({ className }: { className?: string }): React.JSX.Element => (
+  <img src={typesafeLogo} alt="" className={cn('size-3 shrink-0 object-contain', className)} />
+)
 
 // Official vendor brand marks, bundled as assets. Providers from the same vendor share one mark:
 // Bailian and Bailian for Plan, Kimi and Kimi For Coding, Zhipu and GLM Coding Plan, and StepFun and

@@ -84,7 +84,8 @@ describe('Content blob migration', () => {
         '0038_literature_search_text',
         '0039_literature_metadata_commit_receipt',
         '0040_literature_collection_revision',
-        '0041_bookmarks'
+        '0041_bookmarks',
+        '0042_classification_usage'
       ]
     })
     await expect(
@@ -170,10 +171,11 @@ describe('Content blob migration', () => {
                 '0038_literature_search_text',
                 '0039_literature_metadata_commit_receipt',
                 '0040_literature_collection_revision',
-                '0041_bookmarks'
+                '0041_bookmarks',
+                '0042_classification_usage'
               ],
         from: schema === 'pre-ledger' ? null : '0029_compute_host_execution_mode',
-        to: '0041_bookmarks'
+        to: '0042_classification_usage'
       })
 
       await expect(

@@ -24,7 +24,7 @@ for (const layout of ['restored', 'maximized', 'mobile'] as const) {
       await trigger.click()
       if (layout === 'maximized') await page.getByRole('button', { name: 'Maximize' }).click()
       // Start inside content: Escape on an autofocus-opened tooltip dismisses that layer first.
-      await page.getByRole('tab', { name: 'Agent models', exact: true }).focus()
+      await page.getByRole('tab', { name: 'Conversation models', exact: true }).focus()
       const surface = page.locator('[data-slot="settings-surface"]')
       await observeExit(surface)
       if (closeWith === 'button') {

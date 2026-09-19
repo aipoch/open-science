@@ -219,6 +219,7 @@ export type AcpRuntimeCallbacks = {
 }
 
 type AcpRuntimeOptions = {
+  classifySkills?: import('../../shared/classification').ClassifySkills
   hasPendingCredentialRequest?: (sessionId: string) => boolean
   appVersion: string
   defaultCwd: string

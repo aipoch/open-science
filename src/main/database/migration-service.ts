@@ -1,3 +1,4 @@
+import { classificationUsageMigration } from './migrations/0042-classification-usage'
 import { literatureCollectionRevisionMigration } from './migrations/0040-literature-collection-revision'
 import { bookmarksMigration } from './migrations/0041-bookmarks'
 import {
@@ -511,6 +512,11 @@ const NUMERIC_AND_NULL_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints = Ob
     Object.fromEntries(constraints.map(({ name, expression }) => [name, expression]))
   ])
 )
+const CLASSIFICATION_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints = {
+  SessionAuxiliaryTurnUsage: {
+    SessionAuxiliaryTurnUsage_source_check: `"source" IN ('reviewer', 'side-chat', 'vision', 'session-details', 'host-llm', 'artifact-code-reconstruction', 'context-compaction', 'classification')`
+  }
+}
 const mergeAllowedSuffixChecks = (
   ...contracts: readonly AllowedSuffixCheckConstraints[]
 ): AllowedSuffixCheckConstraints => {
@@ -813,6 +819,17 @@ const MIGRATION_MANIFEST = [
       bookmarksMigration.statements,
       bookmarksMigration.verifiers,
       bookmarksMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...classificationUsageMigration,
+    checksum: checksumMigrationPayload(
+      classificationUsageMigration.id,
+      classificationUsageMigration.statements,
+      classificationUsageMigration.verifiers,
+      classificationUsageMigration.operations
     ),
     backupOnApply: 'required',
     backupRetention: 'retain'
@@ -1228,7 +1245,10 @@ const verifyCurrentApplicationSchema = async (client: PrismaClient): Promise<voi
   await runMigrationVerifiers(
     client,
     sessionAuxiliaryTurnUsageMigration.verifiers,
-    NUMERIC_AND_NULL_ALLOWED_SUFFIX_CHECKS
+    mergeAllowedSuffixChecks(
+      NUMERIC_AND_NULL_ALLOWED_SUFFIX_CHECKS,
+      CLASSIFICATION_ALLOWED_SUFFIX_CHECKS
+    )
   )
   await runMigrationVerifiers(client, sessionUsageAttributionMigration.verifiers)
   await runMigrationVerifiers(client, computeJobAnalysisStateMigration.verifiers)
@@ -1784,10 +1804,12 @@ const applyManifestMigration = async (
   const currentTableNames = new Set(adapted.currentTableNames)
   // An unledgered current schema can already carry 0028's stronger CHECKs. Accept that exact
   // immutable suffix while verifying older steps, so their ALTERs are not replayed over it.
-  const allowedCheckUpgrades =
+  const allowedCheckUpgrades = mergeAllowedSuffixChecks(
     migration.id < numericAndNullConstraintsMigration.id
       ? NUMERIC_AND_NULL_ALLOWED_SUFFIX_CHECKS
-      : {}
+      : {},
+    migration.id < classificationUsageMigration.id ? CLASSIFICATION_ALLOWED_SUFFIX_CHECKS : {}
+  )
   const verifyMigrationTarget = async (targetClient: PrismaClient): Promise<void> => {
     if (
       migration.id === literatureFoundationMigration.id &&
@@ -2159,7 +2181,10 @@ const migrateApplicationDatabaseWithManifest = async (
     adoptsCrossResourceTags ? CROSS_RESOURCE_TAGS_ALLOWED_SUFFIX_CHECKS : {},
     adoptsAgentMemoryProjectScope ? AGENT_MEMORY_PROJECT_SCOPE_ALLOWED_SUFFIX_CHECKS : {},
     adoptsSessionAuxiliaryTurnUsage ? SESSION_AUXILIARY_TURN_USAGE_ALLOWED_SUFFIX_CHECKS : {},
-    adoptsComputeJobOperation ? COMPUTE_JOB_OPERATION_ALLOWED_SUFFIX_CHECKS : {}
+    adoptsComputeJobOperation ? COMPUTE_JOB_OPERATION_ALLOWED_SUFFIX_CHECKS : {},
+    manifest.some((entry) => entry.id === classificationUsageMigration.id)
+      ? CLASSIFICATION_ALLOWED_SUFFIX_CHECKS
+      : {}
   )
 
   let nextIndex = appliedCount

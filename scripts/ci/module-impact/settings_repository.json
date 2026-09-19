@@ -17,7 +17,8 @@
     "src/main/settings/record-codec.test.ts",
     "src/main/settings/repository.test.ts",
     "src/main/settings/document-read-error.ts",
-    "src/main/settings/document-shape.ts"
+    "src/main/settings/document-shape.ts",
+    "src/main/settings/classification-config.ts"
   ],
   "interfacePaths": [
     "src/main/settings/repository.ts",
@@ -239,7 +240,8 @@
       "src/main/specialist/marketplace/service.test.ts",
       "src/main/specialist/package/release-certification.test.ts",
       "src/main/specialist/package/reported-regressions.test.ts",
-      "src/main/specialist/package/transaction.test.ts"
+      "src/main/specialist/package/transaction.test.ts",
+      "src/main/settings/classification-settings.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

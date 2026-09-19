@@ -121,7 +121,8 @@
     "src/shared/window-controls.test.ts",
     "src/shared/window-controls.ts",
     "src/shared/wsl-setup.ts",
-    "src/shared/config-root.ts"
+    "src/shared/config-root.ts",
+    "src/shared/classification.ts"
   ],
   "interfacePaths": [
     "src/shared/__fixtures__/skill-marketplace.ts",

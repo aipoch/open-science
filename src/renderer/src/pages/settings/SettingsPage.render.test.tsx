@@ -477,6 +477,7 @@ const installCustomProviderSnapshot = (): ProviderView => {
 
 describe('SettingsPage layout', () => {
   it('retains model tab DOM across model routes and navigation Back', async () => {
+    window.api.settings.getClassification = vi.fn().mockResolvedValue({ revision: 0, services: [] })
     window.api.localModels = {
       getSnapshot: vi.fn().mockResolvedValue({
         availability: 'notInstalled',

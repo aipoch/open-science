@@ -1,3 +1,10 @@
+import type {
+  ClassificationSnapshot,
+  ClassificationMutation,
+  ClassificationMutationResult,
+  ClassificationProbe,
+  ClassificationProbeResult
+} from './classification'
 import type { MessageSearchRequest, MessageSearchPage } from './message-search'
 import type {
   SkillMarketplaceCatalog,
@@ -2277,6 +2284,16 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'settings.setNcbiCredentials': callable<
     (request: SetNcbiCredentialsRequest) => Promise<ConnectorsSnapshot>
   >()('settings', ['settings:set-ncbi-credentials']),
+  'settings.getClassification': callable<() => Promise<ClassificationSnapshot>>()('settings', [
+    'settings:get-classification',
+    LOCAL
+  ]),
+  'settings.updateClassification': callable<
+    (request: ClassificationMutation) => Promise<ClassificationMutationResult>
+  >()('settings', ['settings:update-classification', LOCAL]),
+  'settings.testClassification': callable<
+    (request: ClassificationProbe) => Promise<ClassificationProbeResult>
+  >()('settings', ['settings:test-classification', LOCAL]),
   'settings.setOpenAlexCredential': callable<
     (request: SetOpenAlexCredentialRequest) => Promise<ConnectorsSnapshot>
   >()('settings', ['settings:set-openalex-credential', LOCAL]),

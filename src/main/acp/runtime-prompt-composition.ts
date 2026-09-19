@@ -158,6 +158,14 @@ const composeAcpRuntimePromptOwners = (
   }
 
   const promptPreparation = new AcpPromptPreparationOwner({
+    classifySkills: options.classifySkills,
+    recordClassificationUsage: async (record) => {
+      await options.auxiliaryUsage?.record({
+        ...record,
+        source: 'classification',
+        completedAtMs: Date.now()
+      })
+    },
     promptContent: base.promptContentOwner,
     imageInputCompatibility: options.imageInputCompatibility,
     presentation: base.sessionPresentationPolicy,

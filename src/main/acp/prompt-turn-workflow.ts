@@ -493,6 +493,11 @@ class AcpPromptTurnWorkflow {
         turn.plan.active ?? turn.plan.protectedPending ?? turn.plan.protectedRejected
       prepared = await preparation.prepare({
         request: preparationRequest,
+        classificationEnabled:
+          turn.mode.kind === 'user' &&
+          turn.mode.runtimeReviewOwner !== 'task' &&
+          !request.continuation &&
+          !request.suppressUserMessage,
         connectionGeneration: turn.connectionGeneration,
         backend,
         tooling: env.tooling(),

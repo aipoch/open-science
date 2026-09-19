@@ -1,3 +1,4 @@
+import type { ClassifySkills, ClassificationUsage } from '../../shared/classification'
 import type { ContentBlock } from '@agentclientprotocol/sdk'
 import { readFile } from 'node:fs/promises'
 
@@ -54,6 +55,10 @@ type AcpPromptPreparationOwnerOptions = Readonly<{
     | 'usage'
     | 'refreshUsage'
   >
+  classifySkills?: ClassifySkills
+  recordClassificationUsage?: (
+    input: ClassificationUsage & { projectId: string; sessionId: string; frameworkId: string }
+  ) => Promise<unknown>
   selectBridgeSkills: SelectBridgeSkills
   authorizeReferencedUploads?: (
     projectId: string,
@@ -85,6 +90,7 @@ type AcpPromptPreparationInput = Readonly<{
   sessionSetupPromptPrefix?: string
   projectId: string
   fallbackPromptMessageId?: string
+  classificationEnabled?: boolean
   bridgeSkillsAvailable: boolean
   skillImportEnabled: boolean
   skillImportTurnToken: string
@@ -239,6 +245,47 @@ class AcpPromptPreparationOwner {
           ...(Number.isSafeInteger(contextUsedTokens) ? { contextUsedTokens } : {})
         })
       }
+      let classifierAttempted = false
+      const selectSkills: SelectBridgeSkills = async (text, catalog, signal, observeUsage) => {
+        if (input.signal.aborted || !input.isCurrent()) return []
+        // Classification is an optional optimization layer. An absent result means
+        // that no usable decision was available (for example, no service, an error,
+        // a timeout, or an ambiguous response), so keep the existing selector as the
+        // source of truth for that turn.
+        if (
+          input.classificationEnabled &&
+          !classifierAttempted &&
+          (!input.role || input.role === 'primary') &&
+          this.options.classifySkills
+        ) {
+          classifierAttempted = true
+          const usage: ClassificationUsage[] = []
+          let classified
+          try {
+            classified = await this.options.classifySkills({
+              text,
+              catalog,
+              signal: input.signal,
+              observeUsage: (entry) => usage.push(entry)
+            })
+          } catch {
+            /* Optional classification never blocks the existing selector. */
+          }
+          for (const entry of usage) {
+            await this.options
+              .recordClassificationUsage?.({
+                ...entry,
+                projectId: input.projectId,
+                sessionId: input.request.sessionId,
+                frameworkId: input.backend.framework.id
+              })
+              .catch(() => undefined)
+          }
+          if (input.signal.aborted || !input.isCurrent()) return []
+          if (classified !== undefined) return classified
+        }
+        return this.options.selectBridgeSkills(text, catalog, signal, observeUsage)
+      }
       const skillPreparation = await input.turnSkill.prepareProvider({
         frameworkId: input.backend.framework.id,
         selectionText: [input.request.text, computeExecutionTargetReminder]
@@ -248,8 +295,7 @@ class AcpPromptPreparationOwner {
         codex: {
           home: input.backend.adapter.codexHome,
           bridgeSkillsAvailable: input.bridgeSkillsAvailable,
-          selectSkills: async (text, catalog, signal, observeUsage) =>
-            (await this.options.selectBridgeSkills(text, catalog, signal, observeUsage)) ?? [],
+          selectSkills,
           signal: input.signal,
           observeUsage: observeSelectorUsage
         },
@@ -258,9 +304,7 @@ class AcpPromptPreparationOwner {
               codebuddy: {
                 root: codeBuddySkillRuntimeRoot(input.backend.session.options),
                 selectorAvailable: input.bridgeSkillsAvailable,
-                selectSkills: async (text, catalog, signal, observeUsage) =>
-                  (await this.options.selectBridgeSkills(text, catalog, signal, observeUsage)) ??
-                  [],
+                selectSkills,
                 signal: input.signal,
                 observeUsage: observeSelectorUsage
               }
