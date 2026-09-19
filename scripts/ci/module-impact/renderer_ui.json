@@ -82,6 +82,7 @@
       "src/renderer/src/components/JobDetailModal.render.test.tsx",
       "src/renderer/src/components/LanguageControls.render.test.tsx",
       "src/renderer/src/components/LegacyDataMoveDialog.render.test.tsx",
+      "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
       "src/renderer/src/components/LifecycleToast.test.tsx",
       "src/renderer/src/components/NetworkStatusIndicator.render.test.tsx",
       "src/renderer/src/components/NotificationBell.test.tsx",
@@ -126,6 +127,7 @@
       "src/renderer/src/lib/acp/useWorkspaceElicitation.test.ts",
       "src/renderer/src/lib/acp/workspace-runtime-save-as-skill-owner.test.tsx",
       "src/renderer/src/lib/compute/WorkspaceComputeRecoveryBridge.render.test.tsx",
+      "src/renderer/src/lib/session-fork.test.ts",
       "src/renderer/src/lib/session-package-export.test.ts",
       "src/renderer/src/lib/session-package-import.test.ts",
       "src/renderer/src/main.render.test.tsx",
@@ -195,6 +197,7 @@
       "src/renderer/src/pages/settings/PermissionsPanel.render.test.tsx",
       "src/renderer/src/pages/settings/ProviderForm.render.test.tsx",
       "src/renderer/src/pages/settings/ProviderList.render.test.tsx",
+      "src/renderer/src/pages/settings/ProviderTestResultCard.test.tsx",
       "src/renderer/src/pages/settings/ProvidersPanel.race.test.tsx",
       "src/renderer/src/pages/settings/ReasoningEffortSelect.render.test.tsx",
       "src/renderer/src/pages/settings/RemoteControlPanel.render.test.tsx",
@@ -284,6 +287,7 @@
       "src/renderer/src/pages/workspace/MobilePreviewSheet.annotation.test.tsx",
       "src/renderer/src/pages/workspace/NotebookPreview.follow-scroll.test.tsx",
       "src/renderer/src/pages/workspace/NotebookPreview.gate.render.test.tsx",
+      "src/renderer/src/pages/workspace/NotebookRunOutputs.render.test.tsx",
       "src/renderer/src/pages/workspace/OutputComparison.test.tsx",
       "src/renderer/src/pages/workspace/PermissionApprovalControls.interaction.test.tsx",
       "src/renderer/src/pages/workspace/PermissionApprovalControls.render.test.tsx",
@@ -396,10 +400,7 @@
       "src/renderer/src/stores/settings-navigation-slice.test.ts",
       "src/renderer/src/stores/settings-store.test.ts",
       "src/renderer/web/bootstrap.test.ts",
-      "src/renderer/web/renderer-argument-shape-characterization.test.ts",
-      "src/renderer/src/lib/session-fork.test.ts",
-      "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
-      "src/renderer/src/pages/settings/ProviderTestResultCard.test.tsx"
+      "src/renderer/web/renderer-argument-shape-characterization.test.ts"
     ]
   },
   "capabilityOverlays": [],
