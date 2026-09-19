@@ -65,13 +65,15 @@ const MGNIFY_ANALYSES = [
 ]
 
 describe('omics-archives tool set', () => {
-  it('exposes exactly the 17 upstream tools, all on connector omics-archives', () => {
+  it('exposes the 17 upstream archive tools and 2 ENA tools, all on connector omics-archives', () => {
     expect(OMICS_ARCHIVES_TOOLS.map((t) => t.id).sort()).toEqual(
       [
         'arrayexpress_get_experiment',
         'arrayexpress_get_experiment_files',
         'arrayexpress_get_experiment_samples',
         'arrayexpress_search_experiments',
+        'ena_search_runs',
+        'ena_get_run_files',
         'geo_get_series',
         'geo_search_series',
         'metabolights_get_studies',
