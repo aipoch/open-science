@@ -61,10 +61,13 @@ describe('Escaped descendant detection', () => {
     const pid = proc.pid!
 
     // Capture the real birth token before the process exits
-    const identity = capturePosixProcessTreeIdentity(pid)
-    const birthToken = identity?.startTime ?? 'unknown'
+    const identity = capturePosixProcessTreeIdentity(proc)
+    const birthToken = identity?.birthToken ?? 'unknown'
 
     await new Promise((resolve) => proc.on('exit', resolve))
+
+    // Wait a bit to ensure the PID is fully released from the system
+    await new Promise((resolve) => setTimeout(resolve, 200))
 
     // Leader is gone, group is gone, complete marker scan finds nothing. Per the documented
     // contract: return 'gone' when the recorded pid is absent, the owned group is gone, and
