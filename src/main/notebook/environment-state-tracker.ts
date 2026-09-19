@@ -32,6 +32,7 @@ type EnvironmentExecFile = (
 const execFileAsync = promisify(execFile) as EnvironmentExecFile
 const INSPECTION_TIMEOUT_MS = 30_000
 const MAX_INVENTORY_CACHE_AGE_MS = 24 * 60 * 60 * 1_000
+const WINDOWS_R_POST_MUTATION_INVENTORY_RETRY_DELAY_MS = 250
 // The mutable binding cache is read on every run, so keep completed operation history bounded by
 // both shape and serialized size. Recovery-critical entries may temporarily exceed these limits.
 const MAX_OPERATION_LOG_ENTRIES = 200
@@ -1339,7 +1340,35 @@ class EnvironmentStateTracker {
       let verification: PackageMutationVerification
       try {
         const previousInventoryChecksum = cache.inventoryChecksum
-        const inventory = await this.captureInventory(target)
+        let inventory = await this.captureInventory(target)
+        verification = verifyPackageMutation(target, outcome, inventory.packages)
+        // On Windows, a conda LINK can return after the R library directory exists but before
+        // installed.packages() observes the newly linked package metadata. Re-read once after a
+        // short bounded delay so a successful transaction is not turned into a false verification
+        // failure. Keep the existing failure path when the package is still absent.
+        if (
+          target.language === 'r' &&
+          this.platform === 'win32' &&
+          verification.result === 'failure' &&
+          outcome.result === 'success' &&
+          outcome.attempts?.some(
+            (attempt) => attempt.installer === 'conda' && attempt.status === 'succeeded'
+          )
+        ) {
+          await new Promise((resolve) =>
+            setTimeout(resolve, WINDOWS_R_POST_MUTATION_INVENTORY_RETRY_DELAY_MS)
+          )
+          const retriedInventory = await this.captureInventory(target)
+          const retriedVerification = verifyPackageMutation(
+            target,
+            outcome,
+            retriedInventory.packages
+          )
+          if (retriedVerification.result === 'success') {
+            inventory = retriedInventory
+            verification = retriedVerification
+          }
+        }
         const nextInventoryChecksum = this.inventoryChecksum(inventory)
         const inventoryRefresh =
           previousInventoryChecksum === nextInventoryChecksum ? 'unchanged' : 'published'
@@ -1359,10 +1388,7 @@ class EnvironmentStateTracker {
           }),
           outcome.source
         )
-        verification = {
-          ...verifyPackageMutation(target, outcome, inventory.packages),
-          ...(packageChanges.length > 0 ? { packageChanges } : {})
-        }
+        verification = { ...verification, ...(packageChanges.length > 0 ? { packageChanges } : {}) }
         const publishedEntry: NotebookEnvironmentOperation = {
           ...baseLogEntry,
           result: verification.result,
