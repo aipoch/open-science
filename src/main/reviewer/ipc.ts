@@ -107,9 +107,9 @@ const createFallbackSessionReader = (storageRoot: string): ReviewerSessionReader
       return loaded.status === 'found' ? loaded.session : undefined
     },
     findSessionById: async (sessionId) => {
-      const { sessions } = await repository.loadAllWithDiagnostics({ mode: 'read-only' }).then(
-        (scan) => scan.result
-      )
+      const { sessions } = await repository
+        .loadAllWithDiagnostics({ mode: 'read-only' })
+        .then((scan) => scan.result)
       return sessions.find((candidate) => candidate.id === sessionId)
     }
   }

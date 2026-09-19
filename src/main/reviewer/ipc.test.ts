@@ -70,14 +70,18 @@ vi.mock('../projects/prisma-client', () => ({
 const sessionRepositoryRoots: string[] = []
 const sessionLoadAll = vi.fn().mockResolvedValue({ sessions: [] })
 const sessionLoadOne = vi.fn().mockResolvedValue({ id: 'session-1' })
-const sessionLoadAllDiagnostics = vi.fn(async (options?: { mode?: string }) => {
+const sessionLoadAllDiagnostics = vi.fn(async (_options?: { mode?: string }) => {
+  void _options // Mock accepts options param for signature compatibility but doesn't use it
   const sessions = await sessionLoadAll()
   return { result: sessions, isComplete: true }
 })
-const sessionLoadOneDiagnostics = vi.fn(async (projectId: string, sessionId: string, options?: { mode?: string }) => {
-  const session = await sessionLoadOne(projectId, sessionId)
-  return session ? { status: 'found' as const, session } : { status: 'missing' as const }
-})
+const sessionLoadOneDiagnostics = vi.fn(
+  async (projectId: string, sessionId: string, _options?: { mode?: string }) => {
+    void _options // Mock accepts options param for signature compatibility but doesn't use it
+    const session = await sessionLoadOne(projectId, sessionId)
+    return session ? { status: 'found' as const, session } : { status: 'missing' as const }
+  }
+)
 vi.mock('../session-persistence/repository', () => ({
   SessionRepository: class {
     constructor(root: string) {
