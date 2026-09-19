@@ -312,11 +312,29 @@ export class DelegatedProcessOwnership {
       if (!this.directory(this.root)) return []
       const receipts: Receipt[] = []
       for (const projectId of scope.projectId ? [scope.projectId] : readdirSync(this.root)) {
-        if (osArtifact(projectId)) continue
+        // Skip OS sidecar files, but not directories with those names (valid ownership scopes)
+        if (osArtifact(projectId)) {
+          const projectPath = join(this.root, segment(projectId))
+          try {
+            const stat = lstatSync(projectPath)
+            if (!stat.isDirectory() || stat.isSymbolicLink()) continue
+          } catch {
+            continue // Doesn't exist or unreadable
+          }
+        }
         const project = join(this.root, segment(projectId))
         if (!this.directory(project)) continue
         for (const sessionId of scope.sessionId ? [scope.sessionId] : readdirSync(project)) {
-          if (osArtifact(sessionId)) continue
+          // Skip OS sidecar files, but not directories with those names (valid ownership scopes)
+          if (osArtifact(sessionId)) {
+            const sessionPath = join(project, segment(sessionId))
+            try {
+              const stat = lstatSync(sessionPath)
+              if (!stat.isDirectory() || stat.isSymbolicLink()) continue
+            } catch {
+              continue // Doesn't exist or unreadable
+            }
+          }
           const directory = this.sessionDirectory({ projectId, sessionId })
           if (!directory) continue
           for (const file of readdirSync(directory)) {

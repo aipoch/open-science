@@ -1132,11 +1132,12 @@ const scanForOwnedDescendants = async (
         if (foundSameUid) return true
 
         // Otherwise: reached init/orphaned without same-UID ancestor. This could be:
-        // 1. Unrelated system process that existed before our spawn (should ignore)
+        // 1. Unrelated system process (should ignore, but only if it existed before our spawn)
         // 2. Setuid descendant that was reparented (should block)
-        // If we already filtered by start time above, this is likely case 1
-        // If we couldn't get start time, fail closed
-        return spawnedAt === undefined || !startTimeMap.has(pid)
+        // Even if we have a start time showing the process started after our spawn, we cannot
+        // rule out case 2. A setuid descendant would start after our spawn, inherit the marker,
+        // then become inaccessible. Fail closed: treat as potentially relevant.
+        return true
       }
 
       let hadRelevantPermissionDenied = false

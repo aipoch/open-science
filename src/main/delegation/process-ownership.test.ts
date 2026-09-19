@@ -316,4 +316,37 @@ describe('durable delegated process ownership', () => {
     const err = await cold.recover(scope).catch((e: AggregateError) => e)
     expect((err as AggregateError).errors?.[0]?.name).toBe('DelegateExecutionCleanupError')
   })
+
+  it('does not skip ownership scopes named like OS artifacts if they are directories', async () => {
+    const owner = await setup()
+    // .DS_Store and desktop.ini are valid scope segment values (not rejected by segment())
+    const dsStoreScope = {
+      projectId: '.DS_Store',
+      sessionId: 'session-test',
+      frameId: 'frame-1',
+      attemptId: 'attempt-1',
+      frameworkId: 'codex'
+    }
+    const desktopIniScope = {
+      projectId: 'project-test',
+      sessionId: 'desktop.ini',
+      frameId: 'frame-2',
+      attemptId: 'attempt-2',
+      frameworkId: 'codex'
+    }
+
+    owner.recordFailure(dsStoreScope)
+    owner.recordFailure(desktopIniScope)
+
+    // Both receipts should be visible
+    const allReceipts = owner.receipts()
+    expect(allReceipts).toHaveLength(2)
+
+    // Scoped queries should find them
+    expect(owner.receipts({ projectId: '.DS_Store' })).toHaveLength(1)
+    expect(owner.receipts({ sessionId: 'desktop.ini' })).toHaveLength(1)
+
+    // assertClear should fail (receipts are present)
+    expect(() => owner.assertClear()).toThrow('Delegated process cleanup is unconfirmed')
+  })
 })
