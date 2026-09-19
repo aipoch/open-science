@@ -229,7 +229,7 @@ export const GENOMES_UCSC_TOOLS: ToolDescriptor[] = [
     id: 'ucsc_conservation',
     connector: 'genomes',
     description:
-      "Evolutionary conservation summary for a region from UCSC phyloP / phastCons tracks (base-wise scores over multi-species alignments). Args: chrom (chr-prefixed); start (0-based half-open); end (exclusive; span capped at 100000 bp — split larger); genome (default hg38); track (default phyloP100way; positive=conserved, negative=fast-evolving; alternatives hg38 phastCons100way, phyloP30way, phastCons30way, phyloP447way, phyloP470way; hg19 phyloP100wayAll/phastCons100way); include_values (also return per-base {start,end,value} rows capped at max_values, values_truncated flags the cap; default false = summary only); max_values (per-base cap default 2000). Returns {genome, track, chrom, start, end, span_bp, n_bases_covered, coverage_fraction, mean, min, max} (+values, values_truncated when requested). Stats weighted by each row's base span, clipped to window; uncovered bases lower coverage_fraction, not zero-scored. Non-score tracks raise; an upstream-truncated row list also raises.",
+      "Evolutionary conservation summary for a region from UCSC phyloP / phastCons tracks (base-wise scores over multi-species alignments). Args: chrom (chr-prefixed); start (0-based half-open); end (exclusive; span capped at 100000 bp — split larger); genome (default hg38); track (optional; defaults to phyloP100wayAll for hg19 and phyloP100way for other genomes; positive=conserved, negative=fast-evolving; alternatives hg38 phastCons100way, phyloP30way, phastCons30way, phyloP447way, phyloP470way; hg19 phastCons100way); include_values (also return per-base {start,end,value} rows capped at max_values, values_truncated flags the cap; default false = summary only); max_values (per-base cap default 2000). Returns {genome, track, chrom, start, end, span_bp, n_bases_covered, coverage_fraction, mean, min, max} (+values, values_truncated when requested). Stats weighted by each row's base span, clipped to window; uncovered bases lower coverage_fraction, not zero-scored. Non-score tracks raise; an upstream-truncated row list also raises.",
     input: {
       type: 'object',
       properties: {
@@ -237,7 +237,7 @@ export const GENOMES_UCSC_TOOLS: ToolDescriptor[] = [
         start: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
         end: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
         genome: { type: 'string', default: 'hg38' },
-        track: { type: 'string', default: 'phyloP100way' },
+        track: { type: 'string' },
         include_values: { type: 'boolean', default: false },
         max_values: { type: 'integer', default: 2000 }
       },
@@ -251,7 +251,11 @@ export const GENOMES_UCSC_TOOLS: ToolDescriptor[] = [
     run: async (ctx, a) => {
       const genome = a.genome != null && String(a.genome).trim() !== '' ? String(a.genome) : 'hg38'
       const track =
-        a.track != null && String(a.track).trim() !== '' ? String(a.track) : 'phyloP100way'
+        a.track != null && String(a.track).trim() !== ''
+          ? String(a.track)
+          : genome === 'hg19'
+            ? 'phyloP100wayAll'
+            : 'phyloP100way'
       const chrom = String(a.chrom)
       const { start, end } = regionBounds(a.start, a.end)
       const includeValues = a.include_values === true

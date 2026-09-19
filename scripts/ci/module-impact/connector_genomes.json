@@ -3,14 +3,20 @@
     "src/main/connectors/descriptors/genomes-ucsc.test.ts",
     "src/main/connectors/descriptors/genomes-ucsc.ts",
     "src/main/connectors/descriptors/genomes.test.ts",
-    "src/main/connectors/descriptors/genomes.ts"
+    "src/main/connectors/descriptors/genomes.ts",
+    "src/main/connectors/descriptors/genomes-reference.test.ts",
+    "src/main/connectors/descriptors/genomes-reference.ts"
   ],
-  "interfacePaths": ["src/main/connectors/descriptors/genomes.ts"],
+  "interfacePaths": [
+    "src/main/connectors/descriptors/genomes.ts",
+    "src/main/connectors/descriptors/genomes-reference.ts"
+  ],
   "consumerModules": [],
   "testFiles": {
     "owner": [
       "src/main/connectors/descriptors/genomes-ucsc.test.ts",
-      "src/main/connectors/descriptors/genomes.test.ts"
+      "src/main/connectors/descriptors/genomes.test.ts",
+      "src/main/connectors/descriptors/genomes-reference.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
