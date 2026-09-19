@@ -1036,10 +1036,14 @@ const scanForOwnedDescendants = async (marker: string): Promise<number[] | undef
 
   try {
     if (process.platform === 'linux') {
-      // Read /proc/[pid]/environ for all processes
-      const { readdirSync, readFileSync } = await import('node:fs')
+      // Read /proc/[pid]/environ for all processes. Only processes running as the same UID can
+      // inherit the marker (child processes inherit environment from parent). Permission denied
+      // for other-UID processes (especially root-owned system processes) does not indicate an
+      // incomplete scan of the ownership scope.
+      const { readdirSync, readFileSync, statSync } = await import('node:fs')
       const procs = readdirSync('/proc').filter((name) => /^\d+$/.test(name))
-      let hadPermissionDenied = false
+      const ourUid = process.getuid?.()
+      let hadRelevantPermissionDenied = false
 
       for (const pidStr of procs) {
         try {
@@ -1051,14 +1055,24 @@ const scanForOwnedDescendants = async (marker: string): Promise<number[] | undef
         } catch (err) {
           const code = (err as NodeJS.ErrnoException).code
           // ENOENT/ESRCH are benign (process exited between readdir and readFile).
-          // Any other error (EACCES, EPERM, EIO, EBUSY, etc.) means the scan is incomplete.
-          if (code !== 'ENOENT' && code !== 'ESRCH') {
-            hadPermissionDenied = true
+          if (code === 'ENOENT' || code === 'ESRCH') continue
+
+          // Permission denied for a same-UID process means incomplete scan (we should have access).
+          // Permission denied for other-UID processes is expected and does not affect completeness.
+          try {
+            const stat = statSync(`/proc/${pidStr}`)
+            const isSameUid = ourUid !== undefined && stat.uid === ourUid
+            if (isSameUid) {
+              hadRelevantPermissionDenied = true
+            }
+          } catch {
+            // Cannot stat — assume it could be relevant to be safe
+            hadRelevantPermissionDenied = true
           }
         }
       }
-      // If we hit permission errors, the scan is incomplete — cannot prove absence
-      if (hadPermissionDenied && found.length === 0) return undefined
+      // If we hit permission errors for same-UID processes, the scan is incomplete
+      if (hadRelevantPermissionDenied && found.length === 0) return undefined
       return found
     } else if (process.platform === 'darwin') {
       // Use native binding to read process environments reliably. The binding reads via
@@ -1154,14 +1168,17 @@ export const proveRecordedPosixLeaderGone = async (
     // Leader and its original group are both gone. If we have an ownership marker, scan the process
     // table for any descendants that may have escaped to a new session but still carry the marker.
     // Per the documented contract: return 'gone' when no process in the system carries the marker
-    // (provided the scan is complete). An incomplete scan cannot prove absence.
+    // (provided the scan is complete). While a process could theoretically unsetenv() the marker,
+    // this requires deliberate action and is not part of normal process behavior. The scan checks
+    // only same-UID processes (only they can inherit our marker), making it a practical ownership
+    // proof despite lacking OS-level lifecycle guarantees like Windows Job objects.
     if (marker) {
       const descendants = await scanForOwnedDescendants(marker)
-      // undefined means incomplete scan (permission denied, binding failed), cannot prove absence
+      // undefined means incomplete scan (permission denied for same-UID process, binding failed)
       if (descendants === undefined) return 'blocked'
       // Found descendants with marker → definitely blocked
       if (descendants.length > 0) return 'blocked'
-      // Complete scan with no marker found → sufficient proof per documented contract
+      // Complete same-UID scan with no marker found → sufficient proof per documented contract
     }
 
     // Leader and group confirmed absent, and complete marker scan found nothing (if marker provided)
