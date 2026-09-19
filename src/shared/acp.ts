@@ -176,8 +176,10 @@ export const ACP_RESTORED_PERMISSION_REARM_FAILED_EVENT_TITLE =
 
 // Marks a prompt failure the app can auto-recover from without user action. 'context-overflow' means
 // the conversation outgrew the provider's request-size limit; the renderer tries framework-native
-// compaction first, then falls back to a fresh context plus text replay. Absent on ordinary events.
-export type AcpRecoverableFailure = 'context-overflow'
+// compaction first, then falls back to a fresh context plus text replay. 'session-lost' means the
+// provider session disappeared; the renderer creates a fresh provider session and replays the text.
+// Absent on ordinary events.
+export type AcpRecoverableFailure = 'context-overflow' | 'session-lost'
 
 export type AcpContextUsageCategoryKey =
   'system' | 'tools' | 'messages' | 'mcp' | 'skills' | 'other'

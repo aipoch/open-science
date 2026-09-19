@@ -13,7 +13,11 @@ import { createLogger, errorLogFields } from '../logger'
 import type { ContextWindowTurnHandle } from './context-usage-tracker'
 import type { AcpPermissionContext } from './permission-context'
 import type { PreparedPromptHandle } from './prompt-preparation-owner'
-import { describePromptError, isProviderPromptError } from './prompt-error'
+import {
+  describePromptError,
+  isOpenCodeSessionServiceFailure,
+  isProviderPromptError
+} from './prompt-error'
 import type { ProviderPromptOutcome } from './provider-prompt-executor'
 import type { AcpProviderModelCallUsage } from './provider-turn-adapter'
 import type { AcpPromptSessionInteractionScope } from './session-interaction-owner'
@@ -335,10 +339,11 @@ export class AcpPromptOutcomeFinalizer {
       safeCleanup('skill activity cleanup failed', handles.failPendingSkillActivities)
       safeLog('error', 'prompt failed', errorLogFields(error))
       const text = describePromptError(error, { model: handles.model })
-      const recoverable =
-        isMediaOverflowError(text) ||
-        isMediaOverflowError(handles.errorMessage(error)) ||
-        isMediaOverflowError(handles.errorKind(error))
+      const recoverable = isOpenCodeSessionServiceFailure(error)
+        ? 'session-lost'
+        : isMediaOverflowError(text) ||
+            isMediaOverflowError(handles.errorMessage(error)) ||
+            isMediaOverflowError(handles.errorKind(error))
           ? 'context-overflow'
           : undefined
       const terminal = interactions.settle(interaction, {})

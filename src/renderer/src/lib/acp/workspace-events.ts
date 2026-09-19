@@ -1116,11 +1116,11 @@ const applyWorkspaceRuntimeEvent = async (
   if (event.kind === 'error' && event.sessionId) {
     activityGroupToolCallIdsBySession.delete(event.sessionId)
     pendingArtifactTurnUsageBySession.delete(event.sessionId)
-    // A recoverable request-size overflow shows the neutral "compacting" note ONLY while a recovery is
-    // actually in flight — the workspace runtime flips the session to `compacting` first (its recovery
-    // effect runs before this event is applied). If the session is not compacting, no recovery started
-    // for this overflow (a repeat overflow inside the cooldown, nothing to replay, or a detached
-    // session), so surface a normal error instead of leaving a stuck "Compacting…".
+    // A recoverable overflow or lost provider session shows the neutral "compacting" note ONLY while a
+    // recovery is actually in flight — the workspace runtime flips the session to `compacting` first
+    // (its recovery effect runs before this event is applied). If the session is not compacting, no
+    // recovery started (a repeat failure inside the cooldown, nothing to replay, or a detached session),
+    // so surface a normal error instead of leaving a stuck "Compacting…".
     const activeSession = store.sessions.find((session) => session.id === event.sessionId)
     const isCompacting = activeSession?.compacting
     // Same overflow detection the recovery effect uses (marker first, message as a fallback), so the two
@@ -1129,8 +1129,9 @@ const applyWorkspaceRuntimeEvent = async (
       event.recoverable === 'context-overflow' ||
       isMediaOverflowError(event.text) ||
       isMediaOverflowError(event.title)
+    const isSessionLost = event.recoverable === 'session-lost'
 
-    if (isOverflow && isCompacting) {
+    if ((isOverflow || isSessionLost) && isCompacting) {
       return true
     }
 

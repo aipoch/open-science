@@ -45,7 +45,9 @@ import { projectPermissionRequest } from './runtime-publication-owner'
 const QUIT_PREPARATION_TIMEOUT_MS = 4_000
 
 const isOwnershipScopedControlEvent = (event: AcpRuntimeEvent): boolean =>
-  event.kind === 'compaction' || event.recoverable === 'context-overflow'
+  event.kind === 'compaction' ||
+  event.recoverable === 'context-overflow' ||
+  event.recoverable === 'session-lost'
 
 const hasArtifactProvenance = (event: AcpRuntimeEvent): boolean =>
   Boolean(event.runId && event.promptMessageId && event.artifactClaimId)

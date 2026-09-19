@@ -436,6 +436,26 @@ describe('AcpPromptOutcomeFinalizer', () => {
       providerError: false
     },
     {
+      name: 'OpenCode session service failure',
+      error: Object.assign(new Error('Internal error: OpenCode service failure'), {
+        code: -32603,
+        data: { service: 'session' },
+        name: 'RequestError'
+      }),
+      recoverable: 'session-lost',
+      providerError: false
+    },
+    {
+      name: 'non-session OpenCode service failure',
+      error: Object.assign(new Error('Internal error: OpenCode service failure'), {
+        code: -32603,
+        data: { service: 'provider' },
+        name: 'RequestError'
+      }),
+      recoverable: undefined,
+      providerError: false
+    },
+    {
       name: 'provider error',
       error: Object.assign(new Error('Invalid API key'), { data: { errorName: 'APIError' } }),
       recoverable: undefined,
