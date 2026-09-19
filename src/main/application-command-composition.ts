@@ -323,7 +323,8 @@ const createRemoteAccessSlot = (): Readonly<{
     disable: (...args) => current().disable(...args),
     approve: (...args) => current().approve(...args),
     reject: (...args) => current().reject(...args),
-    revoke: (...args) => current().revoke(...args)
+    revoke: (...args) => current().revoke(...args),
+    revokeBrowsers: (...args) => current().revokeBrowsers(...args)
   })
 
   return Object.freeze({

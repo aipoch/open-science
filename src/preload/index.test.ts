@@ -508,6 +508,7 @@ describe('preload bridge — public surface inventory', () => {
       'remoteAccess.probe',
       'remoteAccess.reject',
       'remoteAccess.revokeBrowser',
+      'remoteAccess.revokeBrowsers',
       'remoteAccess.setMode',
       'reviewer.abortFixLoop',
       'reviewer.getForSession',

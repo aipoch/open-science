@@ -435,6 +435,23 @@ export class RemoteAccessService {
     })
   }
 
+  async revokeBrowsers(
+    browserIds: string[],
+    canManage = true,
+    canManagePairing = canManage
+  ): Promise<RemoteAccessSnapshot> {
+    return this.serialize(async () => {
+      this.assertConfigurationAvailable()
+      const revocation = this.pairing.revokeBrowsers(browserIds)
+      for (const browserId of new Set(browserIds)) {
+        this.webController?.closeExternalConnections(browserId)
+      }
+      // The accepted batch must finish even when it revokes the calling browser.
+      await revocation
+      return this.snapshot(canManage, canManagePairing)
+    })
+  }
+
   shutdown(): Promise<void> {
     if (this.shutdownPromise) return this.shutdownPromise
     this.shutdownStarted = true
