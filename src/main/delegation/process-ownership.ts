@@ -167,6 +167,10 @@ const parse = (value: unknown): Receipt => {
         (leader.birthToken !== undefined && typeof leader.birthToken !== 'string')
       )
         throw new Error('Invalid process leader')
+      // Receipts with a leader must have a token (the ownership marker) for descendant detection.
+      // Only markerless recordFailure receipts (no leader, no token) are permitted without a token.
+      if (ownership.token === undefined)
+        throw new Error('Process leader requires ownership token for descendant tracking')
     }
   }
   return receipt
