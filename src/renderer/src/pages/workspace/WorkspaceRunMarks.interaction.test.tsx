@@ -238,6 +238,37 @@ describe('WorkspaceRunMarks interaction', () => {
     expect(document.activeElement).toBe(buttons[1])
   })
 
+  it('does not observe or measure layouts when the run-mark rail is hidden', async () => {
+    let notifyResize: (() => void) | undefined
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(callback: ResizeObserverCallback) {
+          notifyResize = () => callback([], this as unknown as ResizeObserver)
+        }
+
+        observe(): void {}
+
+        disconnect(): void {}
+      }
+    )
+    const viewportRect = vi.spyOn(viewport, 'getBoundingClientRect')
+    const items = [0, 1, 2].map((index) =>
+      createMessageItem({ id: `prompt-${index}`, content: `Prompt ${index}` }, index)
+    )
+
+    render(<WorkspaceRunMarks items={items} viewport={viewport} />)
+    viewportRect.mockClear()
+    await act(async () => {
+      window.dispatchEvent(new Event('resize'))
+      notifyResize?.()
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()))
+    })
+
+    expect(notifyResize).toBeUndefined()
+    expect(viewportRect).not.toHaveBeenCalled()
+  })
+
   it('keeps visible marks dark at rest while hover tapers mark lengths independently', () => {
     const items = [0, 1, 2, 3, 4].map((index) => {
       const messageId = `prompt-${index}`

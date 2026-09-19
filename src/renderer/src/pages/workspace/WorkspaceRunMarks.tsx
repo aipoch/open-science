@@ -192,7 +192,7 @@ const WorkspaceRunMarks = ({
   }, [viewport])
 
   useLayoutEffect(() => {
-    if (!viewport) return
+    if (!viewport || marks.length < 4) return
 
     const renderedMessageIds = new Set(
       Array.from(viewport.querySelectorAll<HTMLElement>('[data-message-id]')).flatMap((element) =>
@@ -249,11 +249,10 @@ const WorkspaceRunMarks = ({
 
   // The portal is mounted after its first measurement; also follow after panel/window resizing.
   useLayoutEffect(() => {
-    if (viewport) {
-      updateRailScroll(
-        Math.max(resolveCurrentRunMarkPosition(viewport, marks), visibleIndices[0] ?? 0)
-      )
-    }
+    if (!viewport || marks.length < 4) return
+    updateRailScroll(
+      Math.max(resolveCurrentRunMarkPosition(viewport, marks), visibleIndices[0] ?? 0)
+    )
   }, [marks, railPosition, updateRailScroll, viewport, visibleIndices])
 
   const scrollToRun = (mark: RunMark, index: number): void => {
