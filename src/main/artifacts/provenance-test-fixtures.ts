@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -35,6 +35,10 @@ export const createArtifactVersionRequest = (
   ...overrides
 })
 
+// Cache bytes only within this isolated test module. Every fixture still owns a fresh directory,
+// database and client; migration/upgrade behavior is covered by the database module's tests.
+let emptyDatabase: Promise<Buffer> | undefined
+
 export const createProvenanceTestFixture = async (): Promise<{
   storageRoot: string
   client: ReturnType<typeof createProjectDbClient>
@@ -49,7 +53,17 @@ export const createProvenanceTestFixture = async (): Promise<{
   const storageRoot = await mkdtemp(join(tmpdir(), 'os-p-'))
   const client = createProjectDbClient(storageRoot)
   try {
-    await migrateApplicationDatabase(client)
+    const databasePath = join(storageRoot, 'open-science.db')
+    emptyDatabase ??= (async () => {
+      await migrateApplicationDatabase(client)
+      // Disconnect before copying so SQLite has flushed/closed any journal or WAL handles.
+      await client.$disconnect()
+      return readFile(databasePath)
+    })().catch((error) => {
+      emptyDatabase = undefined
+      throw error
+    })
+    await writeFile(databasePath, await emptyDatabase)
   } catch (error) {
     await client.$disconnect().catch(() => undefined)
     await rm(storageRoot, { recursive: true, force: true })
