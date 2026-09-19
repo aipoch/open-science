@@ -5940,6 +5940,8 @@
     "Last updated": "最後更新",
     "Messages in current branch": "目前分支訊息",
     "{{total}} from Assistant": "其中 {{total}} 則來自助理",
-    "Loading session information…": "正在載入對話資訊…"
+    "Loading session information…": "正在載入對話資訊…",
+    "Notebook execution was blocked": "Notebook 執行已遭封鎖",
+    "This R cell was not run because Notebook network protection is not ready. Open Network settings to finish setup, then run the cell again.": "此 R 儲存格未執行，因為 Notebook 網路保護尚未就緒。請開啟網路設定完成設定，然後再次執行此儲存格。"
   }
 }

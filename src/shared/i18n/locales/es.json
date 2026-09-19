@@ -6272,6 +6272,8 @@
     "Last updated": "Última actualización",
     "Messages in current branch": "Mensajes en la rama actual",
     "{{total}} from Assistant": "{{total}} del asistente",
-    "Loading session information…": "Cargando información de la sesión…"
+    "Loading session information…": "Cargando información de la sesión…",
+    "Notebook execution was blocked": "La ejecución del Notebook se bloqueó",
+    "This R cell was not run because Notebook network protection is not ready. Open Network settings to finish setup, then run the cell again.": "Esta celda de R no se ejecutó porque la protección de red de Notebook no está lista. Abra la configuración de Red para completar la configuración y vuelva a ejecutar la celda."
   }
 }

@@ -5940,6 +5940,8 @@
     "Last updated": "最后更新",
     "Messages in current branch": "当前分支消息",
     "{{total}} from Assistant": "其中 {{total}} 条来自助手",
-    "Loading session information…": "正在加载会话信息…"
+    "Loading session information…": "正在加载会话信息…",
+    "Notebook execution was blocked": "Notebook 执行被阻止",
+    "This R cell was not run because Notebook network protection is not ready. Open Network settings to finish setup, then run the cell again.": "此 R 单元格未运行，因为 Notebook 网络保护尚未就绪。请打开网络设置完成配置，然后再次运行此单元格。"
   }
 }

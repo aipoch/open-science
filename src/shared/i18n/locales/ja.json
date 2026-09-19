@@ -5940,6 +5940,8 @@
     "Last updated": "最終更新",
     "Messages in current branch": "現在のブランチのメッセージ",
     "{{total}} from Assistant": "アシスタントから {{total}} 件",
-    "Loading session information…": "セッション情報を読み込み中…"
+    "Loading session information…": "セッション情報を読み込み中…",
+    "Notebook execution was blocked": "Notebook の実行がブロックされました",
+    "This R cell was not run because Notebook network protection is not ready. Open Network settings to finish setup, then run the cell again.": "Notebook のネットワーク保護が準備できていないため、この R セルは実行されませんでした。ネットワーク設定を開いてセットアップを完了し、セルをもう一度実行してください。"
   }
 }

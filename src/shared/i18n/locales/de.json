@@ -6102,6 +6102,8 @@
     "Last updated": "Zuletzt aktualisiert",
     "Messages in current branch": "Nachrichten im aktuellen Zweig",
     "{{total}} from Assistant": "{{total}} vom Assistenten",
-    "Loading session information…": "Sitzungsinformationen werden geladen…"
+    "Loading session information…": "Sitzungsinformationen werden geladen…",
+    "Notebook execution was blocked": "Die Notebook-Ausführung wurde blockiert",
+    "This R cell was not run because Notebook network protection is not ready. Open Network settings to finish setup, then run the cell again.": "Diese R-Zelle wurde nicht ausgeführt, da der Notebook-Netzwerkschutz nicht bereit ist. Öffnen Sie die Netzwerkeinstellungen, schließen Sie die Einrichtung ab und führen Sie die Zelle erneut aus."
   }
 }

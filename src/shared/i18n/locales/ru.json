@@ -6413,6 +6413,8 @@
     "Last updated": "Последнее обновление",
     "Messages in current branch": "Сообщения в текущей ветке",
     "{{total}} from Assistant": "От ассистента: {{total}}",
-    "Loading session information…": "Загрузка информации о сеансе…"
+    "Loading session information…": "Загрузка информации о сеансе…",
+    "Notebook execution was blocked": "Выполнение Notebook заблокировано",
+    "This R cell was not run because Notebook network protection is not ready. Open Network settings to finish setup, then run the cell again.": "Эта ячейка R не запущена, потому что защита сети Notebook не готова. Откройте настройки сети, завершите настройку и запустите ячейку снова."
   }
 }
