@@ -207,7 +207,7 @@ describe('assertShellSearchScope with granted roots', () => {
     ).resolves.toBeUndefined()
   })
 
-  it.skipIf(process.platform !== 'win32')(
+  it.skipIf(process.platform !== 'win32' || !process.env.OPEN_SCIENCE_WSL_DISTRO)(
     'maps WSL2 guest paths to Windows host paths before validation',
     async () => {
       // Simulate WSL2 scenario on Windows: granted root is C:\data, command uses /mnt/c/data
@@ -236,7 +236,7 @@ describe('assertShellSearchScope with granted roots', () => {
     }
   )
 
-  it.skipIf(process.platform !== 'win32')(
+  it.skipIf(process.platform !== 'win32' || !process.env.OPEN_SCIENCE_WSL_DISTRO)(
     'maps WSL2 guest paths in cd commands before validation',
     async () => {
       // Test that cd /mnt/c/... && find . works correctly
