@@ -422,9 +422,11 @@ export const assertShellSearchScope = async (
             context.variables.clear()
           }
           if (tool === 'cd' || tool === 'pushd' || tool === 'popd') {
+            const isWsl2 = runtimeBinding?.kind === 'wsl2-bash'
+            const dir = values.length === 1 && values[0] ? values[0] : undefined
             context.cwd =
-              values.length === 1 && values[0] && context.cwd
-                ? resolve(context.cwd, values[0])
+              dir && context.cwd
+                ? resolve(context.cwd, isWsl2 ? mapWsl2GuestPathToHost(dir, 'win32') : dir)
                 : undefined
           } else if (tool && searchTools.has(tool)) {
             if (values.some((value) => value === undefined))

@@ -234,4 +234,33 @@ describe('assertShellSearchScope with granted roots', () => {
       })
     ).resolves.toBeUndefined()
   })
+
+  it('maps WSL2 guest paths in cd commands before validation', async () => {
+    // Test that cd /mnt/c/... && find . works correctly
+    const root = await mkdtemp(join(tmpdir(), 'wsl2-cd-test-'))
+    const cwd = join(root, 'workspace')
+    const grantedDir = join(root, 'granted')
+    await mkdir(cwd)
+    await mkdir(grantedDir)
+
+    const grantedRoots: GrantedLocalRoot[] = [
+      { id: 'root-1', path: grantedDir, name: 'Granted', access: 'ro' }
+    ]
+
+    const wsl2Path = grantedDir
+      .replace(/^([A-Z]):\\/, (_, drive) => `/mnt/${drive.toLowerCase()}/`)
+      .replace(/\//g, '/')
+
+    // Should work: cd to WSL2 path then search relative
+    await expect(
+      assertShellSearchScope(
+        `cd ${wsl2Path} && find .`,
+        cwd,
+        grantedRoots,
+        'linux',
+        undefined,
+        { kind: 'wsl2-bash' }
+      )
+    ).resolves.toBeUndefined()
+  })
 })
