@@ -62,6 +62,7 @@ import {
   shellRuntimePlatform
 } from './shell-runtime'
 import type { NotebookSourceFileAccessContext } from './dependency-analysis-types'
+import type { GrantedLocalRoot } from '../../shared/local-fs'
 
 type NotebookControlResult = Pick<
   NotebookSessionExecutionResult,
@@ -147,6 +148,7 @@ type NotebookExecutionOwnerOptions = {
   shellProcess?: NotebookShellProcess
   shellConcurrencyLimit?: number
   shellRuntimeBinding?: ShellRuntimeBinding
+  getGrantedLocalRoots?: () => Promise<readonly GrantedLocalRoot[]>
 }
 
 const errorToExecutionResult = (error: unknown, cwd: string): NotebookSessionExecutionResult => {
@@ -1524,6 +1526,7 @@ class NotebookExecutionOwner {
         }
       }
       this.liveShellRuns.set(runId, liveRun)
+      const grantedRoots = (await this.options.getGrantedLocalRoots?.()) ?? []
       const shellProcessRequest = {
         runId,
         executionReference: runId,
@@ -1538,7 +1541,8 @@ class NotebookExecutionOwner {
         environment: frozenShellContext.environment,
         sessionId: session.sessionId,
         projectId: session.projectId,
-        timeoutMs: frozenShellContext.timeoutMs
+        timeoutMs: frozenShellContext.timeoutMs,
+        grantedRoots
       }
       let preparedShell:
         Awaited<ReturnType<NonNullable<NotebookShellProcess['prepare']>>> | undefined

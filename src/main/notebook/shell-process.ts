@@ -3,6 +3,7 @@ import { dirname } from 'node:path'
 import type { NotebookExecutionRecovery } from '../../shared/execution-recovery'
 import { assertShellSearchScope } from './shell-search-scope'
 import type { ShellProcessLaunchOwnership } from './shell-process-ownership.windows-posix'
+import type { GrantedLocalRoot } from '../../shared/local-fs'
 
 import { protectManagedRuntimeWrites } from './managed-runtime-guard'
 import { wsl2BashPreviewStatus } from '../wsl/wsl2-preview-gate'
@@ -78,6 +79,7 @@ type NotebookShellProcessRequest = {
   timeoutMs?: number
   signal?: AbortSignal
   runtimeBinding?: ShellRuntimeBinding
+  grantedRoots?: readonly GrantedLocalRoot[]
 }
 
 // Runtime-private port: platform invocation, encoding, env projection, and teardown stay in its adapter.
@@ -307,7 +309,13 @@ const prepareShellLaunchOptions = async (
     })
   }
   const runtimePlatform = shellRuntimePlatform(runtimeBinding, hostPlatform)
-  await assertShellSearchScope(options.command, options.cwd, runtimePlatform, options.signal)
+  await assertShellSearchScope(
+    options.command,
+    options.cwd,
+    options.grantedRoots ?? [],
+    runtimePlatform,
+    options.signal
+  )
 
   let shellEnv: NodeJS.ProcessEnv
   let workloadCacheEnv: NodeJS.ProcessEnv
