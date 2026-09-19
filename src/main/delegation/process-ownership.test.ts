@@ -308,7 +308,8 @@ describe('durable delegated process ownership', () => {
     await writeFile(path, JSON.stringify(noProof) + '\n')
     const cold = new DelegatedProcessOwnership(directory!)
     await expect(cold.recover(scope)).rejects.toMatchObject({ name: 'AggregateError' })
-    // The error message must identify it as a cleanup-confirmation problem, not a read error.
+    // The AggregateError must contain a DelegateExecutionCleanupError — the signal that
+    // production-composition's isOnlyCleanupPending() can distinguish from unexpected failures.
     const err = await cold.recover(scope).catch((e: AggregateError) => e)
     expect((err as AggregateError).errors?.[0]?.name).toBe('DelegateExecutionCleanupError')
   })

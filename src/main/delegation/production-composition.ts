@@ -468,6 +468,13 @@ const createProductionDelegatedWorkComposition = (
     }
   })
 
+  // Returns true when every error in an AggregateError from recover() is a cleanup-confirmation
+  // error, i.e. all affected receipts are blocked but no unexpected failure occurred.
+  const isOnlyCleanupPending = (error: unknown): boolean =>
+    error instanceof AggregateError &&
+    error.errors.length > 0 &&
+    error.errors.every((e) => e instanceof DelegateExecutionCleanupError)
+
   const stopScopedWork = async (log?: { warn(msg: string, err: unknown): void }): Promise<void> => {
     const scoped = await Promise.all([...works.values()])
     const results = await Promise.allSettled(scoped.map(({ key, work }) => work.stopSession(key)))
@@ -478,7 +485,7 @@ const createProductionDelegatedWorkComposition = (
     try {
       await ownership.recover({}, true)
     } catch (error) {
-      if (error instanceof DelegateExecutionCleanupError) {
+      if (isOnlyCleanupPending(error)) {
         log?.warn(
           'Delegated process cleanup is unconfirmed; affected workspace remains protected.',
           error
@@ -572,7 +579,7 @@ const createProductionDelegatedWorkComposition = (
       try {
         await ownership.recover({ sessionId }, true)
       } catch (error) {
-        if (!(error instanceof DelegateExecutionCleanupError)) throw error
+        if (!isOnlyCleanupPending(error)) throw error
       }
       const failures = results.flatMap((result) =>
         result.status === 'rejected' ? [result.reason] : []

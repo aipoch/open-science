@@ -1035,13 +1035,15 @@ export type PosixLeaderRecoveryOutcome = 'gone' | 'blocked'
 // ChildProcess handle and no live tracker, so the only admissible evidence is the kernel's own
 // birth identity for the recorded pid, read from a COMPLETE process snapshot.
 //
-// 'gone' is returned in exactly two provable cases:
-//   - the recorded pid is absent from a complete snapshot, or
-//   - the pid is present but its birth token differs, i.e. the pid was reused by an unrelated
-//     process. We must never signal that replacement.
-// Everything else — an incomplete snapshot, a missing recorded birth token, a live exact match
-// that will not die — stays 'blocked' so the caller keeps protecting the workspace. Liveness is
-// judged only from the snapshot; a bare kill(pid, 0) cannot distinguish PID reuse.
+// 'gone' is returned only when positive proof exists that neither the leader nor its detached
+// process group remain alive:
+//   - the recorded pid is absent or reused (birth token differs) AND the owned group (kill -0)
+//     is also gone, or
+//   - the exact leader is still alive, we terminate its group, and the confirmation snapshot
+//     shows neither the leader pid nor the group exists.
+// If the leader is gone but the group is still alive the receipt stays blocked — a leaderless
+// group cannot be safely tied back to the receipt (matches notebook shell-process-ownership).
+// Everything else that cannot be fully proven also stays blocked.
 export const proveRecordedPosixLeaderGone = async (
   leader: { pid: number; birthToken?: string },
   signal?: NodeJS.Signals,
@@ -1065,8 +1067,11 @@ export const proveRecordedPosixLeaderGone = async (
   // An incomplete snapshot cannot prove absence: the recorded leader may simply be unreadable.
   if (!snapshot.complete) return 'blocked'
   if (!samePosixIdentity(recorded, snapshot.processes.get(leader.pid))) {
-    // Either the pid is absent, or it now names a different process epoch. The recorded tree is
-    // gone; its numeric group id may already belong to a stranger, so nothing is signaled.
+    // The leader pid is absent or reused by an unrelated process. Before declaring the tree gone,
+    // verify the owned group (kill -0 against -pid) is also absent. If the group is still alive
+    // but the leader is gone, the numeric group id may have been reused — never signal a group
+    // that cannot be tied back to the recorded identity. (Mirrors notebook shell-ownership.)
+    if (isProcessGroupAlive(leader.pid)) return 'blocked'
     return 'gone'
   }
   // The exact recorded leader is still alive. Its detached group is still addressable by the
