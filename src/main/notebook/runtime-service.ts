@@ -259,6 +259,9 @@ type NotebookRuntimeServiceOptions = ProjectIdScope & {
   // environment projection, and timeout teardown; tests inject a fake without crossing IPC/shared.
   shellProcess?: NotebookShellProcess
   shellConcurrencyLimit?: number
+  // Callback to fetch currently granted external folder roots. Production wires the
+  // GrantedLocalRootsRepository; tests can inject an in-memory list or omit for empty-list default.
+  getGrantedLocalRoots?: () => Promise<readonly GrantedLocalRoot[]>
   // Immutable shell capability selected before execution. Later switching creates a fresh service /
   // capability; an in-flight Run never re-reads Settings.
   shellRuntimeBinding?: ShellRuntimeBinding
@@ -748,7 +751,8 @@ class NotebookRuntimeService {
           options.processSandbox,
           this.shellProcessOwnership
         ),
-      shellConcurrencyLimit: options.shellConcurrencyLimit
+      shellConcurrencyLimit: options.shellConcurrencyLimit,
+      getGrantedLocalRoots: options.getGrantedLocalRoots
     })
   }
 
