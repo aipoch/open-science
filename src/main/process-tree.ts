@@ -1027,6 +1027,64 @@ export const terminateOwnedPosixProcessGroupById = (
       )
     : Promise.resolve({ reaped: false })
 
+// Scan the process table for any process carrying the given ownership marker in its environment.
+// Returns the list of pids found. An incomplete scan (permission denied, /proc unreadable) returns
+// undefined to signal that descendants cannot be ruled out.
+const scanForOwnedDescendants = async (marker: string): Promise<number[] | undefined> => {
+  if (!marker || typeof marker !== 'string') return []
+  const found: number[] = []
+
+  try {
+    if (process.platform === 'linux') {
+      // Read /proc/[pid]/environ for all processes
+      const { readdirSync, readFileSync } = await import('node:fs')
+      const procs = readdirSync('/proc').filter((name) => /^\d+$/.test(name))
+      let hadPermissionDenied = false
+
+      for (const pidStr of procs) {
+        try {
+          const environ = readFileSync(`/proc/${pidStr}/environ`, 'utf8')
+          // environ is null-separated key=value pairs
+          if (environ.includes(`OPEN_SCIENCE_PROCESS_TREE_ID=${marker}`)) {
+            found.push(parseInt(pidStr, 10))
+          }
+        } catch (err) {
+          const code = (err as NodeJS.ErrnoException).code
+          // ENOENT is fine (process exited), EACCES/EPERM means incomplete scan
+          if (code === 'EACCES' || code === 'EPERM') hadPermissionDenied = true
+        }
+      }
+      // If we hit permission errors, the scan is incomplete — cannot prove absence
+      if (hadPermissionDenied && found.length === 0) return undefined
+      return found
+    } else if (process.platform === 'darwin') {
+      // Use ps e to get environment variables (may be truncated for long env blocks)
+      const { spawnSync } = await import('node:child_process')
+      const result = spawnSync('ps', ['e', '-A', '-o', 'pid,command'], {
+        encoding: 'utf8',
+        timeout: 5000,
+        maxBuffer: 10 * 1024 * 1024
+      })
+      if (result.error || result.status !== 0) {
+        // ps failed — cannot prove absence
+        return undefined
+      }
+      const lines = result.stdout.split('\n')
+      for (const line of lines) {
+        if (line.includes(`OPEN_SCIENCE_PROCESS_TREE_ID=${marker}`)) {
+          const match = line.trim().match(/^(\d+)/)
+          if (match) found.push(parseInt(match[1], 10))
+        }
+      }
+      return found
+    }
+  } catch {
+    // Any unexpected error means the scan is unreliable
+    return undefined
+  }
+  return []
+}
+
 // Outcome of proving a persisted POSIX leader receipt from a later application instance:
 // 'gone' is positive proof that the recorded tree no longer exists, 'blocked' retains ownership.
 export type PosixLeaderRecoveryOutcome = 'gone' | 'blocked'
@@ -1036,16 +1094,18 @@ export type PosixLeaderRecoveryOutcome = 'gone' | 'blocked'
 // birth identity for the recorded pid, read from a COMPLETE process snapshot.
 //
 // 'gone' is returned only when positive proof exists that neither the leader nor its detached
-// process group remain alive:
+// process group nor any marker-attributed descendants remain alive:
 //   - the recorded pid is absent or reused (birth token differs) AND the owned group (kill -0)
-//     is also gone, or
+//     is also gone AND (if marker provided) no process in the system carries that marker, or
 //   - the exact leader is still alive, we terminate its group, and the confirmation snapshot
 //     shows neither the leader pid nor the group exists.
 // If the leader is gone but the group is still alive the receipt stays blocked — a leaderless
 // group cannot be safely tied back to the receipt (matches notebook shell-process-ownership).
+// If a marker scan is incomplete (permission denied) the receipt also stays blocked.
 // Everything else that cannot be fully proven also stays blocked.
 export const proveRecordedPosixLeaderGone = async (
   leader: { pid: number; birthToken?: string },
+  marker?: string,
   signal?: NodeJS.Signals,
   log?: ProcessTreeLogger
 ): Promise<PosixLeaderRecoveryOutcome> => {
@@ -1072,6 +1132,17 @@ export const proveRecordedPosixLeaderGone = async (
     // but the leader is gone, the numeric group id may have been reused — never signal a group
     // that cannot be tied back to the recorded identity. (Mirrors notebook shell-ownership.)
     if (isProcessGroupAlive(leader.pid)) return 'blocked'
+
+    // Leader and its original group are both gone. If we have an ownership marker, scan the
+    // process table for any descendants that may have escaped to a new session but still carry
+    // the marker in their environment. Only return 'gone' if the scan confirms no such processes.
+    if (marker) {
+      const descendants = await scanForOwnedDescendants(marker)
+      // undefined means incomplete scan (permission denied), cannot prove absence
+      if (descendants === undefined) return 'blocked'
+      if (descendants.length > 0) return 'blocked'
+    }
+
     return 'gone'
   }
   // The exact recorded leader is still alive. Its detached group is still addressable by the

@@ -230,10 +230,13 @@ describe('durable delegated process ownership', () => {
     // Must have an ownership block so reboot-proof can clear it later.
     expect(receipt.ownership).toBeDefined()
     expect(receipt.ownership?.platform).toBe(process.platform)
-    // Token is always present; bootId may be undefined on platforms with no boot-identity read.
-    expect(receipt.ownership?.token).toMatch(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-    )
+    // recordFailure receipts do NOT have a token — only real spawned processes get tokens.
+    // This prevents Windows ERROR_FILE_NOT_FOUND from incorrectly clearing unresolved failures.
+    expect(receipt.ownership?.token).toBeUndefined()
+    // bootId may be undefined on platforms with no boot-identity read.
+    if (receipt.ownership?.bootId !== undefined) {
+      expect(receipt.ownership.bootId).toMatch(/^[0-9a-f-]{36}$/i)
+    }
   })
 
   // ── D1: cold-receipt cleared when the recorded POSIX leader is provably dead ────────────────

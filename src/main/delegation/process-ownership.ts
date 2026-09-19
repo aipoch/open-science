@@ -42,7 +42,7 @@ type Receipt = ProcessScope & {
   createdAt: number
   ownership?: {
     platform: 'linux' | 'darwin' | 'win32'
-    token: string
+    token?: string // Optional: only present for real spawned processes, not recordFailure receipts
     bootId?: string
     leader?: { pid: number; birthToken?: string }
   }
@@ -147,7 +147,7 @@ const parse = (value: unknown): Receipt => {
         (key) => !['platform', 'token', 'bootId', 'leader'].includes(key)
       ) ||
       !['linux', 'darwin', 'win32'].includes(ownership.platform) ||
-      !uuidLower.test(ownership.token) ||
+      (ownership.token !== undefined && !uuidLower.test(ownership.token)) ||
       (ownership.bootId !== undefined &&
         // linux emits lowercase; darwin emits uppercase; both are valid per-boot UUIDs.
         !(ownership.platform === 'linux'
@@ -430,6 +430,9 @@ export class DelegatedProcessOwnership {
     // An execution adapter may fail before returning a physical handle. Preserve that explicit
     // cleanup failure without manufacturing a PID or backfilling historical terminal Attempts.
     // Record the boot session so a proven reboot can clear this receipt automatically.
+    // Do NOT generate a fake token — on Windows, reapWindowsOwnedJob treats ERROR_FILE_NOT_FOUND
+    // as success, so a nonexistent Job would be incorrectly cleared. Only real spawned processes
+    // get a token; recordFailure receipts can only be cleared by reboot proof or manual intervention.
     const currentBootSession = bootSessionId()
     this.write(
       {
@@ -440,7 +443,7 @@ export class DelegatedProcessOwnership {
         createdAt: Date.now(),
         ownership: {
           platform: process.platform as 'linux' | 'darwin' | 'win32',
-          token: randomUUID(),
+          // No token for recordFailure — only real process handles have tokens
           ...(currentBootSession ? { bootId: currentBootSession } : {})
         }
       },
@@ -474,18 +477,24 @@ export class DelegatedProcessOwnership {
                 this.remove(receipt)
                 return
               }
-              // Windows: the named Job is the authoritative lifecycle owner.
-              if (
-                ownership.platform === 'win32' &&
-                (await reapWindowsOwnedJob(`Local\\OpenScience.Delegation.${ownership.token}`))
-              ) {
-                this.remove(receipt)
-                return
+              // Windows: the named Job is the authoritative lifecycle owner. Only attempt reap if we
+              // have a real token — recordFailure receipts have no token and can only be cleared by
+              // reboot proof. Attempting reapWindowsOwnedJob on a nonexistent Job returns success
+              // (ERROR_FILE_NOT_FOUND) which would incorrectly clear an unresolved failure receipt.
+              if (ownership.platform === 'win32' && ownership.token) {
+                if (await reapWindowsOwnedJob(`Local\\OpenScience.Delegation.${ownership.token}`)) {
+                  this.remove(receipt)
+                  return
+                }
               }
               // POSIX: if we recorded a leader identity, try to prove the recorded tree gone
-              // by checking whether the pid still exists with the same birth token.
+              // by checking whether the pid still exists with the same birth token. Pass the marker
+              // so escaped descendants carrying it can be detected via process-table scan.
               if (ownership.platform !== 'win32' && ownership.leader?.birthToken !== undefined) {
-                const outcome = await proveRecordedPosixLeaderGone(ownership.leader)
+                const outcome = await proveRecordedPosixLeaderGone(
+                  ownership.leader,
+                  ownership.token // the marker is stored in the token field for POSIX
+                )
                 if (outcome === 'gone') {
                   this.remove(receipt)
                   return
