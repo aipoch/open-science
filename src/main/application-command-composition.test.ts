@@ -430,7 +430,8 @@ describe('application command composition', () => {
       disable: vi.fn(),
       approve: vi.fn(),
       reject: vi.fn(),
-      revoke: vi.fn()
+      revoke: vi.fn(),
+      revokeBrowsers: vi.fn(async () => snapshot)
     }
     const replacementSnapshot = vi.fn(() =>
       Object.freeze({ ...snapshot, mode: 'remoteit' as const, enabled: true, lifecycle: 'running' })
@@ -447,6 +448,19 @@ describe('application command composition', () => {
       composition.remoteWeb.invoke('remote-access:get-snapshot', invocation('remote'))
     ).resolves.toBe(snapshot)
     expect(firstSnapshot).toHaveBeenCalledOnce()
+    const batch = { browserIds: ['first', 'second'] }
+    await expect(
+      composition.remoteWeb.invoke('remote-access:revoke-browsers', {
+        ...invocation('remote'),
+        callerContext: createCallerContext({
+          ...invocation('remote').callerContext,
+          authorities: ['manage-remote-pairing']
+        }),
+        args: [batch]
+      })
+    ).resolves.toBe(snapshot)
+    expect(firstOwner.revokeBrowsers).toHaveBeenCalledExactlyOnceWith(batch.browserIds, false, true)
+
     expect(() => composition.bindRemoteAccess(replacementOwner as never)).toThrow(
       'Remote Access command owner is already bound.'
     )

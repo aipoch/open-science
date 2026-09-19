@@ -72,6 +72,78 @@ const response = (): CapturedResponse => {
 const cookiePair = (header: string): string => header.split(';', 1)[0]
 
 describe('RemoteSessionPairingManager', () => {
+  it('persists a selected batch once, fails closed while saving, and retries without partial deletion', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-remote-batch-'))
+    roots.push(root)
+    const repository = new RemoteAccessRepository(root)
+    const now = Date.now()
+    const browsers = ['first', 'second', 'unselected'].map((id) => ({
+      id,
+      browser: 'Chrome',
+      platform: 'macOS',
+      tokenHash: createHash('sha256').update(`${id}-secret`).digest('hex'),
+      createdAt: now,
+      lastSeenAt: now,
+      expiresAt: now + TRUSTED_BROWSER_TTL_MS
+    }))
+    await repository.save({ version: 5, mode: 'remoteit-public', trustedBrowsers: browsers })
+    const onChanged = vi.fn()
+    const manager = await RemoteSessionPairingManager.create({
+      repository,
+      now: () => now,
+      isEnabled: () => true,
+      isAllowedRemoteHost: (hostname) => hostname === 'home.example.ts.net',
+      onChanged
+    })
+    const authorize = (id: string): ReturnType<typeof manager.webAccess.authorizeWebSocket> =>
+      manager.webAccess.authorizeWebSocket(
+        request('/events', {
+          cookie: `open_science_remote_session=${id}.${id}-secret`,
+          origin: 'https://home.example.ts.net'
+        }),
+        new URL('https://home.example.ts.net/events')
+      )
+    let rejectSave!: (error: Error) => void
+    const save = vi.spyOn(repository, 'save').mockImplementationOnce(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectSave = reject
+        })
+    )
+    try {
+      const firstAccess = await authorize('first')
+      const secondAccess = await authorize('second')
+      const revocation = manager.revokeBrowsers(['first', 'second', 'first', 'already-removed'])
+      const failure = expect(revocation).rejects.toThrow('disk full')
+      await vi.waitFor(() => expect(save).toHaveBeenCalledOnce())
+      expect(firstAccess && firstAccess.isCurrent()).toBe(false)
+      expect(secondAccess && secondAccess.isCurrent()).toBe(false)
+      expect(await authorize('first')).toBeUndefined()
+      expect(await authorize('second')).toBeUndefined()
+      expect(await authorize('unselected')).toBeDefined()
+      expect(save.mock.calls[0][0].trustedBrowsers.map(({ id }) => id)).toEqual(['unselected'])
+      rejectSave(new Error('disk full'))
+      await failure
+      expect((await repository.load()).trustedBrowsers).toHaveLength(3)
+      expect(manager.trustedViews()).toHaveLength(3)
+      expect(onChanged).not.toHaveBeenCalled()
+      expect(await authorize('first')).toBeDefined()
+      expect(await authorize('second')).toBeDefined()
+
+      await manager.revokeBrowsers(['first', 'second'])
+      expect(save).toHaveBeenCalledTimes(2)
+      expect(onChanged).toHaveBeenCalledOnce()
+      expect((await repository.load()).trustedBrowsers.map(({ id }) => id)).toEqual(['unselected'])
+      expect(await authorize('first')).toBeUndefined()
+      expect(await authorize('second')).toBeUndefined()
+      expect(await authorize('unselected')).toBeDefined()
+      await manager.revokeBrowsers(['first', 'second'])
+      expect(save).toHaveBeenCalledTimes(2)
+    } finally {
+      manager.dispose()
+    }
+  })
+
   it.each(['http', 'websocket'] as const)(
     'keeps valid trusted %s access available when only the activity timestamp cannot be saved',
     async (transport) => {

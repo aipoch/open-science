@@ -13,6 +13,16 @@ const paths = (
 ): string[] => RENDERER_CONTRACT_CATALOG.filter(predicate).map(({ publicPath }) => publicPath)
 
 describe('renderer contract catalog', () => {
+  it('installs bulk browser revocation on every renderer with caller authorization in the owner', () => {
+    expect(
+      RENDERER_CONTRACT_CATALOG.find(
+        ({ publicPath }) => publicPath === 'remoteAccess.revokeBrowsers'
+      )
+    ).toMatchObject({
+      surfaceInstallation: { electron: 'preload', localWeb: 'web-rpc', remoteWeb: 'web-rpc' }
+    })
+    expect(WEB_INVOKE_CHANNELS['remoteAccess.revokeBrowsers']).toBe('remote-access:revoke-browsers')
+  })
   it('registers all four local model methods across the intended surfaces', () => {
     const group = RENDERER_CONTRACT_GROUPS.find(({ capability }) => capability === 'local-models')
     expect(group?.contracts.map(({ publicPath }) => publicPath).sort()).toEqual([

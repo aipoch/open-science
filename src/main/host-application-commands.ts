@@ -32,6 +32,7 @@ import type {
   RemoteAccessSnapshot,
   RemotePairingRequestId,
   RevokeRemoteBrowserRequest,
+  RevokeRemoteBrowsersRequest,
   SetRemoteAccessModeRequest
 } from '../shared/remote-access'
 import { remoteAccessApplicationCommandContracts } from '../shared/remote-access'
@@ -227,6 +228,11 @@ const remoteAccessCommands = Object.freeze({
     readonly [request: RevokeRemoteBrowserRequest],
     RemoteAccessSnapshot
   >('remote-access:revoke-browser', remoteAccessApplicationCommandContracts.revokeBrowser),
+  revokeBrowsers: defineApplicationCommand<
+    'remote-access:revoke-browsers',
+    readonly [request: RevokeRemoteBrowsersRequest],
+    RemoteAccessSnapshot
+  >('remote-access:revoke-browsers', remoteAccessApplicationCommandContracts.revokeBrowsers),
   setMode: defineApplicationCommand<
     'remote-access:set-mode',
     readonly [request: SetRemoteAccessModeRequest],
@@ -450,7 +456,15 @@ type HostApplicationCommandDependencies = Readonly<{
   }>
   remoteAccess: Pick<
     RemoteAccessService,
-    'snapshot' | 'probe' | 'detect' | 'setMode' | 'disable' | 'approve' | 'reject' | 'revoke'
+    | 'snapshot'
+    | 'probe'
+    | 'detect'
+    | 'setMode'
+    | 'disable'
+    | 'approve'
+    | 'reject'
+    | 'revoke'
+    | 'revokeBrowsers'
   >
   reviewer: Pick<ReviewerCommandOwner, 'run' | 'getForSession' | 'abort' | 'abortFixLoop'>
   storage: Readonly<{
@@ -621,6 +635,14 @@ const registerHostApplicationCommands = (
         return dependencies.remoteAccess.revoke(
           args[0].browserId,
           desktop,
+          canManagePairing(callerContext)
+        )
+      },
+      'remote-access:revoke-browsers': ({ args, callerContext }) => {
+        requirePairingManager(callerContext)
+        return dependencies.remoteAccess.revokeBrowsers(
+          args[0].browserIds,
+          isDesktopCaller(callerContext),
           canManagePairing(callerContext)
         )
       },

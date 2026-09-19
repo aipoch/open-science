@@ -261,6 +261,16 @@ describe('renderer argument-shape characterization', () => {
     expect(actualPaths).toEqual(expectedPaths)
   })
 
+  it('keeps bulk browser revocation arguments equivalent across Electron and Web', async () => {
+    const args = [{ browserIds: ['browser-1', 'browser-2'] }]
+    const channel = 'remote-access:revoke-browsers'
+    expect(await invokeElectron(electronApi, 'remoteAccess.revokeBrowsers', args)).toEqual({
+      channel,
+      args
+    })
+    expect(await invokeWeb(webApi, 'remoteAccess.revokeBrowsers', args)).toEqual({ channel, args })
+  })
+
   it('keeps Skill Marketplace request arguments equivalent across Electron and Web', async () => {
     for (const [path, channel, args] of [
       ['settings.listSkillMarketplace', 'settings:list-skill-marketplace', []],

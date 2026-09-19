@@ -545,6 +545,7 @@ import type {
   RemoteAccessSnapshot,
   RemotePairingRequestId,
   RevokeRemoteBrowserRequest,
+  RevokeRemoteBrowsersRequest,
   SetRemoteAccessModeRequest
 } from './remote-access'
 import type {
@@ -1733,6 +1734,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'remoteAccess.revokeBrowser': callable<
     (request: RevokeRemoteBrowserRequest) => Promise<RemoteAccessSnapshot>
   >()('remote-access', ['remote-access:revoke-browser']),
+  'remoteAccess.revokeBrowsers': callable<
+    (request: RevokeRemoteBrowsersRequest) => Promise<RemoteAccessSnapshot>
+  >()('remote-access', ['remote-access:revoke-browsers']),
   'remoteAccess.setMode': callable<
     (request: SetRemoteAccessModeRequest) => Promise<RemoteAccessSnapshot>
   >()('remote-access', ['remote-access:set-mode', ELECTRON]),
