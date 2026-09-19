@@ -1025,6 +1025,7 @@ export {
   buildEnvironmentLockReadme,
   createArtifactReproducibilityReceiptExporter,
   environmentLockBundleInfo,
+  outputFilename,
   readEnvironmentLockArchive,
   verificationArchiveName
 }
