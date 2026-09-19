@@ -1036,15 +1036,49 @@ const scanForOwnedDescendants = async (marker: string): Promise<number[] | undef
 
   try {
     if (process.platform === 'linux') {
-      // Read /proc/[pid]/environ for all processes. Only processes running as the same UID can
-      // inherit the marker (child processes inherit environment from parent). Permission denied
-      // for other-UID processes (especially root-owned system processes) does not indicate an
-      // incomplete scan of the ownership scope.
+      // Read /proc/[pid]/environ for all processes. A setuid descendant can inherit the marker but
+      // run as a different UID, making its environment unreadable. To avoid incorrectly clearing
+      // ownership, we must check: (1) same-UID processes (direct descendants), and (2) processes
+      // we cannot inspect that might be setuid descendants. Use PPID to identify potential descendants.
       const { readdirSync, readFileSync, statSync } = await import('node:fs')
       const procs = readdirSync('/proc').filter((name) => /^\d+$/.test(name))
       const ourUid = process.getuid?.()
-      let hadRelevantPermissionDenied = false
 
+      // Build PPID map to identify potential descendants
+      const ppidMap = new Map<number, number>() // pid -> ppid
+      for (const pidStr of procs) {
+        try {
+          const stat = readFileSync(`/proc/${pidStr}/stat`, 'utf8')
+          // stat format: pid (comm) state ppid ...
+          const match = stat.match(/^\d+ \(.+\) \S+ (\d+)/)
+          if (match) {
+            ppidMap.set(parseInt(pidStr, 10), parseInt(match[1], 10))
+          }
+        } catch {
+          // Ignore processes that disappear or are unreadable
+        }
+      }
+
+      // Helper: check if pid could be a descendant of any same-UID process
+      const couldBeDescendant = (pid: number): boolean => {
+        const visited = new Set<number>()
+        let current: number | undefined = pid
+        while (current !== undefined && !visited.has(current)) {
+          visited.add(current)
+          // If we reach a same-UID process, this could be a descendant
+          try {
+            const stat = statSync(`/proc/${current}`)
+            if (ourUid !== undefined && stat.uid === ourUid) return true
+          } catch {
+            // Cannot determine - assume could be relevant
+            return true
+          }
+          current = ppidMap.get(current)
+        }
+        return false
+      }
+
+      let hadRelevantPermissionDenied = false
       for (const pidStr of procs) {
         try {
           const environ = readFileSync(`/proc/${pidStr}/environ`, 'utf8')
@@ -1057,21 +1091,14 @@ const scanForOwnedDescendants = async (marker: string): Promise<number[] | undef
           // ENOENT/ESRCH are benign (process exited between readdir and readFile).
           if (code === 'ENOENT' || code === 'ESRCH') continue
 
-          // Permission denied for a same-UID process means incomplete scan (we should have access).
-          // Permission denied for other-UID processes is expected and does not affect completeness.
-          try {
-            const stat = statSync(`/proc/${pidStr}`)
-            const isSameUid = ourUid !== undefined && stat.uid === ourUid
-            if (isSameUid) {
-              hadRelevantPermissionDenied = true
-            }
-          } catch {
-            // Cannot stat — assume it could be relevant to be safe
+          // Permission denied: check if this process could be a setuid descendant
+          const pid = parseInt(pidStr, 10)
+          if (couldBeDescendant(pid)) {
             hadRelevantPermissionDenied = true
           }
         }
       }
-      // If we hit permission errors for same-UID processes, the scan is incomplete
+      // If we hit permission errors for potential descendants, the scan is incomplete
       if (hadRelevantPermissionDenied && found.length === 0) return undefined
       return found
     } else if (process.platform === 'darwin') {
