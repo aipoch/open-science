@@ -1167,11 +1167,18 @@ export const proveRecordedPosixLeaderGone = async (
 
     // Leader and its original group are both gone. If we have an ownership marker, scan the process
     // table for any descendants that may have escaped to a new session but still carry the marker.
-    // Per the documented contract: return 'gone' when no process in the system carries the marker
-    // (provided the scan is complete). While a process could theoretically unsetenv() the marker,
-    // this requires deliberate action and is not part of normal process behavior. The scan checks
-    // only same-UID processes (only they can inherit our marker), making it a practical ownership
-    // proof despite lacking OS-level lifecycle guarantees like Windows Job objects.
+    //
+    // Security model: marker-based tracking provides practical ownership proof but lacks the
+    // authoritative guarantees of OS lifecycle handles (Windows Job objects). Theoretical attack:
+    // a descendant could exec() itself with a cleaned environment, removing the marker from
+    // /proc/[pid]/environ. However:
+    //   1. Reboot proof (checked upstream) handles the cold-start case definitively
+    //   2. Our spawned delegation backends don't exec() themselves
+    //   3. Same-UID scope limits the attack surface
+    //   4. The documented contract explicitly permits this approach
+    //
+    // Alternative (always block without reboot proof) would make workspaces unusable after clean
+    // process termination, contradicting the recovery contract and practical requirements.
     if (marker) {
       const descendants = await scanForOwnedDescendants(marker)
       // undefined means incomplete scan (permission denied for same-UID process, binding failed)
