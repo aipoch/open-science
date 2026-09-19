@@ -476,9 +476,14 @@ const createProductionDelegatedWorkComposition = (
   // quit/update; only suppress per-receipt cleanup-pending errors (no cause).
   const isOnlyCleanupPending = (error: unknown): boolean => {
     if (error instanceof DelegateExecutionCleanupError) {
-      // DelegateExecutionCleanupError with a cause means storage read failure; propagate it.
-      // Without a cause, it's a legitimate cleanup-pending error; suppress during quit/update.
-      return error.cause === undefined
+      // DelegateExecutionCleanupError with a cause: recursively check if the cause itself is
+      // cleanup-pending. This handles wrapping by the execution layer where real cleanup failures
+      // are wrapped with context but the root cause is still a cleanup-pending error.
+      // Without a cause, it's a direct cleanup-pending error; suppress during quit/update.
+      if (error.cause !== undefined) {
+        return isOnlyCleanupPending(error.cause)
+      }
+      return true // No cause = cleanup-pending
     }
     if (error instanceof AggregateError && error.errors.length > 0) {
       return error.errors.every((e) => isOnlyCleanupPending(e))

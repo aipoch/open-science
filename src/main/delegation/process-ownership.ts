@@ -521,11 +521,13 @@ export class DelegatedProcessOwnership {
               }
               // POSIX: if we recorded a leader identity, try to prove the recorded tree gone
               // by checking whether the pid still exists with the same birth token. Pass the marker
-              // so escaped descendants carrying it can be detected via process-table scan.
+              // so escaped descendants carrying it can be detected via process-table scan. Also pass
+              // createdAt so we can ignore processes that existed before our spawn time.
               if (ownership.platform !== 'win32' && ownership.leader?.birthToken !== undefined) {
                 const outcome = await proveRecordedPosixLeaderGone(
                   ownership.leader,
-                  ownership.token // the marker is stored in the token field for POSIX
+                  ownership.token, // the marker is stored in the token field for POSIX
+                  receipt.createdAt
                 )
                 if (outcome === 'gone') {
                   this.remove(receipt)

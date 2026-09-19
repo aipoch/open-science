@@ -1030,7 +1030,10 @@ export const terminateOwnedPosixProcessGroupById = (
 // Scan the process table for any process carrying the given ownership marker in its environment.
 // Returns the list of pids found. An incomplete scan (permission denied, /proc unreadable) returns
 // undefined to signal that descendants cannot be ruled out.
-const scanForOwnedDescendants = async (marker: string): Promise<number[] | undefined> => {
+const scanForOwnedDescendants = async (
+  marker: string,
+  spawnedAt?: number
+): Promise<number[] | undefined> => {
   if (!marker || typeof marker !== 'string') return []
   const found: number[] = []
 
@@ -1040,42 +1043,100 @@ const scanForOwnedDescendants = async (marker: string): Promise<number[] | undef
       // run as a different UID, making its environment unreadable. To avoid incorrectly clearing
       // ownership, we must check: (1) same-UID processes (direct descendants), and (2) processes
       // we cannot inspect that might be setuid descendants. Use PPID to identify potential descendants.
+      // Also use process start time to exclude processes that existed before our spawn time.
       const { readdirSync, readFileSync, statSync } = await import('node:fs')
       const procs = readdirSync('/proc').filter((name) => /^\d+$/.test(name))
       const ourUid = process.getuid?.()
 
+      // System boot time in seconds since epoch (needed to convert process start time)
+      let bootTime: number | undefined
+      if (spawnedAt !== undefined) {
+        try {
+          const uptime = readFileSync('/proc/uptime', 'utf8')
+          const uptimeSeconds = parseFloat(uptime.split(' ')[0])
+          bootTime = Date.now() / 1000 - uptimeSeconds
+        } catch {
+          // Cannot determine boot time - fail closed (cannot filter by time)
+        }
+      }
+
       // Build PPID map to identify potential descendants
       const ppidMap = new Map<number, number>() // pid -> ppid
+      const startTimeMap = new Map<number, number>() // pid -> start time (ms since epoch)
       for (const pidStr of procs) {
         try {
           const stat = readFileSync(`/proc/${pidStr}/stat`, 'utf8')
-          // stat format: pid (comm) state ppid ...
+          // stat format: pid (comm) state ppid ... starttime(jiffies)
+          // starttime is field 22 (0-indexed: 21)
           const match = stat.match(/^\d+ \(.+\) \S+ (\d+)/)
           if (match) {
             ppidMap.set(parseInt(pidStr, 10), parseInt(match[1], 10))
+          }
+          // Extract starttime (field 22, 1-indexed)
+          const fields = stat.split(')')
+          if (fields.length >= 2) {
+            const afterComm = fields[1].trim().split(/\s+/)
+            if (afterComm.length >= 20 && bootTime !== undefined) {
+              const starttimeJiffies = parseInt(afterComm[19], 10) // 0-indexed field 21
+              const clockTick = 100 // USER_HZ, typically 100 on Linux
+              const startTimeSec = bootTime + starttimeJiffies / clockTick
+              startTimeMap.set(parseInt(pidStr, 10), startTimeSec * 1000) // Convert to ms
+            }
           }
         } catch {
           // Ignore processes that disappear or are unreadable
         }
       }
 
-      // Helper: check if pid could be a descendant of any same-UID process
+      // Helper: check if pid could be a descendant of any same-UID process. Returns true if we
+      // cannot rule it out (fail closed). A setuid descendant may be reparented to PID 1 after
+      // its same-UID parent exits, making PPID-based tracing inconclusive.
       const couldBeDescendant = (pid: number): boolean => {
+        // If we have a spawn time and this process started before it, definitely not our descendant
+        if (spawnedAt !== undefined && startTimeMap.has(pid)) {
+          const processStart = startTimeMap.get(pid)!
+          if (processStart < spawnedAt) {
+            return false // Process existed before we spawned anything
+          }
+        }
+
         const visited = new Set<number>()
         let current: number | undefined = pid
+        let foundSameUid = false
+
         while (current !== undefined && !visited.has(current)) {
           visited.add(current)
+
           // If we reach a same-UID process, this could be a descendant
           try {
             const stat = statSync(`/proc/${current}`)
-            if (ourUid !== undefined && stat.uid === ourUid) return true
+            if (ourUid !== undefined && stat.uid === ourUid) {
+              foundSameUid = true
+              break
+            }
           } catch {
-            // Cannot determine - assume could be relevant
+            // Cannot determine UID - assume could be relevant (fail closed)
             return true
           }
+
           current = ppidMap.get(current)
+
+          // Reached PID 1 or orphaned (no PPID entry) without finding same-UID ancestor.
+          // This could be a setuid descendant that was reparented after its parent exited.
+          if (current === undefined || current === 1) {
+            break
+          }
         }
-        return false
+
+        // If we found a same-UID ancestor, definitely could be a descendant
+        if (foundSameUid) return true
+
+        // Otherwise: reached init/orphaned without same-UID ancestor. This could be:
+        // 1. Unrelated system process that existed before our spawn (should ignore)
+        // 2. Setuid descendant that was reparented (should block)
+        // If we already filtered by start time above, this is likely case 1
+        // If we couldn't get start time, fail closed
+        return spawnedAt === undefined || !startTimeMap.has(pid)
       }
 
       let hadRelevantPermissionDenied = false
@@ -1164,6 +1225,7 @@ export type PosixLeaderRecoveryOutcome = 'gone' | 'blocked'
 export const proveRecordedPosixLeaderGone = async (
   leader: { pid: number; birthToken?: string },
   marker?: string,
+  spawnedAt?: number,
   signal?: NodeJS.Signals,
   log?: ProcessTreeLogger
 ): Promise<PosixLeaderRecoveryOutcome> => {
@@ -1207,7 +1269,7 @@ export const proveRecordedPosixLeaderGone = async (
     // Alternative (always block without reboot proof) would make workspaces unusable after clean
     // process termination, contradicting the recovery contract and practical requirements.
     if (marker) {
-      const descendants = await scanForOwnedDescendants(marker)
+      const descendants = await scanForOwnedDescendants(marker, spawnedAt)
       // undefined means incomplete scan (permission denied for same-UID process, binding failed)
       if (descendants === undefined) return 'blocked'
       // Found descendants with marker → definitely blocked
@@ -1242,7 +1304,7 @@ export const proveRecordedPosixLeaderGone = async (
   // successful termination provides sufficient proof: we killed the recorded group and no
   // marked descendants remain visible.
   if (marker) {
-    const descendants = await scanForOwnedDescendants(marker)
+    const descendants = await scanForOwnedDescendants(marker, spawnedAt)
     if (descendants === undefined) return 'blocked' // incomplete scan
     if (descendants.length > 0) return 'blocked' // found escaped descendants
     // Clean scan after live teardown: sufficient proof
