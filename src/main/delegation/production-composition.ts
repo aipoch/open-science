@@ -603,13 +603,9 @@ const createProductionDelegatedWorkComposition = (
       settlementWake?.invalidateSession(sessionId)
       const scoped = await worksForSession(sessionId)
       const results = await Promise.allSettled(scoped.map(({ key, work }) => work.stopSession(key)))
-      // Blocked receipts for this session must not propagate into the shutdown/update-gate aggregate.
-      // Workspace files for the session remain protected; deletion and prepare still block.
-      try {
-        await ownership.recover({ sessionId }, true)
-      } catch (error) {
-        if (!isOnlyCleanupPending(error)) throw error
-      }
+      // Attempt recovery but propagate cleanup-pending errors. Unlike quit/update gates, ordinary
+      // stopSession must surface unresolved ownership so the caller knows cleanup is unconfirmed.
+      await ownership.recover({ sessionId })
       const failures = results.flatMap((result) =>
         result.status === 'rejected' ? [result.reason] : []
       )

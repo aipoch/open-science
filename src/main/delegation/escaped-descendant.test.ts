@@ -49,7 +49,7 @@ describe('Escaped descendant detection', () => {
     }
   }, 10000)
 
-  it('remains blocked in cold recovery even when leader, group, and marker scan are all clean', async () => {
+  it('returns gone when complete scan finds leader absent, group absent, and no marker', async () => {
     if (process.platform !== 'linux' && process.platform !== 'darwin') return
 
     const marker = `test-gone-${Date.now()}`
@@ -63,12 +63,11 @@ describe('Escaped descendant detection', () => {
 
     await new Promise((resolve) => proc.on('exit', resolve))
 
-    // Leader is gone, group is gone, complete marker scan finds nothing. However, in cold recovery
-    // (where we did not actively terminate), a descendant could have unsetenv() the marker or
-    // daemonized, making it invisible to scans while still alive. Without an authoritative OS-owned
-    // lifecycle handle (like Windows Job objects) or reboot proof, cold recovery must remain blocked.
+    // Leader is gone, group is gone, complete marker scan finds nothing. Per the documented
+    // contract: return 'gone' when the recorded pid is absent, the owned group is gone, and
+    // no process in the system carries that marker (with a complete scan).
     const outcome = await proveRecordedPosixLeaderGone({ pid, birthToken }, marker)
 
-    expect(outcome).toBe('blocked')
+    expect(outcome).toBe('gone')
   })
 })
