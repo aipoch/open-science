@@ -99,6 +99,7 @@
     "src/main/literature/pdf-structure/fixtures/column-flowchart-above-comment-heading.jsonl",
     "src/main/literature/pdf-structure/fixtures/comma-separated-bibliography-columns.jsonl",
     "src/main/literature/pdf-structure/fixtures/comparison-symbol-subset.jsonl",
+    "src/main/literature/pdf-structure/fixtures/continuation-footer-overlapping-model-row.jsonl",
     "src/main/literature/pdf-structure/fixtures/continuous-measure-before-count-percentage-header.jsonl",
     "src/main/literature/pdf-structure/fixtures/correlation-triangle-with-repeated-source-labels.jsonl",
     "src/main/literature/pdf-structure/fixtures/demographic-groups-with-centered-stub-and-missing-record.jsonl",
@@ -183,6 +184,7 @@
     "src/main/literature/pdf-structure/fixtures/rotated-outcome-records-with-trailing-intervals.jsonl",
     "src/main/literature/pdf-structure/fixtures/rotated-outcome-table-continuation.jsonl",
     "src/main/literature/pdf-structure/fixtures/ruled-attribute-list-with-hanging-entries.jsonl",
+    "src/main/literature/pdf-structure/fixtures/ruled-bulleted-table-continuation.jsonl",
     "src/main/literature/pdf-structure/fixtures/ruled-followup-series-with-shared-outcomes.jsonl",
     "src/main/literature/pdf-structure/fixtures/sectioned-mixed-effects-with-wrapped-coefficients.jsonl",
     "src/main/literature/pdf-structure/fixtures/short-clinical-comparison-with-leading-measurement.jsonl",
@@ -625,7 +627,16 @@
     "src/main/literature/session-pdf-source-resolver.test.ts",
     "src/main/literature/session-pdf-source-resolver.ts",
     "src/main/literature/transact.ts",
-    "src/main/literature/citation-exchange.test.ts"
+    "src/main/literature/citation-exchange.test.ts",
+    "src/main/literature/pdf-structure/table-native-record-boundaries.test.ts",
+    "src/main/literature/pdf-structure/fixtures/typed-characteristics-with-overlapping-records.jsonl",
+    "src/main/literature/pdf-structure/fixtures/paired-adjustment-records-with-raised-significance.jsonl",
+    "src/main/literature/pdf-structure/fixtures/segmented-cohort-counts-with-section-statistics.jsonl",
+    "src/main/literature/pdf-structure/fixtures/stacked-side-plots-with-rasterized-labels.jsonl",
+    "src/main/literature/pdf-structure/fixtures/outlined-diagonal-watermark-with-table-witnesses.jsonl",
+    "src/main/literature/pdf-structure/fixtures/centered-group-parent-above-cohort-samples.jsonl",
+    "src/main/literature/pdf-structure/fixtures/ruled-population-title-above-sample-count.jsonl",
+    "src/main/literature/pdf-structure/fixtures/centered-variable-stubs-with-repeated-summary-statistics.jsonl"
   ],
   "interfacePaths": [
     "src/main/literature/agent-pdf-acquisition.ts",
@@ -819,7 +830,8 @@
       "src/main/literature/reference-resolver.test.ts",
       "src/main/literature/scale-regressions.test.ts",
       "src/main/literature/session-pdf-source-resolver.test.ts",
-      "src/main/literature/citation-exchange.test.ts"
+      "src/main/literature/citation-exchange.test.ts",
+      "src/main/literature/pdf-structure/table-native-record-boundaries.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

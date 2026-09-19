@@ -474,14 +474,17 @@ export function refineTable(table, pageItems, captions = [], notes = [], rules =
   )
   const excluded = new Set(excludedCaptionItems)
   // A split continuation marker below the last source row is navigation text.
+  // Allow a small model-boundary overlap, not a marker within the row body.
   // Keep parentheses elsewhere, including lone zeros and incomplete source values.
   for (const marker of pageItems.filter(
     (i) =>
       rows.length &&
       i.horizontal &&
-      /^\(?continued(?: on (?:next|following) page)?\)?$/i.test(i.text.trim()) &&
-      i.rect[1] >= (recordGrid?.rows.at(-1)?.[3] ?? rows.at(-1).rect[3]) &&
-      inside(table.cropRect, i)
+      /^\(?continu(?:ed|es)(?: on (?:next|following) page)?\)?$/i.test(i.text.trim()) &&
+      i.rect[1] >= (recordGrid?.rows.at(-1)?.[3] ?? rows.at(-1).rect[3]) - i.height * 0.1 &&
+      i.rect[0] >= table.cropRect[0] &&
+      i.rect[2] <= table.cropRect[2] &&
+      intersect(table.cropRect, i.rect) > 0
   )) {
     excluded.add(marker)
     for (const part of pageItems) {
@@ -534,7 +537,7 @@ export function refineTable(table, pageItems, captions = [], notes = [], rules =
   const items = sourceItems.filter(
     (i) =>
       inside(table.cropRect, i) &&
-      !/^\((?:Table\s+\d+\s+continued on next column|continues)\)$/i.test(i.text.trim())
+      !/^\(Table\s+\d+\s+continued on next column\)$/i.test(i.text.trim())
   )
   if (!items.length) issues.add('no-source-text')
   if (!rows.length || !columns.length) issues.add('missing-row-or-column')
@@ -753,6 +756,38 @@ export function refineTable(table, pageItems, captions = [], notes = [], rules =
           Math.abs(item.rect[0] - rect[0]) < 1 &&
           item.baseline - leading[0].baseline < height * 1.5
       )
+    // A centered population title above its sample-size line is one wrapped
+    // header. Matching native rules bound both, independently of model cuts.
+    const sampleChild =
+      leading.length === 1 &&
+      /^[\p{L}][\p{L}\s()/-]*$/u.test(leading[0].text.trim()) &&
+      objects.some((o) => o.label === 'table column header') &&
+      items.find(
+        (i) =>
+          /^N\s*=\s*\d+\s*\(%\)$/i.test(i.text.trim()) &&
+          i.baseline - leading[0].baseline > height * 0.8 &&
+          i.baseline - leading[0].baseline < height * 1.6 &&
+          Math.abs(i.rect[0] + i.rect[2] - rect[0] - rect[2]) < height * 0.5 &&
+          objects.some((o) => o.label === 'table column header' && inside(o.rect, i))
+      )
+    const ruledSample =
+      sampleChild &&
+      rules.some(
+        (a) =>
+          a[1] === a[3] &&
+          a[1] <= rect[1] &&
+          rect[1] - a[1] < height &&
+          a[0] <= rect[0] &&
+          a[2] >= rect[2] &&
+          rules.some(
+            (b) =>
+              b[1] === b[3] &&
+              b[1] >= sampleChild.rect[3] &&
+              b[1] - sampleChild.rect[3] < height &&
+              Math.abs(a[0] - b[0]) < 0.1 &&
+              Math.abs(a[2] - b[2]) < 0.1
+          )
+      )
     const parentTitle =
       leading.length === 1 &&
       /\p{L}/u.test(leading[0].text) &&
@@ -772,12 +807,13 @@ export function refineTable(table, pageItems, captions = [], notes = [], rules =
           items.some((item) => inside(object.rect, item) && Math.abs(item.rect[0] - rect[0]) < 1)
       )
     if (
-      (confidencePrefix || parentTitle) &&
+      (confidencePrefix || parentTitle || ruledSample) &&
       rect[3] < rows[0].rect[1] &&
       rows[0].rect[1] - rect[1] < height * 1.6 &&
-      objects.some(
-        (object) => object.label === 'table column header' && inside(object.rect, next[0])
-      ) &&
+      (ruledSample ||
+        objects.some(
+          (object) => object.label === 'table column header' && inside(object.rect, next[0])
+        )) &&
       !rules.some(
         (rule) =>
           rule[1] === rule[3] &&
@@ -1036,6 +1072,7 @@ export function refineTable(table, pageItems, captions = [], notes = [], rules =
   }
   let pairedRows
   let recoveredHeaderCuts
+  let recoveredGroupColumns
   let recoveredIntervalParent = false
   let recoveredNumericSections = false
   let recoveredComparisonStatistics = false
@@ -1201,6 +1238,39 @@ export function refineTable(table, pageItems, captions = [], notes = [], rules =
             ).size >= 2
           )
         })
+      const parentBounds = runs[0]?.length ? union(runs[0]) : bounds
+      const parentColumns = columnRects.flatMap((r, n) =>
+        Math.min(r[2], parentBounds[2]) - Math.max(r[0], parentBounds[0]) >
+        parentBounds[3] - parentBounds[1]
+          ? [n]
+          : []
+      )
+      const parentChildren = parentColumns.map(
+        (c) =>
+          firstBand
+            .filter((i) => columnOf(i) === c && /^[\p{L}][\p{L}\s-]*$/u.test(i.text))
+            .sort((a, b) => a.baseline - b.baseline)[0]
+      )
+      const centeredGroupParent =
+        runs.length === 1 &&
+        runs[0].length === 1 &&
+        /\bgroups?$/i.test(leading[0].text.trim()) &&
+        parentColumns.length === 2 &&
+        parentColumns[0] > 0 &&
+        parentColumns[1] === parentColumns[0] + 1 &&
+        parentChildren.every(Boolean) &&
+        Math.abs(parentChildren[0].baseline - parentChildren[1].baseline) <
+          leading[0].height * 0.2 &&
+        parentChildren.every(
+          (i) =>
+            i.baseline > parentBounds[3] && i.baseline - parentBounds[3] < leading[0].height * 4
+        ) &&
+        Math.abs(
+          union(parentChildren)[0] + union(parentChildren)[2] - parentBounds[0] - parentBounds[2]
+        ) < leading[0].height &&
+        objects.some(
+          (o) => o.label === 'table column header' && parentChildren.every((i) => inside(o.rect, i))
+        )
       // A lone parent or the first line of a wrapped parent can sit above all
       // predicted rows. Its own underline and model header evidence distinguish
       // it from prose or an uncaptured data record.
@@ -1307,6 +1377,25 @@ export function refineTable(table, pageItems, captions = [], notes = [], rules =
         ruled(top - 2, bounds[1]) &&
         ruled(bounds[3], rows[0].rect[1] + 2)
       if (
+        centeredGroupParent &&
+        leading.every(
+          (i) =>
+            runs[0].includes(i) ||
+            (columnOf(i) >= 0 &&
+              !parentColumns.includes(columnOf(i)) &&
+              i.rect[1] >= parentBounds[3] &&
+              rows[0].rect[1] - i.rect[1] < i.height)
+        )
+      ) {
+        const peers = leading.filter((i) => !runs[0].includes(i))
+        rows[0].rect[1] = Math.min(rows[0].rect[1], ...peers.map((i) => i.rect[1]))
+        rows.unshift({
+          rect: [left, parentBounds[1], right, parentBounds[3]],
+          origin: 'source-text'
+        })
+        recoveredGroupColumns = parentColumns
+        repairs.push('treatment-header-recovered')
+      } else if (
         (headerColumns.length >= columns.length - 1 ||
           ruledInterval ||
           completeRuns ||
@@ -2235,7 +2324,7 @@ export function refineTable(table, pageItems, captions = [], notes = [], rules =
           (column, i) =>
             (i && column !== valueColumns[i - 1] + 1) ||
             !/^\d+(?:\.\d+)?%$/.test(line.texts[column]) ||
-            !/^\d+$/.test(count.texts[column])
+            !/^\d[\d,]*$/.test(count.texts[column])
         ) ||
         !count.texts.slice(0, valueColumns[0]).some((text) => /\p{L}/u.test(text)) ||
         count.texts
@@ -3377,6 +3466,38 @@ export function refineTable(table, pageItems, captions = [], notes = [], rules =
       captioned: externalCaptions.length > 0,
       headers: objects.filter((o) => o.label === 'table column header')
     })
+  // A wrapped stub label may sit one baseline above a complete numeric row
+  // while the model starts the row at the lower line. Extend that owner's band
+  // upward only when the label is unowned and the following line has the same
+  // stub plus at least two numeric value columns.
+  if (externalCaptions.length) {
+    for (let index = 0; index + 1 < groups.length; index++) {
+      const head = groups[index],
+        tail = groups[index + 1]
+      const headColumns = new Set(head.map(columnOf)),
+        tailColumns = new Set(tail.map(columnOf))
+      const owner = rows.find((row) => tail.every((item) => inside(row.rect, item)))
+      const values = tail.filter(
+        (item) => columnOf(item) > 0 && /^[<>≤≥−+-]?\d[\d.,%()±–−+\-/]*$/.test(item.text.trim())
+      )
+      if (
+        !owner ||
+        headColumns.size !== 1 ||
+        !headColumns.has(0) ||
+        !tailColumns.has(0) ||
+        head.some((item) => rows.some((row) => inside(row.rect, item))) ||
+        head.length !== 1 ||
+        !/^[A-Z][\p{L}\s-]*$/u.test(head[0].text.trim()) ||
+        values.length < 2 ||
+        head[0].baseline - tail[0].baseline > 0 ||
+        tail[0].baseline - head[0].baseline > head[0].height * 1.6 ||
+        hasHorizontalTableRuleBetween(rules, head[0].rect[3], tail[0].rect[1])
+      )
+        continue
+      owner.rect[1] = Math.min(owner.rect[1], head[0].rect[1])
+      repairs.push('wrapped-source-label-recovered')
+    }
+  }
   const ruledStubGrid = externalCaptions.length
     ? recoverRuledStubGrid(table.cropRect, columns, items, rules)
     : undefined
@@ -3857,12 +3978,184 @@ export function refineTable(table, pageItems, captions = [], notes = [], rules =
   })
   if (!recordGrid?.completeSpans)
     recoverRepeatedMeasurementSections({ rows, groups, items, columnRects, repairs })
+  // Some table-transformer rows cover only the first arm of a repeated
+  // treatment record. Recover the missing subrows from source baselines when
+  // the same label and all value columns repeat; this also gives span cells
+  // the correct row band instead of leaving the second arm unassigned.
+  if (!recordGrid && externalCaptions.length && columns.length >= 4 && rows.length >= 3) {
+    const numeric = (text) => /^[<>≤≥−+-]?\d[\d.,%()±–−+\-/]*$/.test(text.trim())
+    let repeatedSubrowRecovered = false
+    const candidateGroups = groups.filter((group) => {
+      const byColumn = columns.map((_, column) => group.filter((item) => columnOf(item) === column))
+      return (
+        byColumn[1].length === 1 &&
+        byColumn.slice(2).every((parts) => parts.length === 1 && numeric(parts[0].text)) &&
+        /\p{L}/u.test(byColumn[1][0].text)
+      )
+    })
+    const labels = new Map()
+    for (const group of candidateGroups) {
+      const label = group.find((item) => columnOf(item) === 1)?.text.trim()
+      if (label) labels.set(label, (labels.get(label) ?? 0) + 1)
+    }
+    const repeatedLabels = new Set(
+      [...labels].filter(([, count]) => count >= 2).map(([label]) => label)
+    )
+    for (const group of candidateGroups) {
+      const label = group.find((item) => columnOf(item) === 1)?.text.trim()
+      if (!repeatedLabels.has(label)) continue
+      const rect = union(group)
+      if (rows.some((row) => group.every((item) => inside(row.rect, item)))) continue
+      const overlap = rows
+        .map((row, index) => ({ row, index, amount: intersect(row.rect, rect) }))
+        .filter(({ amount }) => amount > 0)
+        .sort((a, b) => b.amount - a.amount)[0]
+      const occupied = overlap && items.some((item) => inside(overlap.row.rect, item))
+      if (overlap && !occupied && overlap.amount >= (rect[3] - rect[1]) * 0.25) {
+        overlap.row.rect = [left, rect[1], right, rect[3]]
+        repairs.push('repeated-subrow-recovered')
+        repeatedSubrowRecovered = true
+        continue
+      }
+      const nextRow = rows.findIndex((row) => row.rect[1] > rect[1])
+      const insertAt = nextRow < 0 ? rows.length : nextRow
+      const previous = rows[insertAt - 1]
+      if (
+        previous &&
+        previous.rect[3] > rect[1] &&
+        items.some((item) => inside(previous.rect, item))
+      )
+        previous.rect[3] = rect[1]
+      rows.splice(insertAt, 0, { rect: [left, rect[1], right, rect[3]], origin: 'source-text' })
+      repairs.push('repeated-subrow-recovered')
+      repeatedSubrowRecovered = true
+    }
+    if (repeatedSubrowRecovered)
+      for (let index = rows.length - 1; index > 0; index--)
+        if (!items.some((item) => inside(rows[index].rect, item))) rows.splice(index, 1)
+    if (repeatedSubrowRecovered)
+      for (let index = rows.length - 1; index > 0; index--) {
+        const current = rows[index],
+          previous = rows[index - 1]
+        const currentItems = items.filter((item) => inside(current.rect, item))
+        const previousItems = items.filter((item) => inside(previous.rect, item))
+        if (
+          current.origin === 'model' &&
+          currentItems.length &&
+          currentItems.every((item) => previousItems.includes(item)) &&
+          intersect(current.rect, previous.rect) > 0
+        )
+          rows.splice(index, 1)
+      }
+    rows.sort((a, b) => a.rect[1] - b.rect[1])
+  }
   const parentRowSpans =
     (!recordGrid || ([5, 7, 9].includes(columns.length) && !recordGrid.headerRows)) &&
     !ruledTierSpans &&
     externalCaptions.length
       ? splitRuledParentRow({ rows, items, columnRects, rules, repairs })
       : undefined
+  // A native table can place a wrapped parent tier above the model's first
+  // header band. Recover that tier from the partial rules and the complete
+  // leaf-label row instead of leaving its text outside the grid.
+  let nativeParentSpans
+  if (!recordGrid && externalCaptions.length && columns.length >= 7 && columns.length % 2 === 1) {
+    const numeric = (text) => /^[<>≤≥−+-]?\d[\d.,%()±–−+\-/]*$/.test(text.trim())
+    const firstData = groups.findIndex((group) => {
+      const values = columnRects
+        .slice(1)
+        .map((_, c) => group.filter((item) => columnOf(item) === c + 1))
+      return (
+        values.length >= columns.length - 1 &&
+        values.every((parts) => parts.length === 1 && numeric(parts[0].text)) &&
+        group.some((item) => columnOf(item) === 0 && /\p{L}/u.test(item.text))
+      )
+    })
+    const headerGroups = firstData < 0 ? [] : groups.slice(0, firstData)
+    const leafIndex = headerGroups.findIndex((group) => {
+      const columnsWithLabels = new Set(
+        group.filter((item) => columnOf(item) > 0 && /\p{L}/u.test(item.text)).map(columnOf)
+      )
+      return columnsWithLabels.size >= columns.length - 2
+    })
+    const upper = leafIndex > 0 ? headerGroups.slice(0, leafIndex) : []
+    const leaf = leafIndex >= 0 ? headerGroups.slice(leafIndex).flat() : []
+    const parentBottom = upper.length ? Math.max(...upper.flat().map((item) => item.rect[3])) : 0
+    const leafTop = leaf.length ? Math.min(...leaf.map((item) => item.rect[1])) : 0
+    const splitLevels = rules
+      .filter(
+        (rule) =>
+          rule[1] === rule[3] &&
+          rule[1] > parentBottom &&
+          rule[1] < leafTop &&
+          rule[2] - rule[0] > (right - left) * 0.2
+      )
+      .sort((a, b) => a[1] - b[1])
+    const split = splitLevels[0]?.[1]
+    const parentRules = split ? splitLevels.filter((rule) => Math.abs(rule[1] - split) < 1) : []
+    const parentColumns = parentRules
+      .map((rule) => ({
+        rule,
+        columns: columnRects.flatMap((column, index) => {
+          const center = (column[0] + column[2]) / 2
+          return index > 0 && center >= rule[0] - 1 && center <= rule[2] + 1 ? [index] : []
+        })
+      }))
+      .filter(({ columns: covered }) => covered.length >= 2)
+      .sort((a, b) => a.rule[0] - b.rule[0])
+    const upperItems = upper.flat()
+    const stub = upperItems.filter((item) => columnOf(item) === 0)
+    const assigned = upperItems.filter((item) =>
+      parentColumns.some(({ rule }) => item.rect[0] >= rule[0] - 1 && item.rect[2] <= rule[2] + 1)
+    )
+    const topRule = rules.some(
+      (rule) =>
+        rule[1] === rule[3] &&
+        rule[1] <= Math.min(...upperItems.map((item) => item.rect[1])) &&
+        rule[0] <= left + 12 &&
+        rule[2] >= right - 12
+    )
+    const lowerRule = rules.some(
+      (rule) =>
+        rule[1] === rule[3] &&
+        rule[1] >= leaf.at(-1)?.rect[3] &&
+        rule[1] <= union(leaf)[3] + Math.max(...leaf.map((item) => item.height)) * 2 &&
+        rule[0] <= left + 12 &&
+        rule[2] >= right - 12
+    )
+    if (
+      rows.length >= 2 &&
+      upperItems.length >= 2 &&
+      leaf.length >= columns.length - 2 &&
+      parentColumns.length >= 2 &&
+      stub.length === 1 &&
+      assigned.length + stub.length === upperItems.length &&
+      parentColumns.every(({ columns: covered }) =>
+        covered.every((column) =>
+          leaf.some((item) => columnOf(item) === column && /\p{L}/u.test(item.text))
+        )
+      ) &&
+      topRule &&
+      lowerRule &&
+      rows[0].rect[3] >= split - 2 &&
+      rows[1].rect[1] <= leafTop + Math.max(...leaf.map((item) => item.height))
+    ) {
+      rows[0].rect[1] = Math.min(rows[0].rect[1], ...upperItems.map((item) => item.rect[1]))
+      rows[0].rect[3] = split
+      rows[1].rect[1] = split
+      rows[1].rect[3] = Math.max(rows[1].rect[3], ...leaf.map((item) => item.rect[3]))
+      nativeParentSpans = [
+        { row: 0, column: 0, rowSpan: 2, colSpan: 1 },
+        ...parentColumns.map(({ columns: covered }) => ({
+          row: 0,
+          column: covered[0],
+          rowSpan: 1,
+          colSpan: covered.length
+        }))
+      ]
+      repairs.push('native-parent-header-recovered')
+    }
+  }
   if (recordGrid && parentRowSpans) {
     for (const span of recordGrid.spans ?? []) if (span.row > 0) span.row++
     recordGrid.spans.push(...parentRowSpans)
@@ -3899,6 +4192,109 @@ export function refineTable(table, pageItems, captions = [], notes = [], rules =
         rows.splice(r--, 1)
       }
     }
+  }
+  // A complete source record can fall across two adjacent model bands. This
+  // is especially common in ruled demographic tables where one age row is
+  // omitted and every glyph is consequently ambiguous. Rebuild only records
+  // with a textual stub and at least four numeric value columns; prose and
+  // sparse statistic rows remain on the model bands.
+  if (externalCaptions.length && columns.length >= 4) {
+    const numeric = (text) => /^[<>≤≥−+-]?\d[\d.,%()±–−+\-/]*$/.test(text.trim())
+    const records = groups.filter((group) => {
+      const parts = columns.map((_, column) => group.filter((item) => columnOf(item) === column))
+      return (
+        parts[0].length === 1 &&
+        /^\d+\s*[–—-]\s*\d+$/u.test(parts[0][0].text.trim()) &&
+        /^[\p{L}\d][\p{L}\d\s–—()/'-]{1,40}$/u.test(parts[0][0].text.trim()) &&
+        parts.slice(1).filter((part) => part.length === 1 && numeric(part[0].text)).length >=
+          Math.min(4, columns.length - 2)
+      )
+    })
+    for (const record of records) {
+      // A duplicated center owner is the signature of a source row crossing a
+      // model boundary. A single center owner usually means the row is already
+      // stable even when glyph padding touches a neighboring band.
+      const centerOwners = rows.filter((row) => record.every((item) => inside(row.rect, item)))
+      if (centerOwners.length < 2) continue
+      const rect = union(record)
+      if (rect[1] < top || rect[3] > bottom) continue
+      const affected = rows.filter((row) => intersect(row.rect, rect) > 0)
+      if (!affected.length) continue
+      for (const row of affected) {
+        const center = (row.rect[1] + row.rect[3]) / 2
+        if (center < (rect[1] + rect[3]) / 2) row.rect[3] = rect[1] - 0.01
+        else row.rect[1] = rect[3] + 0.01
+      }
+      for (let index = rows.length - 1; index >= 0; index--)
+        if (
+          rows[index].rect[3] <= rows[index].rect[1] ||
+          (affected.includes(rows[index]) && !items.some((item) => inside(rows[index].rect, item)))
+        )
+          rows.splice(index, 1)
+      const insertAt = rows.findIndex((row) => row.rect[1] > rect[1])
+      rows.splice(insertAt < 0 ? rows.length : insertAt, 0, {
+        rect: [left, rect[1], right, rect[3]],
+        origin: 'source-text'
+      })
+      repairs.push('complete-source-record-recovered')
+    }
+  }
+  // Standalone category labels are real header rows when they sit between two
+  // complete records. Split a model row that incorrectly joins the preceding
+  // record and keep the header as its own row so the following category rows
+  // retain their column alignment.
+  if (externalCaptions.length && columns.length >= 4) {
+    const numeric = (text) => /^[<>≤≥−+-]?\d[\d.,%()±–−+\-/]*$/.test(text.trim())
+    const complete = (group) => {
+      const parts = columns.map((_, column) => group.filter((item) => columnOf(item) === column))
+      return (
+        parts[0].length === 1 &&
+        parts.slice(1).filter((part) => part.length === 1 && numeric(part[0].text)).length >=
+          Math.min(4, columns.length - 2)
+      )
+    }
+    for (const [index, group] of groups.entries()) {
+      const parts = columns.map((_, column) => group.filter((item) => columnOf(item) === column))
+      if (
+        parts[0].length !== 1 ||
+        parts.slice(1).some((part) => part.length) ||
+        !/^[A-Z][\p{L}\s()/'-]{2,40}$/u.test(parts[0][0].text.trim())
+      )
+        continue
+      const previous = groups[index - 1],
+        next = groups[index + 1]
+      if (
+        !previous ||
+        !next ||
+        !/^\d+\s*[–—-]\s*\d+$/u.test(previous[0]?.text.trim() ?? '') ||
+        !complete(previous) ||
+        !complete(next)
+      )
+        continue
+      const sectionRect = union(group),
+        previousRect = union(previous)
+      const rowIndex = rows.findIndex(
+        (row) =>
+          previous.some((item) => intersect(row.rect, item.rect) > 0) &&
+          group.some((item) => intersect(row.rect, item.rect) > 0)
+      )
+      if (rowIndex < 0) continue
+      const row = rows[rowIndex],
+        split = (previousRect[3] + sectionRect[1]) / 2
+      row.rect[3] = Math.min(row.rect[3], split)
+      rows.splice(rowIndex + 1, 0, {
+        rect: [left, split, right, sectionRect[3]],
+        origin: 'source-text'
+      })
+      repairs.push('standalone-section-row-recovered')
+    }
+  }
+  if (repairs.includes('complete-source-record-recovered')) {
+    for (let index = rows.length - 1; index >= 0; index--)
+      if (rows[index].origin === 'model' && !items.some((item) => inside(rows[index].rect, item))) {
+        rows.splice(index, 1)
+        repairs.push('empty-model-row-removed')
+      }
   }
   const baseCells = rows.flatMap((r, row) =>
     columnRects.map((c, column) => ({
@@ -5250,6 +5646,12 @@ export function refineTable(table, pageItems, captions = [], notes = [], rules =
   }
   if (parentRowSpans) applySourceHeaderSpans(proposals, baseCells, parentRowSpans, 2)
   if (ruledTierSpans) applySourceHeaderSpans(proposals, baseCells, ruledTierSpans, 3)
+  if (nativeParentSpans) applySourceHeaderSpans(proposals, baseCells, nativeParentSpans, 2)
+  if (recoveredGroupColumns) {
+    const slots = baseCells.filter((c) => c.row === 0 && recoveredGroupColumns.includes(c.column))
+    removeOverlappingMergeProposals(proposals, slots)
+    proposals.push({ slots, origin: 'text-supported-header-span' })
+  }
   if (clippedWrappedHeader) {
     const slots = baseCells.filter(
       (c) =>
@@ -5326,6 +5728,14 @@ export function refineTable(table, pageItems, captions = [], notes = [], rules =
     issues,
     repairs
   })
+  if (nativeParentSpans && rows[1])
+    for (let index = unresolvedSpans.length - 1; index >= 0; index--) {
+      const span = unresolvedSpans[index]
+      if (span.rect[1] < rows[1].rect[3] && span.rect[3] <= rows[1].rect[3] + 2) {
+        unresolvedSpans.splice(index, 1)
+        repairs.push('native-header-span-discarded')
+      }
+    }
   reconcileUnresolvedTableSpans({
     spans: unresolvedSpans,
     cells,
