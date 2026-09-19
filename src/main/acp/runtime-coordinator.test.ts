@@ -1496,8 +1496,8 @@ describe('AcpRuntimeCoordinator', () => {
   it.each([
     ['prepareForQuit', 'stopAll'],
     ['disconnect', 'stopAll'],
-    ['shutdownForUpdateGate', 'stopAll'],
-    ['shutdownForQuit', 'shutdown'],
+    ['shutdownForUpdateGate', 'shutdownForUpdateGate'],
+    ['shutdownForQuit', 'shutdownForQuit'],
     ['shutdown', 'shutdown']
   ] as const)('uses delegated %s lifecycle with %s', async (operation, cleanup) => {
     const delegated = {

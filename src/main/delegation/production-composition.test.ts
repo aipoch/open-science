@@ -3962,11 +3962,22 @@ describe('unreaped delegated execution lifecycle', () => {
             : operation === 'deleteProject'
               ? harness.composition.root.deleteProject(harness.session.projectId)
               : harness.composition.root[operation]()
-      await expect.soft(run()).rejects.toThrow()
-      await expect.soft(readFile(evidence, 'utf8')).resolves.toBe('process-owned evidence')
-      // Retrying a lifecycle operation must not forget the quarantined owner.
-      await expect.soft(run()).rejects.toThrow()
-      await expect.soft(readFile(evidence, 'utf8')).resolves.toBe('process-owned evidence')
+      // Global quit/update operations suppress cleanup-pending errors and resolve successfully,
+      // but workspace evidence is preserved because the receipt remains quarantined.
+      if (operation === 'shutdownForQuit' || operation === 'shutdownForUpdateGate') {
+        await expect.soft(run()).resolves.toEqual({ reaped: true })
+        await expect.soft(readFile(evidence, 'utf8')).resolves.toBe('process-owned evidence')
+        // Retrying must still preserve the quarantined owner.
+        await expect.soft(run()).resolves.toEqual({ reaped: true })
+        await expect.soft(readFile(evidence, 'utf8')).resolves.toBe('process-owned evidence')
+      } else {
+        // Other operations (stopAll, deleteSession, deleteProject) still reject on cleanup failures.
+        await expect.soft(run()).rejects.toThrow()
+        await expect.soft(readFile(evidence, 'utf8')).resolves.toBe('process-owned evidence')
+        // Retrying a lifecycle operation must not forget the quarantined owner.
+        await expect.soft(run()).rejects.toThrow()
+        await expect.soft(readFile(evidence, 'utf8')).resolves.toBe('process-owned evidence')
+      }
     }
   )
 })
