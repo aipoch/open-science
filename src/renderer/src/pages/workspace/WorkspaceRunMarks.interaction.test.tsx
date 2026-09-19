@@ -247,9 +247,13 @@ describe('WorkspaceRunMarks interaction', () => {
           notifyResize = () => callback([], this as unknown as ResizeObserver)
         }
 
-        observe(): void {}
+        observe(): void {
+          // no-op
+        }
 
-        disconnect(): void {}
+        disconnect(): void {
+          // no-op
+        }
       }
     )
     const viewportRect = vi.spyOn(viewport, 'getBoundingClientRect')
