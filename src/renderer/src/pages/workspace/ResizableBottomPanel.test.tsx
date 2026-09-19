@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ResizableBottomPanel } from './ResizableBottomPanel'
 
@@ -28,8 +28,84 @@ describe('ResizableBottomPanel pointer drag', () => {
     act(() => {
       root.unmount()
     })
+    vi.unstubAllGlobals()
     container.remove()
     Object.defineProperty(window, 'innerHeight', { configurable: true, value: originalInnerHeight })
+  })
+
+  it('keeps one observer when streamed children update', () => {
+    const observers: {
+      observe: ReturnType<typeof vi.fn>
+      unobserve: ReturnType<typeof vi.fn>
+      disconnect: ReturnType<typeof vi.fn>
+    }[] = []
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe = vi.fn()
+        unobserve = vi.fn()
+        disconnect = vi.fn()
+        constructor() {
+          observers.push(this)
+        }
+      }
+    )
+    const renderPanel = (index: number, key = 'same'): void =>
+      act(() =>
+        root.render(
+          <ResizableBottomPanel
+            ariaLabel="Resize permission panel"
+            testId="panel"
+            scrollTestId="scroll"
+          >
+            <div key={key}>{`Content ${index}`}</div>
+          </ResizableBottomPanel>
+        )
+      )
+    renderPanel(0)
+    const firstChild = container.querySelector('[data-testid="scroll"]')!.firstElementChild
+    for (let i = 1; i <= 20; i++) renderPanel(i)
+    expect(observers).toHaveLength(1)
+    expect(observers[0]!.observe).toHaveBeenCalledTimes(3)
+    renderPanel(21, 'replacement')
+    expect(observers).toHaveLength(1)
+    expect(observers[0]!.unobserve).toHaveBeenCalledWith(firstChild)
+    expect(observers[0]!.observe).toHaveBeenCalledTimes(4)
+  })
+
+  it('uses the latest dragged height when the existing observer reports smaller bounds', () => {
+    const callbacks: ResizeObserverCallback[] = []
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe = vi.fn()
+        unobserve = vi.fn()
+        disconnect = vi.fn()
+        constructor(callback: ResizeObserverCallback) {
+          callbacks.push(callback)
+        }
+      }
+    )
+    act(() => {
+      root.render(
+        <ResizableBottomPanel ariaLabel="Resize panel" testId="panel" scrollTestId="scroll">
+          <div>content</div>
+        </ResizableBottomPanel>
+      )
+    })
+    const panel = container.querySelector('[data-testid="panel"]') as HTMLDivElement
+    const handle = container.querySelector('[role="separator"]') as HTMLDivElement
+    panel.getBoundingClientRect = () =>
+      ({ height: Number.parseFloat(panel.style.height) || 320 }) as DOMRect
+    act(() => {
+      handle.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }))
+    })
+    expect(panel.style.height).toBe('352px')
+    expect(callbacks).toHaveLength(1)
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 400 })
+    act(() => callbacks[0]!([], {} as ResizeObserver))
+    expect(panel.style.height).toBe('280px')
+    expect(handle.getAttribute('aria-valuemax')).toBe('280')
   })
 
   it('stops resizing after the captured pointer is lost', () => {

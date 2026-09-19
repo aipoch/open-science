@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useEffectEvent,
   useId,
   useLayoutEffect,
   useRef,
@@ -41,6 +42,8 @@ const ResizableBottomPanel = ({
   const surfaceRef = useRef<HTMLDivElement>(null)
   const dragStateRef = useRef<DragState | undefined>(undefined)
   const [height, setHeight] = useState<number>()
+  const observerRef = useRef<ResizeObserver | undefined>(undefined)
+  const observedTargetsRef = useRef(new Set<Element>())
   const panelId = useId()
   const [size, setSize] = useState({ now: 0, min: 0, max: 0 })
 
@@ -81,39 +84,54 @@ const ResizableBottomPanel = ({
     }
   }, [scrollTestId, constrainGrowthToOverflow, minimumContentSelector, minimumContentIndex])
 
+  const measure = useCallback((): void => {
+    const surface = surfaceRef.current
+    if (!surface) return
+    const bounds = resizeBounds()
+    const actual = Math.round(surface.getBoundingClientRect().height)
+    // Natural content may be shorter than the preferred drag minimum.
+    const next = {
+      now: actual,
+      min: Math.min(bounds.min, actual),
+      max: Math.max(bounds.max, actual)
+    }
+    setSize((current) =>
+      current.now === next.now && current.min === next.min && current.max === next.max
+        ? current
+        : next
+    )
+    if (height !== undefined && height > bounds.max) setHeight(bounds.max)
+  }, [height, resizeBounds])
+  const measureObservedResize = useEffectEvent(measure)
+
+  useLayoutEffect(() => {
+    const update = (): void => measureObservedResize()
+    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(update)
+    observerRef.current = observer
+    window.addEventListener('resize', update)
+    return () => {
+      observer?.disconnect()
+      observerRef.current = undefined
+      observedTargetsRef.current.clear()
+      window.removeEventListener('resize', update)
+    }
+  }, [])
+
   useLayoutEffect(() => {
     const surface = surfaceRef.current
     if (!surface) return
-    const measure = (): void => {
-      const bounds = resizeBounds()
-      const actual = Math.round(surface.getBoundingClientRect().height)
-      // Natural content may be shorter than the preferred drag minimum.
-      const next = {
-        now: actual,
-        min: Math.min(bounds.min, actual),
-        max: Math.max(bounds.max, actual)
-      }
-      setSize((current) =>
-        current.now === next.now && current.min === next.min && current.max === next.max
-          ? current
-          : next
-      )
-      if (height !== undefined && height > bounds.max) setHeight(bounds.max)
-    }
-    measure()
-    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(measure)
-    observer?.observe(surface)
     const scroll = surface.querySelector<HTMLElement>(`[data-testid="${scrollTestId}"]`)
-    if (scroll) {
-      observer?.observe(scroll)
-      for (const child of scroll.children) observer?.observe(child)
+    const targets = new Set<Element>([surface, ...(scroll ? [scroll, ...scroll.children] : [])])
+    // React children change during streaming; only actual DOM replacements need re-observing.
+    for (const target of observedTargetsRef.current) {
+      if (!targets.has(target)) observerRef.current?.unobserve(target)
     }
-    window.addEventListener('resize', measure)
-    return () => {
-      observer?.disconnect()
-      window.removeEventListener('resize', measure)
+    for (const target of targets) {
+      if (!observedTargetsRef.current.has(target)) observerRef.current?.observe(target)
     }
-  }, [height, resizeBounds, scrollTestId, children])
+    observedTargetsRef.current = targets
+    measure()
+  }, [measure, scrollTestId, children])
 
   const resizeTo = (nextHeight: number): void => {
     const bounds = resizeBounds()

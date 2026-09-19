@@ -189,8 +189,22 @@ const pdfClipboardContent = (
   }
 }
 
+// These values, rather than the surrounding preview projection's object identity, own
+// annotation matching, reveal subscriptions and observer callbacks.
+type AnnotationPreviewItem = Pick<
+  PreviewFileItem,
+  | 'id'
+  | 'projectId'
+  | 'path'
+  | 'name'
+  | 'source'
+  | 'managedFileId'
+  | 'selectedVersionId'
+  | 'sessionId'
+>
+
 const projectFileVersionId = (
-  item: PreviewFileItem,
+  item: AnnotationPreviewItem,
   annotationVersionId?: string
 ): string | undefined =>
   annotationVersionId ??
@@ -200,7 +214,7 @@ const projectFileVersionId = (
     : parseArtifactVersionLocator(item.path)?.versionId)
 
 const projectFileSource = (
-  item: PreviewFileItem,
+  item: AnnotationPreviewItem,
   pageNumber?: number,
   annotationVersionId?: string,
   annotationVersionPending = false
@@ -227,7 +241,7 @@ const projectFileSource = (
 
 const belongsToPreview = (
   annotation: RangeAnnotation,
-  item: PreviewFileItem,
+  item: AnnotationPreviewItem,
   pageNumber?: number,
   annotationVersionId?: string
 ): boolean => {
@@ -250,7 +264,7 @@ const belongsToPreview = (
 
 const textBookmarkBelongsToPreview = (
   target: Extract<BookmarkRevealTarget, { kind: 'text' }>,
-  item: PreviewFileItem,
+  item: AnnotationPreviewItem,
   pageNumber?: number,
   annotationVersionId?: string
 ): boolean => {
@@ -354,8 +368,31 @@ export const PreviewTextAnnotationSurface = ({
   const [copied, setCopied] = useState(false)
   const [annotationControls, setAnnotationControls] = useState<readonly AnnotationControl[]>([])
   const [hoveredAnnotationId, setHoveredAnnotationId] = useState<string>()
+  const {
+    id,
+    projectId,
+    path,
+    name,
+    source: fileSource,
+    managedFileId,
+    selectedVersionId,
+    sessionId
+  } = item
+  const annotationItem = useMemo<AnnotationPreviewItem>(
+    () => ({
+      id,
+      projectId,
+      path,
+      name,
+      source: fileSource,
+      managedFileId,
+      selectedVersionId,
+      sessionId
+    }),
+    [id, projectId, path, name, fileSource, managedFileId, selectedVersionId, sessionId]
+  )
   const source = projectFileSource(
-    item,
+    annotationItem,
     sourcePageNumber,
     annotationVersionId,
     annotationVersionPending
@@ -365,9 +402,9 @@ export const PreviewTextAnnotationSurface = ({
       activeAnnotations.filter(
         (annotation): annotation is RangeAnnotation =>
           annotation.kind === 'text' &&
-          belongsToPreview(annotation, item, sourcePageNumber, annotationVersionId)
+          belongsToPreview(annotation, annotationItem, sourcePageNumber, annotationVersionId)
       ),
-    [activeAnnotations, annotationVersionId, item, sourcePageNumber]
+    [activeAnnotations, annotationVersionId, annotationItem, sourcePageNumber]
   )
 
   const matchingBookmarks = useMemo(
@@ -379,15 +416,26 @@ export const PreviewTextAnnotationSurface = ({
               bookmark.target.kind === 'text' &&
               textBookmarkBelongsToPreview(
                 { id: bookmark.id, ...bookmark.target },
-                item,
+                annotationItem,
                 sourcePageNumber,
                 annotationVersionId
               )
           ),
-    [annotationVersionPending, bookmarks.bookmarks, item, sourcePageNumber, annotationVersionId]
+    [
+      annotationVersionPending,
+      bookmarks.bookmarks,
+      annotationItem,
+      sourcePageNumber,
+      annotationVersionId
+    ]
   )
 
   const measureAnnotationControls = useCallback((): void => {
+    if (matchingAnnotations.length === 0 && matchingBookmarks.length === 0) {
+      setAnnotationControls((current) => (current.length === 0 ? current : []))
+      setBookmarkMarkers((current) => (current.length === 0 ? current : []))
+      return
+    }
     const surface = surfaceRef.current
     if (!surface) return
     const surfaceRect = surface.getBoundingClientRect()
@@ -662,7 +710,7 @@ export const PreviewTextAnnotationSurface = ({
     const stopPreparation = subscribeAnnotationRevealPreparation((annotation) => {
       prepared =
         annotation.kind === 'text' &&
-        belongsToPreview(annotation, item, sourcePageNumber, annotationVersionId)
+        belongsToPreview(annotation, annotationItem, sourcePageNumber, annotationVersionId)
           ? annotation
           : undefined
       setRevealUnavailable(false)
@@ -686,14 +734,20 @@ export const PreviewTextAnnotationSurface = ({
       stopPreparation()
       stopReveal()
     }
-  }, [matchingAnnotations, item, sourcePageNumber, annotationVersionId, annotationVersionPending])
+  }, [
+    matchingAnnotations,
+    annotationItem,
+    sourcePageNumber,
+    annotationVersionId,
+    annotationVersionPending
+  ])
 
   useLayoutEffect(() => {
     let prepared: Extract<BookmarkRevealTarget, { kind: 'text' }> | undefined
     const stopPreparation = subscribeBookmarkRevealPreparation((target) => {
       prepared =
         target.kind === 'text' &&
-        textBookmarkBelongsToPreview(target, item, sourcePageNumber, annotationVersionId)
+        textBookmarkBelongsToPreview(target, annotationItem, sourcePageNumber, annotationVersionId)
           ? target
           : undefined
       setRevealUnavailable(false)
@@ -702,7 +756,7 @@ export const PreviewTextAnnotationSurface = ({
       if (
         annotationVersionPending ||
         target.kind !== 'text' ||
-        !textBookmarkBelongsToPreview(target, item, sourcePageNumber, annotationVersionId)
+        !textBookmarkBelongsToPreview(target, annotationItem, sourcePageNumber, annotationVersionId)
       ) {
         return
       }
@@ -719,7 +773,7 @@ export const PreviewTextAnnotationSurface = ({
       stopPreparation()
       stopReveal()
     }
-  }, [annotationVersionId, annotationVersionPending, item, sourcePageNumber])
+  }, [annotationVersionId, annotationVersionPending, annotationItem, sourcePageNumber])
 
   const add = (noteValue = note): void => {
     if (
@@ -950,7 +1004,7 @@ export const PreviewTextAnnotationSurface = ({
           backward={selection.backward}
           open={open}
           note={note}
-          noteInputId={`preview-note-${item.id}`}
+          noteInputId={`preview-note-${annotationItem.id}`}
           variant="preview"
           onOpenChange={(next) => {
             setOpen(next)

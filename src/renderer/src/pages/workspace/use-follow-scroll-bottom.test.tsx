@@ -7,15 +7,22 @@ import { useFollowScrollBottom } from './use-follow-scroll-bottom'
 
 const Harness = ({
   enabled,
-  contentHeight
+  contentHeight,
+  viewportKey = 'viewport',
+  contentKey = 'content',
+  visible = true
 }: {
   enabled: boolean
   contentHeight: number
+  viewportKey?: string
+  contentKey?: string
+  visible?: boolean
 }): React.JSX.Element => {
   const viewportRef = useFollowScrollBottom(enabled)
+  if (!visible) return <></>
   return (
-    <div data-testid="viewport" ref={viewportRef}>
-      <div data-testid="content" style={{ height: contentHeight }} />
+    <div key={viewportKey} data-testid="viewport" ref={viewportRef}>
+      <div key={contentKey} data-testid="content" style={{ height: contentHeight }} />
     </div>
   )
 }
@@ -37,6 +44,61 @@ afterEach(() => {
 })
 
 describe('useFollowScrollBottom', () => {
+  it('keeps one observer while streamed content updates and still follows resize notifications', () => {
+    const observers: { callback: ResizeObserverCallback; disconnect: ReturnType<typeof vi.fn> }[] =
+      []
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        disconnect = vi.fn()
+        constructor(callback: ResizeObserverCallback) {
+          observers.push({ callback, disconnect: this.disconnect })
+        }
+        observe = vi.fn()
+        unobserve = vi.fn()
+      }
+    )
+    const view = render(<Harness enabled contentHeight={1000} />)
+    const viewport = screen.getByTestId('viewport')
+    for (let i = 0; i < 20; i++) view.rerender(<Harness enabled contentHeight={1000 + i} />)
+    expect(observers).toHaveLength(1)
+    setScrollGeometry(viewport, { clientHeight: 400, scrollHeight: 1800, scrollTop: 0 })
+    act(() => observers[0]!.callback([], {} as ResizeObserver))
+    expect(viewport.scrollTop).toBe(1400)
+    view.unmount()
+    expect(observers[0]!.disconnect).toHaveBeenCalledOnce()
+  })
+
+  it('rebinds replaced DOM targets and cleans up when the viewport disappears', () => {
+    const observers: { observe: ReturnType<typeof vi.fn>; disconnect: ReturnType<typeof vi.fn> }[] =
+      []
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe = vi.fn()
+        disconnect = vi.fn()
+        constructor() {
+          observers.push(this)
+        }
+      }
+    )
+    const view = render(<Harness enabled contentHeight={1000} />)
+    view.rerender(<Harness enabled contentHeight={1000} contentKey="next-content" />)
+    expect(observers).toHaveLength(2)
+    expect(observers[0]!.disconnect).toHaveBeenCalledOnce()
+    expect(observers[1]!.observe).toHaveBeenCalledWith(screen.getByTestId('content'))
+    view.rerender(
+      <Harness enabled contentHeight={1000} viewportKey="next-viewport" contentKey="next-content" />
+    )
+    expect(observers).toHaveLength(3)
+    expect(observers[1]!.disconnect).toHaveBeenCalledOnce()
+    expect(observers[2]!.observe).toHaveBeenCalledWith(screen.getByTestId('viewport'))
+    view.rerender(<Harness enabled contentHeight={1000} visible={false} />)
+    expect(observers[2]!.disconnect).toHaveBeenCalledOnce()
+    view.unmount()
+    expect(observers[2]!.disconnect).toHaveBeenCalledOnce()
+  })
+
   it('pins new content to the bottom while following', () => {
     const view = render(<Harness enabled contentHeight={1000} />)
     const viewport = screen.getByTestId('viewport')

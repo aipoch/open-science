@@ -223,6 +223,8 @@ type SessionScopedNearViewportNotebookRunState = {
 
 const EMPTY_ACTIVITY_EXPANSION_OVERRIDES: ActivityExpansionOverrides = {}
 const EMPTY_NOTEBOOK_RUN_IDS: ReadonlySet<string> = new Set()
+const EMPTY_ANNOTATIONS: readonly Annotation[] = []
+const EMPTY_TEXT_ANNOTATIONS: readonly TextAnnotation[] = []
 
 // Extra hold after the paced reveal drains, so a queued message dispatches into a settled
 // transcript instead of the same moment as the final reveal frame.
@@ -553,7 +555,7 @@ const WorkspaceMessageScrollerImpl = ({
   isResumingSession = false,
   notebookReference,
   onSendEditedMessage,
-  annotations = [],
+  annotations = EMPTY_ANNOTATIONS,
   onAddAnnotation,
   onUpdateAnnotationNote,
   onRemoveAnnotation,
@@ -587,9 +589,22 @@ const WorkspaceMessageScrollerImpl = ({
     [onAddAnnotation]
   )
   const currentSessionId = activeSession?.id
-  const activeTextAnnotations = annotations.filter(
-    (annotation): annotation is TextAnnotation => annotation.kind === 'text'
+  const activeTextAnnotations = useMemo(
+    () =>
+      annotations.filter((annotation): annotation is TextAnnotation => annotation.kind === 'text'),
+    [annotations]
   )
+  const annotationsByMessageId = useMemo(() => {
+    const groups = new Map<string, TextAnnotation[]>()
+    for (const annotation of activeTextAnnotations) {
+      if (annotation.source.kind !== 'agent-message') continue
+      const messageId = annotation.source.messageId
+      const group = groups.get(messageId)
+      if (group) group.push(annotation)
+      else groups.set(messageId, [annotation])
+    }
+    return groups
+  }, [activeTextAnnotations])
   const annotationPortFor = (
     activeAnnotations: readonly TextAnnotation[]
   ): AnnotationPort | undefined =>
@@ -1711,11 +1726,7 @@ const WorkspaceMessageScrollerImpl = ({
                       ? handleEditAnnotationTargetChange
                       : undefined,
                     annotationPort: annotationPortFor(
-                      activeTextAnnotations.filter(
-                        (annotation) =>
-                          annotation.source.kind === 'agent-message' &&
-                          annotation.source.messageId === item.message.id
-                      )
+                      annotationsByMessageId.get(item.message.id) ?? EMPTY_TEXT_ANNOTATIONS
                     ),
                     canBranchInNewSession,
                     onBranchInNewSession,

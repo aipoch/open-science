@@ -5,7 +5,11 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { installCssHighlightsMock, type TestHighlightRegistry } from '@/test-utils/css-highlights'
-import { validateAnnotations, type TextAnnotation } from '../../../../../shared/annotations'
+import {
+  validateAnnotations,
+  type SessionTextAnnotationSource,
+  type TextAnnotation
+} from '../../../../../shared/annotations'
 import { WorkspaceToolCodeBlock } from '../WorkspaceToolCodeBlock'
 import { requestAnnotationReveal, subscribeAnnotationReveal } from './annotation-reveal'
 import { TextAnnotationSurface } from './TextAnnotationSurface'
@@ -67,6 +71,105 @@ describe('TextAnnotationSurface highlight restoration', () => {
       )
     )
   }
+
+  it.each([
+    { kind: 'agent-message' as const, sessionId: 'session-1', messageId: 'message-1' },
+    {
+      kind: 'session-item' as const,
+      sessionId: 'session-1',
+      itemId: 'tool-1',
+      itemType: 'tool-activity' as const,
+      sectionId: 'output'
+    }
+  ])('retains observers when parent updates preserve the source values ($kind)', async (source) => {
+    let mutationCount = 0
+    let resizeCount = 0
+    const Original = globalThis.MutationObserver
+    vi.stubGlobal(
+      'MutationObserver',
+      class extends Original {
+        constructor(callback: MutationCallback) {
+          super(callback)
+          mutationCount++
+        }
+      }
+    )
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor() {
+          resizeCount++
+        }
+        observe = vi.fn()
+        unobserve = vi.fn()
+        disconnect = vi.fn()
+      }
+    )
+    for (let i = 0; i < 21; i++) {
+      await act(async () =>
+        root.render(
+          <TextAnnotationSurface source={{ ...source }} isAnimating>
+            <p>{`Streaming text ${i}`}</p>
+          </TextAnnotationSurface>
+        )
+      )
+    }
+    expect(container.textContent).toContain('Streaming text 20')
+    expect({ mutationCount, resizeCount }).toEqual({ mutationCount: 1, resizeCount: 1 })
+  })
+
+  it.each<[SessionTextAnnotationSource, SessionTextAnnotationSource]>([
+    [
+      { kind: 'agent-message', sessionId: 's1', messageId: 'm1' },
+      { kind: 'agent-message', sessionId: 's2', messageId: 'm1' }
+    ],
+    [
+      { kind: 'agent-message', sessionId: 's1', messageId: 'm1' },
+      { kind: 'agent-message', sessionId: 's1', messageId: 'm2' }
+    ],
+    [
+      {
+        kind: 'session-item',
+        sessionId: 's1',
+        itemId: 'i1',
+        itemType: 'tool-activity',
+        sectionId: 'input'
+      },
+      {
+        kind: 'session-item',
+        sessionId: 's1',
+        itemId: 'i1',
+        itemType: 'tool-activity',
+        sectionId: 'output'
+      }
+    ],
+    [
+      { kind: 'session-item', sessionId: 's1', itemId: 'i1', itemType: 'tool-activity' },
+      { kind: 'session-item', sessionId: 's1', itemId: 'i1', itemType: 'plan' }
+    ],
+    [
+      { kind: 'session-item', sessionId: 's1', itemId: 'i1', itemType: 'plan' },
+      { kind: 'session-item', sessionId: 's1', itemId: 'i2', itemType: 'plan' }
+    ]
+  ])(
+    'invalidates highlights when the source identity changes (%j -> %j)',
+    async (before, after) => {
+      const saved = [{ ...annotation('scope', 'repeat'), source: before }]
+      const show = async (source: SessionTextAnnotationSource): Promise<void> => {
+        await act(async () =>
+          root.render(
+            <TextAnnotationSurface source={source} activeAnnotations={saved}>
+              <p>repeat then repeat</p>
+            </TextAnnotationSurface>
+          )
+        )
+      }
+      await show(before)
+      expect(Array.from(highlights.get('agent-annotation-draft') ?? [])).toHaveLength(1)
+      await show(after)
+      expect(Array.from(highlights.get('agent-annotation-draft') ?? [])).toHaveLength(0)
+    }
+  )
 
   it('retries a sent quote after its surface and asynchronous content mount', async () => {
     const saved = annotation('late-quote', 'unique evidence')
