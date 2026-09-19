@@ -132,6 +132,7 @@ type RootDelegatedWorkControl = Readonly<{
   stopAll(): Promise<void>
   shutdown(): Promise<void>
   shutdownForQuit(): Promise<void>
+  shutdownForUpdateGate(): Promise<void>
   deleteSession(sessionId: string): Promise<void>
   deleteProject(projectId: string): Promise<void>
 }>
@@ -502,7 +503,21 @@ const createProductionDelegatedWorkComposition = (
     const failures = results.flatMap((result) =>
       result.status === 'rejected' ? [result.reason] : []
     )
-    if (failures.length) throw new AggregateError(failures, 'Delegated work shutdown failed.')
+    // When suppressing cleanup-pending errors, filter them from work.stopSession failures too.
+    // Each work.stopSession can internally call recoverCleanup() and reject with cleanup errors.
+    const filteredFailures = suppressCleanupPending
+      ? failures.filter((error) => !isOnlyCleanupPending(error))
+      : failures
+    if (filteredFailures.length) {
+      throw new AggregateError(filteredFailures, 'Delegated work shutdown failed.')
+    }
+    // Log suppressed cleanup failures from work.stopSession if any
+    if (suppressCleanupPending && filteredFailures.length < failures.length) {
+      log?.warn(
+        'Work-level process cleanup is unconfirmed; affected workspace remains protected.',
+        failures.filter((e) => isOnlyCleanupPending(e))
+      )
+    }
   }
 
   const root: RootDelegatedWorkControl = Object.freeze({
@@ -651,6 +666,10 @@ const createProductionDelegatedWorkComposition = (
     async shutdownForQuit() {
       settlementWake?.shutdown()
       await stopScopedWork(true, console) // Suppress cleanup-pending at quit gate
+    },
+    async shutdownForUpdateGate() {
+      settlementWake?.invalidateAll() // Invalidate current work without latching to stopped
+      await stopScopedWork(true, console) // Suppress cleanup-pending at update gate
     },
     async deleteSession(sessionId) {
       settlementWake?.invalidateSession(sessionId)

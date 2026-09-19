@@ -1416,6 +1416,7 @@ describe('AcpRuntimeCoordinator', () => {
       stopAll: vi.fn(async () => undefined),
       shutdown: vi.fn(async () => undefined),
       shutdownForQuit: vi.fn(async () => undefined),
+      shutdownForUpdateGate: vi.fn(async () => undefined),
       deleteSession: vi.fn(async () => undefined),
       deleteProject: vi.fn(async () => undefined)
     }
@@ -1508,6 +1509,7 @@ describe('AcpRuntimeCoordinator', () => {
       stopAll: vi.fn(async () => undefined),
       shutdown: vi.fn(async () => undefined),
       shutdownForQuit: vi.fn(async () => undefined),
+      shutdownForUpdateGate: vi.fn(async () => undefined),
       deleteSession: async () => undefined,
       deleteProject: async () => undefined
     }
@@ -1550,6 +1552,7 @@ describe('AcpRuntimeCoordinator', () => {
       stopAll: vi.fn(async () => undefined),
       shutdown: vi.fn(async () => undefined),
       shutdownForQuit: vi.fn(async () => undefined),
+      shutdownForUpdateGate: vi.fn(async () => undefined),
       deleteSession: vi.fn(async () => undefined),
       deleteProject: vi.fn(async () => undefined)
     }
@@ -2143,6 +2146,7 @@ describe('AcpRuntimeCoordinator', () => {
       stopAll: async () => undefined,
       shutdown: async () => undefined,
       shutdownForQuit: async () => undefined,
+      shutdownForUpdateGate: async () => undefined,
       deleteSession: async () => undefined,
       deleteProject: async () => undefined,
       rootTurnStarted,
@@ -2227,6 +2231,7 @@ describe('AcpRuntimeCoordinator', () => {
         stopAll: async () => undefined,
         shutdown: async () => undefined,
         shutdownForQuit: async () => undefined,
+        shutdownForUpdateGate: async () => undefined,
         deleteSession: async () => undefined,
         deleteProject: async () => undefined,
         rootTurnStarted,
@@ -4688,6 +4693,7 @@ describe('AcpRuntimeCoordinator', () => {
       stopAll: async () => undefined,
       shutdown: async () => undefined,
       shutdownForQuit: async () => undefined,
+      shutdownForUpdateGate: async () => undefined,
       deleteSession: vi.fn(() => delegatedDeletion.promise),
       deleteProject: async () => undefined
     }

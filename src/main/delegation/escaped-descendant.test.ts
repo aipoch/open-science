@@ -49,7 +49,7 @@ describe('Escaped descendant detection', () => {
     }
   }, 10000)
 
-  it('returns gone when leader is absent, group is absent, and no marker scan finds descendants', async () => {
+  it('remains blocked even when leader is absent, group is absent, and no marker scan finds descendants', async () => {
     if (process.platform !== 'linux' && process.platform !== 'darwin') return
 
     const marker = `test-gone-${Date.now()}`
@@ -63,9 +63,11 @@ describe('Escaped descendant detection', () => {
 
     await new Promise((resolve) => proc.on('exit', resolve))
 
-    // Process is gone, no descendants with marker
+    // Process is gone, no descendants with marker found. However, marker presence means we cannot
+    // prove all descendants are gone (a descendant could have daemonized and scrubbed the marker).
+    // Require reboot proof or live teardown instead of returning 'gone'.
     const outcome = await proveRecordedPosixLeaderGone({ pid, birthToken }, marker)
 
-    expect(outcome).toBe('gone')
+    expect(outcome).toBe('blocked')
   })
 })

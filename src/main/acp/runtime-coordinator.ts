@@ -550,7 +550,7 @@ class AcpRuntimeCoordinator {
     this.supersedeInitializationRequests()
     return this.shutdownAll(
       (runtime) => runtime.shutdownForUpdateGate(),
-      () => this.delegatedWork?.shutdownForQuit() // Use shutdownForQuit for update gate too
+      () => this.delegatedWork?.shutdownForUpdateGate()
     )
   }
 

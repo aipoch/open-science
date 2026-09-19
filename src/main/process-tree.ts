@@ -1138,14 +1138,20 @@ export const proveRecordedPosixLeaderGone = async (
 
     // Leader and its original group are both gone. If we have an ownership marker, scan the
     // process table for any descendants that may have escaped to a new session but still carry
-    // the marker in their environment. Only return 'gone' if the scan confirms no such processes.
+    // the marker in their environment. Marker presence blocks cleanup, but marker absence cannot
+    // prove all descendants are gone (a process could daemonize, scrub its environment, then
+    // outlive the scan). When a marker was provided, require reboot proof or live teardown.
     if (marker) {
       const descendants = await scanForOwnedDescendants(marker)
       // undefined means incomplete scan (permission denied), cannot prove absence
       if (descendants === undefined) return 'blocked'
+      // Found descendants with marker → definitely blocked
       if (descendants.length > 0) return 'blocked'
+      // Marker provided but no descendants found → ambiguous, require reboot proof
+      return 'blocked'
     }
 
+    // No marker provided: fall back to leader+group absence as sufficient proof
     return 'gone'
   }
   // The exact recorded leader is still alive. Its detached group is still addressable by the
