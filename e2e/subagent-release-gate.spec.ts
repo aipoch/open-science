@@ -1,9 +1,10 @@
 import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
-import { setTimeout as delay } from 'node:timers/promises'
 import { expect } from '@playwright/test'
 import type { Page } from 'playwright'
+import { applySessionConversationCommands } from '../src/shared/session-conversation-command'
+import type { PersistedChatSession } from '../src/shared/session-persistence'
 
 import {
   createProject,
@@ -681,103 +682,176 @@ test('parks an upward message on branch switch and resumes it after restart and 
   await app.completeOnboarding()
   let page = await app.configureFakeAgent()
   const projectId = await createProject(page, 'Reliable branch park release gate')
-  const releaseFile = join(await app.createTestDirectory('reliable-branch-park'), 'release')
-
-  const composer = page.getByRole('textbox', { name: 'Ask anything' })
-  await composer.fill(
-    `${RELIABLE_BRANCH_PARK_PROMPT}\nRelease file: ${JSON.stringify(releaseFile)}`
-  )
-  await page.getByRole('button', { name: 'Send message' }).click()
-  await expect(page.getByText('Branch park upward message queued.')).toBeVisible({
-    timeout: 120_000
-  })
-  let sessionId: string | undefined
-  await expect
-    .poll(async () => {
-      const identity = await page.evaluate(async (projectId) => {
-        const loaded = await window.api.sessions.loadAll()
-        const session = loaded.sessions.find((candidate) => candidate.projectId === projectId)
-        const command = session?.runtimeContext?.delegatedWork?.messageCommands?.find(
-          ({ requestId }) => requestId === 'e2e-child-park'
-        )
-        return { sessionId: session?.id, status: command?.receipt.status }
-      }, projectId)
-      sessionId = identity.sessionId
-      return identity.status
-    })
-    .toBe('queued')
-  expect(sessionId).toEqual(expect.any(String))
-
-  // Reproduce a slow CI branch switch: the old fixture released Main after two seconds,
-  // allowing the queued message to be accepted before its branch became inactive.
-  // The release-file barrier must keep it parked regardless of this scheduling delay.
-  await delay(5_000)
-
-  await Promise.all([
-    page.waitForEvent('domcontentloaded'),
-    retrySessionRevisionConflict(() =>
-      page.evaluate(
-        async ({ projectId, sessionId }) => {
-          const loaded = await window.api.sessions.loadAll()
-          const session = loaded.sessions.find(
-            (candidate) => candidate.projectId === projectId && candidate.id === sessionId
-          )!
-          const graph = session.conversationGraph!
-          const root = graph.frames.find(({ id }) => id === graph.rootFrameId)!
-          const parentBranch = graph.branches.find(({ id }) => id === root.activeBranchId)!
-          const forkTarget = graph.messages
-            .filter(
-              (message) =>
-                message.agentFrameId === root.id &&
-                message.introducedOnBranchId === parentBranch.id &&
-                message.role === 'user'
-            )
-            .sort((left, right) => right.createdAt - left.createdAt)[0]!
-          const now = Date.now()
-          graph.branches.push({
-            id: 'e2e-park-other-branch',
-            agentFrameId: root.id,
-            parentBranchId: parentBranch.id,
-            forkMessageId: forkTarget.parentMessageId,
-            supersededMessageId: forkTarget.id,
-            headMessageId: forkTarget.parentMessageId,
-            createdAt: now,
-            updatedAt: now
-          })
-          root.activeBranchId = 'e2e-park-other-branch'
-          graph.activeFrameId = root.id
-          await window.api.sessions.saveSession({
-            ...session,
-            conversationGraph: graph,
-            messages: [],
-            activities: [],
-            activityGroups: [],
-            updatedAt: now
-          })
-          window.setTimeout(() => window.location.reload(), 0)
+  const cwd = await app.createTestDirectory('reliable-branch-park')
+  // Seed an unfenced durable queue on an idle Session. A running Main turn cannot switch
+  // branches; Host RPC admission and concurrent delivery are exercised by the adjacent tests.
+  const sessionId = 'e2e-park-session'
+  const now = Date.now()
+  const rootMessage = {
+    id: 'park-origin',
+    role: 'user' as const,
+    content: RELIABLE_BRANCH_PARK_PROMPT,
+    status: 'complete' as const,
+    eventIds: [],
+    createdAt: now,
+    updatedAt: now,
+    agentFrameId: 'park-root',
+    introducedOnBranchId: 'park-branch',
+    revisionRootMessageId: 'park-origin',
+    runtimeSegmentId: 'park-segment'
+  }
+  const fixture: PersistedChatSession = {
+    id: sessionId,
+    projectId,
+    cwd,
+    title: RELIABLE_BRANCH_PARK_PROMPT,
+    runtimeTranscriptOwner: 'main',
+    status: 'idle',
+    agentFrameworkId: 'opencode',
+    messages: [rootMessage],
+    createdAt: now,
+    updatedAt: now,
+    conversationGraph: {
+      schemaVersion: 1,
+      rootFrameId: 'park-root',
+      activeFrameId: 'park-root',
+      frames: [
+        {
+          id: 'park-root',
+          kind: 'root',
+          originBindingState: 'root',
+          status: 'completed',
+          activeBranchId: 'park-branch',
+          createdAt: now
         },
-        { projectId, sessionId: sessionId! }
-      )
-    )
-  ])
-  await writeFile(releaseFile, '')
+        {
+          id: 'park-child',
+          kind: 'delegate',
+          originBindingState: 'validated',
+          originMessageId: rootMessage.id,
+          parentFrameId: 'park-root',
+          delegateName: 'Parked child',
+          status: 'completed',
+          activeBranchId: 'park-child-branch',
+          createdAt: now
+        }
+      ],
+      branches: [
+        {
+          id: 'park-branch',
+          agentFrameId: 'park-root',
+          headMessageId: rootMessage.id,
+          createdAt: now,
+          updatedAt: now
+        },
+        {
+          id: 'park-child-branch',
+          agentFrameId: 'park-child',
+          headMessageId: 'park-child-prompt',
+          createdAt: now,
+          updatedAt: now
+        }
+      ],
+      messages: [
+        rootMessage,
+        {
+          ...rootMessage,
+          id: 'park-child-prompt',
+          agentFrameId: 'park-child',
+          introducedOnBranchId: 'park-child-branch',
+          revisionRootMessageId: 'park-child-prompt',
+          runtimeSegmentId: 'park-child-segment',
+          content: 'Send Main a question'
+        }
+      ],
+      runtimeSegments: [
+        {
+          id: 'park-segment',
+          agentFrameId: 'park-root',
+          frameworkId: 'opencode',
+          startedAt: now
+        },
+        {
+          id: 'park-child-segment',
+          agentFrameId: 'park-child',
+          frameworkId: 'opencode',
+          startedAt: now,
+          endedAt: now + 1
+        }
+      ],
+      activities: [],
+      activityGroups: []
+    },
+    runtimeContext: {
+      version: 1,
+      revision: 1,
+      delegatedWork: {
+        records: [
+          {
+            agentFrameId: 'park-child',
+            attempts: [
+              {
+                id: 'park-attempt',
+                status: 'completed',
+                resolvedAgent: { kind: 'main' },
+                runtimeSegmentIds: ['park-child-segment'],
+                startedAt: now,
+                endedAt: now + 1
+              }
+            ]
+          }
+        ],
+        messageCommands: [
+          {
+            messageId: 'park-message',
+            requestId: 'e2e-child-park',
+            sourcePrincipal: 'park-child\u0000park-attempt',
+            canonicalDigest: 'a'.repeat(64),
+            sourceFrameId: 'park-child',
+            sourceAttemptId: 'park-attempt',
+            targetFrameId: 'park-root',
+            rootPromptMessageId: 'park-message-root-prompt',
+            rootOriginMessageId: rootMessage.id,
+            callerRootMessageId: rootMessage.id,
+            rootBranchId: 'park-branch',
+            rootBranchRevision: `park-branch:${now}`,
+            direction: 'to_parent',
+            disposition: 'message',
+            text: 'Parked reliable child question',
+            kind: 'question',
+            laneSequence: 1,
+            queuedAt: now + 1,
+            receipt: { status: 'queued' }
+          }
+        ]
+      }
+    }
+  }
+  page = await app.restartWithSessionFixture(
+    applySessionConversationCommands(fixture, [
+      {
+        id: 'e2e-park-fork',
+        kind: 'fork-message',
+        timestamp: now + 2,
+        branchId: 'e2e-park-other-branch',
+        parentBranchId: 'park-branch',
+        messageId: rootMessage.id
+      }
+    ])
+  )
   await expect
     .poll(async () =>
-      page.evaluate(
-        async ({ projectId, sessionId }) => {
-          const loaded = await window.api.sessions.loadAll()
-          const session = loaded.sessions.find(
-            (candidate) => candidate.projectId === projectId && candidate.id === sessionId
-          )
-          const command = session?.runtimeContext?.delegatedWork?.messageCommands?.find(
-            ({ requestId }) => requestId === 'e2e-child-park'
-          )
-          return { sessionStatus: session?.status, receiptStatus: command?.receipt.status }
-        },
-        { projectId, sessionId: sessionId! }
-      )
+      page.evaluate(async (sessionId) => {
+        const loaded = await window.api.sessions.loadAll()
+        const session = loaded.sessions.find(({ id }) => id === sessionId)!
+        return {
+          branchId: session.conversationGraph!.frames.find(({ id }) => id === 'park-root')!
+            .activeBranchId,
+          receipt: session.runtimeContext?.delegatedWork?.messageCommands?.[0]?.receipt
+        }
+      }, sessionId)
     )
-    .toEqual({ sessionStatus: 'idle', receiptStatus: 'queued' })
+    .toEqual({ branchId: 'e2e-park-other-branch', receipt: { status: 'queued' } })
   await page.screenshot({ path: testInfo.outputPath('late-output-selected-branch.png') })
   page = await app.restart()
   await expect
@@ -811,30 +885,16 @@ test('parks an upward message on branch switch and resumes it after restart and 
             ({ requestId }) => requestId === 'e2e-child-park'
           )
           if (!command) throw new Error('Parked message command is unavailable.')
-          root.activeBranchId = command.rootBranchId
-          graph.activeFrameId = root.id
-          const restoredBranch = graph.branches.find(({ id }) => id === command.rootBranchId)!
-          const messagesById = new Map(graph.messages.map((message) => [message.id, message]))
-          const restoredMessages: typeof graph.messages = []
-          let cursor = restoredBranch.headMessageId
-          while (cursor) {
-            const message = messagesById.get(cursor)
-            if (!message) break
-            restoredMessages.unshift(message)
-            cursor = message.parentMessageId
-          }
-          const restoredMessageIds = new Set<string>(restoredMessages.map(({ id }) => id))
-          await window.api.sessions.saveSession({
-            ...session,
-            conversationGraph: graph,
-            messages: restoredMessages,
-            activities: graph.activities.filter((activity) =>
-              restoredMessageIds.has(activity.promptMessageId)
-            ),
-            activityGroups: graph.activityGroups.filter((group) =>
-              restoredMessageIds.has(group.promptMessageId)
-            ),
-            updatedAt: Date.now()
+          await window.api.sessions.saveSession(session, {
+            conversationCommands: [
+              {
+                id: 'e2e-park-restore',
+                timestamp: Date.now(),
+                kind: 'select-branch',
+                branchId: command.rootBranchId,
+                previousBranchId: root.activeBranchId
+              }
+            ]
           })
           window.setTimeout(() => window.location.reload(), 0)
         },
@@ -901,7 +961,7 @@ test('recovers a post-fence receipt persistence failure as uncertain after proce
         dispatchStarted: typeof durable.dispatchStartedAt === 'number'
       }
     })
-    .toEqual({ sessionStatus: 'idle', dispatchStarted: true })
+    .toEqual({ sessionStatus: 'running', dispatchStarted: true })
   expect(sessionId).toEqual(expect.any(String))
   page = await app.restartAfterCrash()
   await openProjectSession(page, 'Reliable failure window release gate', RELIABLE_FAILURE_PROMPT)

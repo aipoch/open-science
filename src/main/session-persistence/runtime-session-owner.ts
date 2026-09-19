@@ -38,6 +38,8 @@ export type RuntimeSessionAdmission = {
   reviewOwner?: 'task' | 'renderer'
   // Supplied only by the live app continuation after claiming this durable delivery.
   planDeliveryCommandId?: string
+  // Main-only identity of the fenced reliable message; never serialized as provider binding.
+  delegatedMessageId?: string
 }
 
 export type RuntimeSessionArtifactPublicationReceipt = {
@@ -301,6 +303,69 @@ const continuationRunFor = (
   }
 }
 
+// A reliable parent delivery starts another execution of its originating turn. Its durable
+// command is the authority; a caller-supplied provenance Segment alone cannot re-arm a turn.
+const admitDelegatedMessage = (
+  session: PersistedChatSession,
+  scope: RuntimeSessionTurnScope,
+  admission: RuntimeSessionAdmission,
+  now: number
+): PersistedChatSession => {
+  if (!admission.delegatedMessageId) return session
+  const graph = session.conversationGraph
+  const root = graph?.frames.find(({ id }) => id === graph.rootFrameId)
+  const branch = graph?.branches.find(({ id }) => id === root?.activeBranchId)
+  const delegated = session.runtimeContext?.delegatedWork
+  const command = delegated?.messageCommands?.find(
+    ({ messageId }) => messageId === admission.delegatedMessageId
+  )
+  const prompt = graph?.messages.find(({ id }) => id === scope.promptMessageId)
+  if (
+    session.activeRun ||
+    session.status !== 'idle' ||
+    delegated?.messageCommandsQuarantine ||
+    !command ||
+    command.direction !== 'to_parent' ||
+    command.targetFrameId !== scope.agentFrameId ||
+    command.rootOriginMessageId !== scope.promptMessageId ||
+    command.rootBranchId !== scope.messageBranchId ||
+    command.receipt.status !== 'queued' ||
+    command.receipt.dispatchStartedAt === undefined ||
+    !command.receipt.dispatchEpoch ||
+    root?.id !== scope.agentFrameId ||
+    graph?.activeFrameId !== root.id ||
+    branch?.id !== scope.messageBranchId ||
+    `${branch.id}:${branch.createdAt}` !== command.rootBranchRevision ||
+    !prompt?.runtimeSegmentId ||
+    scope.runtimeSegmentId !== `delegated-message-${command.messageId}` ||
+    graph.runtimeSegments.some(({ id }) => id === scope.runtimeSegmentId)
+  )
+    throw new Error('Runtime Session has no admissible parent message command.')
+  // Validate the original path before introducing the new execution's Segment.
+  assertScopeMatchesSession({ ...scope, runtimeSegmentId: prompt.runtimeSegmentId }, session)
+  const startedAt = Math.max(now, (session.runtimeTranscriptLastRun?.startedAt ?? 0) + 1)
+  return {
+    ...session,
+    status: 'running',
+    activeRun: { promptMessageId: scope.promptMessageId, startedAt },
+    conversationGraph: {
+      ...graph,
+      runtimeSegments: [
+        ...graph.runtimeSegments,
+        {
+          id: scope.runtimeSegmentId,
+          agentFrameId: scope.agentFrameId,
+          frameworkId:
+            admission.agentFrameworkId ??
+            session.agentFrameworkId ??
+            graph.runtimeSegments.find(({ id }) => id === prompt.runtimeSegmentId)!.frameworkId,
+          startedAt
+        }
+      ]
+    }
+  }
+}
+
 export class RuntimeSessionOwner {
   private readonly turns = new Map<string, Turn>()
   private readonly publications = new Map<string, PublicationAttempt>()
@@ -320,20 +385,25 @@ export class RuntimeSessionOwner {
     if (previousTurn?.terminalObserved) {
       await this.flush(scope.sessionId, scope.promptMessageId)
     }
-    const loaded = await this.dependencies.loadSession(scope)
+    let loaded = await this.dependencies.loadSession(scope)
     if (!loaded) throw new Error('Runtime Session turn is not durable.')
+    const sameExecution =
+      previousTurn?.scope.executionId === scope.executionId &&
+      previousTurn.scope.agentFrameId === scope.agentFrameId &&
+      previousTurn.scope.messageBranchId === scope.messageBranchId &&
+      previousTurn.scope.runtimeSegmentId === scope.runtimeSegmentId
+    if (!sameExecution) loaded = admitDelegatedMessage(loaded, scope, admission, this.now())
     const continuationRun = continuationRunFor(
       loaded,
       scope,
       this.now(),
       admission.planDeliveryCommandId
     )
-    const promptRuntimeSegmentId =
-      previousTurn?.scope.executionId === scope.executionId &&
-      previousTurn.scope.agentFrameId === scope.agentFrameId &&
-      previousTurn.scope.messageBranchId === scope.messageBranchId &&
-      previousTurn.scope.runtimeSegmentId === scope.runtimeSegmentId
-        ? previousTurn.promptRuntimeSegmentId
+    const promptRuntimeSegmentId = sameExecution
+      ? previousTurn.promptRuntimeSegmentId
+      : admission.delegatedMessageId
+        ? loaded.conversationGraph!.messages.find(({ id }) => id === scope.promptMessageId)!
+            .runtimeSegmentId!
         : resolvePromptRuntimeSegmentId(loaded, scope)
     assertScopeMatchesSession(scope, loaded, continuationRun === undefined, promptRuntimeSegmentId)
     const admittedRun = loaded.activeRun ?? continuationRun
@@ -369,6 +439,7 @@ export class RuntimeSessionOwner {
     // The coordinator stamps Main's runtime ownership in this identity mutation. Await it before
     // provider dispatch so a renderer save can never become the first durable writer for the turn.
     const session = await this.dependencies.mutateSession(scope, (latest) => {
+      latest = admitDelegatedMessage(latest, scope, admission, this.now())
       // Re-derive against the durable record Main is about to write: only a still-parked turn may
       // be continued, and its re-armed run has to be newer than the run it replaces.
       const resumedRun = continuationRunFor(
@@ -377,15 +448,20 @@ export class RuntimeSessionOwner {
         this.now(),
         admission.planDeliveryCommandId
       )
-      if (resolvePromptRuntimeSegmentId(latest, scope) !== promptRuntimeSegmentId)
+      if (
+        !admission.delegatedMessageId &&
+        resolvePromptRuntimeSegmentId(latest, scope) !== promptRuntimeSegmentId
+      )
         throw new Error('Runtime Session prompt Segment changed before admission.')
       assertScopeMatchesSession(scope, latest, resumedRun === undefined, promptRuntimeSegmentId)
       const {
         reviewOwner = 'renderer',
         planDeliveryCommandId: _planDeliveryCommandId,
+        delegatedMessageId: _delegatedMessageId,
         ...runtimeBinding
       } = admission
       void _planDeliveryCommandId
+      void _delegatedMessageId
       const next: PersistedChatSession = {
         ...latest,
         ...(resumedRun ? { activeRun: resumedRun, status: 'running' as const } : {}),

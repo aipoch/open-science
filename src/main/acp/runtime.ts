@@ -1791,7 +1791,8 @@ class AcpRuntime {
   async sendAppContinuation(
     request: AcpPromptRequest,
     promptAttemptId?: string,
-    planDelivery?: Readonly<{ projectId: string; commandId: string }>
+    planDelivery?: Readonly<{ projectId: string; commandId: string }>,
+    delegatedMessageId?: string
   ): Promise<PromptResponse> {
     // A parked continuation itself blocks reconnect. Enter the generation directly so it can finish
     // before that barrier is released instead of waiting on the barrier it intentionally holds.
@@ -1799,7 +1800,8 @@ class AcpRuntime {
       this.runPromptTurn(request, {
         kind: 'app-continuation',
         ...(promptAttemptId === undefined ? {} : { promptAttemptId }),
-        ...(planDelivery ? { planDelivery } : {})
+        ...(planDelivery ? { planDelivery } : {}),
+        ...(delegatedMessageId ? { delegatedMessageId } : {})
       })
     )
   }
@@ -1821,6 +1823,7 @@ class AcpRuntime {
           kind: 'app-continuation'
           promptAttemptId?: string
           planDelivery?: Readonly<{ projectId: string; commandId: string }>
+          delegatedMessageId?: string
         }>,
     onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>
   ): Promise<PromptResponse> {

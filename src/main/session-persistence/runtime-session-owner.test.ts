@@ -5,7 +5,11 @@ import { continueInterruptedTurn } from '../acp/interrupted-turn-continuation'
 import type { AcpRuntimeEvent } from '../../shared/acp'
 import type { ArtifactFile } from '../../shared/artifacts'
 import { applySessionConversationCommands } from '../../shared/session-conversation-command'
-import { normalizeSessionFile, type PersistedChatSession } from '../../shared/session-persistence'
+import {
+  normalizeSessionFile,
+  type DelegatedMessageCommand,
+  type PersistedChatSession
+} from '../../shared/session-persistence'
 import {
   RuntimeSessionArtifactPublicationError,
   RuntimeSessionOwner,
@@ -202,7 +206,114 @@ const harness = (initial = [session()]) => {
   return { owner, sessions, scheduled, mutateSession, finalizeArtifacts }
 }
 
+const parentMessageSession = (): PersistedChatSession => {
+  const turn = scope()
+  const durable = session()
+  delete durable.activeRun
+  durable.status = 'idle'
+  durable.runtimeContext = {
+    version: 1,
+    revision: 1,
+    delegatedWork: {
+      records: [],
+      messageCommands: [
+        {
+          messageId: 'message-1',
+          requestId: 'request-1',
+          sourcePrincipal: 'child',
+          canonicalDigest: 'digest',
+          sourceFrameId: 'child-1',
+          sourceAttemptId: 'attempt-1',
+          targetFrameId: turn.agentFrameId,
+          rootOriginMessageId: turn.promptMessageId,
+          callerRootMessageId: turn.promptMessageId,
+          rootBranchId: turn.messageBranchId,
+          rootBranchRevision: 'branch-1:1',
+          direction: 'to_parent',
+          disposition: 'message',
+          text: 'Child question',
+          kind: 'question',
+          laneSequence: 1,
+          queuedAt: 2,
+          receipt: { status: 'queued', dispatchStartedAt: 3, dispatchEpoch: 'epoch-1' }
+        }
+      ]
+    }
+  }
+  return durable
+}
+
 describe('RuntimeSessionOwner', () => {
+  it('durably admits a fenced parent message without adding a user message', async () => {
+    const turn = { ...scope(), runtimeSegmentId: 'delegated-message-message-1' }
+    const durable = parentMessageSession()
+    const { owner, sessions } = harness([durable])
+    await owner.begin(turn, { delegatedMessageId: 'message-1', agentFrameworkId: 'opencode' })
+    const admitted = sessions.get(turn.sessionId)!
+    expect(admitted.activeRun).toEqual({ promptMessageId: turn.promptMessageId, startedAt: 10 })
+    expect(admitted.conversationGraph!.runtimeSegments.at(-1)).toMatchObject({
+      id: turn.runtimeSegmentId,
+      frameworkId: 'opencode',
+      startedAt: 10
+    })
+    expect(admitted.conversationGraph!.messages).toEqual(durable.conversationGraph!.messages)
+    expect(admitted).not.toHaveProperty('delegatedMessageId')
+    owner.accept({ ...messageEvent(turn, 'continued-message', 'Main answer'), timestamp: 11 })
+    await owner.flush(turn.sessionId, turn.promptMessageId)
+    expect(
+      sessions.get(turn.sessionId)!.messages.some(({ content }) => content === 'Main answer')
+    ).toBe(true)
+    await expect(
+      owner.begin({ ...turn, executionId: 'replay' }, { delegatedMessageId: 'message-1' })
+    ).rejects.toThrow()
+  })
+
+  it.each(['missing', 'unfenced', 'accepted', 'uncertain', 'wrong-origin', 'inactive-branch'])(
+    'rejects %s parent-message admission',
+    async (scenario) => {
+      const turn = { ...scope(), runtimeSegmentId: 'delegated-message-message-1' }
+      const durable = parentMessageSession()
+      const existing = durable.runtimeContext!.delegatedWork!.messageCommands![0]
+      const command: DelegatedMessageCommand = {
+        ...existing,
+        rootOriginMessageId: scenario === 'wrong-origin' ? 'other' : turn.promptMessageId,
+        receipt:
+          scenario === 'accepted'
+            ? { status: 'accepted', acceptedAt: 4, evidence: 'provider_prompt_accepted' }
+            : scenario === 'uncertain'
+              ? { status: 'uncertain', uncertainAt: 4, resolution: 'pending' }
+              : scenario === 'unfenced'
+                ? { status: 'queued' }
+                : existing.receipt
+      }
+      durable.runtimeContext = {
+        version: 1,
+        revision: 1,
+        delegatedWork: { records: [], messageCommands: scenario === 'missing' ? [] : [command] }
+      }
+      if (scenario === 'inactive-branch')
+        durable.conversationGraph!.frames[0].activeBranchId = 'other'
+      const { owner, mutateSession } = harness([durable])
+      await expect(owner.begin(turn, { delegatedMessageId: 'message-1' })).rejects.toThrow()
+      expect(mutateSession).not.toHaveBeenCalled()
+    }
+  )
+
+  it('revalidates the parent branch in the serialized admission write', async () => {
+    const turn = { ...scope(), runtimeSegmentId: 'delegated-message-message-1' }
+    const { owner, sessions, mutateSession } = harness([parentMessageSession()])
+    const mutate = mutateSession.getMockImplementation()!
+    mutateSession.mockImplementationOnce(async (scope, update) => {
+      sessions.get(scope.sessionId)!.conversationGraph!.frames[0].activeBranchId = 'other'
+      return mutate(scope, update)
+    })
+    await expect(owner.begin(turn, { delegatedMessageId: 'message-1' })).rejects.toThrow(
+      'no admissible parent message'
+    )
+    expect(sessions.get(turn.sessionId)!.activeRun).toBeUndefined()
+    expect(sessions.get(turn.sessionId)!.conversationGraph!.runtimeSegments).toHaveLength(1)
+  })
+
   it('rejects a turn whose exact durable prompt path is missing', async () => {
     const turn = scope()
     const malformed = session(turn)

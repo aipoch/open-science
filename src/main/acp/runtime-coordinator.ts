@@ -1037,17 +1037,24 @@ class AcpRuntimeCoordinator {
 
   startContinuationWhenDispatchAdmitted(
     request: AcpPromptRequest,
-    validate: () => Promise<void>
+    validate: () => Promise<void>,
+    delegatedMessageId?: string
   ): Promise<DelegateMessageAcceptanceEvidence> {
     // The caller owns final deletion admission for the whole validation/resume/acceptance lifecycle.
     // Bypass only the nested dispatch guard; root-session admission remains linearized below.
-    return this.startContinuationWhenWithDispatchAdmission(request, validate, true)
+    return this.startContinuationWhenWithDispatchAdmission(
+      request,
+      validate,
+      true,
+      delegatedMessageId
+    )
   }
 
   private startContinuationWhenWithDispatchAdmission(
     request: AcpPromptRequest,
     validate: () => Promise<void>,
-    dispatchAdmitted: boolean
+    dispatchAdmitted: boolean,
+    delegatedMessageId?: string
   ): Promise<DelegateMessageAcceptanceEvidence> {
     let resolve!: (evidence: DelegateMessageAcceptanceEvidence) => void
     let reject!: (error: unknown) => void
@@ -1084,7 +1091,19 @@ class AcpRuntimeCoordinator {
         )
       }
       await (dispatchAdmitted
-        ? this.dispatchAdmittedPrompt(request, acceptance, 'sendAppContinuation')
+        ? this.dispatchAdmittedPrompt(
+            request,
+            acceptance,
+            'sendAppContinuation',
+            undefined,
+            false,
+            undefined,
+            undefined,
+            undefined,
+            'renderer',
+            undefined,
+            delegatedMessageId
+          )
         : this.dispatchPrompt(request, acceptance, 'sendAppContinuation'))
       if (!acceptance.settled) {
         acceptance.settled = true
@@ -1146,7 +1165,8 @@ class AcpRuntimeCoordinator {
     onApplicationPromptAdmitted?: (prompt: ReturnType<AcpRuntime['sendPrompt']>) => void,
     onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>,
     runtimeReviewOwner: 'task' | 'renderer' = 'renderer',
-    startAdmission?: PromptAcceptance
+    startAdmission?: PromptAcceptance,
+    delegatedMessageId?: string
   ): ReturnType<AcpRuntime['sendPrompt']> {
     if (this.promptAdmissionClosedForQuit) return this.rejectPromptForQuit()
     const owner = pinnedRuntime ?? this.findRuntimeForSession(request.sessionId)
@@ -1235,7 +1255,9 @@ class AcpRuntimeCoordinator {
           ? runtime.sendPrompt(taskRequest, attempt.id, admitPrompt)
           : runtime.sendPrompt(taskRequest, attempt.id)
       }
-      return runtime.sendAppContinuation(taskRequest, attempt.id)
+      return delegatedMessageId
+        ? runtime.sendAppContinuation(taskRequest, attempt.id, undefined, delegatedMessageId)
+        : runtime.sendAppContinuation(taskRequest, attempt.id)
     })
     onApplicationPromptAdmitted?.(prompt)
     return prompt

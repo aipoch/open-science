@@ -32,6 +32,7 @@ import { RendererFailureGate } from './renderer-failure-gate'
 import { prepareBrandStorageFixture } from './brand-storage-data'
 import { captureNativeQuitDialog } from './native-quit-dialog'
 import type { PackageOperationSnapshot } from '../../src/shared/session-package'
+import { createSessionFile, type PersistedChatSession } from '../../src/shared/session-persistence'
 
 const APP_ROOT = resolve(process.cwd())
 const FAKE_AGENT_PATH = resolve(APP_ROOT, 'e2e', 'fixtures', 'fake-opencode.mjs')
@@ -345,6 +346,7 @@ type ElectronApp = {
   restart: (options?: { resourceProfilePhase?: string }) => Promise<Page>
   restartAfterCrash: () => Promise<Page>
   restartWithCorruptHistoricalSessionFile: (projectId: string) => Promise<Page>
+  restartWithSessionFixture: (session: PersistedChatSession) => Promise<Page>
   sabotageDelegatedHandoffCleanup: (childName: string) => Promise<void>
   recordResourceTiming: (name: string, durationMs: number) => void
   captureResourceTimings: (prefix?: string) => Promise<void>
@@ -1217,6 +1219,28 @@ class ElectronAppHarness implements ElectronApp {
     this.resourceProfiler?.detach(application)
     this.application = undefined
     this.currentPage = undefined
+    await this.launch()
+    return this.page
+  }
+
+  async restartWithSessionFixture(session: PersistedChatSession): Promise<Page> {
+    if (![session.projectId, session.id].every((id) => /^[a-zA-Z0-9_-]+$/.test(id))) {
+      throw new Error('Invalid E2E Session fixture identity.')
+    }
+    await this.close()
+    const directory = join(this.roots.storageRoot, 'sessions', session.projectId)
+    await mkdir(directory, { recursive: true })
+    await writeFile(
+      join(directory, `${session.id}.json`),
+      JSON.stringify(createSessionFile(session))
+    )
+    // Rebuild the catalog from the fixture file, just as the historical-session fixture does.
+    const client = createProjectDbClient(this.roots.storageRoot)
+    try {
+      await client.sessionProjectionState.deleteMany()
+    } finally {
+      await client.$disconnect()
+    }
     await this.launch()
     return this.page
   }

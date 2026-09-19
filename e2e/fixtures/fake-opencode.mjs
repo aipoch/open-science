@@ -66,8 +66,6 @@ const DELEGATION_BRANCH_B_PROMPT = 'Start the active-branch partial Stop certifi
 const DELEGATION_UNAVAILABLE_PROMPT = 'Verify unsupported delegation admission.'
 const DELEGATION_STRUCTURED_OUTPUT_PROMPT = 'Run the production structured output journey.'
 const RELIABLE_MESSAGING_PROMPT = 'Run the production reliable messaging journey.'
-const RELIABLE_BRANCH_PARK_PROMPT = 'Start the reliable messaging branch park journey.'
-const RELIABLE_BRANCH_WAKE_PROMPT = 'Wake the reliable messaging branch park journey.'
 const RELIABLE_FAILURE_PROMPT = 'Start the reliable messaging post-fence failure journey.'
 const RELIABLE_FAILURE_OBSERVE_PROMPT = 'Observe the reliable messaging post-fence failure.'
 const RELIABLE_FAIRNESS_PROMPT = 'Start the reliable messaging fairness journey.'
@@ -109,7 +107,6 @@ const DELEGATED_WAIT_NAME = 'Delegated fixture A'
 const DELEGATED_WAIT_NAME_TWO = 'Delegated fixture B'
 const DELEGATED_STRUCTURED_OUTPUT_TASK = 'Create certified structured evidence.'
 const DELEGATED_RELIABLE_MESSAGING_TASK = 'Send a reliable question to Main.'
-const DELEGATED_RELIABLE_PARK_TASK = 'Queue a reliable question for branch parking.'
 const DELEGATED_RELIABLE_FAILURE_TASK = 'Queue a reliable question for post-fence failure.'
 const DELEGATED_RELIABLE_FAILURE_NAME = 'Post-fence reliable question'
 const DELEGATED_RELIABLE_FAIRNESS_TASK_A = 'Queue reliable fairness question A.'
@@ -1707,36 +1704,6 @@ if (process.argv.includes('--version')) {
             throw new Error(`Reliable downward delivery failed: ${JSON.stringify(downward)}`)
           }
           reply = 'Production reliable downward message was accepted.'
-        } else if (prompt.includes(RELIABLE_BRANCH_PARK_PROMPT)) {
-          await runProductionDelegationRequest(
-            context.params.sessionId,
-            { task: DELEGATED_RELIABLE_PARK_TASK, name: DELEGATED_RELIABLE_PARK_TASK },
-            false
-          )
-          await delay(500)
-          await context.client.notify(acp.methods.client.session.update, {
-            sessionId: context.params.sessionId,
-            update: {
-              sessionUpdate: 'agent_message_chunk',
-              messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
-              content: { type: 'text', text: 'Branch park upward message queued.' }
-            }
-          })
-          await waitForReleaseFile(JSON.parse(prompt.split('Release file: ')[1]))
-          reply = 'Reliable branch park source turn completed.'
-        } else if (prompt.includes(RELIABLE_BRANCH_WAKE_PROMPT)) {
-          const receipt = controlResultValue(
-            await executeControlCode(
-              context.params.sessionId,
-              `return await host.messageReceipt("e2e-child-park", { timeoutSeconds: 0 })`
-            )
-          )
-          if (receipt.status !== 'queued') {
-            throw new Error(
-              `Reliable parked receipt changed before wake: ${JSON.stringify(receipt)}`
-            )
-          }
-          reply = 'Reliable branch wake admitted.'
         } else if (prompt.includes(RELIABLE_FAILURE_PROMPT)) {
           await runProductionDelegationRequest(
             context.params.sessionId,
@@ -1909,17 +1876,6 @@ if (process.argv.includes('--version')) {
             throw new Error(`Reliable upward admission failed: ${JSON.stringify(upward)}`)
           }
           reply = 'Child sent a reliable question.'
-        } else if (prompt.includes(DELEGATED_RELIABLE_PARK_TASK)) {
-          const upward = controlResultValue(
-            await executeControlCode(
-              context.params.sessionId,
-              `return await host.sendFrameMessage("parent", "Parked reliable child question", { kind: "question", requestId: "e2e-child-park" })`
-            )
-          )
-          if (upward.status !== 'queued') {
-            throw new Error(`Reliable parked admission failed: ${JSON.stringify(upward)}`)
-          }
-          reply = 'Child queued a branch-bound reliable question.'
         } else if (prompt.includes(DELEGATED_RELIABLE_FAILURE_TASK)) {
           await executeControlCode(
             context.params.sessionId,
@@ -1970,7 +1926,18 @@ if (process.argv.includes('--version')) {
           } finally {
             await restoreWrites()
           }
-          reply = 'Persistence sabotage released.'
+          await context.client.notify(acp.methods.client.session.update, {
+            sessionId: context.params.sessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
+              content: { type: 'text', text: 'Persistence sabotage released.' }
+            }
+          })
+          // Keep the provider call in flight until the test crashes Main. Completing it would
+          // provide fresh acceptance evidence and legitimately settle the receipt after recovery.
+          await waitForSessionCancellation(context.params.sessionId)
+          return { stopReason: 'cancelled' }
         } else if (prompt.includes('Reliable fairness child A')) {
           reply = 'Main rendered reliable fairness child A.'
         } else if (prompt.includes('Reliable fairness child B')) {

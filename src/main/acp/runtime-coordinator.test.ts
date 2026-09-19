@@ -3373,33 +3373,42 @@ describe('AcpRuntimeCoordinator', () => {
     })
   })
 
-  it('does not reacquire dispatch admission for an already admitted continuation', async () => {
-    let createdRuntime!: ReturnType<typeof createFakeRuntime>
-    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
-      createdRuntime = createFakeRuntime({
-        frameworkId: 'claude-code',
-        sessionIds: ['session-1'],
-        callbacks
+  it.each(['claude-code', 'opencode', 'codex'] as const)(
+    'passes trusted parent-message admission through %s without reacquiring deletion admission',
+    async (frameworkId) => {
+      let createdRuntime!: ReturnType<typeof createFakeRuntime>
+      const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+        createdRuntime = createFakeRuntime({
+          frameworkId,
+          sessionIds: ['session-1'],
+          callbacks
+        })
+        return createdRuntime.runtime
       })
-      return createdRuntime.runtime
-    })
-    const session = await coordinator.createSession({ cwd: '/workspace' })
-    const admittedSessionIds: string[] = []
-    coordinator.setPromptDispatchAdmissionGuard(async (sessionId, dispatch) => {
-      admittedSessionIds.push(sessionId)
-      return dispatch()
-    })
+      const session = await coordinator.createSession({ cwd: '/workspace' })
+      const admittedSessionIds: string[] = []
+      coordinator.setPromptDispatchAdmissionGuard(async (sessionId, dispatch) => {
+        admittedSessionIds.push(sessionId)
+        return dispatch()
+      })
 
-    await expect(
-      coordinator.startContinuationWhenDispatchAdmitted(
-        { sessionId: session.sessionId, text: 'already deletion-admitted' },
-        async () => undefined
+      await expect(
+        coordinator.startContinuationWhenDispatchAdmitted(
+          { sessionId: session.sessionId, text: 'already deletion-admitted' },
+          async () => undefined,
+          'message-1'
+        )
+      ).resolves.toBe('provider_prompt_accepted')
+
+      expect(admittedSessionIds).toEqual([])
+      expect(createdRuntime.sendAppContinuation).toHaveBeenCalledWith(
+        expect.objectContaining({ text: 'already deletion-admitted' }),
+        expect.any(String),
+        undefined,
+        'message-1'
       )
-    ).resolves.toBe('provider_prompt_accepted')
-
-    expect(admittedSessionIds).toEqual([])
-    expect(createdRuntime.sendAppContinuation).toHaveBeenCalledOnce()
-  })
+    }
+  )
 
   it('stops a prompt for handoff without reporting a user generation cancellation', async () => {
     const onSessionCancellationRequested = vi.fn()

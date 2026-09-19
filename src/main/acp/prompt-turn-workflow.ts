@@ -13,6 +13,7 @@ import {
 } from '../../shared/permission-profiles'
 import type { AgentFramework } from '../agent-framework'
 import { createLogger, errorLogFields } from '../logger'
+import { DelegateMessagePreAcceptanceError } from '../delegation/execution-port'
 import { PLAN_FIRST_TURN_PROMPT_REMINDER } from '../session-plan/guidance'
 import type { ArtifactTurnHandle } from './artifact-turn-owner'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
@@ -61,6 +62,7 @@ type AcpPromptTurnMode =
       kind: 'app-continuation'
       promptAttemptId?: string
       planDelivery?: Readonly<{ projectId: string; commandId: string }>
+      delegatedMessageId?: string
     }>
 
 type AcpPromptTurnPlanContext = Readonly<{
@@ -231,7 +233,8 @@ type AcpPromptTurnWorkflowOptions = Readonly<{
     request: AcpPromptRequest,
     executionId: string,
     reviewOwner: 'task' | 'renderer',
-    planDeliveryCommandId?: string
+    planDeliveryCommandId?: string,
+    delegatedMessageId?: string
   ) => Promise<void>
   onPromptStarted: (sessionId: string, turnToken: string, promptAttemptId?: string) => void
   emitState: () => void
@@ -394,7 +397,8 @@ class AcpPromptTurnWorkflow {
           admittedRequest,
           interaction.turnToken,
           mode.kind === 'user' ? (mode.runtimeReviewOwner ?? 'renderer') : 'renderer',
-          mode.kind === 'app-continuation' ? mode.planDelivery?.commandId : undefined
+          mode.kind === 'app-continuation' ? mode.planDelivery?.commandId : undefined,
+          mode.kind === 'app-continuation' ? mode.delegatedMessageId : undefined
         )
       }
       this.options.registry.select(admittedRequest.sessionId)
@@ -402,6 +406,12 @@ class AcpPromptTurnWorkflow {
     } catch (error) {
       skill.close(rejectedSkillOutcome)
       this.options.interactions.release(interaction ?? reservation)
+      if (mode.kind === 'app-continuation' && mode.delegatedMessageId) {
+        throw new DelegateMessagePreAcceptanceError(
+          error instanceof Error ? error.message : String(error),
+          error
+        )
+      }
       throw error
     }
 
