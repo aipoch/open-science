@@ -9,6 +9,7 @@ import {
   RuntimeResourceProfiler,
   mergeResourceSample,
   parseSessionHydrationDiagnostic,
+  parseStartupDiagnostic,
   readRuntimeStorageSnapshot,
   renderSummaryMarkdown,
   summarizeSamples,
@@ -395,6 +396,126 @@ describe('runtime resource profiler', () => {
     expect(summary.sessionHydrationTrace).toHaveLength(1)
     expect(renderSummaryMarkdown(summary)).toContain(
       '1 | load-authority | authority-loaded | 20.0 | 6.0 | 2.0 | 8.0'
+    )
+  })
+
+  it('retains only bounded startup phase metrics from known operations', () => {
+    const trace = parseStartupDiagnostic({
+      capturedAt: 2_000,
+      message: '[startup] operation phase',
+      data: {
+        operation: 'application-composition',
+        operationId: 'operation-1',
+        phase: 'ipc-adapters',
+        cpuIntervalPhase: 'operation-start',
+        elapsedMs: 25,
+        phaseDurationMs: 20,
+        phaseCpuTotalMs: 8,
+        phaseWaitMs: 12,
+        delayKind: 'mixed',
+        path: '/private/research',
+        errorMessage: 'private content'
+      }
+    })
+
+    expect(trace).toEqual({
+      capturedAt: 2_000,
+      event: 'phase',
+      operation: 'application-composition',
+      operationId: 'operation-1',
+      phase: 'ipc-adapters',
+      cpuIntervalPhase: 'operation-start',
+      elapsedMs: 25,
+      phaseDurationMs: 20,
+      phaseCpuTotalMs: 8,
+      phaseWaitMs: 12,
+      delayKind: 'mixed'
+    })
+    expect(JSON.stringify(trace)).not.toMatch(/private|path|errorMessage/u)
+    expect(
+      parseStartupDiagnostic({
+        capturedAt: 2_000,
+        message: '[startup] operation phase',
+        data: {
+          operation: 'storage-migration',
+          operationId: 'operation-2',
+          phase: 'copy'
+        }
+      })
+    ).toBeUndefined()
+    expect(
+      parseStartupDiagnostic({
+        capturedAt: 2_000,
+        message: '[startup] operation phase',
+        data: {
+          operation: 'application-startup',
+          operationId: 'operation-3',
+          phase: '../private/path'
+        }
+      })
+    ).toBeUndefined()
+  })
+
+  it.each([
+    ['data-root', 'operation-start'],
+    ['deletion-barriers', 'connectors'],
+    ['ipc-adapters', 'commands']
+  ])('projects the %s application-composition interval from %s', (phase, previousPhase) => {
+    expect(
+      parseStartupDiagnostic({
+        capturedAt: 2_000,
+        message: '[startup] operation phase',
+        data: {
+          operation: 'application-composition',
+          operationId: 'composition-1',
+          phase,
+          cpuIntervalPhase: previousPhase,
+          phaseDurationMs: 20
+        }
+      })
+    ).toMatchObject({
+      event: 'phase',
+      operation: 'application-composition',
+      operationId: 'composition-1',
+      phase,
+      cpuIntervalPhase: previousPhase,
+      phaseDurationMs: 20
+    })
+  })
+
+  it('renders existing application startup and composition intervals in the local summary', () => {
+    const summary = summarizeSamples(
+      [],
+      {
+        startedAt: 1_000,
+        endedAt: 2_000,
+        sampleIntervalMs: 1_000,
+        nodeVersion: '22.0.0'
+      },
+      [],
+      [
+        {
+          capturedAt: 1_100,
+          event: 'phase',
+          operation: 'application-startup',
+          operationId: 'startup-1',
+          phase: 'compose-runtime',
+          cpuIntervalPhase: 'application-modules-loaded',
+          phaseDurationMs: 20,
+          phaseCpuTotalMs: 8,
+          delayKind: 'mixed'
+        }
+      ]
+    )
+
+    expect(summary.startupTrace).toHaveLength(1)
+    expect(renderSummaryMarkdown(summary)).toContain(
+      'application-startup #1 | application-modules-loaded | compose-runtime | 20.0 | 8.0 | mixed'
+    )
+
+    summary.startupTrace[0]!.phaseCpuTotalMs = undefined
+    expect(renderSummaryMarkdown(summary)).toContain(
+      'application-startup #1 | application-modules-loaded | compose-runtime | 20.0 | unavailable | mixed'
     )
   })
 })
