@@ -1,12 +1,20 @@
 {
   "ownerPaths": [
     "src/main/connectors/descriptors/omics-archives.test.ts",
-    "src/main/connectors/descriptors/omics-archives.ts"
+    "src/main/connectors/descriptors/omics-archives.ts",
+    "src/main/connectors/descriptors/omics-ena.ts",
+    "src/main/connectors/descriptors/omics-ena.test.ts"
   ],
-  "interfacePaths": ["src/main/connectors/descriptors/omics-archives.ts"],
+  "interfacePaths": [
+    "src/main/connectors/descriptors/omics-archives.ts",
+    "src/main/connectors/descriptors/omics-ena.ts"
+  ],
   "consumerModules": [],
   "testFiles": {
-    "owner": ["src/main/connectors/descriptors/omics-archives.test.ts"],
+    "owner": [
+      "src/main/connectors/descriptors/omics-archives.test.ts",
+      "src/main/connectors/descriptors/omics-ena.test.ts"
+    ],
     "contract": [
       "src/preload/index.test.ts",
       "src/renderer/web/api-installer.test.ts",
