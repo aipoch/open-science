@@ -157,6 +157,7 @@
       "src/main/literature/reference-resolver.test.ts",
       "src/main/literature/scale-regressions.test.ts",
       "src/main/literature/session-pdf-source-resolver.test.ts",
+      "src/main/local-models/download.test.ts",
       "src/main/local-models/owner.test.ts",
       "src/main/managed-file-versions/diff-task.test.ts",
       "src/main/managed-file-versions/ipc.test.ts",

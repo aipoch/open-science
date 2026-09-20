@@ -589,6 +589,7 @@
       "src/main/local-fs/granted-roots-repository.test.ts",
       "src/main/local-fs/ipc.test.ts",
       "src/main/local-fs/service.test.ts",
+      "src/main/local-models/download.test.ts",
       "src/main/local-models/owner.test.ts",
       "src/main/locale/owner.test.ts",
       "src/main/locale/resources.lazy.test.ts",
