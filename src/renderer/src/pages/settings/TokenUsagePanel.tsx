@@ -1,3 +1,4 @@
+import { InlineNotice } from '@/components/ui/inline-notice'
 import { ErrorNotice } from '@/components/error-notice'
 import { ChartNoAxesCombined, Info, Loader2, RefreshCw } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
@@ -475,9 +476,9 @@ function TokenUsagePanel({
           ) : null}
 
           {usageProjectionLoadFailed ? (
-            <p role="alert" className="-mt-2 text-xs text-destructive">
+            <InlineNotice level="error" role="alert" className="-mt-2">
               {t('Could not load token usage.')}
-            </p>
+            </InlineNotice>
           ) : null}
 
           <div data-slot="token-usage-summary" className="py-5">

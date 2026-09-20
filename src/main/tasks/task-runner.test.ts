@@ -1,3 +1,7 @@
+import {
+  rebaseTaskSessionBinding,
+  rebaseTaskTurnOntoLatestSession
+} from '../session-persistence/task-admission'
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, sep } from 'node:path'
@@ -6,6 +10,7 @@ import { queryObjects } from 'node:v8'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { AcpRuntimeEvent } from '../../shared/acp'
+import type { ArtifactFile } from '../../shared/artifacts'
 import { ComputeHostPreferenceValidationError } from '../../shared/compute'
 import type { Project } from '../../shared/projects'
 import { resolveProviderEffectiveModel } from '../../shared/provider-reasoning-effort'
@@ -15,13 +20,27 @@ import {
   normalizeSessionFile,
   SessionConfigurationBusyError,
   type PersistedChatSession,
+  type PersistedChatMessage,
   type SettleTaskSessionCompletionRequest
 } from '../../shared/session-persistence'
 import type { TaskRun } from '../../shared/task-api'
+import { applyRuntimeSessionEvents } from '../../shared/runtime-session-projection'
+import {
+  resolveActiveConversationMessages,
+  type PersistedMessageNode
+} from '../../shared/conversation-graph'
 import { EnabledComputeHostsRegistry } from '../compute/enabled-hosts-registry'
 import { SessionEnabledComputeHostsOwner } from '../compute/session-enabled-hosts-owner'
 import { loadManagedCodexErrorHandler } from '../settings/codex-error.test-utils'
 import { isProviderPromptError } from '../acp/prompt-error'
+import { randomUUID } from 'node:crypto'
+import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
+import { fetchLocalRpc } from '../local-rpc-transport'
+import { NotebookLocalRpcServer } from '../notebook/local-rpc-server'
+import { NotebookRuntimeService } from '../notebook/runtime-service'
+import { NotebookRunRepository } from '../notebook/repository'
+import { SessionRepository } from '../session-persistence/repository'
+import { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
 import { FileTaskRunJournal, type TaskRunJournalEntry } from './task-run-journal'
 import {
   TASK_RUN_DISPOSAL_BUDGET_MS,
@@ -32,6 +51,8 @@ import {
   type TaskRunnerDependencies,
   type TaskSessionPort
 } from './task-runner'
+
+vi.mock('electron', () => ({ app: { getPath: () => tmpdir(), isPackaged: true } }))
 
 const temporaryRoots: string[] = []
 
@@ -136,6 +157,17 @@ const createRunner = (overrides: TaskRunnerOverrides = {}): TaskRunner => {
       return loaded
     },
     save,
+    bindSession: async (request) => {
+      const latest = (await defaultSessions.list()).find(({ id }) => id === request.session.id)
+      if (!latest)
+        throw new Error(`Session not found for Task provider binding: ${request.session.id}`)
+      return save(rebaseTaskSessionBinding(latest, request))
+    },
+    admitTurn: async ({ session: prepared, contextReset }) => {
+      const latest = (await defaultSessions.list()).find(({ id }) => id === prepared.id)
+      if (!latest) throw new Error(`Session not found for Task prompt admission: ${prepared.id}`)
+      return save(rebaseTaskTurnOntoLatestSession(latest, prepared, contextReset))
+    },
     stageCompletion: async (request) => {
       const current = loadSession(request.sessionId)
       const candidate: PersistedChatSession = {
@@ -233,6 +265,194 @@ const createRunner = (overrides: TaskRunnerOverrides = {}): TaskRunner => {
   })
 }
 describe('TaskRunner', () => {
+  it.each([
+    { concurrent: false, cancel: false, tool: false },
+    { concurrent: true, cancel: false, tool: false },
+    { concurrent: true, cancel: false, tool: false, resume: true },
+    { concurrent: false, cancel: true, tool: false },
+    { concurrent: false, cancel: true, tool: true },
+    { concurrent: false, cancel: true, tool: true, webMessage: 'streaming' as const },
+    { concurrent: false, cancel: true, tool: true, webMessage: 'complete' as const }
+  ])(
+    'preserves a follow-up across a Web title save during admission (concurrent: $concurrent, cancel: $cancel, tool: $tool, web: $webMessage, resume: $resume)',
+    async ({ concurrent, cancel, tool, webMessage, resume }) => {
+      const root = await mkdtemp(join(tmpdir(), 'task-web-admission-'))
+      temporaryRoots.push(root)
+      let promptInFlight = false
+      const repository = new SessionRepository(root, {
+        hasActiveRuntimePrompt: () => promptInFlight
+      })
+      const coordinator = new SessionPersistenceCoordinator(repository, {
+        syncSession: async () => [],
+        softDeleteSession: async () => 'deleted',
+        restoreSession: async () => undefined,
+        softDeleteProject: async () => 'deleted',
+        reconcileActiveSessions: async () => undefined,
+        reconcileProjectSessions: async () => undefined,
+        markReconciliationIncomplete: () => undefined
+      })
+      let injectWebSave = false
+      let turn = 0
+      let admitFollowUp!: () => void
+      const followUpAdmitted = new Promise<void>((resolve) => {
+        admitFollowUp = resolve
+      })
+      let stopFollowUp!: () => void
+      const followUpStopped = new Promise<void>((resolve) => {
+        stopFollowUp = resolve
+      })
+      let emit: ((event: AcpRuntimeEvent) => void) | undefined
+      const runner = createRunner({
+        createId: randomUUID,
+        now: Date.now,
+        sessions: {
+          list: async () => (await coordinator.loadAllReadOnly()).sessions,
+          save: async (candidate) => {
+            if (injectWebSave) {
+              injectWebSave = false
+              const latest = await coordinator.loadSessionForContinuation(project.id, candidate.id)
+              await coordinator.saveSession({ ...latest, title: 'Title from Web' })
+            }
+            return coordinator.saveSession(candidate)
+          },
+          bindSession: async (request) => {
+            if (injectWebSave) {
+              injectWebSave = false
+              const latest = await coordinator.loadSessionForContinuation(
+                project.id,
+                request.session.id
+              )
+              await coordinator.saveSession({ ...latest, title: 'Title from Web' })
+            }
+            return coordinator.bindTaskSession(request)
+          },
+          admitTurn: async (request) => {
+            if (injectWebSave) {
+              injectWebSave = false
+              const latest = await coordinator.loadSessionForContinuation(
+                project.id,
+                request.session.id
+              )
+              await coordinator.saveSession({ ...latest, title: 'Title from Web' })
+            }
+            return coordinator.admitTaskTurn(request)
+          },
+          stageCompletion: (request) => coordinator.stageTaskCompletion(request),
+          settleCompletion: (request) => coordinator.settleTaskCompletion(request),
+          failRun: (request) => coordinator.failTaskRun(request)
+        },
+        runtimeEvents: {
+          subscribe: (listener) => {
+            emit = listener
+            return () => undefined
+          }
+        },
+        agent: {
+          createSession: async () => ({
+            sessionId: session.id,
+            cwd: root,
+            ...(resume ? { backendId: 'codex' } : {})
+          }),
+          resumeSession: async () => ({
+            sessionId: session.id,
+            cwd: root,
+            backendId: 'codex',
+            providerSessionId: 'resumed-provider-session'
+          }),
+          listAttachedSessionIds: async () => [session.id],
+          cancelPrompt: async () => {
+            stopFollowUp()
+          },
+          prompt: async (request, observer) => {
+            turn += 1
+            promptInFlight = true
+            await observer?.onPromptAdmitted?.()
+            observer?.onProviderPromptAccepted?.()
+            emit?.({
+              id: randomUUID(),
+              timestamp: Date.now(),
+              kind: 'message',
+              level: 'info',
+              sessionId: request.sessionId,
+              role: 'assistant',
+              text: cancel && turn === 1 ? 'Which report and chart formats?' : 'Research answer'
+            })
+            if (webMessage && turn === 2) {
+              const latest = await coordinator.loadSessionForContinuation(
+                project.id,
+                request.sessionId
+              )
+              const timestamp = Date.now()
+              await coordinator.saveSession({
+                ...latest,
+                ...(webMessage === 'complete'
+                  ? { activeRun: undefined, status: 'idle' as const }
+                  : {}),
+                messages: [
+                  ...latest.messages,
+                  {
+                    id: randomUUID(),
+                    role: 'agent',
+                    content: 'Research answer',
+                    responseToMessageId: request.promptMessageId,
+                    status: webMessage,
+                    eventIds: [],
+                    createdAt: timestamp,
+                    updatedAt: timestamp
+                  }
+                ],
+                updatedAt: timestamp
+              })
+            }
+            if (tool && turn === 2) {
+              emit?.({
+                id: randomUUID(),
+                timestamp: Date.now(),
+                kind: 'tool',
+                level: 'info',
+                sessionId: request.sessionId,
+                promptMessageId: request.promptMessageId,
+                toolCallId: 'notebook-execution',
+                title: 'Execute Python',
+                status: 'in_progress'
+              })
+            }
+            if (cancel && turn === 2) {
+              admitFollowUp()
+              await followUpStopped
+            }
+            promptInFlight = false
+          }
+        }
+      })
+      const first = await runner.startRun({
+        project: project.id,
+        prompt: 'Analyze the CSV.',
+        ...(cancel ? { turnIntent: 'plan-first' as const } : {})
+      })
+      expect(await runner.waitForRun(first.id)).toMatchObject({ status: 'completed' })
+      injectWebSave = concurrent
+      const next = await runner.startRun({
+        project: project.id,
+        sessionId: session.id,
+        prompt: 'Summarize the results.'
+      })
+      if (cancel) await followUpAdmitted
+      const result = cancel ? await runner.cancelRun(next.id) : await runner.waitForRun(next.id)
+      expect(result, JSON.stringify(result)).toMatchObject({
+        status: cancel ? 'cancelled' : 'completed',
+        error: undefined
+      })
+      const saved = await coordinator.loadSessionForContinuation(project.id, session.id)
+      expect(
+        saved.messages
+          .filter((message) => message.role === 'user')
+          .map((message) => message.content)
+      ).toEqual(['Analyze the CSV.', 'Summarize the results.'])
+      if (concurrent) expect(saved.title).toBe('Title from Web')
+    }
+  )
+
   it.each(['terminal-error', 'retryable-error', 'foreign-error', 'assistant-quotation'] as const)(
     'reports the pinned Codex capacity outcome correctly for %s',
     async (delivery) => {
@@ -1954,6 +2174,7 @@ describe('TaskRunner', () => {
   it('skips automatic review when the current turn has no assistant message', async () => {
     const historical: PersistedChatSession = {
       ...session,
+      runtimeTranscriptOwner: undefined,
       autoReviewEnabled: true,
       messages: [
         {
@@ -1982,7 +2203,7 @@ describe('TaskRunner', () => {
     const ids = ['current-user', 'current-run', 'unused-agent']
     const runner = createRunner({
       sessions: {
-        list: async () => [historical],
+        list: async () => [savedSessions.at(-1) ?? historical],
         save: async (saved) => {
           savedSessions.push(structuredClone(saved))
         }
@@ -2464,6 +2685,7 @@ describe('TaskRunner', () => {
   it('cleans up an admitted Task turn when Session persistence commits before rejecting', async () => {
     let durableSession: PersistedChatSession = {
       ...session,
+      runtimeTranscriptOwner: undefined,
       revision: 1,
       messages: []
     }
@@ -2562,7 +2784,7 @@ describe('TaskRunner', () => {
     const completed = await runner.waitForRun(started.id)
 
     expect(completed.status).toBe('completed')
-    expect(list).toHaveBeenCalledTimes(2)
+    expect(list).toHaveBeenCalledTimes(3)
     expect(durableSession).toMatchObject({
       title: 'Renamed concurrently',
       description: 'Keep this edit'
@@ -3097,78 +3319,82 @@ describe('TaskRunner', () => {
     expect(saved.at(-1)?.pendingHistoryReplay).toEqual({ kind: 'all' })
   })
 
-  it('provides transcript fallback for skill-triggered reconnects', async () => {
-    const existing: PersistedChatSession = {
-      ...session,
-      messages: [
-        {
-          id: 'prior-user',
-          role: 'user',
-          content: 'Prior question',
-          status: 'complete',
-          eventIds: [],
-          createdAt: 1,
-          updatedAt: 1
-        },
-        {
-          id: 'prior-agent',
-          role: 'agent',
-          content: 'Prior answer',
-          status: 'complete',
-          eventIds: [],
-          createdAt: 2,
-          updatedAt: 2
-        }
-      ]
-    }
-    const prompts: Parameters<TaskRunnerDependencies['agent']['prompt']>[0][] = []
-    const ids = ['skill-user', 'skill-run', 'skill-agent']
-    const runner = createRunner({
-      sessions: { list: async () => [existing], save: async () => undefined },
-      agent: {
-        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
-        listAttachedSessionIds: async () => [existing.id],
-        createSession: async () => ({ sessionId: 'unused' }),
-        resumeSession: async (request) => ({ sessionId: request.sessionId }),
-        setPermissionProfile: async () => undefined,
-        cancelPrompt: async () => undefined,
-        prompt: async (request) => {
-          prompts.push(request)
-        }
-      },
-      createId: () => ids.shift() ?? 'generated-id'
-    })
-
-    const started = await runner.startRun({
-      project: project.id,
-      sessionId: existing.id,
-      prompt: 'Use the selected skill.',
-      skillIds: ['literature-review']
-    })
-    await runner.waitForRun(started.id)
-
-    expect(prompts).toEqual([
-      {
-        sessionId: existing.id,
-        promptMessageId: 'skill-user',
-        provenanceContext: {
-          rootFrameId: 'root-frame-session-1',
-          agentFrameId: 'root-frame-session-1',
-          messageBranchId: 'message-branch-session-1',
-          messageBranchAncestry: ['message-branch-session-1'],
-          messageAncestry: ['prior-user', 'prior-agent', 'skill-user'],
-          runtimeSegmentId: 'runtime-segment-session-1',
-          promptMessageId: 'skill-user'
-        },
-        text: 'Use the selected skill.',
-        skillIds: ['literature-review'],
-        resumeFallback: {
-          historyPreamble:
-            'Previous conversation:\n\nUser: Prior question\n\nAssistant: Prior answer'
-        }
+  it.each(['explicit Skill', 'bound Specialist'])(
+    'provides transcript fallback for %s reconnects',
+    async (selection) => {
+      const existing: PersistedChatSession = {
+        ...session,
+        ...(selection === 'bound Specialist' ? { specialistId: 'research-specialist' } : {}),
+        messages: [
+          {
+            id: 'prior-user',
+            role: 'user',
+            content: 'Prior question',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 1,
+            updatedAt: 1
+          },
+          {
+            id: 'prior-agent',
+            role: 'agent',
+            content: 'Prior answer',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 2,
+            updatedAt: 2
+          }
+        ]
       }
-    ])
-  })
+      const prompts: Parameters<TaskRunnerDependencies['agent']['prompt']>[0][] = []
+      const ids = ['skill-user', 'skill-run', 'skill-agent']
+      const runner = createRunner({
+        sessions: { list: async () => [existing], save: async () => undefined },
+        agent: {
+          withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+          listAttachedSessionIds: async () => [existing.id],
+          createSession: async () => ({ sessionId: 'unused' }),
+          resumeSession: async (request) => ({ sessionId: request.sessionId }),
+          setPermissionProfile: async () => undefined,
+          cancelPrompt: async () => undefined,
+          prompt: async (request) => {
+            prompts.push(request)
+          }
+        },
+        createId: () => ids.shift() ?? 'generated-id'
+      })
+
+      const started = await runner.startRun({
+        project: project.id,
+        sessionId: existing.id,
+        prompt: 'Use the selected skill.',
+        ...(selection === 'explicit Skill' ? { skillIds: ['literature-review'] } : {})
+      })
+      await runner.waitForRun(started.id)
+
+      expect(prompts).toEqual([
+        {
+          sessionId: existing.id,
+          promptMessageId: 'skill-user',
+          provenanceContext: {
+            rootFrameId: 'root-frame-session-1',
+            agentFrameId: 'root-frame-session-1',
+            messageBranchId: 'message-branch-session-1',
+            messageBranchAncestry: ['message-branch-session-1'],
+            messageAncestry: ['prior-user', 'prior-agent', 'skill-user'],
+            runtimeSegmentId: 'runtime-segment-session-1',
+            promptMessageId: 'skill-user'
+          },
+          text: 'Use the selected skill.',
+          ...(selection === 'explicit Skill' ? { skillIds: ['literature-review'] } : {}),
+          resumeFallback: {
+            historyPreamble:
+              'Previous conversation:\n\nUser: Prior question\n\nAssistant: Prior answer'
+          }
+        }
+      ])
+    }
+  )
 
   it('marks artifact-only completions when turn usage is unavailable', async () => {
     let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
@@ -3267,6 +3493,432 @@ describe('TaskRunner', () => {
       })
     ])
   })
+
+  it.each(['agent-final', 'agent-first', undefined])(
+    'consumes Main-owned terminal transcript without restaging artifacts (event owner: %s)',
+    async (eventMessageId) => {
+      let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+      let authoritative: PersistedChatSession | undefined
+      let lastSaved: PersistedChatSession | undefined
+      const stageCompletion = vi.fn<TaskSessionPort['stageCompletion']>()
+      const settleCompletion = vi.fn<TaskSessionPort['settleCompletion']>(async (request) => ({
+        ...authoritative!,
+        taskRunCommitId: request.taskRunCommitId
+      }))
+      const finalizeRun = vi.fn<TaskRunnerDependencies['artifacts']['finalizeRun']>()
+      const artifact: ArtifactFile = {
+        id: 'version-main',
+        artifactId: 'artifact-main',
+        versionId: 'version-main',
+        versionNumber: 1,
+        checksum: 'a'.repeat(64),
+        projectId: project.id,
+        sessionId: 'session-main-owner',
+        messageId: 'agent-final',
+        name: 'result.txt',
+        path: '/artifacts/result.txt',
+        fileUrl: 'open-science-preview://version-main/result.txt',
+        size: 6,
+        mtimeMs: 12
+      }
+      const runner = createRunner({
+        sessions: {
+          list: async () => (authoritative ? [authoritative] : []),
+          save: async (session) => {
+            lastSaved = structuredClone({ ...session, runtimeTranscriptOwner: 'main' })
+            return lastSaved
+          },
+          stageCompletion,
+          settleCompletion
+        },
+        agent: {
+          createSession: async () => ({ sessionId: 'session-main-owner' }),
+          prompt: async (request) => {
+            const admitted = lastSaved!
+            const first: PersistedChatMessage = {
+              id: 'agent-first',
+              role: 'agent',
+              content: 'first ',
+              status: 'complete',
+              responseToMessageId: request.promptMessageId,
+              eventIds: ['message-event-1'],
+              createdAt: 10,
+              updatedAt: 10
+            }
+            const final: PersistedChatMessage = {
+              id: 'agent-final',
+              role: 'agent',
+              content: 'second',
+              status: 'complete',
+              responseToMessageId: request.promptMessageId,
+              eventIds: ['message-event-2'],
+              artifactIds: ['version-main'],
+              createdAt: 11,
+              updatedAt: 12
+            }
+            authoritative = materializeSessionConversationGraph({
+              ...admitted,
+              runtimeTranscriptOwner: 'main',
+              status: 'idle',
+              activeRun: undefined,
+              messages: [...admitted.messages, first, final],
+              artifacts: [
+                {
+                  id: artifact.id,
+                  artifactId: artifact.artifactId,
+                  versionId: artifact.versionId,
+                  versionNumber: artifact.versionNumber,
+                  sha256: artifact.checksum,
+                  kind: 'managed-file',
+                  path: artifact.path,
+                  fileUrl: artifact.fileUrl,
+                  name: artifact.name,
+                  size: artifact.size,
+                  mtimeMs: artifact.mtimeMs
+                }
+              ],
+              updatedAt: 12
+            })
+            emitEvent?.({
+              id: 'published-artifact',
+              timestamp: 12,
+              level: 'info',
+              kind: 'artifact',
+              sessionId: authoritative.id,
+              runId: 'run-main',
+              promptMessageId: request.promptMessageId,
+              artifactClaimId: 'already-finalized',
+              publicationOwner: 'main',
+              messageId: 'agent-final',
+              artifacts: [{ ...artifact, messageId: eventMessageId }]
+            } as AcpRuntimeEvent)
+          }
+        },
+        artifacts: { finalizeRun },
+        runtimeEvents: {
+          subscribe: (listener) => {
+            emitEvent = listener
+            return () => undefined
+          }
+        }
+      })
+
+      const started = await runner.startRun({ project: project.id, prompt: 'Produce output.' })
+      const completed = await runner.waitForRun(started.id)
+
+      expect(completed).toMatchObject({
+        status: 'completed',
+        output: 'first second',
+        artifacts: [{ id: 'version-main', messageId: 'agent-final' }]
+      })
+      expect(stageCompletion).not.toHaveBeenCalled()
+      expect(finalizeRun).not.toHaveBeenCalled()
+      expect(settleCompletion).toHaveBeenCalledWith(expect.objectContaining({ artifacts: [] }))
+      expect(
+        authoritative?.messages.filter(({ role }) => role === 'agent').map(({ id }) => id)
+      ).toEqual(['agent-first', 'agent-final'])
+    }
+  )
+
+  it.each(['hidden-prompt', 'visible-prompt-hidden-reply'] as const)(
+    'completes from the admitted Main-owned graph scope when the active projection has a %s',
+    async (selection) => {
+      let authoritative: PersistedChatSession | undefined
+      let admitted: PersistedChatSession | undefined
+      let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+      const stageCompletion = vi.fn<TaskSessionPort['stageCompletion']>()
+      const settleCompletion = vi.fn<TaskSessionPort['settleCompletion']>(async (request) => ({
+        ...authoritative!,
+        taskRunCommitId: request.taskRunCommitId
+      }))
+      const finalizeRun = vi.fn<TaskRunnerDependencies['artifacts']['finalizeRun']>()
+      const prompt = vi.fn<TaskAgentPort['prompt']>(async (request) => {
+        const durablePrompt = admitted!.conversationGraph!.messages.find(
+          ({ id }) => id === request.promptMessageId
+        )!
+        const runScope = {
+          promptMessageId: durablePrompt.id,
+          agentFrameId: durablePrompt.agentFrameId,
+          messageBranchId: durablePrompt.introducedOnBranchId,
+          runtimeSegmentId: durablePrompt.runtimeSegmentId!
+        }
+        authoritative = applyRuntimeSessionEvents(admitted!, runScope, [
+          {
+            id: `event-${selection}`,
+            kind: 'message',
+            level: 'info',
+            sessionId: admitted!.id,
+            promptMessageId: request.promptMessageId,
+            messageId: `stream-${selection}`,
+            role: 'assistant',
+            text: `exact ${selection} output`,
+            timestamp: 10
+          },
+          {
+            id: `stop-${selection}`,
+            kind: 'stop',
+            level: 'info',
+            sessionId: admitted!.id,
+            promptMessageId: request.promptMessageId,
+            timestamp: 11
+          }
+        ])
+        const replyId = authoritative.conversationGraph!.messages.find(
+          (message) => message.role === 'agent' && message.responseToMessageId === durablePrompt.id
+        )!.id
+        const artifact: ArtifactFile = {
+          id: `version-${selection}`,
+          artifactId: `artifact-${selection}`,
+          versionId: `version-${selection}`,
+          versionNumber: 1,
+          checksum: 'a'.repeat(64),
+          projectId: project.id,
+          sessionId: admitted!.id,
+          messageId: replyId,
+          name: `${selection}.txt`,
+          path: `/artifacts/${selection}.txt`,
+          fileUrl: `open-science-preview://version-${selection}/${selection}.txt`,
+          size: 6,
+          mtimeMs: 11
+        }
+        const artifactEvent: AcpRuntimeEvent = {
+          id: `published-${selection}`,
+          kind: 'artifact',
+          level: 'info',
+          timestamp: 11,
+          sessionId: admitted!.id,
+          promptMessageId: durablePrompt.id,
+          runId: `run-${selection}`,
+          artifactClaimId: `claim-${selection}`,
+          publicationOwner: 'main',
+          messageId: replyId,
+          artifacts: [artifact]
+        }
+        authoritative = applyRuntimeSessionEvents(authoritative, runScope, [artifactEvent])
+        emitEvent?.(artifactEvent)
+        authoritative = {
+          ...authoritative,
+          runtimeTranscriptOwner: 'main'
+        }
+        const graph = authoritative.conversationGraph!
+        const graphPrompt = graph.messages.find(({ id }) => id === request.promptMessageId)!
+        const originalBranch = graph.branches.find(
+          ({ id }) => id === graphPrompt.introducedOnBranchId
+        )!
+        if (selection === 'visible-prompt-hidden-reply') {
+          graph.branches.push({
+            id: 'visible-prompt-branch',
+            agentFrameId: graphPrompt.agentFrameId!,
+            parentBranchId: originalBranch.id,
+            forkMessageId: graphPrompt.id,
+            headMessageId: graphPrompt.id,
+            createdAt: 12,
+            updatedAt: 12
+          })
+          graph.frames.find(({ id }) => id === graphPrompt.agentFrameId)!.activeBranchId =
+            'visible-prompt-branch'
+        } else {
+          const alternate = {
+            id: 'newer-visible-prompt',
+            role: 'user',
+            content: 'Newer visible turn',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 12,
+            updatedAt: 12,
+            agentFrameId: graphPrompt.agentFrameId!,
+            introducedOnBranchId: 'newer-visible-branch',
+            parentMessageId: graphPrompt.parentMessageId,
+            revisionRootMessageId: graphPrompt.revisionRootMessageId,
+            supersedesMessageId: graphPrompt.id,
+            runtimeSegmentId: graphPrompt.runtimeSegmentId
+          } satisfies PersistedMessageNode
+          graph.messages.push(alternate)
+          graph.branches.push({
+            id: 'newer-visible-branch',
+            agentFrameId: graphPrompt.agentFrameId!,
+            parentBranchId: originalBranch.id,
+            forkMessageId: graphPrompt.parentMessageId,
+            supersededMessageId: graphPrompt.id,
+            headMessageId: alternate.id,
+            createdAt: 12,
+            updatedAt: 12
+          })
+          graph.frames.find(({ id }) => id === graphPrompt.agentFrameId)!.activeBranchId =
+            'newer-visible-branch'
+        }
+        authoritative.messages = resolveActiveConversationMessages(graph)
+      })
+      const runner = createRunner({
+        sessions: {
+          list: async () => (authoritative ? [authoritative] : []),
+          save: async (value) => {
+            admitted = materializeSessionConversationGraph({
+              ...structuredClone(value),
+              runtimeTranscriptOwner: 'main'
+            })
+            return admitted
+          },
+          stageCompletion,
+          settleCompletion
+        },
+        agent: {
+          createSession: async () => ({ sessionId: `session-${selection}` }),
+          prompt
+        },
+        artifacts: { finalizeRun },
+        runtimeEvents: {
+          subscribe: (listener) => {
+            emitEvent = listener
+            return () => undefined
+          }
+        }
+      })
+
+      const started = await runner.startRun({ project: project.id, prompt: 'Produce output.' })
+      const completed = await runner.waitForRun(started.id)
+
+      expect(completed.error).toBeUndefined()
+      expect(completed).toMatchObject({
+        status: 'completed',
+        output: `exact ${selection} output`,
+        artifacts: [{ id: `version-${selection}`, artifactId: `artifact-${selection}` }]
+      })
+      expect(prompt).toHaveBeenCalledOnce()
+      expect(stageCompletion).not.toHaveBeenCalled()
+      expect(finalizeRun).not.toHaveBeenCalled()
+      expect(settleCompletion).toHaveBeenCalledWith(
+        expect.objectContaining({
+          messageId: expect.any(String),
+          artifacts: []
+        })
+      )
+      if (selection === 'hidden-prompt') {
+        expect(authoritative?.messages.map(({ id }) => id)).toEqual(['newer-visible-prompt'])
+        expect(
+          authoritative?.conversationGraph?.frames.find(
+            ({ id }) => id === admitted?.conversationGraph?.activeFrameId
+          )?.activeBranchId
+        ).toBe('newer-visible-branch')
+      }
+    }
+  )
+
+  it.each(['provider-failure', 'cancelled'] as const)(
+    'projects Main-owned partial output for %s without creating another message',
+    async (outcome) => {
+      let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+      let authoritative: PersistedChatSession | undefined
+      let admitted: PersistedChatSession | undefined
+      let promptMessageId: string | undefined
+      const stageCompletion = vi.fn<TaskSessionPort['stageCompletion']>()
+      const finalizeRun = vi.fn<TaskRunnerDependencies['artifacts']['finalizeRun']>()
+      const failRun = vi.fn<TaskSessionPort['failRun']>(async (request) => ({
+        ...authoritative!,
+        taskRunCommitId: request.taskRunCommitId,
+        error: request.error
+      }))
+      const settleCompletion = vi.fn<TaskSessionPort['settleCompletion']>(async (request) => ({
+        ...authoritative!,
+        taskRunCommitId: request.taskRunCommitId
+      }))
+      const runner = createRunner({
+        sessions: {
+          list: async () => (authoritative ? [authoritative] : []),
+          save: async (session) => {
+            admitted = structuredClone({ ...session, runtimeTranscriptOwner: 'main' })
+            return admitted
+          },
+          stageCompletion,
+          settleCompletion,
+          failRun
+        },
+        agent: {
+          createSession: async () => ({ sessionId: `session-main-${outcome}` }),
+          prompt: async (request) => {
+            promptMessageId = request.promptMessageId
+            const partial: PersistedChatMessage = {
+              id: `agent-${outcome}`,
+              role: 'agent',
+              content: 'partial output',
+              status: 'complete',
+              responseToMessageId: request.promptMessageId,
+              eventIds: ['partial-event'],
+              createdAt: 10,
+              updatedAt: 10
+            }
+            authoritative = materializeSessionConversationGraph({
+              ...admitted!,
+              runtimeTranscriptOwner: 'main',
+              status: outcome === 'provider-failure' ? 'error' : 'idle',
+              activeRun: undefined,
+              messages: [...admitted!.messages, partial],
+              ...(outcome === 'provider-failure' ? { error: 'provider unavailable' } : {}),
+              updatedAt: 10
+            })
+            if (outcome === 'cancelled') {
+              emitEvent?.({
+                id: 'cancelled-stop',
+                timestamp: 11,
+                level: 'info',
+                kind: 'stop',
+                sessionId: authoritative.id,
+                promptMessageId: request.promptMessageId,
+                text: 'cancelled'
+              })
+              return
+            }
+            emitEvent?.({
+              id: 'provider-error',
+              timestamp: 11,
+              level: 'error',
+              kind: 'error',
+              sessionId: authoritative.id,
+              promptMessageId: request.promptMessageId,
+              text: 'provider unavailable',
+              providerError: true
+            })
+            throw new Error('raw provider failure')
+          }
+        },
+        artifacts: { finalizeRun },
+        runtimeEvents: {
+          subscribe: (listener) => {
+            emitEvent = listener
+            return () => undefined
+          }
+        }
+      })
+
+      const started = await runner.startRun({ project: project.id, prompt: 'Start.' })
+      const terminal = await runner.waitForRun(started.id)
+
+      expect(terminal).toMatchObject({
+        status: outcome === 'cancelled' ? 'cancelled' : 'failed',
+        output: 'partial output',
+        ...(outcome === 'provider-failure' ? { error: 'provider unavailable' } : {})
+      })
+      expect(stageCompletion).not.toHaveBeenCalled()
+      expect(finalizeRun).not.toHaveBeenCalled()
+      expect(
+        authoritative?.messages.filter(
+          ({ responseToMessageId }) => responseToMessageId === promptMessageId
+        )
+      ).toHaveLength(1)
+      if (outcome === 'cancelled') {
+        expect(settleCompletion).toHaveBeenCalledWith(expect.objectContaining({ artifacts: [] }))
+        expect(failRun).not.toHaveBeenCalled()
+      } else {
+        expect(failRun).toHaveBeenCalledWith(
+          expect.objectContaining({
+            messageId: `agent-${outcome}`,
+            artifacts: [],
+            error: 'provider unavailable'
+          })
+        )
+      }
+    }
+  )
 
   it('reuses the renderer-settled response identity when finalizing Task artifacts', async () => {
     let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
@@ -4354,6 +5006,184 @@ describe('TaskRunner', () => {
     await expect(runner.waitForRun(started.id)).resolves.toMatchObject({ status: 'completed' })
   })
 
+  it.each([true, false])(
+    'persists failed Notebook stop despite accepted cancellation (admitted: %s)',
+    async (admitted) => {
+      let stop!: () => void
+      const stopped = new Promise<void>((resolve) => {
+        stop = resolve
+      })
+      let durableSession = structuredClone(session)
+      let durableRuns: TaskRunJournalEntry[] = []
+      const failure = new NotebookExecutionStopError()
+      const runner = createRunner({
+        createId: randomUUID,
+        sessions: {
+          list: async () => [structuredClone(durableSession)],
+          save: async (candidate) => {
+            durableSession = structuredClone(candidate)
+            return candidate
+          }
+        },
+        runJournal: {
+          load: async () => durableRuns,
+          replace: async (runs) => {
+            durableRuns = runs.map((entry) => structuredClone(entry))
+          }
+        },
+        agent: {
+          prompt: async (_request, observer) => {
+            if (admitted) await observer?.onPromptAdmitted?.()
+            await stopped
+            throw failure
+          },
+          cancelPrompt: async () => {
+            stop()
+          }
+        }
+      })
+      try {
+        const run = await runner.startRun({
+          project: project.id,
+          sessionId: session.id,
+          prompt: 'Execute then cancel.'
+        })
+        await expect(runner.cancelRun(run.id)).resolves.toMatchObject({
+          status: 'failed',
+          error: failure.message,
+          cancelledAt: undefined
+        })
+        expect(durableRuns.find((entry) => entry.id === run.id)).toMatchObject({
+          status: 'failed',
+          error: failure.message
+        })
+        expect(durableSession.activeRun).toBeUndefined()
+        if (admitted)
+          expect(durableSession).toMatchObject({ status: 'error', error: failure.message })
+      } finally {
+        stop()
+        await runner.dispose()
+      }
+    }
+  )
+
+  it('persists a replaced Notebook turn stop failure after Task cancellation', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'task-replaced-notebook-stop-'))
+    temporaryRoots.push(root)
+    let started!: () => void
+    const executionStarted = new Promise<void>((resolve) => {
+      started = resolve
+    })
+    let stop!: () => void
+    const stopped = new Promise<void>((resolve) => {
+      stop = resolve
+    })
+    const failure = new NotebookExecutionStopError()
+    const notebook = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: project.id,
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: async () => {
+          started()
+          await stopped
+          throw failure
+        },
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+    const rpc = new NotebookLocalRpcServer(notebook, { transport: 'tcp' })
+    const connection = await rpc.issueSessionConnection(
+      session.id,
+      project.id,
+      `root-frame-${session.id}`
+    )
+    const bind = (executionId: string): void =>
+      rpc.setArtifactTurnBinding(session.id, {
+        ownerExecutionId: executionId,
+        projectId: project.id,
+        provenanceContext: {
+          rootFrameId: `root-frame-${session.id}`,
+          agentFrameId: `root-frame-${session.id}`,
+          messageBranchId: 'branch-1',
+          runtimeSegmentId: executionId,
+          promptMessageId: executionId
+        }
+      })
+    bind('old-execution')
+    const journal = new FileTaskRunJournal(root)
+    let pending: Promise<Response> | undefined
+    let cleanupError: unknown
+    let rpcOutcome: { status: number; body: unknown } | undefined
+    const runner = createRunner({
+      createId: randomUUID,
+      runJournal: journal,
+      sessions: { list: async () => [structuredClone(session)] },
+      agent: {
+        prompt: async (_request, observer) => {
+          pending = fetchLocalRpc(
+            connection,
+            {
+              method: 'POST',
+              headers: {
+                authorization: `Bearer ${connection.token}`,
+                'content-type': 'application/json'
+              },
+              body: JSON.stringify({
+                method: 'execute',
+                params: { sessionId: session.id, workspaceCwd: root, code: 'work()' }
+              })
+            },
+            'Task replaced Notebook turn'
+          )
+          await executionStarted
+          await observer?.onPromptAdmitted?.()
+          await stopped
+          const response = await pending
+          rpcOutcome = { status: response.status, body: await response.json() }
+          try {
+            await rpc.clearArtifactTurnBinding(session.id, 'old-execution')
+          } catch (error) {
+            cleanupError = error
+            throw error
+          }
+        },
+        cancelPrompt: async () => {
+          bind('new-execution')
+          stop()
+        }
+      }
+    })
+    try {
+      const run = await runner.startRun({
+        project: project.id,
+        sessionId: session.id,
+        prompt: 'Execute and cancel.'
+      })
+      await executionStarted
+      const cancelled = await runner.cancelRun(run.id)
+      expect(rpcOutcome).toEqual({ status: 500, body: { error: failure.message } })
+      expect.soft(cleanupError).toBe(failure)
+      expect.soft(cancelled).toMatchObject({
+        status: 'failed',
+        error: failure.message,
+        cancelledAt: undefined
+      })
+      expect((await journal.load()).find((entry) => entry.id === run.id)).toMatchObject({
+        status: 'failed',
+        error: failure.message
+      })
+    } finally {
+      stop()
+      await pending?.catch(() => undefined)
+      await runner.dispose()
+      connection.release?.()
+      await rpc.close()
+      await notebook.dispose()
+    }
+  })
+
   it('lets Artifact finalization failure win after cancellation is accepted', async () => {
     let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
     let finishPrompt: (() => void) | undefined
@@ -4563,6 +5393,61 @@ describe('TaskRunner', () => {
     })
   })
 
+  it('repairs a failed Main-owned prompt admission through the narrow failure command', async () => {
+    let durableSession: PersistedChatSession | undefined
+    let rejectedAdmission = false
+    const save = vi.fn(async (value: PersistedChatSession) => {
+      if (!rejectedAdmission && value.status === 'running') {
+        rejectedAdmission = true
+        durableSession = structuredClone({ ...value, runtimeTranscriptOwner: 'main' })
+        throw new Error('Main admission receipt was lost.')
+      }
+      durableSession = structuredClone(value)
+      return value
+    })
+    const failRun = vi.fn<TaskSessionPort['failRun']>(async (request) => {
+      durableSession = {
+        ...durableSession!,
+        status: 'error',
+        activeRun: undefined,
+        taskRunCommitId: request.taskRunCommitId,
+        error: request.error
+      }
+      return structuredClone(durableSession)
+    })
+    const runner = createRunner({
+      sessions: {
+        list: async () => (durableSession ? [structuredClone(durableSession)] : []),
+        save,
+        failRun
+      },
+      runJournal: { load: async () => [], replace: async () => undefined },
+      createId: (() => {
+        const ids = ['main-admission-prompt', 'main-admission-run']
+        return () => ids.shift() ?? 'generated-id'
+      })()
+    })
+
+    await expect(
+      runner.startRun({
+        project: project.id,
+        prompt: 'Preserve the Main transcript.'
+      })
+    ).rejects.toThrow('Main admission receipt was lost.')
+
+    expect(failRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        promptMessageId: 'main-admission-prompt',
+        taskRunCommitId: 'main-admission-run',
+        artifacts: [],
+        error: 'Main admission receipt was lost.'
+      })
+    )
+    expect(
+      save.mock.calls.filter(([value]) => value.taskRunCommitId === 'main-admission-run')
+    ).toHaveLength(0)
+  })
+
   it('recovers a post-commit Session failure before its compensation save completes', async () => {
     let markCompensationStarted: (() => void) | undefined
     let releaseCompensation: (() => void) | undefined
@@ -4631,7 +5516,7 @@ describe('TaskRunner', () => {
     expect(recoveredRunner.getRun('crash-window-run')).toMatchObject({
       status: 'failed',
       failureCode: 'process_restarted',
-      error: 'Run interrupted because Open Science restarted.'
+      error: 'Run interrupted because Open-Science restarted.'
     })
     expect(durableSession).toMatchObject({
       status: 'error',
@@ -4775,6 +5660,65 @@ describe('TaskRunner', () => {
     })
     expect(durableSession.activeRun).toBeUndefined()
     expect(failureWasStagedBeforeSessionSave).toBe(true)
+  })
+
+  it('repairs a Main-owned interrupted Run through the narrow failure command', async () => {
+    const promptMessage = {
+      id: 'main-interrupted-prompt',
+      role: 'user' as const,
+      content: 'Resume safely after restart.',
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: 2,
+      updatedAt: 2
+    }
+    const durableSession = normalizeSessionFile({
+      ...session,
+      runtimeTranscriptOwner: 'main',
+      status: 'running',
+      activeRun: { promptMessageId: promptMessage.id, startedAt: 2 },
+      messages: [promptMessage]
+    })!
+    const save = vi.fn(async (value: PersistedChatSession) => value)
+    const failRun = vi.fn<TaskSessionPort['failRun']>(async (request) => ({
+      ...durableSession,
+      status: 'error',
+      activeRun: undefined,
+      taskRunCommitId: request.taskRunCommitId,
+      error: request.error
+    }))
+    const runner = createRunner({
+      sessions: { list: async () => [structuredClone(durableSession)], save, failRun },
+      runJournal: {
+        load: async () => [
+          {
+            id: 'main-interrupted-run',
+            sessionId: session.id,
+            projectId: project.id,
+            cwd: session.cwd,
+            status: 'running',
+            startedAt: 2,
+            artifacts: [],
+            preferredComputeHostIds: [],
+            promptMessageId: promptMessage.id
+          }
+        ],
+        replace: async () => undefined
+      }
+    })
+
+    await runner.initialize()
+
+    expect(failRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: session.id,
+        promptMessageId: promptMessage.id,
+        taskRunCommitId: 'main-interrupted-run',
+        artifacts: [],
+        error: 'Session was interrupted before the app closed.'
+      })
+    )
+    expect(save).not.toHaveBeenCalled()
   })
 
   it('does not overwrite newer Session activity while reconciling an interrupted Run', async () => {

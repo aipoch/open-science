@@ -5,6 +5,7 @@ import {
   type ApplicationCommandRouter,
   type ApplicationInvocation
 } from './application-command-router'
+import { ArtifactFinalizationExecutionError } from './artifacts/ipc'
 import {
   createCallerContext,
   createTaskCallerContext,
@@ -30,6 +31,7 @@ import {
   type SessionDeletionResult
 } from '../shared/session-persistence'
 import { ApplicationCommandError } from '../shared/application-command-contract'
+import * as Artifacts from '../shared/artifacts'
 import { MAIN_DELEGATION_POLICY_LIFECYCLE_CLIENT_ID } from '../shared/lifecycle-events'
 import { ApplicationEventHub } from './application-events'
 import {
@@ -177,6 +179,8 @@ const createDependencies = () => {
     loadOne: vi.fn(),
     loadUsage: vi.fn(),
     saveSession: vi.fn(async () => ({ created: true, session })),
+    bindTaskSession: vi.fn(async () => session),
+    admitTaskTurn: vi.fn(async () => session),
     stageTaskCompletion: vi.fn(async () => session),
     settleTaskCompletion: vi.fn(async () => session),
     failTaskRun: vi.fn(async () => session),
@@ -211,6 +215,7 @@ const createDependencies = () => {
     readPreview: vi.fn()
   }
   const electron = {
+    forkSession: vi.fn(async () => null),
     exportSessionPackage: vi.fn(async () => ({ saved: false })),
     sessionPackageOperation: vi.fn(async () => null),
     importSessionPackage: vi.fn(async () => null),
@@ -253,6 +258,7 @@ const WRAPPED_COMMAND_KEYS = [
   'artifactFinalizeRun',
   'artifactOpenFile',
   'lifecycleClientId',
+  'runtimeWriterClaim',
   'projectCreate',
   'projectDelete',
   'projectUpdate',
@@ -260,6 +266,7 @@ const WRAPPED_COMMAND_KEYS = [
   'sessionDelete',
   'sessionEditDetails',
   'sessionExportConversation',
+  'sessionFork',
   'sessionExportPackage',
   'sessionImportPackage',
   'sessionPackageOperation',
@@ -272,6 +279,8 @@ const WRAPPED_COMMAND_KEYS = [
   'sessionLoadUsage',
   'sessionSaveManifest',
   'sessionSave',
+  'sessionBindTask',
+  'sessionAdmitTaskTurn',
   'sessionStageTaskCompletion',
   'sessionSettleTaskCompletion',
   'sessionFailTaskRun',
@@ -321,6 +330,7 @@ describe('Data and content application commands', () => {
         'artifacts:reconcile-pending',
         'artifacts:resolve-version-descriptors',
         'lifecycle:client-id',
+        'lifecycle:claim-runtime-writer',
         'preview:delete',
         'preview:load',
         'preview:save',
@@ -346,6 +356,7 @@ describe('Data and content application commands', () => {
         'sessions:delete-session',
         'sessions:edit-details',
         'sessions:export-conversation',
+        'sessions:fork',
         'sessions:export-package',
         'sessions:import-package',
         'sessions:package-operation',
@@ -360,6 +371,8 @@ describe('Data and content application commands', () => {
         'sessions:update-archive',
         'sessions:unlink-pdf-context',
         'sessions:save-session',
+        'sessions:bind-task-session',
+        'sessions:admit-task-turn',
         'sessions:stage-task-completion',
         'sessions:settle-task-completion',
         'sessions:fail-task-run',
@@ -836,6 +849,85 @@ describe('Data and content application commands', () => {
     })
   })
 
+  it('fences runtime saves by caller while retaining explicit observer edits', async () => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+    const lease = await router.dispatcher.invoke(
+      dataContentApplicationCommands.runtimeWriterClaim,
+      invocation([] as const, electronCaller)
+    )
+    expect(lease.token).toBeTruthy()
+    const observer = await router.dispatcher.invoke(
+      dataContentApplicationCommands.runtimeWriterClaim,
+      invocation([] as const, remoteCaller)
+    )
+    expect(observer.token).toBeUndefined()
+    await router.dispatcher.invoke(
+      dataContentApplicationCommands.sessionSave,
+      invocation([deps.session, { runtimeWriterToken: lease.token }] as const, electronCaller)
+    )
+    expect(deps.sessions.saveSession).toHaveBeenCalledTimes(1)
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionSave,
+        invocation([deps.session, { runtimeWriterToken: lease.token }] as const, remoteCaller)
+      )
+    ).rejects.toMatchObject({ code: 'SESSION_RUNTIME_WRITER_LOST' })
+    expect(deps.sessions.saveSession).toHaveBeenCalledTimes(1)
+    await router.dispatcher.invoke(
+      dataContentApplicationCommands.sessionSave,
+      invocation([{ ...deps.session, title: 'Explicit mobile edit' }] as const, remoteCaller)
+    )
+    expect(deps.sessions.saveSession).toHaveBeenCalledTimes(2)
+  })
+
+  it('returns bounded committed execution facts without exposing an operational cause', async () => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+    deps.artifacts.finalizeRunArtifacts.mockRejectedValueOnce(
+      new ArtifactFinalizationExecutionError(
+        {
+          stage: 'activation',
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          runId: 'run-1',
+          messageId: 'message-1',
+          artifactVersionIds: ['version-1'],
+          durableFinalizationCompleted: true,
+          compatibilityPublicationCompleted: true,
+          activationCompleted: false
+        },
+        Artifacts.ARTIFACT_FINALIZATION_OPERATIONAL_FAILURE,
+        new Error('SECRET_TOKEN=synthetic-secret /Users/private/artifact.txt')
+      )
+    )
+
+    const result = await router.dispatcher.invoke(
+      dataContentApplicationCommands.artifactFinalizeRun,
+      invocation([{ claimId: 'claim-1', messageId: 'message-1' }] as const)
+    )
+
+    expect(result).toMatchObject({
+      ok: false,
+      code: Artifacts.ARTIFACT_FINALIZATION_OPERATIONAL_FAILURE,
+      execution: {
+        stage: 'activation',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        runId: 'run-1',
+        messageId: 'message-1',
+        artifactVersionIds: ['version-1'],
+        durableFinalizationCompleted: true,
+        compatibilityPublicationCompleted: true,
+        activationCompleted: false
+      }
+    })
+    expect(JSON.stringify(result)).not.toContain('synthetic-secret')
+    expect(JSON.stringify(result)).not.toContain('/Users/private')
+  })
+
   it('publishes project and session mutations after durable owner completion without failing commits', async () => {
     const order: string[] = []
     const router = createApplicationCommandRouter()
@@ -922,7 +1014,7 @@ describe('Data and content application commands', () => {
       for (const operation of operations) {
         await expect(
           dispatchCommand(router, operation.command, operation.args).result
-        ).rejects.toThrow('Open Science is moving your data.')
+        ).rejects.toThrow('Open-Science is moving your data.')
       }
     } finally {
       clearMigrationPending()
@@ -997,6 +1089,8 @@ describe('Data and content application commands', () => {
       | 'unlinkPdfContext'
       | 'updateArchive'
       | 'saveSession'
+      | 'bindTaskSession'
+      | 'admitTaskTurn'
       | 'stageTaskCompletion'
       | 'settleTaskCompletion'
       | 'failTaskRun'
@@ -1106,6 +1200,20 @@ describe('Data and content application commands', () => {
             updatedAt: 2
           }
         ],
+        caller: taskCaller
+      },
+      {
+        label: 'task provider binding',
+        command: 'sessionBindTask',
+        owner: 'bindTaskSession',
+        args: (deps) => [{ session: deps.session, contextReset: false }],
+        caller: taskCaller
+      },
+      {
+        label: 'task turn admission',
+        command: 'sessionAdmitTaskTurn',
+        owner: 'admitTaskTurn',
+        args: (deps) => [{ session: deps.session, contextReset: false }],
         caller: taskCaller
       },
       {
@@ -1913,6 +2021,14 @@ describe('Data and content application commands', () => {
       format: 'markdown' as const,
       selectedPromptMessageIds: ['prompt-1']
     }
+    const forkInvocation = invocation(
+      [{ projectId: 'project-1', sessionId: 'session-1' }] as const,
+      electronCaller
+    )
+    await expect(
+      router.dispatcher.invoke(dataContentApplicationCommands.sessionFork, forkInvocation)
+    ).resolves.toBeNull()
+    expect(deps.electron.forkSession).toHaveBeenCalledWith(forkInvocation)
     const exportInvocation = invocation([exportRequest] as const, electronCaller)
     await expect(
       router.dispatcher.invoke(

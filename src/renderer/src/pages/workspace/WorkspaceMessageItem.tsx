@@ -529,11 +529,13 @@ const WorkspaceAssistantTurnCompletion = ({
                 aria-label={copied ? t('Copied') : t('Copy message')}
                 onClick={handleCopyMessage}
               >
-                {copied ? (
-                  <Check className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                ) : (
-                  <Copy className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                )}
+                <span key={String(copied)} className="button-feedback">
+                  {copied ? (
+                    <Check className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                  ) : (
+                    <Copy className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                  )}
+                </span>
               </button>
             </UserMessageActionTooltip>
             <UserMessageActionTooltip label={t('Branch in new session')}>
@@ -1731,7 +1733,7 @@ const WorkspaceMessageItemImpl = ({
                   />
                   {editError ? (
                     <div role="alert">
-                      <ErrorNotice tone="red" title={editError} />
+                      <ErrorNotice inline tone="red" title={editError} />
                     </div>
                   ) : null}
                   <div className="flex items-center justify-end gap-1">
@@ -1778,11 +1780,13 @@ const WorkspaceMessageItemImpl = ({
                             aria-label={copied ? t('Copied') : t('Copy message')}
                             onClick={handleCopyMessage}
                           >
-                            {copied ? (
-                              <Check className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                            ) : (
-                              <Copy className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                            )}
+                            <span key={String(copied)} className="button-feedback">
+                              {copied ? (
+                                <Check className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                              ) : (
+                                <Copy className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                              )}
+                            </span>
                           </button>
                         </UserMessageActionTooltip>
                         <UserMessageActionTooltip label={t('Edit message')}>
@@ -1841,7 +1845,7 @@ const WorkspaceMessageItemImpl = ({
                     {message.interrupted ? (
                       <span
                         data-slot="user-message-interrupted"
-                        className="italic text-amber-600 dark:text-amber-400"
+                        className="italic text-status-warning-foreground dark:text-status-warning-dark-foreground"
                       >
                         {t('This turn was interrupted.')}
                       </span>

@@ -1,3 +1,4 @@
+import { InlineNotice } from '@/components/ui/inline-notice'
 // SessionReviewerPanel: the dedicated Session reviewer page rendered inside the PreviewPanel.
 // Opened by clicking "Go to transcript" on any check in the ReviewerCard. Shows:
 //   - A unified Checks list (pass/warn/fail) with status badges, claim, evidence, locator+link
@@ -355,14 +356,11 @@ const SessionReviewerPanel = ({
           {review.model} &middot; {formatDate(review.createdAt, 'dateTime')}
         </p>
         {review.stale && (
-          <p
-            data-testid="reviewer-stale-notice"
-            className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-800 dark:border-amber-800/50 dark:bg-amber-950/20 dark:text-amber-300"
-          >
+          <InlineNotice data-testid="reviewer-stale-notice" className="mt-2">
             {t(
               'This turn changed after the review ran (e.g. an artifact was edited). The result below may be out of date — re-run the review to refresh it.'
             )}
-          </p>
+          </InlineNotice>
         )}
       </div>
 

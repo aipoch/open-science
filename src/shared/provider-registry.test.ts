@@ -209,12 +209,41 @@ describe('provider registry', () => {
     expect(getOfficialVendor('deepseek')?.label).toBe('DeepSeek')
   })
 
-  it('ships DeepSeek V4 with a vision-capable flash experimental model', () => {
+  it('retains DeepSeek compatibility names after discovery without changing other vendors', () => {
+    const fetched = ['deepseek-flash', 'deepseek-v4-pro', 'future-model']
+    expect(getOfficialVendorModelIds('deepseek', undefined, fetched)).toEqual([
+      ...fetched,
+      'deepseek-v4-pro[1m]',
+      'deepseek-v4-flash',
+      'deepseek-v4-flash-vision-exp'
+    ])
+    expect(fetched).toEqual(['deepseek-flash', 'deepseek-v4-pro', 'future-model'])
+    expect(getOfficialVendorModelIds('anthropic', undefined, ['live-model'])).toEqual([
+      'live-model'
+    ])
+  })
+
+  it('resolves V4.1 Flash protocol, context and reasoning capabilities', () => {
+    expect(resolveVendorModelApiEndpoints('deepseek', 'deepseek-flash')).toEqual([
+      'anthropic',
+      'openai',
+      'responses'
+    ])
+    expect(isVendorModelResponsesSupported('deepseek', 'deepseek-flash')).toBe(true)
+    expect(resolveModelContextWindow('deepseek', 'deepseek-flash')).toBe(1_000_000)
+    expect(resolveVendorModelReasoningEffort('deepseek', 'deepseek-flash')).toEqual({
+      supported: true,
+      slots: ['none', 'high', 'max', 'max', 'max']
+    })
+  })
+
+  it('ships DeepSeek V4.1 Flash under its official API id while retaining legacy models', () => {
     expect(
       getOfficialVendor('deepseek')?.models.map(({ id, contextWindow }) => ({ id, contextWindow }))
     ).toEqual([
       { id: 'deepseek-v4-pro', contextWindow: 1_000_000 },
       { id: 'deepseek-v4-pro[1m]', contextWindow: 1_000_000 },
+      { id: 'deepseek-flash', contextWindow: 1_000_000 },
       { id: 'deepseek-v4-flash', contextWindow: 1_000_000 },
       { id: 'deepseek-v4-flash-vision-exp', contextWindow: 1_000_000 }
     ])
@@ -344,6 +373,10 @@ describe('provider registry', () => {
       slots: ['low', 'high', 'max', 'max', 'max']
     })
     expect(resolveVendorModelReasoningEffort('stepfun', 'step-3.7-flash')).toEqual({
+      supported: true,
+      slots: ['low', 'medium', 'high', 'high', 'high']
+    })
+    expect(resolveVendorModelReasoningEffort('stepfun', 'step-5-preview')).toEqual({
       supported: true,
       slots: ['low', 'medium', 'high', 'high', 'high']
     })
@@ -517,7 +550,7 @@ describe('provider registry', () => {
     }
   })
 
-  it('routes Volcengine Ark through all three APIs with a curated Doubao Seed catalog', () => {
+  it('routes Volcengine Ark through all three APIs with a curated chat catalog', () => {
     expect(resolveVendorApiEndpoints('volcengine')).toEqual(['anthropic', 'openai', 'responses'])
     expect(resolveVendorBaseUrl('volcengine')).toBe(
       'https://ark.cn-beijing.volces.com/api/compatible'
@@ -529,9 +562,42 @@ describe('provider registry', () => {
       'https://console.volcengine.com/ark/region:ark+cn-beijing/apikey'
     )
     // Ark's catalog also serves embedding/image/video models the refresh cannot filter out —
-    // so refresh-from-vendor is hidden and the Doubao Seed chat catalog stays curated.
+    // so refresh-from-vendor is hidden and the chat catalog stays curated.
     expect(resolveVendorModelsUrl('volcengine')).toBeUndefined()
-    expect(defaultVendorModel('volcengine')).toBe('doubao-seed-2-1-pro-260628')
+    expect(defaultVendorModel('volcengine')).toBe('doubao-seed-2-1-pro-260915')
+  })
+
+  it.each([
+    ['doubao-seed-2-1-pro-260915', ['minimal', 'low', 'medium', 'high', 'high']],
+    ['deepseek-v4-1-flash-260910', ['none', 'low', 'high', 'max', 'max']],
+    ['glm-5-3-flash-260828', ['low', 'high', 'max', 'max', 'max']]
+  ])('exposes the documented Ark capabilities for %s', (model, slots) => {
+    expect(getOfficialVendorModelIds('volcengine')).toContain(model)
+    expect(resolveModelContextWindow('volcengine', model)).toBe(1_024_000)
+    expect(isVendorModelMultimodal('volcengine', model)).toBe(true)
+    expect(resolveVendorModelApiEndpoints('volcengine', model)).toEqual([
+      'anthropic',
+      'openai',
+      'responses'
+    ])
+    expect(resolveVendorModelReasoningEffort('volcengine', model)).toEqual({
+      supported: true,
+      slots
+    })
+  })
+
+  it('keeps the previous dated Ark models and their context limits', () => {
+    for (const model of [
+      'doubao-seed-2-1-pro-260628',
+      'doubao-seed-2-1-turbo-260628',
+      'doubao-seed-2-0-pro-260215',
+      'doubao-seed-2-0-lite-260215',
+      'doubao-seed-2-0-mini-260215',
+      'doubao-seed-2-0-code-preview-260215'
+    ]) {
+      expect(getOfficialVendorModelIds('volcengine')).toContain(model)
+      expect(resolveModelContextWindow('volcengine', model)).toBe(256_000)
+    }
   })
 
   it('routes Tencent TokenHub through all three APIs with regional keys and curated models', () => {
@@ -677,7 +743,9 @@ describe('provider registry', () => {
     expect(resolveVendorApiKeyUrl('stepfun', 'china')).toBe(
       'https://platform.stepfun.com/interface-key'
     )
-    expect(defaultVendorModel('stepfun')).toBe('step-3.7-flash')
+    expect(defaultVendorModel('stepfun')).toBe('step-5-preview')
+    expect(resolveModelContextWindow('stepfun', 'step-5-preview')).toBe(1_000_000)
+    expect(isVendorModelResponsesSupported('stepfun', 'step-5-preview')).toBe(true)
   })
 
   it('routes Bailian Responses only for the documented Qwen models', () => {
@@ -814,15 +882,24 @@ describe('provider registry', () => {
     expect(resolveModelContextWindow('bailianplan', 'qwen3.8-max-preview')).toBe(983_616)
   })
 
-  it('routes Step Plan over Anthropic and OpenAI under /step_plan, no live model list', () => {
+  it('routes Step Plan over Anthropic and OpenAI in China and globally, no live model list', () => {
     expect(resolveVendorApiEndpoints('stepplan')).toEqual(['anthropic', 'openai'])
-    expect(vendorHasRegions('stepplan')).toBe(false)
+    expect(vendorHasRegions('stepplan')).toBe(true)
     expect(resolveVendorBaseUrl('stepplan')).toBe('https://api.stepfun.com/step_plan')
     expect(resolveVendorOpenAiBaseUrl('stepplan')).toBe('https://api.stepfun.com/step_plan/v1')
+    expect(resolveVendorBaseUrl('stepplan', 'global')).toBe('https://api.stepfun.ai/step_plan')
+    expect(resolveVendorOpenAiBaseUrl('stepplan', 'global')).toBe(
+      'https://api.stepfun.ai/step_plan/v1'
+    )
     // Quota-based plan: fixed catalog, no "refresh from vendor" endpoint.
     expect(resolveVendorModelsUrl('stepplan')).toBeUndefined()
     expect(resolveVendorApiKeyUrl('stepplan')).toBe('https://platform.stepfun.com/plan-subscribe')
-    expect(defaultVendorModel('stepplan')).toBe('step-3.7-flash')
+    expect(resolveVendorApiKeyUrl('stepplan', 'global')).toBe(
+      'https://platform.stepfun.ai/plan-subscribe'
+    )
+    expect(defaultVendorModel('stepplan')).toBe('step-5-preview')
+    expect(resolveModelContextWindow('stepplan', 'step-5-preview')).toBe(1_000_000)
+    expect(isVendorModelResponsesSupported('stepplan', 'step-5-preview')).toBe(false)
   })
 
   it('resolves the key-console URL, preferring the selected region', () => {
@@ -871,10 +948,12 @@ describe('provider registry', () => {
       expect(isVendorModelMultimodal('openai', 'gpt-6-turbo')).toBe(true)
     })
 
-    it('returns true only for the DeepSeek vision-exp model', () => {
+    it('recognizes DeepSeek V4.1 Flash and its legacy aliases as multimodal', () => {
       expect(isVendorModelMultimodal('deepseek', 'deepseek-v4-flash-vision-exp')).toBe(true)
       expect(isVendorModelMultimodal('deepseek', 'deepseek-v4-pro')).toBe(false)
-      expect(isVendorModelMultimodal('deepseek', 'deepseek-v4-flash')).toBe(false)
+      expect(isVendorModelMultimodal('deepseek', 'deepseek-v4-flash')).toBe(true)
+      expect(isVendorModelMultimodal('deepseek', 'deepseek-flash')).toBe(true)
+      expect(isVendorModelMultimodal('deepseek', 'unknown-model')).toBe(false)
     })
 
     it('matches the multimodal Qwen models in the Bailian catalog', () => {
@@ -955,9 +1034,11 @@ describe('provider registry', () => {
       )
     })
 
-    it('returns true only for the StepFun multimodal flash model', () => {
+    it('returns true for StepFun multimodal models only', () => {
+      expect(isVendorModelMultimodal('stepfun', 'step-5-preview')).toBe(true)
       expect(isVendorModelMultimodal('stepfun', 'step-3.7-flash')).toBe(true)
       expect(isVendorModelMultimodal('stepfun', 'step-3.5-flash')).toBe(false)
+      expect(isVendorModelMultimodal('stepplan', 'step-5-preview')).toBe(true)
       expect(isVendorModelMultimodal('stepplan', 'step-3.7-flash')).toBe(true)
       expect(isVendorModelMultimodal('stepplan', 'step-3.5-flash-2603')).toBe(false)
       expect(isVendorModelMultimodal('stepplan', 'step-router-v1')).toBe(false)

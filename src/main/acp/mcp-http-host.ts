@@ -62,6 +62,7 @@ type SessionEntry = {
   notebook?: NotebookMcpEnvironment
   skillImport?: SkillImportMcpEnvironment
   plan?: PlanMcpEnvironment
+  planRouteToken?: string
   hostMessage?: HostMessageMcpHandler
   library?: LiteratureLibraryMcpHandler
   literature?: LiteratureMcpHandler
@@ -179,10 +180,24 @@ class AgentMcpHttpHost {
     this.sessions.set(routingId, entry)
   }
 
-  registerPlan(routingId: string, environment: PlanMcpEnvironment): void {
+  registerPlan(routingId: string, environment: PlanMcpEnvironment): () => (() => void) | undefined {
     const entry = this.sessions.get(routingId) ?? {}
+    const previousPlan = entry.plan
+    const previousRouteToken = entry.planRouteToken
+    const routeToken = randomUUID()
     entry.plan = environment
+    entry.planRouteToken = routeToken
     this.sessions.set(routingId, entry)
+    return () => {
+      if (this.sessions.get(routingId)?.planRouteToken !== routeToken) return undefined
+      return () => {
+        if (!previousPlan || !previousRouteToken) return
+        const restored = this.sessions.get(routingId) ?? {}
+        restored.plan = previousPlan
+        restored.planRouteToken = previousRouteToken
+        this.sessions.set(routingId, restored)
+      }
+    }
   }
 
   registerHostMessage(routingId: string, handler: HostMessageMcpHandler): void {
@@ -233,12 +248,22 @@ class AgentMcpHttpHost {
       throw new Error('MCP HTTP host is not started.')
     }
 
-    return `${this.endpoint}/mcp/${kind}/${encodeURIComponent(routingId)}`
+    const route = `${this.endpoint}/mcp/${kind}/${encodeURIComponent(routingId)}`
+    if (kind !== 'plan') return route
+
+    const routeToken = this.sessions.get(routingId)?.planRouteToken
+    if (!routeToken) throw new Error(`No registered plan MCP session: ${routingId}`)
+    // `token` is covered by the shared diagnostic URL redactor if this provider config is logged.
+    return `${route}?token=${encodeURIComponent(routeToken)}`
   }
 
   // Constructs a fresh MCP server for one request from the registered environment, or undefined when
   // the routing id / kind was never registered.
-  private buildServer(kind: ServerKind, routingId: string): ModelContextProtocolServer | undefined {
+  private buildServer(
+    kind: ServerKind,
+    routingId: string,
+    routeToken?: string
+  ): ModelContextProtocolServer | undefined {
     const entry = this.sessions.get(routingId)
 
     if (!entry) return undefined
@@ -259,7 +284,7 @@ class AgentMcpHttpHost {
     }
 
     if (kind === 'plan') {
-      if (!entry.plan) return undefined
+      if (!entry.plan || !routeToken || routeToken !== entry.planRouteToken) return undefined
       return createPlanMcpServerForEnvironment(entry.plan)
     }
 
@@ -303,7 +328,7 @@ class AgentMcpHttpHost {
 
     const kind = match[1]
     const routingId = decodeURIComponent(match[2])
-    const server = this.buildServer(kind, routingId)
+    const server = this.buildServer(kind, routingId, url.searchParams.get('token') ?? undefined)
 
     if (!server) {
       writeJson(response, 404, { error: `No registered ${kind} MCP session: ${routingId}` })

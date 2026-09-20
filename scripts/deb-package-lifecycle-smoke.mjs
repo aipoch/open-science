@@ -11,7 +11,7 @@ import { pathToFileURL } from 'node:url'
 const run = (command, args) =>
   execFileSync(command, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
 const command = '/usr/bin/open-science'
-const appRoot = '/opt/Open Science'
+const appRoot = '/opt/Open-Science'
 const legacyTarget = `${appRoot}/open-science`
 const cliTarget = `${appRoot}/resources/open-science-cli`
 
@@ -28,7 +28,7 @@ const main = async (deb) => {
     }
   })()
   if (status === 'installed') {
-    throw new Error('Run Debian lifecycle certification before installing Open Science.')
+    throw new Error('Run Debian lifecycle certification before installing Open-Science.')
   }
   for (const path of [command, appRoot]) {
     if (
@@ -53,7 +53,7 @@ const main = async (deb) => {
     const fixture = async (version, legacy) => {
       const tree = join(root, version)
       await mkdir(join(tree, 'DEBIAN'), { recursive: true })
-      await mkdir(join(tree, 'opt/Open Science/resources'), { recursive: true })
+      await mkdir(join(tree, 'opt/Open-Science/resources'), { recursive: true })
       await writeFile(
         join(tree, 'DEBIAN/control'),
         `Package: open-science\nVersion: ${version}\nArchitecture: all\nMaintainer: AIPOCH\nDescription: Debian CLI lifecycle certification fixture\n`
@@ -69,14 +69,14 @@ const main = async (deb) => {
               )
             )
               .replaceAll('${executable}', 'open-science')
-              .replaceAll('${sanitizedProductName}', 'Open Science')
+              .replaceAll('${sanitizedProductName}', 'Open-Science')
           : generated[name]
         const path = join(tree, 'DEBIAN', name)
         await writeFile(path, text)
         await chmod(path, 0o755)
       }
       for (const file of ['open-science', 'resources/open-science-cli', 'chrome-sandbox']) {
-        await writeFile(join(tree, 'opt/Open Science', file), '#!/bin/sh\nexit 0\n', {
+        await writeFile(join(tree, 'opt/Open-Science', file), '#!/bin/sh\nexit 0\n', {
           mode: 0o755
         })
       }

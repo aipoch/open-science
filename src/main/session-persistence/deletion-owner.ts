@@ -506,7 +506,7 @@ class SessionPersistenceDeletionOwner {
         throw new Error('Cannot delete a Session whose durable JSON is unreadable.')
       }
       session = loadedSession.status === 'found' ? loadedSession.session : undefined
-      if (session?.packageOrigin) {
+      if (session?.packageOrigin || session?.forkOrigin) {
         failurePhase = 'prepare-package-cleanup'
         operation.phase(failurePhase)
         await this.preparePackageDeletion?.(session)

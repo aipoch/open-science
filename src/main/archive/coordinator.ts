@@ -25,6 +25,7 @@ type SessionArchivePersistence = {
 
 type SessionRuntimeActivity = {
   isSessionBusy(projectId: string, sessionId: string): boolean | Promise<boolean>
+  isSessionExportBusy?(projectId: string, sessionId: string): boolean | Promise<boolean>
   isProjectBusy(projectId: string): boolean | Promise<boolean>
   liveSessionProjectId(sessionId: string): string | undefined
 }
@@ -98,10 +99,11 @@ class ArchiveCoordinator {
         // Fence new work before awaiting the runtime's database-backed activity check.
         this.exportingSessions.set(sessionId, projectId)
         try {
-          if (await this.runtime.isSessionBusy(projectId, sessionId))
+          const isExportBusy = this.runtime.isSessionExportBusy ?? this.runtime.isSessionBusy
+          if (await isExportBusy(projectId, sessionId))
             throw new Error('Wait for the Session to become idle before exporting.')
           await assertIdle()
-          if (await this.runtime.isSessionBusy(projectId, sessionId))
+          if (await isExportBusy(projectId, sessionId))
             throw new Error('The Session is still active.')
           return () => {
             this.exportingSessions.delete(sessionId)

@@ -1,6 +1,7 @@
+import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
+import { Notice } from '@/components/notice'
 import type { TFunction } from 'i18next'
-import { useEffect, useRef, useState } from 'react'
-import { Plus } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { AlertDialog } from 'radix-ui'
 import { useTranslation } from 'react-i18next'
 
@@ -36,7 +37,12 @@ import { ActiveModelSelect } from './ActiveModelSelect'
 import { ProviderList } from './ProviderList'
 import { ReasoningEffortSelect } from './ReasoningEffortSelect'
 import { ScenarioModelList } from './ScenarioModelList'
-import { SettingsField, SettingsRow, SettingsSection } from './SettingsLayout'
+import {
+  SettingsField,
+  SettingsRow,
+  SettingsSection,
+  SettingsListAddAction
+} from './SettingsLayout'
 import { ClaudeIsolatedSignInModal } from './ClaudeIsolatedSignInModal'
 import { XaiOAuthSignInDialog } from './XaiOAuthSignInDialog'
 import { localizeProviderResourceMessage } from './validation-message'
@@ -91,7 +97,7 @@ const providerErrorCopy = (error: ProviderPanelError, t: TFunction): string => {
     case 'claude-sign-out':
       return t('Could not sign out of Claude.')
     case 'claude-disconnect':
-      return t('Could not disconnect Claude from Open Science.')
+      return t('Could not disconnect Claude from Open-Science.')
     case 'xai-sign-in':
       return t('Could not sign in to xAI.')
     case 'xai-sign-out':
@@ -158,6 +164,7 @@ const ProvidersPanel = ({
   const [xaiSession, setXaiSession] = useState<XaiOAuthDeviceAuthorization>()
   const [isXaiLoginPending, setIsXaiLoginPending] = useState(false)
   const [providerPendingDeletion, setProviderPendingDeletion] = useState<ProviderView>()
+  const dialogProvider = useRetainedDialogValue(providerPendingDeletion)
   const [providerDeletionPending, setProviderDeletionPending] = useState(false)
   const xaiLoginCancelledRef = useRef(false)
   // Guards the race between the two isolated sign-in paths. The browser flow (setup-token + its
@@ -382,7 +389,7 @@ const ProvidersPanel = ({
     try {
       const result = await logoutSharedClaude()
       if (!result.ok) {
-        setProviderTestError(result.message ?? t('Could not disconnect Claude from Open Science.'))
+        setProviderTestError(result.message ?? t('Could not disconnect Claude from Open-Science.'))
       }
     } catch (error) {
       setProviderTestError({ action: 'claude-disconnect', detail: errorDetail(error) })
@@ -427,30 +434,34 @@ const ProvidersPanel = ({
     }
   }
 
-  const removedProviderIds = new Set(
-    providerPendingDeletion
-      ? isClaudeSubscriptionProvider(providerPendingDeletion.type)
-        ? [CLAUDE_SHARED_PROVIDER_ID, CLAUDE_ISOLATED_PROVIDER_ID]
-        : [providerPendingDeletion.id]
+  const affectedScenarios = useMemo(() => {
+    const removedProviderIds = new Set(
+      providerPendingDeletion
+        ? isClaudeSubscriptionProvider(providerPendingDeletion.type)
+          ? [CLAUDE_SHARED_PROVIDER_ID, CLAUDE_ISOLATED_PROVIDER_ID]
+          : [providerPendingDeletion.id]
+        : []
+    )
+    return providerPendingDeletion
+      ? [
+          ...(subagentModel.mode === 'fixed' && removedProviderIds.has(subagentModel.providerId)
+            ? [{ id: 'subagent' as const, label: t('Subagent') }]
+            : []),
+          ...(reviewerModel.mode === 'fixed' && removedProviderIds.has(reviewerModel.providerId)
+            ? [{ id: 'reviewer' as const, label: t('Reviewer') }]
+            : []),
+          ...(sessionDetailsModel.mode === 'fixed' &&
+          removedProviderIds.has(sessionDetailsModel.providerId)
+            ? [{ id: 'session-details' as const, label: t('Session details') }]
+            : []),
+          ...(visionModel && removedProviderIds.has(visionModel.providerId)
+            ? [{ id: 'vision' as const, label: t('Vision') }]
+            : [])
+        ]
       : []
-  )
-  const affectedScenarios = providerPendingDeletion
-    ? [
-        ...(subagentModel.mode === 'fixed' && removedProviderIds.has(subagentModel.providerId)
-          ? [{ id: 'subagent' as const, label: t('Subagent') }]
-          : []),
-        ...(reviewerModel.mode === 'fixed' && removedProviderIds.has(reviewerModel.providerId)
-          ? [{ id: 'reviewer' as const, label: t('Reviewer') }]
-          : []),
-        ...(sessionDetailsModel.mode === 'fixed' &&
-        removedProviderIds.has(sessionDetailsModel.providerId)
-          ? [{ id: 'session-details' as const, label: t('Session details') }]
-          : []),
-        ...(visionModel && removedProviderIds.has(visionModel.providerId)
-          ? [{ id: 'vision' as const, label: t('Vision') }]
-          : [])
-      ]
-    : []
+  }, [providerPendingDeletion, subagentModel, reviewerModel, sessionDetailsModel, visionModel, t])
+  const dialogAffectedScenarios =
+    useRetainedDialogValue(providerPendingDeletion ? affectedScenarios : undefined) ?? []
 
   const confirmProviderDeletion = async (
     scenarioModelHandling: 'preserve' | 'inherit'
@@ -555,10 +566,13 @@ const ProvidersPanel = ({
           onLogoutXai={() => void handleXaiLogout()}
         />
         {providerTestError ? (
-          <div className="mt-2">
-            <p className="text-sm text-destructive" role="alert">
-              {providerErrorCopy(providerTestError, t)}
-            </p>
+          <Notice
+            inline
+            level="error"
+            role="alert"
+            className="mt-2"
+            description={providerErrorCopy(providerTestError, t)}
+          >
             <DiagnosticDetails
               detail={
                 typeof providerTestError === 'string' || !providerTestError.detail
@@ -566,18 +580,13 @@ const ProvidersPanel = ({
                   : localizeProviderResourceMessage(providerTestError.detail, t)
               }
             />
-          </div>
+          </Notice>
         ) : null}
         {/* The add action lives with the list: a dashed ghost row appended after the last provider,
             matching the Available-group placeholder treatment. */}
-        <button
-          type="button"
-          onClick={onCreateProvider}
-          className="mt-2 flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-dashed border-border text-sm text-muted-foreground transition-colors duration-150 motion-reduce:transition-none hover:bg-muted/60 hover:text-foreground"
-        >
-          <Plus className="size-4" aria-hidden="true" />
+        <SettingsListAddAction onClick={onCreateProvider}>
           {t('Add provider')}
-        </button>
+        </SettingsListAddAction>
       </SettingsSection>
       {/* The Claude subscription's sign-in modal collects the pasted token. Closing it (without a
           successful paste) is a no-op for the store — the token only lands if the user confirms. */}
@@ -606,17 +615,17 @@ const ProvidersPanel = ({
           >
             <div className={dialogHeaderClassName}>
               <AlertDialog.Title className={dialogTitleClassName}>
-                {t('Delete {{provider}}?', { provider: providerPendingDeletion?.name ?? '' })}
+                {t('Delete {{provider}}?', { provider: dialogProvider?.name ?? '' })}
               </AlertDialog.Title>
             </div>
             <div className={dialogBodyClassName}>
               <AlertDialog.Description asChild>
                 <div className={dialogDescriptionClassName}>
-                  {affectedScenarios.length > 0 ? (
+                  {dialogAffectedScenarios.length > 0 ? (
                     <>
                       <p>{t('Deleting this provider affects these scenario models:')}</p>
                       <ul className="mt-2 list-disc space-y-1 pl-5 text-foreground">
-                        {affectedScenarios.map((scenario) => (
+                        {dialogAffectedScenarios.map((scenario) => (
                           <li key={scenario.id}>{scenario.label}</li>
                         ))}
                       </ul>
@@ -625,7 +634,7 @@ const ProvidersPanel = ({
                           'Keep their saved selections as unavailable, or reset them to use the main model.'
                         )}
                       </p>
-                      {affectedScenarios.some((scenario) => scenario.id === 'vision') ? (
+                      {dialogAffectedScenarios.some((scenario) => scenario.id === 'vision') ? (
                         <p className="mt-2">
                           {t(
                             'For Vision, using the main model disables the separate fallback model.'
@@ -634,7 +643,7 @@ const ProvidersPanel = ({
                       ) : null}
                     </>
                   ) : (
-                    t('This provider will be removed from Open Science.')
+                    t('This provider will be removed from Open-Science.')
                   )}
                 </div>
               </AlertDialog.Description>
@@ -645,7 +654,7 @@ const ProvidersPanel = ({
                   {t('Cancel')}
                 </Button>
               </AlertDialog.Cancel>
-              {affectedScenarios.length > 0 ? (
+              {dialogAffectedScenarios.length > 0 ? (
                 <>
                   <Button
                     type="button"

@@ -8,6 +8,7 @@ const host = vi.hoisted(() => ({ spawn: vi.fn() }))
 vi.mock('node:child_process', () => ({ spawn: host.spawn }))
 import {
   getWindowsRuntimeAccess,
+  isWindowsProtectionConfigured,
   setWindowsRuntimeAccess
 } from '../runtime/src/platform/windows-appcontainer.js'
 
@@ -382,4 +383,55 @@ it('waits for the verifier to close after its combined output exceeds the limit'
   expect(settled).toBe(false)
   child.emit('close', 0)
   await expect(result).resolves.toContain('output exceeded its buffer limit')
+})
+
+const unconfiguredProtection = {
+  profileExists: false,
+  loopbackAllowed: false,
+  networkFenceReady: false,
+  owned: false,
+  ownershipState: 'unowned',
+  gatewayPort: null
+}
+
+it('recognizes only an absent protection receipt as standard mode without elevation', async () => {
+  reply(unconfiguredProtection)
+  await expect(
+    isWindowsProtectionConfigured('host.exe', 'installation', 'owner-root')
+  ).resolves.toBe(false)
+  expect(host.spawn).toHaveBeenCalledExactlyOnceWith(
+    'host.exe',
+    ['status', 'installation', 'owner-root'],
+    expect.any(Object)
+  )
+})
+
+it.each(['creating', 'owned'])(
+  'retains protection for a %s receipt even when its resources are broken',
+  async (ownershipState) => {
+    reply({ ...unconfiguredProtection, ownershipState })
+    await expect(
+      isWindowsProtectionConfigured('host.exe', 'installation', 'owner-root')
+    ).resolves.toBe(true)
+  }
+)
+
+it.each([
+  { profileExists: true },
+  { loopbackAllowed: true },
+  { networkFenceReady: true },
+  { owned: true },
+  { gatewayPort: 4312 }
+])('rejects inconsistent unowned protection: %j', async (overrides) => {
+  reply({ ...unconfiguredProtection, ...overrides })
+  await expect(
+    isWindowsProtectionConfigured('host.exe', 'installation', 'owner-root')
+  ).rejects.toThrow('ownership is inconsistent')
+})
+
+it('does not classify an unreadable protection receipt as standard mode', async () => {
+  reply(null, 1)
+  await expect(
+    isWindowsProtectionConfigured('host.exe', 'installation', 'owner-root')
+  ).rejects.toThrow('pending owned operation')
 })

@@ -1,3 +1,4 @@
+import { FocusScope } from '@radix-ui/react-focus-scope'
 import { literatureDeletionError } from '../../../../shared/literature-deletion'
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
@@ -61,20 +62,22 @@ vi.mock('../workspace/FilePreviewDialog', () => ({
   }) => {
     filePreviewRenderCount.value += 1
     return item ? (
-      <div
-        data-testid="literature-pdf-preview"
-        data-allow-reading-context={String(allowReadingContext)}
-      >
-        {`${item.title} · ${item.path}`}
-        <button type="button" onClick={() => onClose()}>
-          Close PDF
-        </button>
-        {onReadWithAgent ? (
-          <button type="button" onClick={() => onReadWithAgent(item)}>
-            Read with agent
+      <FocusScope trapped asChild>
+        <div
+          data-testid="literature-pdf-preview"
+          data-allow-reading-context={String(allowReadingContext)}
+        >
+          {`${item.title} · ${item.path}`}
+          <button type="button" onClick={() => onClose()}>
+            Close PDF
           </button>
-        ) : null}
-      </div>
+          {onReadWithAgent ? (
+            <button type="button" onClick={() => onReadWithAgent(item)}>
+              Read with agent
+            </button>
+          ) : null}
+        </div>
+      </FocusScope>
     ) : null
   }
 }))
@@ -3917,15 +3920,25 @@ describe('LiteratureLibraryPage', () => {
     expect(within(detail).queryByRole('button', { name: 'Preview paper.pdf' })).toBeNull()
   })
 
-  it('does not block PDF wheel events behind reference details and restores the detail modal on close', async () => {
+  it('preserves reference detail and scroll position while releasing only the PDF scroll lock', async () => {
     const itemWithPdf = createLibraryItemWithPdf()
     search.mockImplementation((request: { scope: string }) =>
       Promise.resolve(request.scope === 'library' ? { entries: [itemWithPdf] } : { entries: [] })
     )
     render(<LiteratureLibraryPage />)
     fireEvent.click(screen.getByRole('button', { name: 'All references' }))
-    await openReferenceDetail(await screen.findByText('Corrective Retrieval Augmented Generation'))
-    fireEvent.click(screen.getByRole('button', { name: 'Preview paper.pdf' }))
+    const detail = await openReferenceDetail(
+      await screen.findByText('Corrective Retrieval Augmented Generation')
+    )
+    const trigger = within(detail).getByRole('button', { name: 'Preview paper.pdf' })
+    const scrim = detail.previousElementSibling
+    const scroll = within(detail).getByText('Attachments').closest('.overflow-y-auto')!
+    scroll.scrollTop = 120
+    fireEvent.click(trigger)
+    expect(screen.getByRole('dialog')).toBe(detail)
+    expect(detail.previousElementSibling).toBe(scrim)
+    expect(trigger.isConnected).toBe(true)
+    expect(scroll.scrollTop).toBe(120)
     const preview = screen.getByTestId('literature-pdf-preview')
     const previewClose = within(preview).getByRole('button', { name: 'Close PDF', hidden: true })
     previewClose.focus()
@@ -3936,7 +3949,10 @@ describe('LiteratureLibraryPage', () => {
     expect(wheel.defaultPrevented).toBe(false)
     expect(document.activeElement).toBe(previewClose)
     fireEvent.click(within(preview).getByRole('button', { name: 'Close PDF', hidden: true }))
-    expect(await screen.findByRole('button', { name: 'Preview paper.pdf' })).not.toBeNull()
+    expect(await screen.findByRole('button', { name: 'Preview paper.pdf' })).toBe(trigger)
+    expect(screen.getByRole('dialog')).toBe(detail)
+    expect(detail.previousElementSibling).toBe(scrim)
+    expect(scroll.scrollTop).toBe(120)
     const outsideWheel = new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 600 })
     await act(async () => {
       document.body.dispatchEvent(outsideWheel)
@@ -5410,7 +5426,8 @@ describe('LiteratureLibraryPage', () => {
           target: { value: 'No identifier manual reference' }
         })
         fireEvent.click(screen.getByRole('button', { name: 'Save' }))
-        await within(screen.getByRole('dialog')).findByRole('alert')
+        // This integration fixture commits to real SQLite before the failed readback is rendered.
+        await within(screen.getByRole('dialog')).findByRole('alert', {}, { timeout: 10_000 })
         expect(await client.literatureItem.count()).toBe(1)
         expect((await catalog.get(committedId!))?.item.identifiers).toEqual([])
         const dialog = screen.getByRole('dialog')
@@ -5418,7 +5435,11 @@ describe('LiteratureLibraryPage', () => {
           within(dialog).queryByRole('button', { name: /retry/i }) ??
             within(dialog).getByRole('button', { name: 'Save' })
         )
-        await screen.findByRole('heading', { name: 'No identifier manual reference' })
+        await screen.findByRole(
+          'heading',
+          { name: 'No identifier manual reference' },
+          { timeout: 10_000 }
+        )
         expect
           .soft(await client.literatureItem.findMany({ select: { id: true, title: true } }))
           .toEqual([{ id: committedId, title: 'No identifier manual reference' }])
@@ -7560,159 +7581,186 @@ describe('LiteratureLibraryPage', () => {
     ).toHaveLength(listRequests)
   })
 
-  it('pages filtered ordered results and selects only the current page', async () => {
-    const yearOrderedItems = Array.from({ length: 51 }, (_, index) => createLibraryItem(index))
-    const titleOrderedItem = {
-      ...createLibraryItem(51),
-      item: { ...createLibraryItem(51).item, title: 'Alphabetical result' }
-    }
-    search.mockImplementation(
-      (request: {
-        filter?: { yearFrom?: number }
-        limit?: number
-        offset?: number
-        scope: string
-        sortBy?: string
-        sortDirection?: string
-      }) => {
-        if (request.scope !== 'library') return Promise.resolve({ entries: [] })
-        if (request.sortBy === 'title') {
-          return Promise.resolve({ entries: [titleOrderedItem], totalCount: 1 })
-        }
-        const offset = request.offset ?? 0
-        const limit = request.limit ?? 50
-        const entries = yearOrderedItems.slice(offset, offset + limit)
-        return Promise.resolve({
-          entries,
-          ...(offset + entries.length < yearOrderedItems.length
-            ? { nextOffset: offset + entries.length }
-            : {}),
-          totalCount: yearOrderedItems.length
-        })
+  describe('filtered pagination', () => {
+    beforeEach(async () => {
+      const yearOrderedItems = Array.from({ length: 51 }, (_, index) => createLibraryItem(index))
+      const titleOrderedItem = {
+        ...createLibraryItem(51),
+        item: { ...createLibraryItem(51).item, title: 'Alphabetical result' }
       }
-    )
+      search.mockImplementation(
+        (request: {
+          filter?: { yearFrom?: number }
+          limit?: number
+          offset?: number
+          scope: string
+          sortBy?: string
+          sortDirection?: string
+        }) => {
+          if (request.scope !== 'library') return Promise.resolve({ entries: [] })
+          if (request.sortBy === 'title') {
+            return Promise.resolve({ entries: [titleOrderedItem], totalCount: 1 })
+          }
+          const offset = request.offset ?? 0
+          const limit = request.limit ?? 50
+          const entries = yearOrderedItems.slice(offset, offset + limit)
+          return Promise.resolve({
+            entries,
+            ...(offset + entries.length < yearOrderedItems.length
+              ? { nextOffset: offset + entries.length }
+              : {}),
+            totalCount: yearOrderedItems.length
+          })
+        }
+      )
 
-    render(<LiteratureLibraryPage />)
-    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
-    fireEvent.click(await screen.findByRole('button', { name: 'Filters' }))
-    fireEvent.change(screen.getByLabelText('From year'), { target: { value: '2020' } })
-    expect(screen.getByLabelText('References per page').textContent).toContain('25')
-    await waitFor(() =>
-      expect(search).toHaveBeenCalledWith(
-        expect.objectContaining({
-          scope: 'library',
-          limit: 25,
-          filter: expect.objectContaining({ yearFrom: 2020 })
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+      fireEvent.click(await screen.findByRole('button', { name: 'Filters' }))
+      fireEvent.change(screen.getByLabelText('From year'), { target: { value: '2020' } })
+      expect(screen.getByLabelText('References per page').textContent).toContain('25')
+      await waitFor(() =>
+        expect(search).toHaveBeenCalledWith(
+          expect.objectContaining({
+            scope: 'library',
+            limit: 25,
+            filter: expect.objectContaining({ yearFrom: 2020 })
+          })
+        )
+      )
+      await waitFor(() => expect(screen.getAllByLabelText(/^Select Reference /)).toHaveLength(25))
+      fireEvent.click(screen.getByLabelText('Sort references'))
+      fireEvent.click(screen.getByRole('option', { name: 'Year: newest first' }))
+      await waitFor(() =>
+        expect(search).toHaveBeenCalledWith(
+          expect.objectContaining({
+            scope: 'library',
+            offset: 0,
+            limit: 25,
+            sortBy: 'year',
+            sortDirection: 'desc',
+            filter: expect.objectContaining({ yearFrom: 2020 })
+          })
+        )
+      )
+      await screen.findByText('Reference 0')
+    })
+
+    it('resizes pages and clears the previous page selection', async () => {
+      fireEvent.click(screen.getByLabelText('References per page'))
+      fireEvent.click(screen.getByRole('option', { name: '50' }))
+
+      await waitFor(() =>
+        expect(search).toHaveBeenCalledWith(
+          expect.objectContaining({
+            scope: 'library',
+            offset: 0,
+            limit: 50,
+            sortBy: 'year',
+            sortDirection: 'desc',
+            filter: expect.objectContaining({ yearFrom: 2020 })
+          })
+        )
+      )
+      await screen.findByText('Reference 0')
+      expect(screen.getAllByLabelText(/^Select Reference /)).toHaveLength(50)
+      expect(screen.getByText('Reference 49')).not.toBeNull()
+      expect(screen.queryByText('Reference 50')).toBeNull()
+      const defaultRange = screen.getByText('1–50')
+      expect(defaultRange.parentElement?.textContent).toContain('51')
+
+      fireEvent.click(screen.getByLabelText('Select all references'))
+      expect(screen.getByText('50 selected')).not.toBeNull()
+
+      fireEvent.click(screen.getByLabelText('References per page'))
+      fireEvent.click(screen.getByRole('option', { name: '25' }))
+      await waitFor(() =>
+        expect(search).toHaveBeenCalledWith(
+          expect.objectContaining({
+            scope: 'library',
+            offset: 0,
+            limit: 25,
+            sortBy: 'year',
+            sortDirection: 'desc',
+            filter: expect.objectContaining({ yearFrom: 2020 })
+          })
+        )
+      )
+      await waitFor(() => expect(screen.getAllByLabelText(/^Select Reference /)).toHaveLength(25))
+      expect(screen.queryByText(/ selected$/)).toBeNull()
+      expect(screen.getByText('1–25')).not.toBeNull()
+    })
+
+    it('pages ordered results, selects only the current page and reuses cached pages', async () => {
+      fireEvent.click(screen.getByLabelText('Select all references'))
+      expect(screen.getByText('25 selected')).not.toBeNull()
+      fireEvent.click(
+        within(screen.getByRole('navigation', { name: 'Page 1' })).getByRole('button', {
+          name: 'Next page'
         })
       )
-    )
-    await waitFor(() => expect(screen.getAllByLabelText(/^Select Reference /)).toHaveLength(25))
-    fireEvent.click(screen.getByLabelText('References per page'))
-    fireEvent.click(screen.getByRole('option', { name: '50' }))
-    fireEvent.click(screen.getByLabelText('Sort references'))
-    fireEvent.click(screen.getByRole('option', { name: 'Year: newest first' }))
-
-    await waitFor(() =>
-      expect(search).toHaveBeenCalledWith(
-        expect.objectContaining({
-          scope: 'library',
-          offset: 0,
-          limit: 50,
-          sortBy: 'year',
-          sortDirection: 'desc',
-          filter: expect.objectContaining({ yearFrom: 2020 })
-        })
+      await waitFor(() =>
+        expect(search).toHaveBeenCalledWith(
+          expect.objectContaining({
+            scope: 'library',
+            offset: 25,
+            sortBy: 'year',
+            sortDirection: 'desc',
+            filter: expect.objectContaining({ yearFrom: 2020 })
+          })
+        )
       )
-    )
-    await screen.findByText('Reference 0')
-    expect(screen.getAllByLabelText(/^Select Reference /)).toHaveLength(50)
-    expect(screen.getByText('Reference 49')).not.toBeNull()
-    expect(screen.queryByText('Reference 50')).toBeNull()
-    const defaultRange = screen.getByText('1–50')
-    expect(defaultRange.parentElement?.textContent).toContain('51')
 
-    fireEvent.click(screen.getByLabelText('Select all references'))
-    expect(screen.getByText('50 selected')).not.toBeNull()
-
-    fireEvent.click(screen.getByLabelText('References per page'))
-    fireEvent.click(screen.getByRole('option', { name: '25' }))
-    await waitFor(() =>
-      expect(search).toHaveBeenCalledWith(
-        expect.objectContaining({
-          scope: 'library',
-          offset: 0,
-          limit: 25,
-          sortBy: 'year',
-          sortDirection: 'desc',
-          filter: expect.objectContaining({ yearFrom: 2020 })
-        })
+      expect(await screen.findByText('Reference 25')).not.toBeNull()
+      expect(screen.getByText('Reference 49')).not.toBeNull()
+      expect(screen.queryByText('Reference 50')).toBeNull()
+      expect(screen.queryByText('Reference 0')).toBeNull()
+      expect(document.querySelector('[data-row-number="26"]')?.textContent).toBe('26')
+      const pagination = within(screen.getByRole('navigation', { name: 'Page 2' }))
+      expect(pagination.getByRole('button', { name: 'Page 2' }).getAttribute('aria-current')).toBe(
+        'page'
       )
-    )
-    await waitFor(() => expect(screen.getAllByLabelText(/^Select Reference /)).toHaveLength(25))
-    expect(screen.queryByText(/ selected$/)).toBeNull()
-    expect(screen.getByText('1–25')).not.toBeNull()
+      expect(screen.getByText('26–50')).not.toBeNull()
+      expect(
+        (pagination.getByRole('button', { name: 'Previous page' }) as HTMLButtonElement).disabled
+      ).toBe(false)
 
-    fireEvent.click(screen.getByLabelText('Select all references'))
-    expect(screen.getByText('25 selected')).not.toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: 'Next page' }))
-    await waitFor(() =>
-      expect(search).toHaveBeenCalledWith(
-        expect.objectContaining({
-          scope: 'library',
-          offset: 25,
-          sortBy: 'year',
-          sortDirection: 'desc',
-          filter: expect.objectContaining({ yearFrom: 2020 })
-        })
-      )
-    )
-
-    expect(await screen.findByText('Reference 25')).not.toBeNull()
-    expect(screen.getByText('Reference 49')).not.toBeNull()
-    expect(screen.queryByText('Reference 50')).toBeNull()
-    expect(screen.queryByText('Reference 0')).toBeNull()
-    expect(document.querySelector('[data-row-number="26"]')?.textContent).toBe('26')
-    expect(screen.getByRole('button', { name: 'Page 2' }).getAttribute('aria-current')).toBe('page')
-    expect(screen.getByText('26–50')).not.toBeNull()
-    expect(
-      (screen.getByRole('button', { name: 'Previous page' }) as HTMLButtonElement).disabled
-    ).toBe(false)
-
-    const firstPageRequestCount = search.mock.calls.filter(
-      ([request]) =>
-        request.scope === 'library' &&
-        request.offset === 0 &&
-        request.limit === 25 &&
-        request.sortBy === 'year'
-    ).length
-    fireEvent.click(screen.getByRole('button', { name: 'Previous page' }))
-    expect(await screen.findByText('Reference 0')).not.toBeNull()
-    expect(
-      search.mock.calls.filter(
+      const firstPageRequestCount = search.mock.calls.filter(
         ([request]) =>
           request.scope === 'library' &&
           request.offset === 0 &&
           request.limit === 25 &&
           request.sortBy === 'year'
-      )
-    ).toHaveLength(firstPageRequestCount)
+      ).length
+      fireEvent.click(pagination.getByRole('button', { name: 'Previous page' }))
+      expect(await screen.findByText('Reference 0')).not.toBeNull()
+      expect(
+        search.mock.calls.filter(
+          ([request]) =>
+            request.scope === 'library' &&
+            request.offset === 0 &&
+            request.limit === 25 &&
+            request.sortBy === 'year'
+        )
+      ).toHaveLength(firstPageRequestCount)
 
-    fireEvent.click(screen.getByLabelText('Sort references'))
-    fireEvent.click(screen.getByRole('option', { name: 'Title: A–Z' }))
-    await waitFor(() =>
-      expect(search).toHaveBeenCalledWith(
-        expect.objectContaining({
-          scope: 'library',
-          offset: 0,
-          sortBy: 'title',
-          sortDirection: 'asc',
-          filter: expect.objectContaining({ yearFrom: 2020 })
-        })
+      fireEvent.click(screen.getByLabelText('Sort references'))
+      fireEvent.click(screen.getByRole('option', { name: 'Title: A–Z' }))
+      await waitFor(() =>
+        expect(search).toHaveBeenCalledWith(
+          expect.objectContaining({
+            scope: 'library',
+            offset: 0,
+            sortBy: 'title',
+            sortDirection: 'asc',
+            filter: expect.objectContaining({ yearFrom: 2020 })
+          })
+        )
       )
-    )
-    expect(await screen.findByText('Alphabetical result')).not.toBeNull()
-    expect(screen.queryByRole('button', { name: 'Page 2' })).toBeNull()
-    expect(screen.queryByText('Reference 25')).toBeNull()
+      expect(await screen.findByText('Alphabetical result')).not.toBeNull()
+      expect(screen.queryByRole('button', { name: 'Page 2' })).toBeNull()
+      expect(screen.queryByText('Reference 25')).toBeNull()
+    })
   })
 
   it('starts a page request and shows its loading state in the pagination click', async () => {

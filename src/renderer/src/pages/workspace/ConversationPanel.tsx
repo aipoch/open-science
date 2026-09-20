@@ -1,4 +1,8 @@
+import { forkSession, sessionForkAvailable } from '@/lib/session-fork'
+import { sideChatBlock, sideChatBlockMessage } from './side-chat-availability'
+import { InlineNotice } from '@/components/ui/inline-notice'
 import { PackageOperationIndicator } from '@/components/SessionPackageOperation'
+import { SessionInfoPopover } from './SessionInfoPopover'
 import { sessionExportLocked, usePackageOperationStore } from '@/stores/package-operation-store'
 import { AnnotationTransferSource } from './annotations/AnnotationTransferSource'
 import { useAnnotationDrop } from './annotations/use-annotation-drop'
@@ -145,7 +149,7 @@ import { workspaceHandoffLifecycleClient } from './handoff-lifecycle-source'
 import { SubagentAvailabilityNotice, SubagentsBar } from './SubagentReleaseSurfaces'
 import { projectSessionSubagents } from './subagent-release-projection'
 import { ResizableBottomPanel } from './ResizableBottomPanel'
-import { hasMainConversation, type SideChatController } from './use-side-chat-controller'
+import { type SideChatController } from './use-side-chat-controller'
 import type { WorkspaceComposerController } from './workspace-composer-controller'
 import type { WorkspaceConversationController } from './workspace-conversation-controller'
 import type { WorkspaceSessionController } from './workspace-session-controller'
@@ -396,10 +400,13 @@ type ConversationPanelWorkflows = {
 }
 
 type ConversationPanelSessionTools = {
+  togglePin?: (session: ChatSession) => void
+  editSession?: (session: ChatSession) => void
   notebookReference: NotebookSessionReference | undefined
   openNotebook: (notebook: NotebookSessionReference, runId?: string) => void
   openJobs: (sessionId: string) => void
   openJob?: (job: JobSummary) => void
+  openSession?: (sessionId: string) => void
 }
 
 type ConversationPanelSubagents = {
@@ -448,6 +455,10 @@ const ConversationPanel = ({
   const { total: bookmarkCount, loadError: bookmarkLoadError } = useBookmarks()
   const { activeSession, composerFocusKey, canEditDraft, actionError, sideChatDisabledReason } =
     view
+  const sourceSession = useSessionStore((state) =>
+    state.sessions.find((session) => session.id === activeSession?.branchSource?.sessionId)
+  )
+  const sourceSessionNumber = sourceSession?.number
   const hasBookmarkEntry = Boolean(activeSession && (bookmarkCount > 0 || bookmarkLoadError))
   const {
     view: {
@@ -929,10 +940,10 @@ const ConversationPanel = ({
         return
       }
       if (!(await workflows.wslSetup.start())) {
-        onSetComposerError(t('Open Science could not open the WSL2 setup conversation.'))
+        onSetComposerError(t('Open-Science could not open the WSL2 setup conversation.'))
       }
     } catch {
-      onSetComposerError(t('Open Science could not open the WSL2 setup conversation.'))
+      onSetComposerError(t('Open-Science could not open the WSL2 setup conversation.'))
     }
   }
 
@@ -1002,18 +1013,26 @@ const ConversationPanel = ({
   )
   const canPlanFirst = effectiveCanSend && hasTextDraft
   const hasSideChatDraft = hasTextDraft || annotations.length > 0
-  const canStartSideChat =
-    Boolean(activeSession) &&
-    hasMainConversation(activeSession) &&
-    actionability?.actions.startSideChat.allowed !== false &&
-    canEditDraft &&
-    (hasSideChatDraft || Boolean(sideChatController.createDraft)) &&
-    attachments.length === 0 &&
-    attachmentTransfers.length === 0 &&
-    !sideChatDisabledReason
+  const openSideChatReason =
+    sideChatController.openDisabledReason ??
+    sideChatBlockMessage(sideChatBlock({ action: 'open', parent: activeSession }), t)
+  const sendSideChatReason =
+    sideChatDisabledReason ??
+    sideChatBlockMessage(
+      sideChatBlock({
+        action: 'send',
+        parent: activeSession,
+        hasAttachments: attachments.length > 0 || attachmentTransfers.length > 0,
+        hasContent: hasSideChatDraft
+      }),
+      t
+    )
+  const canOpenSideChat = !openSideChatReason && Boolean(sideChatController.createDraft)
+  const canStartSideChat = !sendSideChatReason
   const canRetrySideChatHydration = Boolean(onRetrySideChatHydration)
   const canOpenSendOptions =
     canPlanFirst ||
+    canOpenSideChat ||
     canStartSideChat ||
     canRetrySideChatHydration ||
     (effectiveCanSend && Boolean(onBranchInNewSession) && canBranchInNewSession)
@@ -1023,12 +1042,43 @@ const ConversationPanel = ({
     onPlanFirst(docToSkillIds(draftDoc))
   }
 
+  const sendsSideChatDraft = hasSideChatDraft && canStartSideChat
+  const sideChatHint =
+    openSideChatReason ??
+    (sendsSideChatDraft
+      ? t('Send draft to Side chat')
+      : t('Opens an empty Side chat; keeps your draft.'))
   const handleSideChat = (): void => {
-    if (canStartSideChat) {
-      if (hasSideChatDraft) onStartSideChat()
-      else sideChatController.createDraft?.()
-    } else onRetrySideChatHydration?.()
+    if (!canOpenSideChat) return
+    if (sendsSideChatDraft) onStartSideChat()
+    else sideChatController.createDraft?.()
   }
+  const sideChatMenuItems = (
+    <>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <DropdownMenuItem
+            data-testid="menu-side-chat"
+            aria-disabled={!canOpenSideChat}
+            className="h-8 whitespace-nowrap aria-disabled:cursor-not-allowed aria-disabled:opacity-50 [@media(pointer:coarse)]:min-h-11"
+            onSelect={(event) => {
+              if (!canOpenSideChat) event.preventDefault()
+              else handleSideChat()
+            }}
+          >
+            <MessageCircleMore className="mr-2 size-4 shrink-0 text-text-300" aria-hidden="true" />
+            {t('New side chat')}
+          </DropdownMenuItem>
+        </TooltipTrigger>
+        <TooltipContent side="left">{sideChatHint}</TooltipContent>
+      </Tooltip>
+      {canRetrySideChatHydration ? (
+        <DropdownMenuItem data-testid="menu-retry-side-chat" onSelect={onRetrySideChatHydration}>
+          {t('Retry Side chat restore')}
+        </DropdownMenuItem>
+      ) : null}
+    </>
+  )
 
   // Converts the hidden file input selection into the shared staging callback.
   const handleAttachmentInputChange = (event: React.ChangeEvent<HTMLInputElement>): void => {
@@ -1111,8 +1161,19 @@ const ConversationPanel = ({
           >
             <Menu className="size-5" strokeWidth={2} aria-hidden="true" />
           </button>
-          <h1 className="min-w-0 flex-1 truncate text-[13px] font-semibold text-text-000">
-            {activeSession?.title ?? t('New conversation')}
+          <h1 className="min-w-0 flex-1 text-[13px] font-semibold text-text-000">
+            {activeSession ? (
+              <SessionInfoPopover
+                key={activeSession.id}
+                session={activeSession}
+                sourceSession={sourceSession}
+                onOpenSession={sessionTools.openSession}
+                onEdit={sessionTools.editSession}
+                onTogglePin={sessionTools.togglePin}
+              />
+            ) : (
+              <span className="block truncate">{t('New conversation')}</span>
+            )}
           </h1>
           <NotificationBell className="md:hidden" />
           <button
@@ -1138,6 +1199,26 @@ const ConversationPanel = ({
           <WorkspaceMessageEditStateProvider canEditMessage={canEditMessage}>
             <WorkspaceMessageScroller
               activeSession={activeSession}
+              forkSourceContent={
+                activeSession?.branchSource && sessionTools.openSession ? (
+                  <div className="mb-2 flex items-center gap-2 text-xs">
+                    <span className="h-px flex-1 bg-border" aria-hidden="true" />
+                    <GitBranch className="size-3 text-muted-foreground" aria-hidden="true" />
+                    <button
+                      type="button"
+                      className="text-primary hover:underline"
+                      onClick={() =>
+                        sessionTools.openSession?.(activeSession.branchSource!.sessionId)
+                      }
+                    >
+                      {sourceSessionNumber !== undefined
+                        ? t('Continued from chat #{{number}}', { number: sourceSessionNumber })
+                        : t('Continued from chat')}
+                    </button>
+                    <span className="h-px flex-1 bg-border" aria-hidden="true" />
+                  </div>
+                ) : null
+              }
               credentialPending={pendingCredentialRequest !== undefined}
               visiblePermissionPending={pendingPermissions.length > 0}
               optimisticMessage={optimisticMessage}
@@ -1181,7 +1262,7 @@ const ConversationPanel = ({
                 ) : null}
                 {composerError && composerError !== actionError ? (
                   <div role="alert" className="mb-2">
-                    <ErrorNotice icon={AlertTriangle} tone="red" title={composerError} />
+                    <ErrorNotice inline icon={AlertTriangle} tone="red" title={composerError} />
                   </div>
                 ) : null}
                 {composerError && composerErrorDetail ? (
@@ -1411,22 +1492,17 @@ const ConversationPanel = ({
                   />
 
                   {activeSession && specialistUnavailable ? (
-                    <div
+                    <InlineNotice
                       role="status"
                       aria-live="polite"
                       data-testid="specialist-unavailable-notice"
-                      className="relative z-10 mb-2 flex flex-wrap items-center gap-2 rounded-xl border border-warning-100/50 bg-warning-100/10 px-3 py-2"
+                      className="relative z-10 mb-2"
                     >
-                      <AlertTriangle
-                        className="mt-0.5 size-3.5 shrink-0 text-warning-900"
-                        strokeWidth={2}
-                        aria-hidden="true"
-                      />
                       <div className="min-w-0 flex-1">
-                        <div className="text-[12px] font-medium leading-5 text-warning-900">
+                        <div className="text-sm font-medium text-foreground">
                           {t('This Specialist is no longer available')}
                         </div>
-                        <div className="text-[11px] leading-4 text-text-100">
+                        <div className="text-sm leading-6 text-muted-foreground">
                           {t('Choose another Specialist before sending a message.')}{' '}
                           {t('Your draft is preserved.')}
                         </div>
@@ -1435,12 +1511,12 @@ const ConversationPanel = ({
                         type="button"
                         variant="outline"
                         size="xs"
-                        className="ml-auto border-warning-100/50 bg-transparent text-warning-900 hover:bg-warning-100/20 hover:text-warning-900"
+                        className="mt-2"
                         onClick={() => setAgentControlsOpenRequest((request) => request + 1)}
                       >
                         {t('Choose Specialist')}
                       </Button>
-                    </div>
+                    </InlineNotice>
                   ) : null}
 
                   {/* Reconfigure failure banner: shown directly above the composer when a pre-send
@@ -1578,7 +1654,11 @@ const ConversationPanel = ({
                         aria-label={t('Session export in progress')}
                       >
                         <LockKeyhole className="size-4 shrink-0" aria-hidden="true" />
-                        <p className="text-sm">{t('Temporarily read-only during export')}</p>
+                        <p className="text-sm">
+                          {packageOperation?.kind === 'fork'
+                            ? t('Temporarily read-only during fork')
+                            : t('Temporarily read-only during export')}
+                        </p>
                       </section>
                     ) : activeSession?.packageOrigin ? (
                       <section
@@ -1598,6 +1678,19 @@ const ConversationPanel = ({
                             'Read-only. Browse the conversation, files and recorded results. Code execution and continuation are disabled.'
                           )}
                         </p>
+                        {sessionForkAvailable() ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="mt-2"
+                            onClick={() => {
+                              void forkSession(activeSession)
+                            }}
+                          >
+                            <GitBranch className="size-4" aria-hidden="true" />
+                            {t('Fork to continue')}
+                          </Button>
+                        ) : null}
                         <details className="mt-2 text-xs leading-5 text-muted-foreground">
                           <summary className="cursor-pointer">{t('Package source')}</summary>
                           <dl className="mt-1 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
@@ -1913,12 +2006,7 @@ const ConversationPanel = ({
                           projectId={activeSession?.projectId ?? ''}
                           parentSessionId={activeSession?.id ?? ''}
                           annotations={annotations}
-                          disabled={
-                            !canEditDraft ||
-                            !activeSession ||
-                            !hasMainConversation(activeSession) ||
-                            Boolean(sideChatDisabledReason)
-                          }
+                          disabled={Boolean(openSideChatReason)}
                           onRemove={onRemoveAnnotation}
                         >
                           <AnnotationDraftCards
@@ -2172,10 +2260,8 @@ const ConversationPanel = ({
                                     }
                                   : undefined
                               }
-                              focusRequest={ordinaryComposerBlocked ? undefined : composerFocusKey}
-                              restoreFocusRequest={
-                                ordinaryComposerBlocked ? undefined : composerRestoreFocusRequest
-                              }
+                              focusRequest={composerFocusKey}
+                              restoreFocusRequest={composerRestoreFocusRequest}
                               caretRequest={ordinaryComposerBlocked ? undefined : caretRequest}
                             />
                           </div>
@@ -2575,7 +2661,9 @@ const ConversationPanel = ({
                                               type="button"
                                               className={composerIconButtonClassName}
                                               disabled={
-                                                !canStartSideChat && !canRetrySideChatHydration
+                                                !canOpenSideChat &&
+                                                !canStartSideChat &&
+                                                !canRetrySideChatHydration
                                               }
                                               aria-label={t('More send options')}
                                               data-testid="running-side-chat-menu-trigger"
@@ -2594,27 +2682,7 @@ const ConversationPanel = ({
                                     </Tooltip>
                                   </>
                                   <DropdownMenuContent side="top" align="end" className="w-64">
-                                    <DropdownMenuItem
-                                      data-testid="menu-side-chat"
-                                      disabled={!canStartSideChat && !canRetrySideChatHydration}
-                                      onSelect={handleSideChat}
-                                      title={sideChatDisabledReason}
-                                    >
-                                      <MessageCircleMore
-                                        className="mr-2 size-4 text-text-300"
-                                        aria-hidden="true"
-                                      />
-                                      <span>
-                                        {canRetrySideChatHydration
-                                          ? t('Retry Side chat restore')
-                                          : t('New side chat')}
-                                        {sideChatDisabledReason ? (
-                                          <span className="block text-[11px] text-text-300">
-                                            {sideChatDisabledReason}
-                                          </span>
-                                        ) : null}
-                                      </span>
-                                    </DropdownMenuItem>
+                                    {sideChatMenuItems}
                                   </DropdownMenuContent>
                                 </DropdownMenu>
                               </div>
@@ -2702,28 +2770,7 @@ const ConversationPanel = ({
                                         />
                                         {t('Plan first')}
                                       </DropdownMenuItem>
-                                      <DropdownMenuItem
-                                        data-testid="menu-side-chat"
-                                        disabled={!canStartSideChat && !canRetrySideChatHydration}
-                                        onSelect={handleSideChat}
-                                        title={sideChatDisabledReason}
-                                        className="whitespace-nowrap [@media(pointer:coarse)]:min-h-11"
-                                      >
-                                        <MessageCircleMore
-                                          className="mr-2 size-4 text-text-300"
-                                          aria-hidden="true"
-                                        />
-                                        <span>
-                                          {canRetrySideChatHydration
-                                            ? t('Retry Side chat restore')
-                                            : t('New side chat')}
-                                          {sideChatDisabledReason ? (
-                                            <span className="block text-[11px] text-text-300">
-                                              {sideChatDisabledReason}
-                                            </span>
-                                          ) : null}
-                                        </span>
-                                      </DropdownMenuItem>
+                                      {sideChatMenuItems}
                                       <DropdownMenuItem
                                         data-testid="menu-branch-in-new-session"
                                         disabled={

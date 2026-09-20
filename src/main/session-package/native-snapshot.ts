@@ -1,3 +1,4 @@
+import { parseOwnedExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
 import {
   packageLiteratureSchema,
   validatePackageLiterature,
@@ -29,7 +30,7 @@ import { assertPackageSourcePath, readPackageJson } from './archive'
 import { NotebookRunRepository } from '../notebook/repository'
 import { createFrameNotebookLane } from '../notebook/lane-identity'
 import type { NotebookRunDocument } from '../../shared/notebook'
-import { executionEvidenceSchema } from './execution-evidence'
+import { readExecutionEvidence } from './execution-evidence'
 import { copyFileWithinBudget } from '../bounded-file-io'
 import { assertPackageCapacity } from './capacity'
 
@@ -432,6 +433,7 @@ export const readPackageNotebooks = async (
 export const sessionFileVersionIds = (session: PersistedChatSession): string[] => {
   const ids = new Set<string>()
   if (session.runtimeContext?.plan) ids.add(session.runtimeContext.plan.artifactVersionId)
+  for (const plan of session.planHistoryProjections ?? []) ids.add(plan.artifactVersionId)
   for (const binding of session.runtimeContext?.pdfContext?.bindings ?? [])
     ids.add(binding.sourceVersionId)
   for (const message of session.conversationGraph?.messages ?? session.messages) {
@@ -470,6 +472,13 @@ export const remapStorageKey = (key: string, identities: Record<string, string>)
   }
   map(1)
   if (!(segments[0] === 'execution-file-evidence' && segments[2] === 'blobs')) map(2)
+  if (['notebook-file-evidence', 'file-evidence'].includes(segments[0])) {
+    const run = segments[3] === 'frames' ? 5 : 3
+    if (segments[run]?.startsWith('run-')) {
+      const id = segments[run].slice(4)
+      if (identities[id]) segments[run] = `run-${identities[id]}`
+    }
+  }
   if (segments[0] === 'execution-file-evidence') {
     const activity = segments.findIndex((segment) => segment.startsWith('activity-'))
     if (activity >= 0) {
@@ -489,7 +498,9 @@ export const remapStorageKey = (key: string, identities: Record<string, string>)
     map(3)
     map(5)
   } else if (
-    ['notebooks', 'execution-file-evidence'].includes(segments[0]) &&
+    ['notebooks', 'execution-file-evidence', 'notebook-file-evidence', 'file-evidence'].includes(
+      segments[0]
+    ) &&
     segments[3] === 'frames'
   ) {
     map(4)
@@ -499,15 +510,19 @@ export const remapStorageKey = (key: string, identities: Record<string, string>)
 }
 
 // A dependency package may include an older pinned Version without the source file's newer head.
-// The original head remains in records.json; native navigation uses the newest included Version.
+// The original head remains in records.json; native navigation uses the newest included completed
+// Version. An absent source head is intentional: copying pending evidence must not publish it.
 export const projectIncludedHeads = (source: PackageRecords): PackageRecords => {
   const records = structuredClone(source)
-  for (const [files, versions, ownerKey] of [
-    [records.tables.ArtifactLineage, records.tables.ArtifactVersion, 'artifactId'],
-    [records.tables.UploadFile, records.tables.UploadVersion, 'uploadFileId']
+  for (const [files, versions, ownerKey, completeState] of [
+    [records.tables.ArtifactLineage, records.tables.ArtifactVersion, 'artifactId', 'finalized'],
+    [records.tables.UploadFile, records.tables.UploadVersion, 'uploadFileId', 'ready']
   ] as const) {
     for (const file of files) {
-      const included = versions.filter((version) => version[ownerKey] === file.id)
+      if (file.currentVersionId == null) continue
+      const included = versions.filter(
+        (version) => version[ownerKey] === file.id && version.state === completeState
+      )
       if (!included.some((version) => version.id === file.currentVersionId)) {
         file.currentVersionId =
           included.sort((a, b) => Number(b.versionNumber) - Number(a.versionNumber))[0]?.id ?? null
@@ -612,6 +627,10 @@ export const prepareNativeImport = async (
     context?.sideChat?.id,
     ...(context?.sideChat?.entries.map((entry) => entry.id) ?? []),
     ...(context?.pdfContext?.bindings.map((binding) => binding.bindingId) ?? []),
+    ...(session?.conversationGraph?.messages ?? session?.messages ?? []).flatMap((message) => [
+      ...(message.pdfContext?.bindings.map((binding) => binding.bindingId) ?? []),
+      ...(message.annotations?.map((annotation) => annotation.id) ?? [])
+    ]),
     ...(context?.delegatedWork?.records.flatMap((record) =>
       record.attempts.map((attempt) => attempt.id)
     ) ?? [])
@@ -650,16 +669,17 @@ export const prepareNativeImport = async (
       if (typeof run.cellId === 'string') identities[run.cellId] ??= randomUUID()
     }
   }
-  const sidecars = new Map<string, ReturnType<typeof executionEvidenceSchema.parse>>()
+  const sidecars = new Map<string, ReturnType<typeof readExecutionEvidence>>()
   for (const entry of manifest.inventory) {
     if (
-      !entry.storageKey?.startsWith('execution-file-evidence/') ||
+      !entry.storageKey ||
+      !/^(?:execution-file-evidence|notebook-file-evidence|file-evidence)\//.test(
+        entry.storageKey
+      ) ||
       !entry.storageKey.endsWith('/evidence.json')
     )
       continue
-    const value = executionEvidenceSchema.parse(
-      await readPackageJson(join(sourceDirectory, entry.path))
-    )
+    const value = readExecutionEvidence(await readPackageJson(join(sourceDirectory, entry.path)))
     for (const id of [
       value.activityId,
       value.evidenceId,
@@ -710,10 +730,17 @@ export const prepareNativeImport = async (
     const sidecar = transformedSidecars.get(entry.storageKey)
     if (sidecar) await writeFile(target, sidecar)
     if (notebookDocumentIdentity(entry.storageKey)) {
-      const document = mapReferences(await readPackageJson(target), identities) as Record<
-        string,
-        unknown
-      >
+      const original = (await readPackageJson(target)) as NotebookRunDocument
+      for (const run of original.runs) {
+        if (!run.fileEvidence) continue
+        const summary = parseOwnedExecutionFileEvidenceSummary(run.fileEvidence, {
+          activityId: run.runId,
+          activityKind: 'notebook-run'
+        })
+        if (!summary) throw new Error('Invalid Notebook file evidence ownership.')
+        run.fileEvidence = summary
+      }
+      const document = mapReferences(original, identities) as Record<string, unknown>
       const rootKey = remapStorageKey(entry.storageKey, identities).slice(0, -'/run.json'.length)
       document.notebookSessionRoot = `$DATA/${rootKey}`
       document.workspaceCwd = `$DATA/${rootKey}`

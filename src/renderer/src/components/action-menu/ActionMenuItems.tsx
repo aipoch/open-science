@@ -78,9 +78,13 @@ export const ActionMenuItems = <ActionId extends string>({
             key={entry.action}
             data-action-id={entry.action}
             disabled={entry.disabled}
+            title={entry.disabled ? entry.disabledDescription : undefined}
             className={cn(
               'gap-2',
               compact && 'min-h-0 h-6 rounded-md px-2 py-0 text-[12px]',
+              entry.disabled &&
+                entry.disabledDescription &&
+                'data-[disabled]:pointer-events-auto data-[disabled]:cursor-default data-[disabled]:hover:bg-transparent',
               entry.danger &&
                 (dangerClassName ??
                   'text-danger-000 data-[highlighted]:bg-danger-000/10 data-[highlighted]:text-danger-000')

@@ -31,18 +31,16 @@ export type StorageUsage = { categories: UsageCategory[]; totalBytes: number }
 export type StorageStatus = {
   dataRoot: string
   isDefault: boolean
-  // The default data root and the parent that reproduces it. `defaultParent` is fed to the same
-  // inspect/migrate flow a browsed folder would be; `defaultDataRoot` is the derived destination
-  // shown to the user in Settings' one-click "return to default" affordance (accurate there because
-  // the affordance only appears when the current root is custom, i.e. the default is <home>/OpenScience).
+  // Exact destination for "Use default location". Pass this to inspection and migration;
+  // defaultParent is only the default browsing parent and may contain a separate legacy root.
   defaultDataRoot: string
   defaultParent: string
   // True only when settings.dataRoot is explicitly configured but the resolved directory is gone
   // (deleted, or an unmounted external/network drive). False for a fresh install whose default
-  // `~/OpenScience` simply hasn't been created yet.
+  // `~/Open-Science` simply hasn't been created yet.
   dataRootMissing: boolean
   // True when this is a pre-§20 legacy install whose data still lives in the hidden config root and
-  // the user hasn't yet answered the one-time "move it into the visible OpenScience folder" prompt.
+  // the user hasn't yet answered the one-time "move it into the visible Open-Science folder" prompt.
   // Drives the first-run LegacyDataMoveDialog; once answered (moved/relocated/declined) it stays false.
   legacyDataMovePrompt: boolean
   // True while a committed move still has verified old-root files to remove. Main retries the
@@ -99,12 +97,21 @@ export type DataRootValidationResult = { ok: true } | { ok: false; error: string
 // Classification of a candidate data root. 'move' = empty writable target (copy-in migration).
 // 'adopt' = already contains our data (pointer switch only, no move). 'recover' = a durable marker
 // from an interrupted copy that Settings can explicitly finish or discard. 'invalid' carries a reason.
-// `dataRoot` is the derived `<parent>/OpenScience` path, always present so the caller can display
+// `dataRoot` is the derived `<parent>/Open-Science` path, always present so the caller can display
 // the final location regardless of kind. Main also reports whether a move target was proven absent;
 // callers that require a brand-new target must fail closed unless `targetWasAbsent` is true.
 export type DataRootKind = 'move' | 'adopt' | 'recover' | 'invalid'
 export type DataRootRecoveryStatus = 'copying' | 'verified'
-export type DataRootInspection =
+export type DataRootSelection = Readonly<{
+  pickedPath: string
+  dataRoot: string
+  kind: Exclude<DataRootKind, 'invalid'>
+  identity: string
+}>
+export const DATA_ROOT_SELECTION_CHANGED =
+  'The selected data folder changed. Check the location and confirm it again.'
+
+export type DataRootInspection = { selection?: DataRootSelection } & (
   | {
       kind: 'recover'
       dataRoot: string
@@ -133,3 +140,4 @@ export type DataRootInspection =
       recoveryStatus?: never
       error?: string
     }
+)

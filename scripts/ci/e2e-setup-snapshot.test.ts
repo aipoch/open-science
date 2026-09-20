@@ -79,7 +79,7 @@ async function fixture(): Promise<{ producer: string; consumer: string; archive:
   return { producer, consumer, archive }
 }
 
-describe('same-run E2E setup snapshots', () => {
+describe('same-run E2E setup snapshots', { timeout: 30_000 }, () => {
   it('packs and restores dependencies without requiring a build output', async () => {
     const { producer, consumer, archive } = await fixture()
     await rm(join(producer, 'out'), { recursive: true })

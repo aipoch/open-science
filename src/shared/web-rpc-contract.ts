@@ -29,6 +29,7 @@ export const WEB_RPC_UNAVAILABLE_CHANNELS = [
   'file:save-managed',
   'sessions:export-conversation',
   'sessions:export-package',
+  'sessions:fork',
   'sessions:import-package',
   'sessions:package-operation',
   'sessions:open-recovery-folder',

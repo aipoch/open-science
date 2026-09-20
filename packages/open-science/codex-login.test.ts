@@ -65,7 +65,7 @@ describe('Codex CLI login', () => {
     await codexLoginCommand({ configRoot }, deps)
     expect(deps.runCodex).toHaveBeenCalledOnce()
     expect(bootstrap).toHaveBeenCalledOnce()
-    expect(deps.log.mock.calls.flat().join(' ')).toContain('updated Open Science daemon')
+    expect(deps.log.mock.calls.flat().join(' ')).toContain('updated Open-Science daemon')
   })
 
   it('requests a daemon update for an empty profile on an older daemon', async () => {
@@ -98,7 +98,7 @@ describe('Codex CLI login', () => {
     )
     await codexLoginCommand({ configRoot }, deps)
     expect(deps.runCodex).toHaveBeenCalledOnce()
-    expect(deps.log.mock.calls.flat().join(' ')).toContain('updated Open Science daemon')
+    expect(deps.log.mock.calls.flat().join(' ')).toContain('updated Open-Science daemon')
   })
 
   it.each([401, 403, 500])(
@@ -234,7 +234,7 @@ describe('Codex CLI login', () => {
     })
   })
 
-  it('does not replace an existing Open Science Codex login by default', async () => {
+  it('does not replace an existing Open-Science Codex login by default', async () => {
     const runCodex = vi.fn().mockResolvedValue({ code: 0, signal: null, stdout: '', stderr: '' })
     const deps = commandDeps(runCodex)
 
@@ -276,7 +276,7 @@ describe('Codex CLI login', () => {
         })
       })
     )
-    expect(deps.log).toHaveBeenLastCalledWith('Codex is signed in for Open Science.')
+    expect(deps.log).toHaveBeenLastCalledWith('Codex is signed in for Open-Science.')
   })
 
   it('starts a replacement login without checking status when forced', async () => {

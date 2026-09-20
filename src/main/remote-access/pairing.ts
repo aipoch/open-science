@@ -388,6 +388,22 @@ export class RemoteSessionPairingManager {
     }
   }
 
+  async revokeBrowsers(browserIds: readonly string[]): Promise<void> {
+    const ids = new Set(browserIds)
+    if ([...ids].some((id) => this.pendingRevocations.has(id))) {
+      throw new Error('Trusted browser revocation is already pending.')
+    }
+    // Deny every selected credential while the one durable mutation is pending.
+    for (const id of ids) this.pendingRevocations.add(id)
+    try {
+      const changed = await this.removeStoredTrustedBrowsers(ids)
+      this.scheduleExpirationTimer()
+      if (changed) this.options.onChanged()
+    } finally {
+      for (const id of ids) this.pendingRevocations.delete(id)
+    }
+  }
+
   async clearTransientAccess(): Promise<void> {
     this.authorizationGeneration += 1
     const unclaimedTrustedBrowsers = new Set(
@@ -447,7 +463,7 @@ export class RemoteSessionPairingManager {
     const authorizationGeneration = this.options.authorizationGeneration?.() ?? 0
     const needsOrigin = request.method !== 'GET' && request.method !== 'HEAD'
     // Provider hosts identify an expected route but are forgeable by local callers. Only the
-    // unguessable Open Science session checked below authenticates external workspace access.
+    // unguessable Open-Science session checked below authenticates external workspace access.
     if (!this.isExpectedRemoteRequest(request, needsOrigin)) return 'denied'
     const sessionAccess = await this.getSessionAccess(request)
     if (

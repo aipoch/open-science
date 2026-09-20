@@ -15,7 +15,7 @@ body:
       options:
         - label: I searched existing issues and this has not been reported yet.
           required: true
-        - label: I'm running a recent version of Open Science.
+        - label: I'm running a recent version of Open-Science.
           required: true
   - type: textarea
     id: what-happened

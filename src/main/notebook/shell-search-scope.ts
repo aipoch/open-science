@@ -2,6 +2,22 @@ import { realpath } from 'node:fs/promises'
 import { parsePowerShellSearchCommands } from './powershell-search-parser'
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { fieldChildren, withParsedNotebookSource, type Node } from './dependency-analysis-parser'
+import type { GrantedLocalRoot } from '../../shared/local-fs'
+
+// Maps WSL2 guest paths (e.g. /mnt/c/data) to Windows host paths (e.g. C:\data).
+// Returns the input path unchanged if not a WSL2 /mnt mount.
+const mapWsl2GuestPathToHost = (guestPath: string): string => {
+  // Match /mnt/<drive-letter>/... pattern
+  const match = /^\/mnt\/([a-z])(\/|$)/i.exec(guestPath)
+  if (!match) return guestPath
+
+  const driveLetter = match[1].toUpperCase()
+  const remainder = guestPath.slice(`/mnt/${match[1]}`.length)
+  // Convert forward slashes to backslashes for Windows
+  const windowsPath = remainder.replace(/\//g, '\\')
+  // Ensure absolute path: /mnt/c -> C:\, not C: (which is drive-relative)
+  return windowsPath ? `${driveLetter}:${windowsPath}` : `${driveLetter}:\\`
+}
 
 const denied = (reason: string): never => {
   throw new Error(
@@ -266,17 +282,42 @@ const rootsFor = (name: string, args: string[]): string[] => {
 export const assertShellSearchScope = async (
   command: string,
   cwd: string,
+  grantedRoots: readonly GrantedLocalRoot[],
   platform: NodeJS.Platform = process.platform,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  runtimeBinding?: { kind: 'wsl2-bash' | 'powershell' | 'native-posix' }
 ): Promise<void> => {
   const root = await physicalPath(resolve(cwd))
   if (dirname(root) === root) return denied('the session cwd must not be a filesystem root')
   const check = async (path: string, state: State): Promise<void> => {
     if (!path || (!isAbsolute(path) && !state.cwd))
       return denied('the search directory cannot be resolved')
-    const target = resolve(state.cwd ?? root, path)
-    if (!inside(root, target) || !inside(root, await physicalPath(target)))
-      return denied('the search directory is outside the session cwd')
+    // For WSL2 only, map guest paths like /mnt/c/data to host paths like C:\data before validation
+    const isWsl2 = runtimeBinding?.kind === 'wsl2-bash'
+    const mappedPath = isWsl2 ? mapWsl2GuestPathToHost(path) : path
+    const target = resolve(state.cwd ?? root, mappedPath)
+    const physicalTarget = await physicalPath(target)
+
+    // First check if path is inside session cwd
+    if (inside(root, target) && inside(root, physicalTarget)) {
+      return // Inside cwd, allowed
+    }
+
+    // Not inside cwd, check if it's inside any granted root
+    for (const grantedRoot of grantedRoots) {
+      try {
+        const grantedPhysicalPath = await physicalPath(grantedRoot.path)
+        if (inside(grantedPhysicalPath, physicalTarget)) {
+          return // Inside granted root, allowed
+        }
+      } catch {
+        // Granted root doesn't exist or is inaccessible, skip it
+        continue
+      }
+    }
+
+    // Neither inside cwd nor any granted root
+    return denied('the search directory is outside the session cwd')
   }
   const analyze = async (source: string, state: State, depth = 0): Promise<void> => {
     if (depth > 8) return denied('nested shell commands are too deeply wrapped to resolve')
@@ -380,9 +421,11 @@ export const assertShellSearchScope = async (
             context.variables.clear()
           }
           if (tool === 'cd' || tool === 'pushd' || tool === 'popd') {
+            const isWsl2 = runtimeBinding?.kind === 'wsl2-bash'
+            const dir = values.length === 1 && values[0] ? values[0] : undefined
             context.cwd =
-              values.length === 1 && values[0] && context.cwd
-                ? resolve(context.cwd, values[0])
+              dir && context.cwd
+                ? resolve(context.cwd, isWsl2 ? mapWsl2GuestPathToHost(dir) : dir)
                 : undefined
           } else if (tool && searchTools.has(tool)) {
             if (values.some((value) => value === undefined))
@@ -501,8 +544,17 @@ export const assertShellSearchScope = async (
     for (const check of checks) await check()
     if (parsed.state !== 'ok') return denied('the shell syntax could not be parsed')
   }
-  if (platform === 'win32') {
+  if (
+    platform === 'win32' &&
+    runtimeBinding?.kind !== 'wsl2-bash' &&
+    runtimeBinding?.kind !== 'native-posix'
+  ) {
     const commands = await parsePowerShellSearchCommands(command, signal)
+    if (!commands) {
+      // Not a PowerShell command or parse failed, continue with bash analysis
+      await analyze(command, { cwd: undefined, variables: new Map() })
+      return
+    }
     const normalize = (name: string): string =>
       name
         .split(/[\\/]/)

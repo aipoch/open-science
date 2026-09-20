@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, createRef } from 'react'
 import { createRoot } from 'react-dom/client'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { useTranscriptWindow } from './use-transcript-window'
 import type { WorkspaceConversationTimelineItem } from './workspace-conversation-timeline'
@@ -19,6 +19,120 @@ const items = Array.from(
 )
 
 describe('useTranscriptWindow', () => {
+  it.each(['movement', 'height', 'width', 'contentHeight', 'contentGrowth', 'anchoredGrowth'])(
+    'handles delayed input with %s',
+    (change) => {
+      vi.useFakeTimers()
+      const root = createRoot(document.createElement('div'))
+      const viewport = document.createElement('div')
+      Object.defineProperties(viewport, {
+        clientHeight: { writable: true, value: 800 },
+        clientWidth: { writable: true, value: 600 },
+        scrollHeight: { writable: true, value: 10000 },
+        scrollTop: { writable: true, value: 9200 }
+      })
+      let current!: ReturnType<typeof useTranscriptWindow>
+      const Harness = ({ rows = items }: { rows?: typeof items }): null => {
+        current = useTranscriptWindow('session', rows, -1, { current: viewport })
+        return null
+      }
+      try {
+        act(() => root.render(<Harness />))
+        act(() => current.recordUserScroll())
+        // Multiple paints and even a no-movement scroll must not consume native input.
+        act(() => vi.advanceTimersByTime(80))
+        act(() => current.expandAtScrollEdge(9200))
+        if (change === 'height') Object.defineProperty(viewport, 'clientHeight', { value: 900 })
+        if (change === 'width') Object.defineProperty(viewport, 'clientWidth', { value: 700 })
+        if (change === 'contentHeight')
+          Object.defineProperty(viewport, 'scrollHeight', { value: 9900 })
+        if (change === 'contentGrowth' || change === 'anchoredGrowth') {
+          Object.defineProperty(viewport, 'scrollHeight', { value: 10040 })
+          if (change === 'anchoredGrowth') viewport.scrollTop = 9240
+          act(() => current.expandAtScrollEdge(9200))
+          expect(current.isFollowingEnd).toBe(true)
+        }
+        // An ArrowUp may move less than the amount added by scroll anchoring.
+        viewport.scrollTop = change === 'anchoredGrowth' ? 9220 : 9100
+        act(() => current.expandAtScrollEdge(9200))
+        act(() => root.render(<Harness rows={[...items, { ...items[0], id: 'latest' }]} />))
+        const releasedFollow = ['movement', 'contentGrowth', 'anchoredGrowth'].includes(change)
+        expect(current.isFollowingEnd).toBe(!releasedFollow)
+        expect(current.entries.at(-1)?.item.id).toBe(releasedFollow ? 'message-120' : 'latest')
+        expect(current.entries).toHaveLength(80)
+      } finally {
+        act(() => root.unmount())
+        vi.useRealTimers()
+      }
+    }
+  )
+
+  it('expires unused input before a later layout scroll', () => {
+    vi.useFakeTimers()
+    const root = createRoot(document.createElement('div'))
+    const viewport = document.createElement('div')
+    Object.defineProperties(viewport, {
+      clientHeight: { value: 800 },
+      scrollHeight: { value: 10000 },
+      scrollTop: { writable: true, value: 9200 }
+    })
+    let current!: ReturnType<typeof useTranscriptWindow>
+    const Harness = ({ rows = items }: { rows?: typeof items }): null => {
+      current = useTranscriptWindow('session', rows, -1, { current: viewport })
+      return null
+    }
+    try {
+      act(() => root.render(<Harness />))
+      act(() => current.recordUserScroll())
+      act(() => vi.advanceTimersByTime(1000))
+      viewport.scrollTop = 9100
+      act(() => current.expandAtScrollEdge(9200))
+      act(() => root.render(<Harness rows={[...items, { ...items[0], id: 'latest' }]} />))
+      expect(current.isFollowingEnd).toBe(true)
+      expect(current.entries.at(-1)?.item.id).toBe('latest')
+      expect(current.entries).toHaveLength(80)
+    } finally {
+      act(() => root.unmount())
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps new messages mounted after a layout scroll away from the bottom', () => {
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    const viewport = document.createElement('div')
+    Object.defineProperties(viewport, {
+      clientHeight: { value: 800 },
+      scrollHeight: { value: 10000 },
+      scrollTop: { writable: true, value: 9100 }
+    })
+    let current!: ReturnType<typeof useTranscriptWindow>
+    const Harness = ({ rows = items }: { rows?: typeof items }): null => {
+      current = useTranscriptWindow('session', rows, -1, { current: viewport })
+      return null
+    }
+    try {
+      act(() => root.render(<Harness />))
+      // Restoring/resizing a window can deliver a scroll before bottom-follow settles.
+      // No wheel, touch, scrollbar, or navigation-key input occurred.
+      act(() => current.expandAtScrollEdge(9200))
+      const appended = [
+        ...items,
+        {
+          id: 'latest',
+          type: 'message',
+          message: { id: 'latest' }
+        } as WorkspaceConversationTimelineItem
+      ]
+      act(() => root.render(<Harness rows={appended} />))
+      expect(current.isFollowingEnd).toBe(true)
+      expect(current.entries.at(-1)?.item.id).toBe('latest')
+      expect(current.entries).toHaveLength(80)
+    } finally {
+      act(() => root.unmount())
+    }
+  })
+
   it('keeps the latest reading position when scrolling during a presentation barrier', () => {
     const viewport = document.createElement('div')
     document.body.appendChild(viewport)
@@ -63,6 +177,7 @@ describe('useTranscriptWindow', () => {
     }
     try {
       act(() => root.render(<Harness barrier={-1} />))
+      act(() => current.recordUserScroll())
       viewport.scrollTop = 600
       act(() => current.expandAtScrollEdge(1200))
       act(() => root.render(<Harness barrier={19} />))
@@ -123,6 +238,7 @@ describe('useTranscriptWindow', () => {
         )
       }
       const expand = (direction: 'up' | 'down', bounded = true): void => {
+        act(() => current.recordUserScroll())
         viewport.scrollTop = direction === 'up' ? 0 : viewport.scrollHeight - 400
         const anchor = Array.from(viewport.children).find(
           (node) => node.getBoundingClientRect().bottom > 100
@@ -138,6 +254,7 @@ describe('useTranscriptWindow', () => {
       try {
         act(() => root.render(<Harness />))
         expect(viewport.childElementCount).toBe(80)
+        viewport.scrollTop = viewport.scrollHeight - viewport.clientHeight
         if (pin !== 'none') {
           const pinned = viewport.lastElementChild as HTMLElement
           if (pin === 'selection') {
@@ -296,6 +413,9 @@ describe('useTranscriptWindow', () => {
     const render = (scope: string, rows = items): void =>
       act(() => root.render(<Harness scope={scope} rows={rows} />))
     render('session:branch-a')
+    viewport.scrollTop = 9000
+    act(() => current.recordUserScroll())
+    viewport.scrollTop = 5000
     act(() => current.expandAtScrollEdge(9000))
     const originalIds = current.entries.map(({ item }) => item.id)
     const inserted = [

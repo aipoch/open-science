@@ -44,6 +44,11 @@ vi.mock('@/stores/review-store', () => ({
       loadReviewsForSession: mocks.loadReviewsForSession
     })
 }))
+vi.mock('../SubagentReleaseSurfaces', () => ({
+  SubagentPreview: ({ isActive }: { isActive: boolean }): React.JSX.Element => (
+    <div data-testid="subagent-preview" data-active={isActive} />
+  )
+}))
 vi.mock('../NotebookPreview', () => ({
   NotebookPreview: ({ item }: { item: PreviewToolItem }): React.JSX.Element => (
     <div data-testid="notebook-preview">{item.notebook?.sessionId}</div>
@@ -83,6 +88,16 @@ const render = (item: PreviewToolItem): string =>
   renderToStaticMarkup(<PreviewToolContent item={item} />)
 
 describe('PreviewToolContent', () => {
+  it('forwards visibility to Subagent previews so hidden mounted tabs cannot auto-load', () => {
+    const item = createItem({ toolKind: 'subagents' })
+    expect(renderToStaticMarkup(<PreviewToolContent item={item} isActive={false} />)).toContain(
+      'data-active="false"'
+    )
+    expect(renderToStaticMarkup(<PreviewToolContent item={item} isActive={true} />)).toContain(
+      'data-active="true"'
+    )
+  })
+
   beforeEach(() => {
     mocks.activeProjectId = 'project-1'
     mocks.getReviewSnapshot.mockReturnValue([])

@@ -19,6 +19,8 @@ import {
 } from 'typescript'
 import { describe, expect, it } from 'vitest'
 
+import { loadModuleImpactManifest } from '../../../scripts/ci/load-module-impact.mjs'
+
 import {
   listProductionSources,
   readProductionSource
@@ -129,9 +131,7 @@ describe('Provider authentication lifecycle ownership', () => {
     expect(productionSources().filter(importsOwner).map(portablePath)).toEqual([
       'src/main/settings/provider-accounts.ts'
     ])
-    const manifest = JSON.parse(readSource(manifestPath)) as {
-      modules: Record<string, { ownerPaths: string[]; testFiles: { owner: string[] } }>
-    }
+    const manifest = loadModuleImpactManifest(manifestPath)
     expect(manifest.modules.settings_provider_accounts.ownerPaths).toContain(
       'src/main/settings/provider-auth-lifecycle.ts'
     )

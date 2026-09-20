@@ -1,8 +1,18 @@
+import type { PersistedConversationGraph } from './conversation-graph'
 export type SideChatModelSelection = Readonly<{
   providerId: string
   model?: string
   reasoningEffort?: import('./settings').ReasoningEffort
 }>
+
+export type SideChatParentBranch = Readonly<{ frameId: string; branchId: string }>
+
+export function sideChatParentBranch(
+  graph: PersistedConversationGraph | undefined
+): SideChatParentBranch | undefined {
+  const frame = graph?.frames.find((item) => item.id === graph.activeFrameId)
+  return frame ? { frameId: frame.id, branchId: frame.activeBranchId } : undefined
+}
 
 export const SIDE_CHAT_MESSAGE_LIMIT = 12_000
 
@@ -18,12 +28,15 @@ export type SideChatSendMessageResult = Readonly<{
   messageId: string
   targetState: SideChatTargetState
   delivery: 'next-user-turn' | 'current-turn'
-  persisted: true
+  // Whether saving the queued advisory or accepted delivery record is confirmed.
+  // False with persistenceError means unconfirmed, not proof that the write rolled back.
+  persisted: boolean
   persistenceError?: string
   systemHint: string
 }>
 
 export type SideChatStartRequest = Readonly<{
+  expectedParentBranch?: SideChatParentBranch
   sideSessionId?: string
   parentSessionId: string
   projectId: string
@@ -38,6 +51,7 @@ export type SideChatStartResponse = Readonly<{
 }>
 
 export type SideChatPromptRequest = Readonly<{
+  expectedParentBranch?: SideChatParentBranch
   modelSelection?: SideChatModelSelection
   sideSessionId: string
   text: string

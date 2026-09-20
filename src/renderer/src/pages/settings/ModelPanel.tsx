@@ -1,4 +1,6 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { ClassificationPanel, type ClassificationView } from './ClassificationPanel'
+import { useEffect, useId, useState, type ReactNode } from 'react'
+import { motion, useReducedMotion } from 'motion/react'
 import { AlertDialog, Tabs } from 'radix-ui'
 import { Brain, Cpu, Download, ShieldCheck, Table2, Trash2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -257,34 +259,82 @@ const LocalModelsPanel = (): React.JSX.Element => {
   )
 }
 
+export type ModelView =
+  | ClassificationView
+  | { kind: 'list' }
+  | { kind: 'local-models' }
+  | { kind: 'create' }
+  | { kind: 'edit'; providerId: string }
+
 export const ModelPanel = ({
   local,
+  view,
+  navigate,
   onChange,
   children
 }: {
   local: boolean
+  view?: ModelView
+  navigate?: (view: ModelView) => void
   onChange(local: boolean): void
   children: ReactNode
 }): React.JSX.Element => {
   const { t } = useTranslation()
+  const classification = view?.kind.startsWith('classification') ?? false
+  const indicatorId = useId()
+  const reduceMotion = useReducedMotion()
+  const indicator = (
+    <motion.span
+      aria-hidden="true"
+      layoutId={indicatorId}
+      initial={false}
+      transition={{ duration: reduceMotion ? 0 : 0.22, ease: [0.22, 1, 0.36, 1] }}
+      className="pointer-events-none absolute inset-x-0 -bottom-0.5 h-0.5 bg-primary"
+    />
+  )
   const tabClass =
-    'flex items-center gap-2 border-b-2 border-transparent px-1 py-3 text-xs text-muted-foreground data-[state=active]:border-primary data-[state=active]:font-semibold data-[state=active]:text-primary focus-visible:outline-ring'
+    'relative flex min-w-0 flex-1 items-center justify-center gap-2 whitespace-nowrap border-b-2 sm:flex-none sm:justify-start border-transparent px-1 py-3 text-xs text-muted-foreground data-[state=active]:font-semibold data-[state=active]:text-primary focus-visible:outline-ring'
+  if (
+    view &&
+    navigate &&
+    (view.kind === 'classification-create' || view.kind === 'classification-edit')
+  )
+    return <ClassificationPanel view={view} navigate={navigate} />
   return (
     <Tabs.Root
-      value={local ? 'local' : 'agent'}
-      onValueChange={(value) => onChange(value === 'local')}
+      value={classification ? 'classification' : local ? 'local' : 'agent'}
+      onValueChange={(value) =>
+        value === 'classification'
+          ? navigate?.({ kind: 'classification' })
+          : onChange(value === 'local')
+      }
     >
-      <Tabs.List aria-label={t('Models')} className="flex gap-6 border-b border-border px-5">
+      <Tabs.List
+        aria-label={t('Models')}
+        className="flex gap-3 border-b border-border px-3 sm:gap-6 sm:px-5"
+      >
         <Tabs.Trigger value="agent" className={tabClass}>
-          <Brain className="size-4" aria-hidden="true" />
-          {t('Agent models')}
+          <Brain className="hidden size-4 shrink-0 sm:block" aria-hidden="true" />
+          <span className="truncate">{t('Conversation models')}</span>
+          {!local && !classification && indicator}
         </Tabs.Trigger>
+        {navigate && (
+          <Tabs.Trigger value="classification" className={tabClass}>
+            <Table2 className="hidden size-4 shrink-0 sm:block" aria-hidden="true" />
+            <span className="truncate">{t('Classification models')}</span>
+            {classification && indicator}
+          </Tabs.Trigger>
+        )}
         <Tabs.Trigger value="local" className={tabClass}>
-          <Cpu className="size-4" aria-hidden="true" />
-          {t('Local parsing models')}
+          <Cpu className="hidden size-4 shrink-0 sm:block" aria-hidden="true" />
+          <span className="truncate">{t('Local parsing models')}</span>
+          {local && indicator}
         </Tabs.Trigger>
       </Tabs.List>
       <Tabs.Content value="agent">{children}</Tabs.Content>
+      <Tabs.Content value="classification">
+        {navigate && <ClassificationPanel view={{ kind: 'classification' }} navigate={navigate} />}
+      </Tabs.Content>
       <Tabs.Content value="local">
         <LocalModelsPanel />
       </Tabs.Content>

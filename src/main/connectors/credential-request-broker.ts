@@ -60,6 +60,10 @@ export class CredentialRequestBroker {
     })
   }
 
+  hasPendingForSession(sessionId: string): boolean {
+    return [...this.pending.values()].some((entry) => entry.request.sessionId === sessionId)
+  }
+
   getPending(id: string): ConnectorCredentialRequest | null {
     return this.pending.get(id)?.request ?? null
   }

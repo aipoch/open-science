@@ -1,3 +1,4 @@
+import { initDataRoot } from '../storage-root'
 import { afterEach, expect, it, vi } from 'vitest'
 import { dirname, join } from 'node:path'
 import { mkdir, mkdtemp, readFile, readdir, stat, writeFile, rm, symlink } from 'node:fs/promises'
@@ -55,7 +56,9 @@ const importedFixture = async (
   archive: string
 }> => {
   const source = await createProvenanceTestFixture()
+  initDataRoot(source.storageRoot)
   const target = await createProvenanceTestFixture()
+  initDataRoot(target.storageRoot)
   fixtures.push(source, target)
   const configRoot = separateConfig ? join(target.storageRoot, 'configuration') : target.storageRoot
   await mkdir(configRoot, { recursive: true })
@@ -565,6 +568,7 @@ it('recognizes the navigation manifest while retaining a live external reference
   // Exercise the persisted recovery boundary without a database migration: the live Session
   // reference must stop recovery before any native mutation is considered.
   const root = await mkdtemp(join(tmpdir(), 'open-science-package-navigation-'))
+  initDataRoot(root)
   const client = createProjectDbClient(root)
   const importId = randomUUID()
   const sessionId = `import-${randomUUID()}`
@@ -621,4 +625,31 @@ it('recognizes the navigation manifest while retaining a live external reference
     await client.$disconnect()
     await rm(root, { recursive: true, force: true })
   }
+})
+
+it('keeps a fork usable after source deletion and preserves evidence when cleanup cannot exclude external history', async () => {
+  const { service, identity, sessions, coordinator, target } = await importedFixture()
+  const child = await service.fork(identity)
+  const childContent = join(
+    target.storageRoot,
+    'notebooks',
+    child.projectId,
+    child.sessionId,
+    'data',
+    'result.txt'
+  )
+  expect(await readFile(childContent, 'utf8')).toBe('Research result')
+  await coordinator.deleteSession(identity.projectId, identity.sessionId)
+  await service.recover({ collectDeletedPackages: true })
+  expect(await readFile(childContent, 'utf8')).toBe('Research result')
+  expect(
+    (await sessions.loadSession(child.projectId, child.sessionId))?.packageOrigin
+  ).toBeUndefined()
+  await coordinator.deleteSession(child.projectId, child.sessionId)
+  await service.recover({ collectDeletedPackages: true })
+  expect(await sessions.loadSession(child.projectId, child.sessionId)).toBeUndefined()
+  // Each receipt has an external Notebook scope. Existing conservative cleanup retains bytes.
+  expect(await readFile(childContent, 'utf8')).toBe('Research result')
+  expect(await target.client.project.findUnique({ where: { id: child.projectId } })).not.toBeNull()
+  await service.close()
 })

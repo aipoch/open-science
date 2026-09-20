@@ -1,3 +1,4 @@
+import { InlineNotice } from '@/components/ui/inline-notice'
 import { ErrorNotice } from '@/components/error-notice'
 import type { SkillReplacementPreview } from '../../../../shared/settings'
 import { Upload } from 'lucide-react'
@@ -21,6 +22,7 @@ const ErrorBanner = ({ notice }: { notice: Notice }): React.JSX.Element => {
   const { t } = useTranslation()
   return (
     <ErrorNotice
+      inline
       role="alert"
       tone="amber"
       className="mt-3"
@@ -34,7 +36,7 @@ const ErrorBanner = ({ notice }: { notice: Notice }): React.JSX.Element => {
 const SkippedNote = ({ items }: { items: SkippedEntry[] }): React.JSX.Element => {
   const { t } = useTranslation()
   return (
-    <div className="mt-3 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+    <InlineNotice className="mt-3 text-xs">
       <p className="font-medium text-foreground">
         {t('Skipped {{count}} skills', {
           defaultValue_one: 'Skipped {{count}} skill',
@@ -48,7 +50,7 @@ const SkippedNote = ({ items }: { items: SkippedEntry[] }): React.JSX.Element =>
           </li>
         ))}
       </ul>
-    </div>
+    </InlineNotice>
   )
 }
 

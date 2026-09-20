@@ -335,7 +335,7 @@ const ProviderList = ({
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <span
-                            className="inline-flex shrink-0 text-amber-500"
+                            className="inline-flex shrink-0 text-status-warning-foreground dark:text-status-warning-dark-foreground"
                             aria-label={describeValidationFailure(failure, t)}
                           >
                             <TriangleAlert
@@ -363,9 +363,9 @@ const ProviderList = ({
                   </div>
                   <div className="mt-1 space-y-0.5 text-xs text-muted-foreground">
                     {codexSubscriptionType === 'codex-shared' ? (
-                      <div>{t('Authentication imported into Open Science')}</div>
+                      <div>{t('Authentication imported into Open-Science')}</div>
                     ) : codexSubscriptionType === 'codex-isolated' ? (
-                      <div>{t('Codex login stored separately by Open Science')}</div>
+                      <div>{t('Codex login stored separately by Open-Science')}</div>
                     ) : provider.type === 'claude-isolated' && isClaudeIsolatedLoginPending ? (
                       // Browser sign-in in flight. `claude setup-token` opens the browser itself and
                       // waits on a localhost callback; when the browser fails to open it stays silent
@@ -437,7 +437,7 @@ const ProviderList = ({
                       </>
                     )}
                     {failure ? (
-                      <div className="text-amber-600 dark:text-amber-500">
+                      <div className="text-status-warning-foreground dark:text-status-warning-dark-foreground">
                         {describeValidationFailure(failure, t)}
                       </div>
                     ) : null}
@@ -577,7 +577,7 @@ const ProviderList = ({
                   ) : null}
                   {provider.type === 'claude-shared' && isVerified ? (
                     <SettingsIconAction
-                      label={t('Disconnect from Open Science')}
+                      label={t('Disconnect from Open-Science')}
                       icon={LogOut}
                       onClick={() => onLogoutSharedClaude?.()}
                       className="border border-border text-foreground"

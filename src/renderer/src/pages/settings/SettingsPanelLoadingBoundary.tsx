@@ -7,6 +7,7 @@ import { ErrorNotice } from '@/components/error-notice'
 type ErrorBoundaryProps = {
   children: ReactNode
   fallback: ReactNode
+  resetKey?: string
 }
 
 type ErrorBoundaryState = { failed: boolean }
@@ -22,6 +23,16 @@ class SettingsPanelErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoun
     console.error('Settings panel failed to load', error, info)
   }
 
+  componentDidUpdate(previousProps: ErrorBoundaryProps, previousState: ErrorBoundaryState): void {
+    if (
+      this.state.failed &&
+      previousState.failed &&
+      previousProps.resetKey !== this.props.resetKey
+    ) {
+      this.setState({ failed: false })
+    }
+  }
+
   render(): ReactNode {
     return this.state.failed ? this.props.fallback : this.props.children
   }
@@ -29,6 +40,7 @@ class SettingsPanelErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoun
 
 type SettingsPanelLoadingBoundaryProps = {
   panelKey: string
+  resetKey?: string
   children: ReactNode
   onClose: () => void
   onReload?: () => void
@@ -36,6 +48,7 @@ type SettingsPanelLoadingBoundaryProps = {
 
 const SettingsPanelLoadingBoundary = ({
   panelKey,
+  resetKey,
   children,
   onClose,
   onReload = () => window.location.reload()
@@ -48,13 +61,14 @@ const SettingsPanelLoadingBoundary = ({
   return (
     <SettingsPanelErrorBoundary
       key={panelKey}
+      resetKey={resetKey}
       fallback={
         <div className={centeredClassName}>
           <ErrorNotice
             role="alert"
             tone="amber"
             title={t("Settings panel couldn't be loaded.")}
-            description={t('Reload Open Science to try loading this panel again.')}
+            description={t('Reload Open-Science to try loading this panel again.')}
             secondaryButton={{ label: t('Close'), onClick: onClose }}
             primaryButton={{
               label: t('Reload', { context: 'window', ns: 'common' }),

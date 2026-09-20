@@ -1,5 +1,6 @@
 import { TooltipProvider } from '@/components/ui/tooltip'
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { motion, useReducedMotion } from 'motion/react'
 import { Tabs } from 'radix-ui'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useTranslation } from 'react-i18next'
@@ -118,6 +119,18 @@ const SpecialistCapabilitiesSection = ({
   onOpenConnectorDetail
 }: SpecialistCapabilitiesSectionProps): React.JSX.Element => {
   const { t } = useTranslation()
+  const indicatorId = useId()
+  const reduceMotion = useReducedMotion()
+  const indicator = (
+    <motion.span
+      aria-hidden="true"
+      layoutId={indicatorId}
+      initial={false}
+      transition={{ duration: reduceMotion ? 0 : 0.22, ease: [0.22, 1, 0.36, 1] }}
+      style={{ borderRadius: 6 }}
+      className="pointer-events-none absolute inset-0 -z-10 bg-card shadow-sm"
+    />
+  )
   const connectors = useSettingsStore((state) => state.connectors)
   const skills = useSettingsStore((state) => state.skills)
   const customServers = useSettingsStore((state) => state.customServers)
@@ -405,7 +418,7 @@ const SpecialistCapabilitiesSection = ({
           >
             <div className="mb-3 flex items-center justify-between">
               <Tabs.List
-                className="inline-flex gap-0.5 rounded-lg bg-muted p-1"
+                className="isolate inline-flex gap-0.5 rounded-lg bg-muted p-1"
                 aria-label={t('Capability type')}
               >
                 <Tabs.Trigger
@@ -413,12 +426,13 @@ const SpecialistCapabilitiesSection = ({
                   onClick={() => onActiveTabChange('skills')}
                   disabled={isFullAccess}
                   className={cn(
-                    'rounded-md px-3 py-1 text-[12.5px] font-medium',
+                    'relative rounded-md px-3 py-1 text-[12.5px] font-medium',
                     activeTab === 'skills'
-                      ? 'bg-card text-foreground shadow-sm'
+                      ? 'text-foreground'
                       : 'text-muted-foreground hover:text-foreground'
                   )}
                 >
+                  {activeTab === 'skills' && indicator}
                   {t('Skills')}{' '}
                   <span className="ml-0.5 text-[11px] opacity-75">{selectedSkillIds.length}</span>
                 </Tabs.Trigger>
@@ -427,12 +441,13 @@ const SpecialistCapabilitiesSection = ({
                   onClick={() => onActiveTabChange('connectors')}
                   disabled={isFullAccess}
                   className={cn(
-                    'rounded-md px-3 py-1 text-[12.5px] font-medium',
+                    'relative rounded-md px-3 py-1 text-[12.5px] font-medium',
                     activeTab === 'connectors'
-                      ? 'bg-card text-foreground shadow-sm'
+                      ? 'text-foreground'
                       : 'text-muted-foreground hover:text-foreground'
                   )}
                 >
+                  {activeTab === 'connectors' && indicator}
                   {t('Connectors')}{' '}
                   <span className="ml-0.5 text-[11px] opacity-75">
                     {selectedConnectorIds.length}

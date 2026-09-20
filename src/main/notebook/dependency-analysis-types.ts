@@ -95,6 +95,11 @@ type NotebookFileCallEffectSummary = Pick<NotebookFileCallEffect, 'kind' | 'inpu
 }
 
 type NotebookSourceFileAccessContext = {
+  // Live analysis only; these fields are deliberately omitted from the sidecar.
+  managedEnvironment?: Readonly<Record<string, string>>
+  managedEnvironmentSafe?: boolean
+  replContainerNames?: string[]
+  replNamespaceUncertain?: boolean
   staticStrings: Array<{ name: string; value: string }>
   staticCollections: Array<{
     name: string
@@ -249,7 +254,8 @@ type NotebookSourceFileAccessContextRequest = {
   projectId: string
   sessionId: string
   currentRunId: string
-  language: 'python' | 'r'
+  includeManagedEnvironment?: boolean
+  language: 'python' | 'r' | 'repl'
   environment?: string
   kernelEpochId: string
 }

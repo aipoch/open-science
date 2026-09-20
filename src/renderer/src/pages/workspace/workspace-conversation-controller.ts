@@ -40,7 +40,7 @@ import {
 } from './workspace-message-queue-controller'
 import { isWorkspacePresentationRevealing } from './workspace-presentation-revealing'
 import type { WorkspaceSessionController } from './workspace-session-controller'
-import { hasMainConversation } from './use-side-chat-controller'
+import { sideChatBlock } from './side-chat-availability'
 
 type WorkspaceConversationRuntime = Pick<
   WorkspaceAgentRuntime,
@@ -122,7 +122,6 @@ type WorkspaceConversationControllerOptions = {
   runtime: WorkspaceConversationRuntime
   sideChat?: Readonly<{ start: (text: string) => Promise<boolean> }>
   sideChatOpen: boolean
-  setAutoReviewEnabled: (sessionId: string, enabled: boolean) => void
   resetNewConversationSettings: () => void
   abortFixLoop: (request: { projectId: string; appSessionId: string }) => Promise<unknown>
   getSession: (sessionId: string) => ChatSession | undefined
@@ -351,17 +350,17 @@ const canBranch = (options: WorkspaceConversationControllerOptions): boolean =>
   )
 
 const canStartSideChat = (options: WorkspaceConversationControllerOptions): boolean =>
-  Boolean(
-    options.sideChat &&
-    options.activeSession &&
-    hasMainConversation(options.activeSession) &&
-    options.isPersistenceReady &&
-    options.agentConfigurationReady &&
-    options.actionability?.actions.startSideChat.allowed !== false &&
-    options.composer.view.transfers.length === 0 &&
-    options.composer.view.attachments.length === 0 &&
-    (docToText(options.composer.view.doc).trim() || options.composer.view.annotations.length > 0)
-  )
+  Boolean(options.sideChat) &&
+  !sideChatBlock({
+    action: 'send',
+    parent: options.activeSession,
+    persistenceReady: options.isPersistenceReady,
+    hasAttachments:
+      options.composer.view.transfers.length > 0 || options.composer.view.attachments.length > 0,
+    hasContent: Boolean(
+      docToText(options.composer.view.doc).trim() || options.composer.view.annotations.length > 0
+    )
+  })
 
 const useWorkspaceConversationController = (
   options: WorkspaceConversationControllerOptions
@@ -494,12 +493,22 @@ const useWorkspaceConversationController = (
               updatedAt: 0
             }
           : undefined
+        const clearOptimisticMessage = (): void => {
+          if (!sessionId || !optimisticMessage) return
+          setOptimisticMessages((current) => {
+            if (current[sessionId] !== optimisticMessage) return current
+            const next = { ...current }
+            delete next[sessionId]
+            return next
+          })
+        }
         if (sessionId && optimisticMessage) {
           setOptimisticMessages((current) => ({ ...current, [sessionId]: optimisticMessage }))
         }
         void runtime
           .sendMessage({
             sessionId,
+            onMessageAppended: clearOptimisticMessage,
             ...(branchInNewSession && activeSession
               ? { branchSourceSessionId: activeSession.id }
               : {}),
@@ -518,6 +527,7 @@ const useWorkspaceConversationController = (
             permissionProfile: current.permissionProfile,
             agentConfiguration: current.agentConfiguration,
             memoryEnabled,
+            ...(wasNewConversation ? { autoReviewEnabled } : {}),
             delegationPolicy: resolveDelegationPolicyForSend(
               branchInNewSession,
               activeSession,
@@ -548,21 +558,12 @@ const useWorkspaceConversationController = (
             if (snapshot.annotations.length > 0) {
               composer.lifecycle.clearDraft(snapshot.draftKey, snapshot.version)
             }
-            if (wasNewConversation && autoReviewEnabled) {
-              current.setAutoReviewEnabled(result.sessionId, true)
-            }
             current.resetNewConversationSettings()
             session.actions.resetNewConversationSpecialist()
           })
           .finally(() => {
             inFlightDraftKeysRef.current.delete(snapshot.draftKey)
-            if (!sessionId || !optimisticMessage) return
-            setOptimisticMessages((current) => {
-              if (current[sessionId]?.id !== optimisticMessage.id) return current
-              const next = { ...current }
-              delete next[sessionId]
-              return next
-            })
+            clearOptimisticMessage()
           })
       }
 

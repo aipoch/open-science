@@ -12,6 +12,7 @@ import {
 } from '@/stores/preview-workbench-store'
 import type { ArtifactVersionProvenance } from '../../../../shared/artifact-provenance'
 
+const notebookEvidenceProbe = vi.hoisted(() => ({ enabled: false }))
 const reviewerCardSpy = vi.hoisted(() => vi.fn())
 const workspaceMessageItemSpy = vi.hoisted(() => vi.fn())
 const workspaceActivityGroupSpy = vi.hoisted(() => vi.fn())
@@ -47,11 +48,17 @@ vi.mock('./previews/PreviewFileContent', () => ({
   )
 }))
 
-vi.mock('./SessionNotebookDialog', () => ({
-  NotebookDialogCell: ({ run }: { run: { runId: string } }) => (
-    <div data-testid="notebook-run">{run.runId}</div>
-  )
-}))
+vi.mock('./SessionNotebookDialog', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./SessionNotebookDialog')>()
+  return {
+    NotebookDialogCell: (props: React.ComponentProps<typeof actual.NotebookDialogCell>) =>
+      notebookEvidenceProbe.enabled ? (
+        <actual.NotebookDialogCell {...props} />
+      ) : (
+        <div data-testid="notebook-run">{props.run.runId}</div>
+      )
+  }
+})
 
 vi.mock('./WorkspaceMessageItem', () => ({
   WorkspaceMessageItem: (props: {
@@ -421,6 +428,7 @@ const clickTab = async (label: string): Promise<void> => {
 }
 
 beforeEach(async () => {
+  notebookEvidenceProbe.enabled = false
   Element.prototype.scrollIntoView = vi.fn()
   useArtifactEnvironmentLockStore.setState({ entries: new Map() })
   reviewerCardSpy.mockClear()
@@ -1019,7 +1027,7 @@ describe('ArtifactProvenancePanel', () => {
     )
     await flush()
 
-    expect(container.textContent).toContain('Edited in Open Science')
+    expect(container.textContent).toContain('Edited in Open-Science')
     expect(container.textContent).toContain('Frozen edited reference')
     expect(container.querySelectorAll('[role="tab"]')).toHaveLength(1)
     expect(getVersionProvenance).not.toHaveBeenCalled()
@@ -1092,7 +1100,7 @@ describe('ArtifactProvenancePanel', () => {
     )
     await flush()
 
-    expect(container.textContent).toContain('Edited in Open Science')
+    expect(container.textContent).toContain('Edited in Open-Science')
     expect(container.textContent).toContain('View source provenance · v1')
     expect(container.textContent).toContain('This edited version has no new agent execution.')
     expect(container.querySelector('[role="tablist"]')).toBeNull()
@@ -1180,7 +1188,7 @@ describe('ArtifactProvenancePanel', () => {
     expect(onVersionChange).toHaveBeenCalledWith(
       expect.objectContaining({ selectedVersionId: 'version-1', versionNumber: 1 })
     )
-    expect(container.textContent).toContain('Edited in Open Science')
+    expect(container.textContent).toContain('Edited in Open-Science')
     expect(container.textContent).toContain('View source provenance · v1')
   })
 
@@ -1725,7 +1733,7 @@ describe('ArtifactProvenancePanel', () => {
     await flush()
 
     expect(container.textContent).toContain(
-      'This message snapshot was created by a newer version of Open Science. Update the app to view it.'
+      'This message snapshot was created by a newer version of Open-Science. Update the app to view it.'
     )
     expect(container.textContent).not.toContain('(message-snapshot-unsupported)')
   })
@@ -2378,6 +2386,78 @@ describe('ArtifactProvenancePanel', () => {
     expect(container.querySelector('[aria-label="Download R lock"]')).not.toBeNull()
   })
 
+  it.each([false, true])(
+    'preserves partial lock diagnostics across runs sharing a checksum (reverse: %s)',
+    async (reverse) => {
+      const execution = provenance().execution!
+      const run = execution.runs[0]!
+      const runs = [
+        {
+          ...run,
+          environmentLock: {
+            state: 'partial' as const,
+            format: 'environment-lock-bundle' as const,
+            lockChecksum: 'e'.repeat(64),
+            partialReasons: ['non-conda-package-detected' as const],
+            diagnostics: [
+              {
+                reason: 'package-lock-missing' as const,
+                packageName: 'scipy',
+                observedVersion: '1.16.0'
+              },
+              {
+                reason: 'package-version-mismatch' as const,
+                packageName: 'numpy',
+                observedVersion: '2.3.2',
+                lockedVersion: '2.2.6'
+              }
+            ]
+          }
+        },
+        {
+          ...run,
+          runId: 'second-run',
+          runIndex: 1,
+          environmentLock: {
+            state: 'available' as const,
+            format: 'environment-lock-bundle' as const,
+            lockChecksum: 'e'.repeat(64)
+          }
+        },
+        {
+          ...run,
+          runId: 'third-run',
+          runIndex: 2,
+          environmentLock: {
+            state: 'partial' as const,
+            format: 'environment-lock-bundle' as const,
+            lockChecksum: 'e'.repeat(64),
+            partialReasons: ['environment-manifest-partial' as const],
+            diagnostics: [
+              {
+                reason: 'package-lock-missing' as const,
+                packageName: 'scipy',
+                observedVersion: '1.16.0'
+              }
+            ]
+          }
+        }
+      ]
+      getVersionExecution.mockResolvedValue({
+        execution: { ...execution, runs: reverse ? runs.reverse() : runs }
+      })
+      await clickTab('Environment')
+      await flush()
+      expect(container.textContent).toContain('Partial lock')
+      expect(container.textContent).not.toContain('Complete lock')
+      expect(container.textContent).toContain('Package inventory was incomplete.')
+      expect(container.textContent).toContain('No exact lock was captured for scipy (1.16.0).')
+      expect(container.textContent).toContain('numpy: installed 2.3.2, locked 2.2.6.')
+      expect(container.textContent?.match(/No exact lock was captured for scipy/g)).toHaveLength(1)
+      expect(container.querySelector('[aria-label="Create reusable environment"]')).toBeNull()
+    }
+  )
+
   it('downloads the exact captured producer block with the matching kernel extension', async () => {
     const download = [...container.querySelectorAll('button')].find(
       (button) => button.textContent === 'Download'
@@ -2805,4 +2885,16 @@ describe('Provenance selection and evidence completeness', () => {
     expect(container.querySelector('[data-testid="notebook-run"]')).not.toBeNull()
     expect(container.textContent).toMatch(/100[\s\S]*1[,]?000/)
   })
+})
+
+it('preserves saved run identity without describing provenance evidence as a historical gap', async () => {
+  notebookEvidenceProbe.enabled = true
+  await clickTab('Execution Log')
+  await flush()
+  expect(container.querySelector('[data-testid="session-notebook-cell"]')).not.toBeNull()
+  const evidence = container.querySelector('[data-testid="notebook-run-evidence"]')
+  expect(evidence?.textContent ?? '').toContain('notebook-run-2')
+  expect(container.textContent).not.toContain(
+    'Environment evidence is incomplete or unavailable. Current packages cannot fill historical gaps.'
+  )
 })

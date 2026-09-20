@@ -478,6 +478,45 @@ const MIGRATION_MANIFEST = [
     expect(result.stdout).toContain('Result: **pass**')
   })
 
+  it('validates the squash subject for merge groups without inspecting commits', () => {
+    expect(
+      checkPrPolicy({
+        eventName: 'merge_group',
+        scope: 'title',
+        title: 'ci(integrity): validate the queued squash subject'
+      })
+    ).toEqual({ ok: true, violations: [] })
+
+    expect(
+      checkPrPolicy({ eventName: 'merge_group', scope: 'title', title: '' }).violations
+    ).toEqual([{ kind: 'title', subject: '' }])
+
+    expect(
+      checkPrPolicy({
+        eventName: 'merge_group',
+        scope: 'commits',
+        title: 'Improve CI',
+        commitSubjects: ['missing conventional format']
+      })
+    ).toEqual({ ok: true, violations: [] })
+  })
+
+  it('fails a merge-group title-only CLI run when the title is missing', () => {
+    const result = spawnSync(process.execPath, [resolve('scripts/ci/check-pr-policy.mjs')], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        EVENT_NAME: 'merge_group',
+        GITHUB_STEP_SUMMARY: '',
+        POLICY_SCOPE: 'title',
+        PR_TITLE: ''
+      }
+    })
+
+    expect(result.status).toBe(1)
+    expect(result.stdout).toContain('Invalid title')
+  })
+
   it('rejects a breaking commit without the required footer', () => {
     const result = checkPrPolicy({
       eventName: 'pull_request',

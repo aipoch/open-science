@@ -69,7 +69,10 @@ export const windowsManagedRuntimeLocation = ({
     environmentDirectory = win32.dirname(normalizedRuntimeId)
   } else {
     if (win32.basename(interpreterKey) !== 'r.exe') return undefined
-    const binDirectory = win32.dirname(normalizedRuntimeId)
+    let binDirectory = win32.dirname(normalizedRuntimeId)
+    if (win32.basename(binDirectory).toLowerCase() === 'x64') {
+      binDirectory = win32.dirname(binDirectory)
+    }
     const rDirectory = win32.dirname(binDirectory)
     const libDirectory = win32.dirname(rDirectory)
     if (
@@ -156,5 +159,12 @@ export const relocatedWindowsManagedRuntimeId = ({
   )
   return language === 'python'
     ? win32.join(prefix, 'python.exe')
-    : win32.join(prefix, 'Lib', 'R', 'bin', 'R.exe')
+    : win32.join(
+        prefix,
+        'Lib',
+        'R',
+        'bin',
+        win32.basename(win32.dirname(location.interpreterKey)) === 'x64' ? 'x64' : '',
+        'R.exe'
+      )
 }

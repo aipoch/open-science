@@ -147,10 +147,7 @@ const ArtifactLiteratureDetailDialog = ({
                   ) : null}
                 </div>
                 <Dialog.Title
-                  className={cn(
-                    dialogTitleClassName,
-                    'line-clamp-3 break-words text-base leading-snug'
-                  )}
+                  className={cn(dialogTitleClassName, 'line-clamp-3 break-words leading-snug')}
                 >
                   {item.title}
                 </Dialog.Title>

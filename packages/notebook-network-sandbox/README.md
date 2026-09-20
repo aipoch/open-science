@@ -1,6 +1,6 @@
 # Notebook process sandbox
 
-This private package is the Open Science-owned process boundary for local Notebook, REPL, Notebook
+This private package is the Open-Science-owned process boundary for local Notebook, REPL, Notebook
 Bash, and `manage_packages` installer processes. Its low-level runtime remains private; application
 code crosses only the `NotebookProcessSandbox` adapter in
 `src/main/notebook/process-sandbox.ts`.
@@ -27,7 +27,7 @@ signing, TLS interception, or request-body inspection.
 
 ```text
 Settings > Network
-  ├─ Open Science domain groups
+  ├─ Open-Science domain groups
   └─ user Allowed domains
             │
             ▼
@@ -67,7 +67,7 @@ Policy is evaluated in this order:
 
 1. malformed destinations and local, private, metadata, or otherwise non-public addresses are
    denied without a prompt;
-2. enabled Open Science domains and saved Allowed domains are forwarded;
+2. enabled Open-Science domains and saved Allowed domains are forwarded;
 3. any other public hostname is denied with `OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED`;
 4. after that result, the Agent may call `request_network_access`; an approved one-time grant is
    consumed by the next command, while an always grant is persisted and hot-applied.
@@ -139,7 +139,8 @@ Call `dispose()` during lifecycle shutdown.
   access, protected files and directories remain read-only, and their ancestor boundaries omit
   delete-child access. A creation journal
   and ownership receipt under the original desktop user's
-  `%LOCALAPPDATA%\Aipoch\OpenScience\notebook-sandbox\<installationId>\` make setup recoverable.
+  `%LOCALAPPDATA%\Aipoch\Open-Science\notebook-sandbox\<installationId>\` make setup recoverable.
+  Existing ownership records under `Aipoch\OpenScience` stay in place; conflicting old and new records block initialization and uninstall. Explicit `OPEN_SCIENCE_CONFIG_ROOT` keeps task ownership records under that isolated root.
   The desktop process passes that root explicitly across UAC, so elevation with another
   administrator account cannot redirect ownership state into the administrator profile.
   The stable installation identity is independent of the selected install directory, so a moved
@@ -161,6 +162,17 @@ leaves standard mode available. Successful setup affects new Notebook and packag
 already-running sessions retain their original mode. `removeWindows()` uses the same explicit
 elevation behavior, stops protected AppContainer processes, removes only ownership-proven resources,
 and returns future launches to standard mode.
+
+Managed and external R kernels can start in Windows standard mode without administrator setup.
+Their authenticated gateway remains active, but software that ignores proxy settings is not isolated.
+R admission checks the native ownership receipt and pending operations: an absent setup permits
+standard execution, while incomplete, damaged, or unreadable protection does not. The admission
+decision is checked again before launch; a protected R request never falls back to standard mode.
+Settings mutations in the same owner process invalidate prepared R launches until the executor
+synchronously starts the owned process tree. Already-started trees retain their selected mode;
+this check does not coordinate mutations from other processes.
+Protected mode retains its separate R runtime-access authorization. This decision is transient and
+does not add a setting or change the ownership receipt format.
 
 Packaged callers pass `join(process.resourcesPath, 'notebook-network-sandbox')` as `resources.root`.
 Development callers point it at this package's `vendor` directory.

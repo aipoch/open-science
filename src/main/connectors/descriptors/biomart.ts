@@ -163,7 +163,7 @@ function toCsv(header: string[], rows: string[][]): string {
 }
 
 // Ensembl BioMart martservice: a MART -> DATASET -> ATTRIBUTES/FILTERS registry plus TSV attribute
-// queries and identifier translation (read-only). Tool names and shapes mirror the openscience BioMart
+// queries and identifier translation (read-only). Tool names and shapes mirror the open-science BioMart
 // connector: list endpoints and get_data return CSV strings; translations return a value / mapping.
 export const BIOMART_TOOLS: ToolDescriptor[] = [
   {

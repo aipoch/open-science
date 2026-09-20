@@ -1596,7 +1596,8 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     method: 'requestNetworkAccess',
     inputSchema: requestNetworkAccessToolSchema,
     mapResult: (raw) => raw,
-    resultLimitChars: NOTEBOOK_MCP_CONTROL_RESULT_LIMIT
+    resultLimitChars: NOTEBOOK_MCP_CONTROL_RESULT_LIMIT,
+    progressMessage: 'Waiting for Notebook network approval.'
   },
   {
     name: 'notebook_state',

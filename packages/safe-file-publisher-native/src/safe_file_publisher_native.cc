@@ -583,6 +583,12 @@ bool IsRemovalDirectory(const std::string& name) {
   return id[14] == '4' && (id[19] == '8' || id[19] == '9' || id[19] == 'a' || id[19] == 'b');
 }
 
+bool IsContentRemovalDirectory(const std::string& name) {
+  const std::string prefix = ".content-recovery-";
+  if (name.size() != prefix.size() + 64 || name.compare(0, prefix.size(), prefix) != 0) return false;
+  return name.find_first_not_of("0123456789abcdef", prefix.size()) == std::string::npos;
+}
+
 bool IsPublicationTemporary(const std::string& name) {
   if (name.size() != 105 || name[64] != '.' || name.substr(101) != ".tmp") return false;
   for (size_t i = 0; i < 64; ++i) {
@@ -666,7 +672,7 @@ bool ReadRemovalNumber(std::istringstream& stream, T* value) {
       line == std::to_string(*value);
 }
 
-int ReadRemovalReceipt(int directory, RemovalReceipt* receipt) {
+int ReadRemovalReceipt(int directory, RemovalReceipt* receipt, const std::string& content_key) {
   RemovalFd file(openat(directory, "receipt", O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC));
   if (file.value < 0) return -1;
   struct stat info {};
@@ -683,9 +689,12 @@ int ReadRemovalReceipt(int directory, RemovalReceipt* receipt) {
     offset += count;
   }
   std::istringstream stream(bytes);
-  std::string version, extra;
-  if (!std::getline(stream, version) || version != "publication-removal-v1" ||
-      !std::getline(stream, receipt->name) || !IsPublicationTemporary(receipt->name) ||
+  std::string version, key, extra;
+  const bool content = !content_key.empty();
+  if (!std::getline(stream, version) || version != (content ? "content-removal-v1" : "publication-removal-v1") ||
+      (content && (!std::getline(stream, key) || key != content_key)) ||
+      !std::getline(stream, receipt->name) ||
+      (content ? !IsSimpleName(receipt->name) : !IsPublicationTemporary(receipt->name)) ||
       receipt->name.find('\0') != std::string::npos || receipt->name.find('\r') != std::string::npos ||
       !ReadRemovalNumber(stream, &receipt->parent_dev) || !ReadRemovalNumber(stream, &receipt->parent_ino) ||
       !ReadRemovalNumber(stream, &receipt->dev) || !ReadRemovalNumber(stream, &receipt->ino) ||
@@ -697,8 +706,10 @@ int ReadRemovalReceipt(int directory, RemovalReceipt* receipt) {
   return 0;
 }
 
-int WriteRemovalReceipt(int directory, const RemovalReceipt& receipt) {
-  const std::string bytes = "publication-removal-v1\n" + receipt.name + "\n" +
+int WriteRemovalReceipt(int directory, const RemovalReceipt& receipt, const std::string& content_key) {
+  const std::string header = content_key.empty() ? "publication-removal-v1\n" :
+      "content-removal-v1\n" + content_key + "\n";
+  const std::string bytes = header + receipt.name + "\n" +
       std::to_string(receipt.parent_dev) + "\n" + std::to_string(receipt.parent_ino) + "\n" +
       std::to_string(receipt.dev) + "\n" + std::to_string(receipt.ino) + "\n" +
       std::to_string(receipt.size) + "\n" + std::to_string(receipt.mtime) + "\n";
@@ -793,7 +804,8 @@ napi_value RemoveAnchoredFile(napi_env env, napi_callback_info info) {
       napi_get_value_bigint_uint64(env, argv[7], &file_size, &size_ok) != napi_ok ||
       napi_get_value_bigint_int64(env, argv[8], &file_mtime, &time_ok) != napi_ok ||
       !file_dev_ok || !file_ino_ok || !size_ok || !time_ok ||
-      !ReadString(env, argv[9], &quarantine) || !IsRemovalDirectory(quarantine)) {
+      !ReadString(env, argv[9], &quarantine) ||
+      (!IsRemovalDirectory(quarantine) && !IsContentRemovalDirectory(quarantine))) {
     return ThrowError(env, "Invalid anchored removal arguments.", "EINVAL");
   }
 #ifdef _WIN32
@@ -888,7 +900,7 @@ napi_value RemoveAnchoredFile(napi_env env, napi_callback_info info) {
   RemovalFd held(OpenRemovalQuarantine(parent.value, quarantine));
   if (held.value < 0) return ThrowError(env, "Unsafe removal quarantine.", PosixErrorCode(errno));
   const RemovalReceipt receipt{filename, expected_dev, expected_ino, file_dev, file_ino, file_size, file_mtime};
-  if (WriteRemovalReceipt(held.value, receipt) != 0 || fsync(held.value) != 0 || fsync(parent.value) != 0 ||
+  if (WriteRemovalReceipt(held.value, receipt, IsContentRemovalDirectory(quarantine) ? quarantine : "") != 0 || fsync(held.value) != 0 || fsync(parent.value) != 0 ||
       FinishRemoval(parent.value, held.value, quarantine, receipt) != 0)
     return ThrowError(env, "Publication quarantine requires recovery: " + quarantine, PosixErrorCode(errno));
 #endif
@@ -898,17 +910,21 @@ napi_value RemoveAnchoredFile(napi_env env, napi_callback_info info) {
 }
 
 napi_value RecoverAnchoredRemoval(napi_env env, napi_callback_info info) {
-  size_t argc = 5;
-  napi_value argv[5];
-  std::string root, relative_parent, directory;
+  size_t argc = 6;
+  napi_value argv[6];
+  std::string root, relative_parent, directory, content_filename;
   std::vector<std::string> components;
   uint64_t dev = 0, ino = 0;
   bool dev_ok = false, ino_ok = false;
-  if (napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr) != napi_ok || argc != 5 ||
+  if (napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr) != napi_ok || (argc != 5 && argc != 6) ||
       !ReadString(env, argv[0], &root) || root.empty() || root.find('\0') != std::string::npos ||
       !ReadString(env, argv[1], &relative_parent) || relative_parent.find('\0') != std::string::npos ||
       !SplitRelativePath(relative_parent, &components) || !ReadString(env, argv[2], &directory) ||
-      !IsRemovalDirectory(directory) ||
+      (argc == 6
+          ? (!IsContentRemovalDirectory(directory) || !ReadString(env, argv[5], &content_filename) ||
+             !IsSimpleName(content_filename) || content_filename.find_first_of("\r\n") != std::string::npos ||
+             content_filename.find('\0') != std::string::npos)
+          : !IsRemovalDirectory(directory)) ||
       napi_get_value_bigint_uint64(env, argv[3], &dev, &dev_ok) != napi_ok ||
       napi_get_value_bigint_uint64(env, argv[4], &ino, &ino_ok) != napi_ok || !dev_ok || !ino_ok)
     return ThrowError(env, "Invalid removal recovery arguments.", "EINVAL");
@@ -922,12 +938,13 @@ napi_value RecoverAnchoredRemoval(napi_env env, napi_callback_info info) {
   RemovalFd held(OpenRemovalQuarantine(parent.value, directory));
   if (held.value < 0) return ThrowError(env, "Unsafe recovery quarantine.", PosixErrorCode(errno));
   RemovalReceipt receipt{};
-  if (ReadRemovalReceipt(held.value, &receipt) != 0) {
+  if (ReadRemovalReceipt(held.value, &receipt, argc == 6 ? directory : "") != 0) {
     if (errno != ENOENT || unlinkat(parent.value, directory.c_str(), AT_REMOVEDIR) != 0)
       return ThrowError(env, "Unrecognized publication recovery receipt.", PosixErrorCode(errno));
     if (fsync(parent.value) != 0) return ThrowError(env, "Could not sync recovery directory.", PosixErrorCode(errno));
-  } else if (components.size() != 3 || components[0] != "content" || components[1] != "blobs" ||
-             components[2] != receipt.name.substr(0, 2)) {
+  } else if (argc == 6 ? receipt.name != content_filename :
+             (components.size() != 3 || components[0] != "content" || components[1] != "blobs" ||
+              components[2] != receipt.name.substr(0, 2))) {
     return ThrowError(env, "Recovery receipt is outside the publication namespace.", "EINVAL");
   } else if (FinishRemoval(parent.value, held.value, directory, receipt) != 0) {
     return ThrowError(env, "Publication quarantine requires recovery: " + directory, PosixErrorCode(errno));

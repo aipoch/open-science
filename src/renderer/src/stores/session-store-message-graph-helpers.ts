@@ -49,6 +49,7 @@ export type AppendUserMessageInput = {
   agentModel?: string
   agentConfiguration?: PersistedChatSession['agentConfiguration']
   memoryEnabled?: boolean
+  autoReviewEnabled?: boolean
   delegationPolicy?: DelegationPolicy
   // Resolved send target stamped onto the user Message; drives config-change timeline markers.
   agentTarget?: PersistedChatMessage['agentTarget']

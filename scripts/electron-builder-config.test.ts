@@ -121,7 +121,7 @@ describe('electron-builder Windows targets', () => {
     expect(config).toContain('from: build/windows-runtime-cache-uninstall.ps1')
     expect(config).toContain('include: build/installer-license.nsh')
     expect(readFileSync(join(process.cwd(), 'build', 'installer-license.nsh'), 'utf8')).toContain(
-      '!include "${BUILD_RESOURCES_DIR}/installer.nsh"'
+      '!include "${BUILD_RESOURCES_DIR}\\installer.nsh"'
     )
     expect(include).toContain('windows-runtime-cache-uninstall.ps1')
     const customUninstall = include.match(/!macro customUnInstall\n([\s\S]*?)!macroend/)?.[1]
@@ -166,7 +166,12 @@ describe('electron-builder Windows targets', () => {
     expect(include).toContain('${ifNot} ${isUpdated}')
     expect(include).toContain('notebookSandboxCleanupComplete')
     expect(include).toContain('The uninstall was stopped so the cleanup can be retried.')
-    expect(cleanup).toContain('-ArgumentList @($Command, $installationId, $ownershipRoot)')
+    expect(cleanup).toContain('-ArgumentList $quotedArguments')
+    expect(cleanup).toContain(
+      '@($Command, $installationId, $ownershipRoot) | ForEach-Object { ConvertTo-WindowsArgument $_ }'
+    )
+    expect(cleanup).toContain('OPEN_SCIENCE_E2E_STORAGE_ROOT')
+    expect(cleanup).not.toContain('OPEN_SCIENCE_E2E_ROOT')
     expect(cleanup).toContain('& $HostPath $Command $installationId $ownershipRoot')
     expect(cleanup).toContain('& $HostPath prepare-remove $installationId $ownershipRoot')
     expect(cleanup).toContain('& $HostPath finish-remove $installationId $ownershipRoot')
@@ -249,15 +254,31 @@ describe('electron-builder macOS icons', () => {
 
 it('registers .science as a viewable document without changing the per-user installer', () => {
   const config = load(readFileSync(join(process.cwd(), 'electron-builder.yml'), 'utf8')) as {
-    fileAssociations: { ext: string; role: string; mimeType: string }[]
+    win: {
+      fileAssociations: {
+        ext: string
+        role: string
+        mimeType: string
+        name: string
+        description: string
+      }[]
+    }
+    mac: { fileAssociations: { name: string }[] }
+    linux: { fileAssociations: { name: string }[] }
     nsis: { perMachine: boolean; allowElevation: boolean }
   }
-  expect(config.fileAssociations).toContainEqual(
+  expect(config.win.fileAssociations).toContainEqual(
     expect.objectContaining({
       ext: 'science',
       role: 'Viewer',
       mimeType: 'application/x-open-science-session'
     })
   )
+  expect(config.win.fileAssociations[0]).toMatchObject({
+    name: 'Open Science Session package',
+    description: 'Open-Science Session package'
+  })
+  expect(config.mac.fileAssociations[0].name).toBe('Open-Science Session package')
+  expect(config.linux.fileAssociations[0].name).toBe('Open-Science Session package')
   expect(config.nsis).toMatchObject({ perMachine: false, allowElevation: false })
 })

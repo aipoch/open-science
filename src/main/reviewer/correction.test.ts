@@ -331,7 +331,8 @@ describe('single-round auditor correction', () => {
         kind: 'application',
         feature: 'reviewer',
         purpose: 'correction'
-      })
+      }),
+      { onPromptAdmitted: expect.any(Function) }
     )
     expect(correctionSendPrompt.mock.calls[0]?.[0].provenanceContext?.promptMessageId).not.toBe(
       'msg-1'

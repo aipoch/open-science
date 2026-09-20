@@ -506,7 +506,7 @@ describe('PermissionsPanel', () => {
     expect(
       document.body.querySelector('[aria-label="Revoke python · Project: Example project"]')
     ).not.toBeNull()
-    expect(document.body.querySelector('h3')?.className).toContain('text-base')
+    expect(document.body.querySelector('h3')?.className).toContain('text-[17px]')
     const permissionRow = document.body.querySelector<HTMLElement>('[data-slot="permission-row"]')
     expect(permissionRow?.className).toContain('min-h-11')
     expect(permissionRow?.className).toContain('py-1.5')

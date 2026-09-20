@@ -180,7 +180,7 @@ export function ClipboardFixture(): React.JSX.Element {
     <TooltipProvider>
       <main className="mx-auto flex min-h-screen max-w-4xl flex-col gap-12 px-8 py-12">
         <header className="text-sm text-muted-foreground">
-          Open Science · Message clipboard browser test
+          Open-Science · Message clipboard browser test
         </header>
         <MessageScrollerProvider>
           <div className="h-56">

@@ -298,14 +298,17 @@ export const LiteratureDuplicatesView = ({
                       if (group.itemIds.length > 20) setExpanded({ id: group.id, requestKey })
                       else void review(group)
                     }}
+                    aria-busy={Boolean(reviewing === group.id)}
                   >
-                    {reviewing === group.id ? (
-                      <LoaderCircle
-                        className="size-4 animate-spin motion-reduce:animate-none"
-                        aria-hidden="true"
-                      />
-                    ) : null}
-                    {t('Review duplicates')}
+                    <span key={String(reviewing === group.id)} className="button-feedback">
+                      {reviewing === group.id ? (
+                        <LoaderCircle
+                          className="size-4 animate-spin motion-reduce:animate-none"
+                          aria-hidden="true"
+                        />
+                      ) : null}
+                      {t('Review duplicates')}
+                    </span>
                   </Button>
                   {expanded?.id === group.id && expanded.requestKey === requestKey ? (
                     <LiteratureDuplicateMembers

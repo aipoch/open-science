@@ -1,3 +1,4 @@
+import { InlineNotice } from '@/components/ui/inline-notice'
 import { useId, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Checkbox } from 'radix-ui'
@@ -228,7 +229,7 @@ export const PackageFileSelection = ({
           </p>
         ) : null}
         {oversized ? (
-          <p className="text-xs text-status-warning">
+          <InlineNotice>
             {requiredOversized
               ? t(
                   'Required evidence exceeds {{limit}} per file. This Session cannot be exported.',
@@ -238,7 +239,7 @@ export const PackageFileSelection = ({
                   'Full export is unavailable because a file exceeds {{limit}}. Choose Essential export or customize the contents.',
                   { limit: packageBytes(PACKAGE_MAX_FILE_BYTES) }
                 )}
-          </p>
+          </InlineNotice>
         ) : null}
         <div className="space-y-3 rounded-lg bg-muted/50 p-4">
           {selectionPreset === 'custom' ? (

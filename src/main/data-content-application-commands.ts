@@ -1,3 +1,5 @@
+import { RuntimeWriterOwner } from './session-persistence/runtime-writer'
+import { runtimeWriterClaimContract, type RuntimeWriterLease } from '../shared/runtime-writer'
 import {
   defineApplicationCommand,
   defineApplicationCommandGroup,
@@ -6,7 +8,7 @@ import {
   type ApplicationInvocation
 } from './application-command-router'
 import type { ApplicationEventMap, ApplicationEventPublisher } from './application-events'
-import type { ArtifactHandlers } from './artifacts/ipc'
+import { artifactFinalizationFailureResult, type ArtifactHandlers } from './artifacts/ipc'
 import {
   ArtifactFinalizationProofError,
   ArtifactOwnershipPersistenceRaceError
@@ -91,6 +93,12 @@ type PreviewApplicationCommandOwner = Readonly<{
 }>
 
 type SessionApplicationCommandOwner = Omit<SessionPersistenceHandlers, 'deleteSession'> & {
+  bindTaskSession(
+    request: SessionPersistence.BindTaskSessionRequest
+  ): Promise<SessionPersistence.PersistedChatSession>
+  admitTaskTurn(
+    request: SessionPersistence.AdmitTaskSessionTurnRequest
+  ): Promise<SessionPersistence.PersistedChatSession>
   stageTaskCompletion(
     request: SessionPersistence.StageTaskSessionCompletionRequest
   ): Promise<SessionPersistence.PersistedChatSession>
@@ -130,6 +138,9 @@ type InvocationOwner<Owner> = Readonly<{
 // T2h0 injects this adapter; it resolves native window/progress targets without putting Electron
 // objects in transport-neutral application invocations.
 type ElectronDataContentApplicationCommandAdapter = InvocationOwner<{
+  forkSession: (
+    request: SessionPackage.SessionPackageRequest
+  ) => Promise<SessionPackage.SessionPackageRequest | null>
   exportSessionPackage: (
     request: SessionPackage.SessionPackageRequest
   ) => Promise<SessionPackage.SessionPackageExportResult>
@@ -179,6 +190,7 @@ type UploadApplicationCommandOwner = InvocationOwner<{
 type DataRootWrite = <Result>(operation: () => Promise<Result>) => Promise<Result>
 
 type DataContentApplicationCommandDependencies = Readonly<{
+  runtimeWriter?: RuntimeWriterOwner
   artifacts: ArtifactHandlers
   electron: ElectronDataContentApplicationCommandAdapter
   events: ApplicationEventPublisher
@@ -241,6 +253,11 @@ const dataContentApplicationCommands = Object.freeze({
     'artifacts:resolve-version-descriptors',
     'resolveVersionDescriptors'
   ),
+  runtimeWriterClaim: defineApplicationCommand<
+    'lifecycle:claim-runtime-writer',
+    readonly [],
+    RuntimeWriterLease
+  >('lifecycle:claim-runtime-writer', runtimeWriterClaimContract),
   lifecycleClientId: defineApplicationCommand<'lifecycle:client-id', readonly [], string>(
     'lifecycle:client-id'
   ),
@@ -337,6 +354,11 @@ const dataContentApplicationCommands = Object.freeze({
     'sessions:export-conversation',
     'exportConversationFromInvokingWindow'
   ),
+  sessionFork: electronCommand(
+    'sessions:fork',
+    'forkSession',
+    SessionPackage.sessionPackageCommandContracts.fork
+  ),
   sessionExportPackage: electronCommand(
     'sessions:export-package',
     'exportSessionPackage',
@@ -390,6 +412,16 @@ const dataContentApplicationCommands = Object.freeze({
     ],
     SessionPersistence.PersistedChatSession
   >('sessions:save-session', SessionPersistence.sessionApplicationCommandContracts.save),
+  sessionBindTask: defineApplicationCommand<
+    'sessions:bind-task-session',
+    readonly [request: SessionPersistence.BindTaskSessionRequest],
+    SessionPersistence.PersistedChatSession
+  >('sessions:bind-task-session'),
+  sessionAdmitTaskTurn: defineApplicationCommand<
+    'sessions:admit-task-turn',
+    readonly [request: SessionPersistence.AdmitTaskSessionTurnRequest],
+    SessionPersistence.PersistedChatSession
+  >('sessions:admit-task-turn'),
   sessionStageTaskCompletion: defineApplicationCommand<
     'sessions:stage-task-completion',
     readonly [request: SessionPersistence.StageTaskSessionCompletionRequest],
@@ -460,7 +492,8 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.artifactResolveVersionDescriptors
   ] as const),
   defineApplicationCommandGroup('lifecycle', [
-    dataContentApplicationCommands.lifecycleClientId
+    dataContentApplicationCommands.lifecycleClientId,
+    dataContentApplicationCommands.runtimeWriterClaim
   ] as const),
   defineApplicationCommandGroup('preview', [
     dataContentApplicationCommands.previewDelete,
@@ -496,6 +529,7 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.sessionDelete,
     dataContentApplicationCommands.sessionEditDetails,
     dataContentApplicationCommands.sessionExportConversation,
+    dataContentApplicationCommands.sessionFork,
     dataContentApplicationCommands.sessionExportPackage,
     dataContentApplicationCommands.sessionImportPackage,
     dataContentApplicationCommands.sessionPackageOperation,
@@ -510,6 +544,8 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.sessionUpdateArchive,
     dataContentApplicationCommands.sessionUnlinkPdfContext,
     dataContentApplicationCommands.sessionSave,
+    dataContentApplicationCommands.sessionBindTask,
+    dataContentApplicationCommands.sessionAdmitTaskTurn,
     dataContentApplicationCommands.sessionStageTaskCompletion,
     dataContentApplicationCommands.sessionSettleTaskCompletion,
     dataContentApplicationCommands.sessionFailTaskRun,
@@ -590,6 +626,7 @@ const registerDataContentApplicationCommands = (
   dependencies: DataContentApplicationCommandDependencies
 ): ApplicationCommandInstallation => {
   const scope = registrar.createScope()
+  const runtimeWriter = dependencies.runtimeWriter ?? new RuntimeWriterOwner()
 
   try {
     scope.registerGroup(dataContentApplicationCommandGroups[0], {
@@ -600,6 +637,8 @@ const registerDataContentApplicationCommands = (
             artifacts: await dependencies.artifacts.finalizeRunArtifacts(args[0])
           }
         } catch (error) {
+          const executionFailure = artifactFinalizationFailureResult(error)
+          if (executionFailure) return executionFailure
           if (error instanceof ArtifactOwnershipPersistenceRaceError) {
             return {
               ok: false as const,
@@ -642,6 +681,8 @@ const registerDataContentApplicationCommands = (
         dependencies.artifacts.resolveVersionDescriptors(args[0])
     })
     scope.registerGroup(dataContentApplicationCommandGroups[1], {
+      'lifecycle:claim-runtime-writer': ({ callerContext }) =>
+        runtimeWriter.claim(callerContext.lifecycleClientId),
       'lifecycle:client-id': ({ callerContext }) => callerContext.lifecycleClientId
     })
     scope.registerGroup(dataContentApplicationCommandGroups[2], {
@@ -757,6 +798,10 @@ const registerDataContentApplicationCommands = (
         )
         return dependencies.electron.exportConversationFromInvokingWindow(invocation)
       },
+      'sessions:fork': (invocation) => {
+        assertElectronCaller(invocation, dataContentApplicationCommands.sessionFork.name)
+        return dependencies.electron.forkSession(invocation)
+      },
       'sessions:export-package': (invocation) => {
         assertElectronCaller(invocation, dataContentApplicationCommands.sessionExportPackage.name)
         return dependencies.electron.exportSessionPackage(invocation)
@@ -834,7 +879,14 @@ const registerDataContentApplicationCommands = (
         ),
       'sessions:save-session': (invocation) => {
         const originClientId = invocation.callerContext.lifecycleClientId
-        return dependencies.withDataRootWrite(() =>
+        const writerToken = invocation.args[1]?.runtimeWriterToken
+        const withRuntimeWriterWrite = <T>(run: () => Promise<T>): Promise<T> =>
+          dependencies.withDataRootWrite(() =>
+            writerToken === undefined
+              ? run()
+              : runtimeWriter.commit(originClientId, writerToken, run)
+          )
+        return withRuntimeWriterWrite(() =>
           preserveSessionSizeLimitCode(async () => {
             let result: Awaited<ReturnType<SessionPersistenceHandlers['saveSession']>>
             try {
@@ -865,6 +917,32 @@ const registerDataContentApplicationCommands = (
               { session: result.session, originClientId }
             )
             return result.session
+          })
+        )
+      },
+      'sessions:bind-task-session': (invocation) => {
+        const originClientId = invocation.callerContext.lifecycleClientId
+        return dependencies.withDataRootWrite(() =>
+          preserveSessionSizeLimitCode(async () => {
+            const session = await dependencies.sessions.bindTaskSession(invocation.args[0])
+            publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.sessionUpdated, {
+              session,
+              originClientId
+            })
+            return session
+          })
+        )
+      },
+      'sessions:admit-task-turn': (invocation) => {
+        const originClientId = invocation.callerContext.lifecycleClientId
+        return dependencies.withDataRootWrite(() =>
+          preserveSessionSizeLimitCode(async () => {
+            const session = await dependencies.sessions.admitTaskTurn(invocation.args[0])
+            publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.sessionUpdated, {
+              session,
+              originClientId
+            })
+            return session
           })
         )
       },

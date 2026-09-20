@@ -71,13 +71,25 @@ async function fetchSnapshotId(ctx: ToolContext): Promise<string> {
   return (await ctx.fetchText(`${BASE_URL}/latest_snapshot_identifier`)).trim()
 }
 
-// client.py swallows fetch failures for the optional blobs (description/markers/sources may not
-// exist for every cell type) and falls back to empty results; mirror that instead of failing.
+// Descriptions remain best-effort enrichment of the cell metadata. Preserve their existing
+// fallback policy independently of marker and source query failures.
 async function tryFetchJson(ctx: ToolContext, url: string): Promise<unknown | undefined> {
   try {
     return await ctx.fetchJson(url)
   } catch {
     return undefined
+  }
+}
+
+// Optional data blobs may be absent (404 or a successful empty body). Other failures must
+// not become false evidence that a cell type has no markers, sources, or tissues.
+async function fetchOptionalData(ctx: ToolContext, url: string): Promise<unknown | undefined> {
+  try {
+    const text = await ctx.fetchText(url)
+    return text.trim() ? JSON.parse(text) : undefined
+  } catch (err) {
+    if (err instanceof Error && /^HTTP 404 for /.test(err.message)) return undefined
+    throw err
   }
 }
 
@@ -285,7 +297,7 @@ export const CELLGUIDE_TOOLS: ToolDescriptor[] = [
 
       const path =
         markerType === 'canonical' ? 'canonical_marker_genes' : 'computational_marker_genes'
-      const raw = await tryFetchJson(
+      const raw = await fetchOptionalData(
         ctx,
         `${BASE_URL}/${loaded.snapshot}/${path}/${encodeURIComponent(loaded.urlId)}.json`
       )
@@ -334,7 +346,7 @@ export const CELLGUIDE_TOOLS: ToolDescriptor[] = [
       const loaded = await loadCellType(ctx, input)
       if ('error' in loaded) return loaded
 
-      const raw = await tryFetchJson(
+      const raw = await fetchOptionalData(
         ctx,
         `${BASE_URL}/${loaded.snapshot}/source_collections/${encodeURIComponent(loaded.urlId)}.json`
       )
@@ -374,7 +386,7 @@ export const CELLGUIDE_TOOLS: ToolDescriptor[] = [
       const loaded = await loadCellType(ctx, input)
       if ('error' in loaded) return loaded
 
-      const raw = await tryFetchJson(
+      const raw = await fetchOptionalData(
         ctx,
         `${BASE_URL}/${loaded.snapshot}/source_collections/${encodeURIComponent(loaded.urlId)}.json`
       )

@@ -1,3 +1,5 @@
+import { ExternalTextLink } from '@/components/ExternalTextLink'
+import { InlineNotice } from '@/components/ui/inline-notice'
 import { useFileCredentialNotice } from './use-file-credential-notice'
 import { BookOpen, Check, KeyRound, Server, Trash2, X } from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
@@ -336,9 +338,21 @@ export function CredentialsPanel({
           </div>
         ) : null}
         <div className="space-y-1.5">
-          <label htmlFor="service-api-key" className="text-sm font-medium">
-            {isOpenAlex ? t('API key') : t('NCBI API key')}
-          </label>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <label htmlFor="service-api-key" className="text-sm font-medium">
+              {isOpenAlex ? t('API key') : t('NCBI API key')}
+            </label>
+            <ExternalTextLink
+              href={
+                isOpenAlex
+                  ? 'https://openalex.org/settings/api'
+                  : 'https://account.ncbi.nlm.nih.gov/settings/'
+              }
+              className="whitespace-nowrap text-xs"
+            >
+              {t('Get an API key')}
+            </ExternalTextLink>
+          </div>
           <MaskedPasswordField
             id="service-api-key"
             value={apiKey}
@@ -358,9 +372,9 @@ export function CredentialsPanel({
           </p>
         </div>
         {!encryptionAvailable ? (
-          <p className="text-xs text-danger-000">
+          <InlineNotice level="error" role="note">
             {t('Secure key storage is unavailable. Unlock the system keychain and try again.')}
-          </p>
+          </InlineNotice>
         ) : null}
         {message ? (
           <p role="status" className="text-xs text-muted-foreground">
@@ -473,7 +487,7 @@ export function CredentialsPanel({
         <p className="mt-1 text-sm text-muted-foreground">
           {fileCredentialNotice ??
             t(
-              'API keys and credentials used by Open Science on your behalf, stored encrypted on this computer.'
+              'API keys and credentials used by Open-Science on your behalf, stored encrypted on this computer.'
             )}
         </p>
         <div className="mt-4 divide-y divide-border rounded-xl border border-border">
@@ -604,9 +618,9 @@ export function CredentialsPanel({
             <p className="text-sm text-muted-foreground">{t('No Connector credentials yet.')}</p>
           ) : null}
           {credentialMessage ? (
-            <p className="mt-3 text-sm text-destructive" role="alert">
+            <InlineNotice level="error" className="mt-3" role="alert">
               {credentialMessage}
-            </p>
+            </InlineNotice>
           ) : null}
         </SettingsSection>
       ) : null}
@@ -705,9 +719,9 @@ export function CredentialsPanel({
                 {t('This permanently removes the stored credential from this device.')}
               </AlertDialog.Description>
               {credentialMessage ? (
-                <p className="mt-4 text-sm text-destructive" role="alert">
+                <InlineNotice level="error" className="mt-4" role="alert">
                   {credentialMessage}
-                </p>
+                </InlineNotice>
               ) : null}
             </div>
             <div className={dialogFooterClassName}>

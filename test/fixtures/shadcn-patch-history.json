@@ -47,5 +47,18 @@
     "commit": "e1ea7d51",
     "sha256": "77e432ad0819c7e490a61a2085fc04b9ba1375c063f41614860bd6f9d7a6a641",
     "edits": [[17022, 0, ",t"]]
+  },
+  {
+    "commit": "2e224cba",
+    "sha256": "6a757b0a426ee20bb883217dae1de8cb528bbcc2bdad79c586908495c52e5a84",
+    "edits": [
+      [12088, 12, "syncPosition"],
+      [12127, 0, "("],
+      [12157, 0, "&&u.current!==\"anchored-to-message\")"],
+      [13464, 12, "syncPosition"],
+      [13795, 12, "syncPosition"],
+      [15827, 12, "syncPosition"],
+      [16653, 12, "syncPosition"]
+    ]
   }
 ]

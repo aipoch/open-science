@@ -2,6 +2,7 @@ import { writeFile } from 'node:fs/promises'
 import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
 import { openProjectSession } from './certification/helpers'
+import { openGeneralSettings } from './fixtures/settings-preferences'
 
 test.use({ windowMode: 'normal' })
 
@@ -102,4 +103,102 @@ test('bounds history scrolling and preserves native find across the transcript',
     path: timingsPath,
     contentType: 'application/json'
   })
+})
+
+test('does not force unannotated transcript geometry during native layout changes', async ({
+  app
+}, testInfo) => {
+  let page = await app.completeOnboarding()
+  const cwd = await app.createTestDirectory('layout-history')
+  await page.evaluate(async (cwd) => {
+    const project = await window.api.projects.create({ name: 'Layout history', description: '' })
+    const now = Date.now() - 400_000
+    await window.api.sessions.saveSession({
+      id: 'layout-history',
+      projectId: project.id,
+      title: 'Layout history',
+      cwd,
+      status: 'idle',
+      createdAt: now,
+      updatedAt: now + 400,
+      messages: Array.from({ length: 400 }, (_, index) => ({
+        id: `layout-${index}`,
+        role: index % 2 ? ('agent' as const) : ('user' as const),
+        content:
+          index % 2
+            ? `## Result ${index}\n\n${'Historical paragraph for resizing. '.repeat(20)}\n\n| Column | Value |\n| --- | --- |\n| Data | 123 |\n\n\`\`\`python\nprint("layout")\n\`\`\``
+            : `Historical question ${index}. ${'Explain the data. '.repeat(10)}`,
+        status: 'complete' as const,
+        eventIds: [],
+        createdAt: now + index,
+        updatedAt: now + index
+      }))
+    })
+  }, cwd)
+  page = await app.restart()
+  await openProjectSession(page, 'Layout history', 'Layout history')
+  await expect(page.locator('[data-message-id="layout-399"]')).toBeVisible()
+  await expect(page.locator('[data-slot="message-scroller-item"]')).toHaveCount(80)
+  await expect(page.locator('[data-annotation-surface]').first()).toBeAttached()
+
+  // Count the synchronous geometry reads identified by the issue's CPU reproduction.
+  // Work counts are deterministic; wall-clock/CPU thresholds would vary across CI runners.
+  await page.evaluate(() => {
+    const original = Element.prototype.getBoundingClientRect
+    let reads = 0
+    Object.defineProperty(window, '__unannotatedLayoutProbe', {
+      configurable: true,
+      value: {
+        count: () => reads,
+        restore: () => {
+          Element.prototype.getBoundingClientRect = original
+        }
+      }
+    })
+    Element.prototype.getBoundingClientRect = function () {
+      if (
+        this.matches(
+          '[data-annotation-surface]:not([data-annotation-active]):not([data-bookmark-active])'
+        )
+      )
+        reads++
+      return original.call(this)
+    }
+  })
+  const counts: Record<string, number> = {}
+  const readCount = (): Promise<number> =>
+    page.evaluate(() =>
+      (
+        window as unknown as { __unannotatedLayoutProbe: { count: () => number } }
+      ).__unannotatedLayoutProbe.count()
+    )
+  try {
+    const settings = await openGeneralSettings(page)
+    await settings.getByRole('button', { name: 'Close settings' }).click()
+    await expect(settings).toBeHidden()
+    counts.settings = await readCount()
+    for (let i = 0; i < 12; i++) {
+      await app.setMainWindowSize(1050 + i * 15, 800 + (i % 5) * 10)
+      await page.evaluate(
+        () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+      )
+    }
+    counts.resize = (await readCount()) - counts.settings
+    await testInfo.attach('unannotated-geometry-reads', {
+      body: JSON.stringify(counts),
+      contentType: 'application/json'
+    })
+    expect(counts, 'empty marker surfaces must not force offscreen layout').toEqual({
+      settings: 0,
+      resize: 0
+    })
+    await page.screenshot({ path: testInfo.outputPath('resized-history.png') })
+  } finally {
+    await page.evaluate(() => {
+      ;(
+        window as unknown as { __unannotatedLayoutProbe: { restore: () => void } }
+      ).__unannotatedLayoutProbe.restore()
+      Reflect.deleteProperty(window, '__unannotatedLayoutProbe')
+    })
+  }
 })

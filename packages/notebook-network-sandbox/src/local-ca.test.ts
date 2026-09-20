@@ -46,7 +46,7 @@ describe('process inspection CA', () => {
     await expect(pending).rejects.toThrow('closed')
   })
 
-  it('serves a verifiable exact-host certificate only when its client CA is trusted', async () => {
+  it('serves an exact-host certificate from the branded issuer only when its client CA is trusted', async () => {
     const ca = await createLocalCertificateAuthority()
     const context = await ca.getSecureContext('example.test')
     const server = createServer(
@@ -58,6 +58,9 @@ describe('process inspection CA', () => {
     await once(server, 'listening')
     const address = server.address() as { port: number }
     try {
+      const root = new X509Certificate(ca.certificatePem)
+      expect(root.subject).toBe('CN=Open-Science process inspection CA')
+      expect(root.issuer).toBe('CN=Open-Science process inspection CA')
       const trusted = connect({
         port: address.port,
         host: '127.0.0.1',
@@ -67,6 +70,7 @@ describe('process inspection CA', () => {
       await once(trusted, 'secureConnect')
       expect(trusted.authorized).toBe(true)
       expect(trusted.getPeerCertificate().subjectaltname).toBe('DNS:example.test')
+      expect(trusted.getPeerCertificate().issuer.CN).toBe('Open-Science process inspection CA')
       trusted.destroy()
       for (const options of [
         { servername: 'other.test', ca: ca.certificatePem },

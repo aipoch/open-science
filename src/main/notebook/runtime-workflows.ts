@@ -10,6 +10,8 @@ import { listEnvPackages } from './package-listing'
 import { discoverExternalRLibraries, resolveExternalRLibrary } from './external-r-library'
 import type { MicromambaRunner } from './windows-micromamba-runner'
 import { isMigrationInProgress, withDataRootWrite } from '../storage/migration-state'
+import { createLogger } from '../logger'
+import { startDiagnosticOperation } from '../diagnostics/operation'
 
 // Upper bound on concurrent package listings inside listPackageCounts (mirrors the bounded
 // probe concurrency in environment-discovery): enough to fill the Settings badges quickly without
@@ -102,7 +104,7 @@ const createRuntimeWorkflows = (deps: RuntimeWorkflowDeps): RuntimeWorkflows => 
     if (language !== 'r' || !deps.setWindowsRuntimeAccess) return operation()
     if (isMigrationInProgress()) {
       throw new Error(
-        'Open Science is moving your data. Wait for the move to finish before running this.'
+        'Open-Science is moving your data. Wait for the move to finish before running this.'
       )
     }
     if (runtimeAccessUpdate)
@@ -150,23 +152,41 @@ const createRuntimeWorkflows = (deps: RuntimeWorkflowDeps): RuntimeWorkflows => 
   }
 
   return {
-    setSandboxAccess: async (request) =>
-      runRuntimeChange(request.language, async () => {
-        if (request.language !== 'r' || !deps.setWindowsRuntimeAccess)
-          throw new Error('Selected-runtime sandbox access is only available for Windows R.')
-        const env = (await discoverLanguageEnvs('r')).find(
-          (candidate) => candidate.envId === request.envId
-        )
-        if (!env || env.provenance === 'agent-created')
-          throw new Error('Select a discovered managed or external R runtime.')
-        if (request.authorized && !env.runnable)
-          throw new Error('R must be runnable with jsonlite before verifying sandbox access.')
-        if (!request.authorized) {
-          await deps.settingsService.setEnvironmentEnabled('r', env.envId, false)
-          await deps.onRuntimeDisabled?.('r', env.envId)
-        }
-        return deps.setWindowsRuntimeAccess(rscriptFor(env.interpreterPath), request.authorized)
-      }),
+    setSandboxAccess: async (request) => {
+      const diagnostic = startDiagnosticOperation(createLogger('notebook:runtime'), {
+        operation: 'r-sandbox-access-request',
+        fields: { language: request.language, authorized: request.authorized }
+      })
+      try {
+        diagnostic.phase('admission')
+        const result = await runRuntimeChange(request.language, async () => {
+          diagnostic.phase('discovery')
+          if (request.language !== 'r' || !deps.setWindowsRuntimeAccess)
+            throw new Error('Selected-runtime sandbox access is only available for Windows R.')
+          const env = (await discoverLanguageEnvs('r')).find(
+            (candidate) => candidate.envId === request.envId
+          )
+          if (!env || env.provenance === 'agent-created')
+            throw new Error('Select a discovered managed or external R runtime.')
+          if (request.authorized && !env.runnable)
+            throw new Error('R must be runnable with jsonlite before verifying sandbox access.')
+          if (!request.authorized) {
+            diagnostic.phase('disable-runtime')
+            await deps.settingsService.setEnvironmentEnabled('r', env.envId, false)
+            diagnostic.phase('drain-runtime')
+            await deps.onRuntimeDisabled?.('r', env.envId)
+          }
+          diagnostic.phase(request.authorized ? 'authorize' : 'revoke')
+          return deps.setWindowsRuntimeAccess(rscriptFor(env.interpreterPath), request.authorized)
+        })
+        if (result.cancelled) diagnostic.cancel()
+        else diagnostic.complete()
+        return result
+      } catch (error) {
+        diagnostic.fail(error)
+        throw error
+      }
+    },
     listEnvironments: async () => {
       // Discovery expects a synchronous manual-path lookup, so snapshot both persisted catalogs first.
       const [manualPython, manualR] = await Promise.all([

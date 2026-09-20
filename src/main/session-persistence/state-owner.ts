@@ -1,3 +1,6 @@
+import { rebaseTaskSessionBinding, rebaseTaskTurnOntoLatestSession } from './task-admission'
+import { applySessionConversationCommands } from '../../shared/session-conversation-command'
+import { applyRuntimeSessionEvents } from '../../shared/runtime-session-projection'
 import { createHash, randomUUID } from 'node:crypto'
 
 import { resolveActiveConversationMessages } from '../../shared/conversation-graph'
@@ -17,6 +20,8 @@ import {
   type SaveSessionOptions,
   type FailTaskSessionRunRequest,
   type SettleTaskSessionCompletionRequest,
+  type BindTaskSessionRequest,
+  type AdmitTaskSessionTurnRequest,
   type StageTaskSessionCompletionRequest,
   type SessionRuntimeContext,
   type SessionRuntimeContextPatch
@@ -32,7 +37,8 @@ import {
 } from './revision-conflict'
 import { mergeMainOwnedRelayProjection } from './relay-projection'
 import { loadSessionMutationAuthority as loadAuthority } from './repository'
-import { saveSessionWithRevision } from './save-session'
+import { saveSessionWithRevision, SessionProjectionAfterCommitError } from './save-session'
+import { isDeepStrictEqual } from 'node:util'
 import { preserveImportedSession } from './imported-session'
 
 type SessionMetadata = Readonly<Pick<PersistedChatSession, 'id' | 'projectId' | 'title'>>
@@ -107,6 +113,7 @@ type SessionPersistenceStateOwnerOptions = {
   assertMutable(projectId: string, sessionId: string, operation: 'save' | 'mutate'): void
   notifyFilesChanged(event: ProjectFilesChangedEvent): void
   notifyRuntimeContextSessionUpdated(session: PersistedChatSession): void
+  notifyRuntimeTranscriptSessionUpdated?(session: PersistedChatSession): void
   notifyDelegationPolicyUpdated?(session: PersistedChatSession): void
   provenance?: SessionStateProvenance
   uploads?: SessionStateUploads
@@ -672,6 +679,90 @@ class SessionPersistenceStateOwner {
     return this.saveSessionWithAuthority(session, options, authority)
   }
 
+  async mutateRuntimeSession(
+    scope: { projectId: string; sessionId: string },
+    mutate: (session: PersistedChatSession) => PersistedChatSession
+  ): Promise<PersistedChatSession> {
+    this.options.assertMutable(scope.projectId, scope.sessionId, 'mutate')
+    const loaded = await loadAuthority(this.options.repository, scope.projectId, scope.sessionId)
+    if (loaded.status !== 'found')
+      throw new Error(`Cannot update a ${loaded.status} runtime Session.`)
+    const previous = loaded.session
+    const mutation = mutate(structuredClone(previous))
+    const transcriptUnchanged =
+      isDeepStrictEqual(mutation.conversationGraph, previous.conversationGraph) &&
+      isDeepStrictEqual(mutation.messages, previous.messages) &&
+      isDeepStrictEqual(mutation.activities, previous.activities) &&
+      isDeepStrictEqual(mutation.activityGroups, previous.activityGroups)
+    const candidate = transcriptUnchanged ? mutation : materializeSessionConversationGraph(mutation)
+    if (candidate.id !== previous.id || candidate.projectId !== previous.projectId) {
+      throw new Error('Runtime mutation changed its Session identity.')
+    }
+    candidate.runtimeTranscriptOwner = 'main'
+    if (previous.activeRun && !candidate.activeRun)
+      candidate.runtimeTranscriptLastRun = previous.activeRun
+    if (isDeepStrictEqual(candidate, previous)) return previous
+    const validation = await validateFinalizedArtifactBindings(
+      this.options.provenance,
+      candidate,
+      this.options.log
+    )
+    if (validation.status === 'conflict') throw validation.error
+    let persisted: PersistedChatSession
+    try {
+      persisted = await saveSessionWithRevision(
+        this.options.repository,
+        candidate,
+        previous.revision ?? 0
+      )
+    } catch (error) {
+      if (!(error instanceof SessionProjectionAfterCommitError)) throw error
+      persisted = error.committedSession
+      this.markMetadataIncomplete()
+    }
+    this.recordSession(persisted)
+    this.invalidateBindingTopology(scope.projectId, scope.sessionId)
+    // JSON is the authoritative commit. Derived capture/index/publication failure must not report
+    // that this mutation never happened or invite another execution of the provider work.
+    try {
+      await this.options.provenance?.captureFinalizedMessages(persisted)
+      const changedSources = await this.options.fileIndex.syncSession(persisted)
+      if (changedSources.length)
+        this.options.notifyFilesChanged({
+          projectId: scope.projectId,
+          sessionId: scope.sessionId,
+          sources: changedSources,
+          kind: 'upsert'
+        })
+    } catch (error) {
+      this.markMetadataIncomplete()
+      try {
+        this.options.log.warn(
+          'Runtime Session committed; derived file projection remains incomplete.',
+          {
+            projectId: scope.projectId,
+            sessionId: scope.sessionId,
+            revision: persisted.revision,
+            errorCategory: error instanceof Error ? error.name : typeof error
+          }
+        )
+        this.options.notifyFilesChanged({
+          projectId: scope.projectId,
+          sources: ['artifact', 'upload'],
+          kind: 'reset'
+        })
+      } catch {
+        /* Diagnostics and observer delivery cannot undo a committed mutation. */
+      }
+    }
+    try {
+      this.options.notifyRuntimeTranscriptSessionUpdated?.(persisted)
+    } catch {
+      // A disconnected observer cannot undo the authoritative JSON commit.
+    }
+    return persisted
+  }
+
   async saveSessionSpecialistBinding(
     session: PersistedChatSession,
     specialistId: string | undefined,
@@ -687,12 +778,63 @@ class SessionPersistenceStateOwner {
     )
   }
 
+  async bindTaskSession(command: BindTaskSessionRequest): Promise<PersistedChatSession> {
+    const { projectId, id } = command.session
+    this.options.assertMutable(projectId, id, 'mutate')
+    const loaded = await loadAuthority(this.options.repository, projectId, id)
+    if (loaded.status !== 'found')
+      throw new Error(`Cannot bind Task provider for a ${loaded.status} Session.`)
+    if (loaded.session.archivedAt !== undefined)
+      throw new Error('Cannot bind a Task provider to an archived Session.')
+    if (loaded.session.runtimeTranscriptOwner === 'main') {
+      return this.mutateRuntimeSession({ projectId, sessionId: id }, (latest) =>
+        rebaseTaskSessionBinding(latest, command)
+      )
+    }
+    return this.saveSession(rebaseTaskSessionBinding(loaded.session, command))
+  }
+
+  async admitTaskTurn(command: AdmitTaskSessionTurnRequest): Promise<PersistedChatSession> {
+    const prepared = command.session
+    this.options.assertMutable(prepared.projectId, prepared.id, 'mutate')
+    const loaded = await loadAuthority(this.options.repository, prepared.projectId, prepared.id)
+    if (loaded.status !== 'found')
+      throw new Error(`Cannot admit Task turn for a ${loaded.status} Session.`)
+    const latest = loaded.session
+    if (latest.archivedAt !== undefined)
+      throw new Error('Cannot admit a Task turn to an archived Session.')
+    if (
+      latest.activeRun &&
+      latest.activeRun.promptMessageId !== prepared.activeRun?.promptMessageId
+    ) {
+      throw new Error('Session already has an active run.')
+    }
+    const latestGraph = materializeSessionConversationGraph(latest).conversationGraph
+    const preparedGraph = materializeSessionConversationGraph(prepared).conversationGraph
+    if (
+      latestGraph.activeFrameId !== preparedGraph.activeFrameId ||
+      latestGraph.frames.find((frame) => frame.id === latestGraph.activeFrameId)?.activeBranchId !==
+        preparedGraph.frames.find((frame) => frame.id === preparedGraph.activeFrameId)
+          ?.activeBranchId
+    ) {
+      throw new Error('The active conversation branch changed before Task prompt admission.')
+    }
+    const candidate = rebaseTaskTurnOntoLatestSession(latest, prepared, command.contextReset)
+    return latest.runtimeTranscriptOwner === 'main'
+      ? this.mutateRuntimeSession(
+          { projectId: latest.projectId, sessionId: latest.id },
+          () => candidate
+        )
+      : this.saveSession(candidate)
+  }
+
   async stageTaskCompletion(
     command: StageTaskSessionCompletionRequest
   ): Promise<PersistedChatSession> {
     const session = await this.loadTaskRunAuthority(command, {
       stagedMessage: command.message
     })
+    if (session.runtimeTranscriptOwner === 'main') return session
     const activeMessages = resolveActiveConversationMessages(
       materializeSessionConversationGraph(session).conversationGraph
     )
@@ -781,6 +923,10 @@ class SessionPersistenceStateOwner {
     }
     const { settledMessageId, stagedMessage } = proof
     const ownsActiveRun = loaded.session.activeRun?.promptMessageId === command.promptMessageId
+    const materializedGraph = materializeSessionConversationGraph(loaded.session).conversationGraph
+    const durablePrompt = materializedGraph?.messages.find(
+      (message) => message.id === command.promptMessageId && message.role === 'user'
+    )
     const ownsSettledMessage =
       loaded.session.activeRun === undefined &&
       settledMessageId !== undefined &&
@@ -788,7 +934,20 @@ class SessionPersistenceStateOwner {
         (message) =>
           message.id === settledMessageId && message.responseToMessageId === command.promptMessageId
       )
-    const materializedGraph = materializeSessionConversationGraph(loaded.session).conversationGraph
+    const ownsMainSettledMessage =
+      loaded.session.runtimeTranscriptOwner === 'main' &&
+      settledMessageId !== undefined &&
+      durablePrompt !== undefined &&
+      materializedGraph?.messages.some(
+        (message) =>
+          message.id === settledMessageId &&
+          message.role === 'agent' &&
+          message.status === 'complete' &&
+          message.responseToMessageId === command.promptMessageId &&
+          message.agentFrameId === durablePrompt.agentFrameId &&
+          message.introducedOnBranchId === durablePrompt.introducedOnBranchId &&
+          message.runtimeSegmentId === durablePrompt.runtimeSegmentId
+      ) === true
     const activeMessages = materializedGraph
       ? resolveActiveConversationMessages(materializedGraph)
       : loaded.session.messages
@@ -804,7 +963,16 @@ class SessionPersistenceStateOwner {
           message.status === 'complete' &&
           message.responseToMessageId === command.promptMessageId
       )
-    if (!ownsActiveRun && !ownsSettledMessage && !ownsStagedMessage) {
+    const ownsMainSettledRun =
+      loaded.session.runtimeTranscriptOwner === 'main' &&
+      loaded.session.runtimeTranscriptLastRun?.promptMessageId === command.promptMessageId
+    if (
+      !ownsActiveRun &&
+      !ownsSettledMessage &&
+      !ownsMainSettledMessage &&
+      !ownsStagedMessage &&
+      !ownsMainSettledRun
+    ) {
       throw new Error('Task completion no longer owns the active Session run.')
     }
     return loaded.session
@@ -815,6 +983,67 @@ class SessionPersistenceStateOwner {
     command: SettleTaskSessionCompletionRequest,
     terminal: Pick<PersistedChatSession, 'status' | 'error' | 'errorReportable'>
   ): Promise<PersistedChatSession> {
+    if (session.runtimeTranscriptOwner === 'main') {
+      // Runtime completion has already committed the exact transcript and publication outcome.
+      // A superseding turn owns the Session witness as well as its transcript.
+      if (session.activeRun && session.activeRun.promptMessageId !== command.promptMessageId)
+        return session
+      if (session.activeRun) {
+        if (terminal.status !== 'error')
+          throw new Error('Main runtime completion has not committed yet.')
+        // Failure before runtime admission or interrupted startup has no terminal runtime event.
+        // Apply its exact prompt failure as a Main delta; never replay the Task snapshot graph.
+        return this.mutateRuntimeSession(
+          { projectId: session.projectId, sessionId: session.id },
+          (latest) => {
+            if (latest.activeRun?.promptMessageId !== command.promptMessageId) return latest
+            const materialized = materializeSessionConversationGraph(latest)
+            const prompt = materialized.conversationGraph?.messages.find(
+              ({ id, role }) => id === command.promptMessageId && role === 'user'
+            )
+            const failureAt = Math.max(latest.updatedAt + 1, command.updatedAt)
+            const terminalized = prompt?.runtimeSegmentId
+              ? applyRuntimeSessionEvents(
+                  materialized,
+                  {
+                    promptMessageId: prompt.id,
+                    agentFrameId: prompt.agentFrameId,
+                    messageBranchId: prompt.introducedOnBranchId,
+                    runtimeSegmentId: prompt.runtimeSegmentId
+                  },
+                  [
+                    {
+                      id: `task-run-failure:${command.taskRunCommitId}`,
+                      kind: 'error',
+                      level: 'error',
+                      sessionId: latest.id,
+                      promptMessageId: prompt.id,
+                      timestamp: failureAt,
+                      title: 'Task Run failed',
+                      text: terminal.error ?? 'Task Run failed.',
+                      providerError: terminal.errorReportable === false
+                    }
+                  ]
+                )
+              : { ...latest, ...terminal, activeRun: undefined }
+            return {
+              ...terminalized,
+              taskRunCommitId: command.taskRunCommitId,
+              updatedAt: Math.max(terminalized.updatedAt, failureAt)
+            }
+          }
+        )
+      }
+      // Task only records its journal witness for the corresponding completed turn.
+      if (
+        session.runtimeTranscriptLastRun &&
+        session.runtimeTranscriptLastRun.promptMessageId !== command.promptMessageId
+      ) {
+        return session
+      }
+      if (session.taskRunCommitId === command.taskRunCommitId) return session
+      return this.persistTaskSession({ ...session, taskRunCommitId: command.taskRunCommitId })
+    }
     const newArtifacts = command.artifacts.filter(
       ({ id }) => !session.artifacts?.some((artifact) => artifact.id === id)
     )
@@ -884,7 +1113,14 @@ class SessionPersistenceStateOwner {
   }
 
   private async persistTaskSession(session: PersistedChatSession): Promise<PersistedChatSession> {
-    const persisted = await saveSessionWithRevision(this.options.repository, session)
+    let persisted: PersistedChatSession
+    try {
+      persisted = await saveSessionWithRevision(this.options.repository, session)
+    } catch (error) {
+      if (!(error instanceof SessionProjectionAfterCommitError)) throw error
+      persisted = error.committedSession
+      this.markMetadataIncomplete()
+    }
     this.recordSession(persisted)
     return persisted
   }
@@ -903,6 +1139,36 @@ class SessionPersistenceStateOwner {
       )
     }
     const authority = authoritative.status === 'found' ? authoritative.session : undefined
+    if (authority?.runtimeTranscriptOwner === 'main') {
+      // A renderer snapshot is presentation, not a second runtime writer. Apply only named user
+      // preferences and graph commands to the latest authority. Never borrow its revision for the
+      // incoming graph (even if that graph has newer timestamps).
+      const fields = options.conflictRebaseFields ?? []
+      let candidate = fields.length
+        ? rebaseSafeSessionFields(authority, session, fields)
+        : authority
+      // Snapshot reset flags and timestamps are not user intents. A stale save must not re-arm a
+      // consumed provider replay or create another revision merely to acknowledge an observation.
+      candidate = { ...candidate, updatedAt: authority.updatedAt }
+      if (authority.branchContextResetRequired === undefined)
+        delete candidate.branchContextResetRequired
+      else candidate.branchContextResetRequired = authority.branchContextResetRequired
+      if (!isDeepStrictEqual(candidate, authority))
+        candidate.updatedAt = Math.max(authority.updatedAt + 1, Date.now())
+      if (options.conversationCommands?.length) {
+        candidate = applySessionConversationCommands(candidate, options.conversationCommands)
+        if (this.options.uploads)
+          candidate = await this.options.uploads.upgradeLegacySessionUploads(candidate, {
+            mode: 'live-save'
+          })
+      }
+      return this.mutateRuntimeSession({ projectId, sessionId }, () => candidate)
+    }
+    session = {
+      ...session,
+      forkOrigin: authority?.forkOrigin,
+      forkHeadMessageId: authority?.forkHeadMessageId
+    }
     if (authority?.packageOrigin) session = preserveImportedSession(authority, session)
     else if (session.packageOrigin) session = { ...session, packageOrigin: undefined }
     const { session: submittedSession, expectedRevision } = resolveRevisionedSessionSave(
@@ -912,6 +1178,13 @@ class SessionPersistenceStateOwner {
     )
 
     const rendererOwnedSession: PersistedChatSession = { ...submittedSession }
+    // Adoption belongs to the awaited Main runtime admission path, not a caller-provided flag.
+    if (!authority?.runtimeTranscriptOwner) {
+      delete rendererOwnedSession.runtimeTranscriptOwner
+      delete rendererOwnedSession.runtimeTranscriptReviewOwner
+      delete rendererOwnedSession.runtimeTranscriptLastRun
+      delete rendererOwnedSession.runtimeConversationCommandIds
+    }
     delete rendererOwnedSession.runtimeContext
     delete rendererOwnedSession.archivedAt
     if (authority) delete rendererOwnedSession.planHistoryProjections

@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       scope:
-        description: Retired dual-review caller compatibility; ignored by the combined reviewer
+        description: Legacy caller compatibility; ignored by the combined reviewer
         required: false
         default: review
         type: string

@@ -85,8 +85,13 @@ export type NotebookSandboxCommand = Readonly<{
   signal?: AbortSignal
   localRpcSocketPath?: string
   inheritedFileDescriptorCount?: number
-  // Opt-in ownership for short-lived workers; ordinary persistent kernels keep their current path.
+  // Opt-in Job Object ownership for standard-mode Windows process trees that require verifiable
+  // descendant cleanup.
   superviseProcessTree?: boolean
+  /** Transient R admission decision; launch must retain this protection requirement. */
+  windowsProtectionRequired?: boolean
+  /** A durable grant used for admission must still be authorized at launch. */
+  windowsRuntimeAccessRequired?: boolean
   filesystem?: NotebookFilesystemPolicy
   onNetworkAccessRequest: NotebookNetworkDecisionHandler
 }>
@@ -107,6 +112,8 @@ export type NotebookSandboxedProcess = Readonly<{
 }>
 
 export type NotebookNetworkSandboxOptions = Readonly<{
+  /** The application supplies its mode; standalone consumers default to production. */
+  packaged?: boolean
   policy: NotebookNetworkPolicy
   resources: NotebookSandboxResources
   parentProxy?: NotebookNetworkParentProxy

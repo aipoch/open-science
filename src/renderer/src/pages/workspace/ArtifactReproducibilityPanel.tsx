@@ -1,4 +1,4 @@
-/* Hallmark · component: reproducibility panel · genre: modern-minimal · theme: Open Science
+/* Hallmark · component: reproducibility panel · genre: modern-minimal · theme: Open-Science
  * Conclusion and next action first; details use existing tokens and controls.
  * States: default, hover, focus, active, unavailable, running, failed, reproduced.
  * Pre-emit critique: P5 H5 E4 S5 R5 V4; contrast checked on the revised summary.
@@ -142,6 +142,23 @@ const environmentDiagnosticText = (
   }
 }
 
+export const EnvironmentLockDiagnostics = ({
+  diagnostics
+}: {
+  diagnostics: NotebookEnvironmentLockDiagnostic[]
+}): ReactNode => {
+  const { t } = useTranslation()
+  return (
+    <ul className="mt-2 list-disc space-y-1 pl-4 text-xs text-text-200">
+      {diagnostics.map((diagnostic, index) => (
+        <li key={index} className="break-words">
+          {environmentDiagnosticText(diagnostic, t)}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
 const environmentCaptureDetails = (
   capture: NotebookRunEnvironmentLockCapture,
   t: ReturnType<typeof useTranslation>['t']
@@ -203,15 +220,15 @@ const failedCheckDetail = (
   switch (phase) {
     case 'loading-evidence':
       return t(
-        'Open Science could not load the captured evidence. The original result was not changed.'
+        'Open-Science could not load the captured evidence. The original result was not changed.'
       )
     case 'materializing-inputs':
       return t(
-        'Open Science could not prepare the isolated inputs. The original result was not changed.'
+        'Open-Science could not prepare the isolated inputs. The original result was not changed.'
       )
     case 'restoring-environments':
       return t(
-        'Open Science could not restore the captured environment. The original result was not changed.'
+        'Open-Science could not restore the captured environment. The original result was not changed.'
       )
     case 'executing':
       return t(
@@ -219,11 +236,11 @@ const failedCheckDetail = (
       )
     case 'comparing':
       return t(
-        'Open Science could not compare the reproduced files. The original result was not changed.'
+        'Open-Science could not compare the reproduced files. The original result was not changed.'
       )
     default:
       return t(
-        'Open Science could not record the check result. The original result was not changed.'
+        'Open-Science could not record the check result. The original result was not changed.'
       )
   }
 }
@@ -2180,21 +2197,23 @@ export const ArtifactReproducibilityPanel = ({
                     aria-busy={starting || restoringSummary}
                     onClick={() => void startCheck()}
                   >
-                    {starting ? (
-                      <LoaderCircle
-                        className="animate-spin motion-reduce:animate-none"
-                        aria-hidden="true"
-                      />
-                    ) : null}
-                    {starting
-                      ? t('Starting…')
-                      : restoringSummary
-                        ? t('Loading…')
-                        : summaryStatus === 'failed'
-                          ? t('Retry check')
-                          : checkState || latestReceipt
-                            ? t('Check again')
-                            : t('Check reproducibility')}
+                    <span key={String(starting)} className="button-feedback">
+                      {starting ? (
+                        <LoaderCircle
+                          className="animate-spin motion-reduce:animate-none"
+                          aria-hidden="true"
+                        />
+                      ) : null}
+                      {starting
+                        ? t('Starting…')
+                        : restoringSummary
+                          ? t('Loading…')
+                          : summaryStatus === 'failed'
+                            ? t('Retry check')
+                            : checkState || latestReceipt
+                              ? t('Check again')
+                              : t('Check reproducibility')}
+                    </span>
                   </Button>
                 )
                 return action
@@ -2859,18 +2878,28 @@ export const ArtifactReproducibilityPanel = ({
                                       'Includes the report, logs, and retained differing outputs. Source data is not included.'
                                     )}
                                     onClick={() => void exportReceipt(receipt)}
-                                  >
-                                    {exportingReceiptChecksum === receipt.receiptChecksum ? (
-                                      <LoaderCircle
-                                        className="animate-spin motion-reduce:animate-none"
-                                        aria-hidden="true"
-                                      />
-                                    ) : (
-                                      <Download aria-hidden="true" />
+                                    aria-busy={Boolean(
+                                      exportingReceiptChecksum === receipt.receiptChecksum
                                     )}
-                                    {exportingReceiptChecksum === receipt.receiptChecksum
-                                      ? t('Exporting…')
-                                      : t('Export verification record')}
+                                  >
+                                    <span
+                                      key={String(
+                                        exportingReceiptChecksum === receipt.receiptChecksum
+                                      )}
+                                      className="button-feedback"
+                                    >
+                                      {exportingReceiptChecksum === receipt.receiptChecksum ? (
+                                        <LoaderCircle
+                                          className="animate-spin motion-reduce:animate-none"
+                                          aria-hidden="true"
+                                        />
+                                      ) : (
+                                        <Download aria-hidden="true" />
+                                      )}
+                                      {exportingReceiptChecksum === receipt.receiptChecksum
+                                        ? t('Exporting…')
+                                        : t('Export verification record')}
+                                    </span>
                                   </Button>
                                 ) : null}
                               </div>
@@ -2889,14 +2918,17 @@ export const ArtifactReproducibilityPanel = ({
                     className="m-3.5"
                     disabled={receiptHistory.loadingMore}
                     onClick={() => void loadMoreReceipts()}
+                    aria-busy={Boolean(receiptHistory.loadingMore)}
                   >
-                    {receiptHistory.loadingMore ? (
-                      <LoaderCircle
-                        className="animate-spin motion-reduce:animate-none"
-                        aria-hidden="true"
-                      />
-                    ) : null}
-                    {receiptHistory.loadingMore ? t('Loading…') : t('Load more')}
+                    <span key={String(receiptHistory.loadingMore)} className="button-feedback">
+                      {receiptHistory.loadingMore ? (
+                        <LoaderCircle
+                          className="animate-spin motion-reduce:animate-none"
+                          aria-hidden="true"
+                        />
+                      ) : null}
+                      {receiptHistory.loadingMore ? t('Loading…') : t('Load more')}
+                    </span>
                   </Button>
                 ) : null}
               </ReproducibilityOutputStorage>

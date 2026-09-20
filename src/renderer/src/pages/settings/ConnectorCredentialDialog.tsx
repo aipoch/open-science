@@ -1,5 +1,8 @@
+import { ExternalTextLink } from '@/components/ExternalTextLink'
+import { InlineNotice } from '@/components/ui/inline-notice'
+import { fieldErrorClassName } from '@/components/ui/notice-chrome'
 import { useFileCredentialNotice } from './use-file-credential-notice'
-import { AlertTriangle, KeyRound } from 'lucide-react'
+import { KeyRound } from 'lucide-react'
 import * as Dialog from '@/components/ui/dialog'
 import { useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -103,7 +106,10 @@ export function ConnectorCredentialControls({
           embedded && 'sticky top-0 z-10 bg-card'
         )}
       >
-        <KeyRound className="mt-0.5 size-5 shrink-0 text-amber-500" aria-hidden="true" />
+        <KeyRound
+          className="mt-0.5 size-5 shrink-0 text-status-warning-foreground dark:text-status-warning-dark-foreground"
+          aria-hidden="true"
+        />
         <div className="min-w-0">
           {embedded ? (
             <h2 className={dialogTitleClassName}>{t('Add your OpenAlex API key')}</h2>
@@ -131,9 +137,17 @@ export function ConnectorCredentialControls({
       </div>
 
       <div className={cn(dialogBodyClassName, 'space-y-2')}>
-        <label htmlFor={inputId} className="text-sm font-medium">
-          {t('API key')}
-        </label>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <label htmlFor={inputId} className="text-sm font-medium">
+            {t('API key')}
+          </label>
+          <ExternalTextLink
+            href="https://openalex.org/settings/api"
+            className="whitespace-nowrap text-xs"
+          >
+            {t('Get an API key')}
+          </ExternalTextLink>
+        </div>
         <MaskedPasswordField
           id={inputId}
           value={apiKey}
@@ -147,21 +161,17 @@ export function ConnectorCredentialControls({
             t('Stored encrypted on this computer and sent only to api.openalex.org.')}
         </p>
         {!encryptionAvailable ? (
-          <p className="text-xs text-danger-000">
+          <InlineNotice level="error" role="note">
             {t('Secure key storage is unavailable. Unlock the system keychain and try again.')}
-          </p>
+          </InlineNotice>
         ) : null}
         {failedRequestId === request.id ? (
-          <div
-            role="alert"
-            className="flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
-          >
-            <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-            <span>{t('Could not save this credential. Try again.')}</span>
-          </div>
+          <InlineNotice level="error" role="alert">
+            {t('Could not save this credential. Try again.')}
+          </InlineNotice>
         ) : null}
         {validationError ? (
-          <p role="alert" className="text-xs text-danger-000">
+          <p role="alert" className={fieldErrorClassName}>
             {validationError}
           </p>
         ) : null}

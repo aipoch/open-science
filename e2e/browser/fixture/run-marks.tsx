@@ -34,7 +34,7 @@ export function App(): JSX.Element {
   return (
     <main className="flex h-screen bg-bg-10 text-text-000">
       <aside className="w-48 shrink-0 border-e border-border-200 bg-bg-000 p-6 text-sm text-text-200">
-        Open Science
+        Open-Science
         <p className="mt-8 text-text-000">RNA annotation study</p>
       </aside>
       <section data-session-id="run-marks-fixture" className="flex min-w-0 flex-1 flex-col">

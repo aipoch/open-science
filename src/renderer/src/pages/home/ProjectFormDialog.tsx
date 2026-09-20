@@ -230,14 +230,17 @@ const ProjectFormDialog = ({
               <Button
                 type="submit"
                 disabled={nameDraft.trim().length === 0 || isSubmitting || Boolean(conflictProject)}
+                aria-busy={Boolean(isSubmitting)}
               >
-                {isSubmitting ? (
-                  <LoaderCircle
-                    className="size-4 animate-spin motion-reduce:animate-none"
-                    aria-hidden="true"
-                  />
-                ) : null}
-                {dialogSubmitLabel}
+                <span key={String(isSubmitting)} className="button-feedback">
+                  {isSubmitting ? (
+                    <LoaderCircle
+                      className="size-4 animate-spin motion-reduce:animate-none"
+                      aria-hidden="true"
+                    />
+                  ) : null}
+                  {dialogSubmitLabel}
+                </span>
               </Button>
             </div>
           </form>

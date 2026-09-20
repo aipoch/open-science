@@ -98,7 +98,9 @@ const imageUrlFromPart = (part: JsonObject): JsonObject => {
   if (part.detail !== undefined && nestedDetail !== undefined && part.detail !== nestedDetail) {
     throw new Error('Responses image detail values must not conflict')
   }
-  const detail = part.detail ?? nestedDetail
+  const requestedDetail = part.detail ?? nestedDetail
+  // The Chat bridge approximates Responses original detail with high; image bytes stay unchanged.
+  const detail = requestedDetail === 'original' ? 'high' : requestedDetail
 
   if (typeof url !== 'string' || url.length === 0) {
     throw new Error('Responses image_url must be a non-empty string')

@@ -4,9 +4,10 @@ import { wsl2Launch, type Wsl2Launch } from '../runtime/src/platform/wsl2-isolat
 import { notebookWorkloadCacheEnv } from '../../../src/main/notebook/notebook-workload-cache-paths.js'
 
 const mapped = new Map([
-  ['C:\\Open Science\\Workspace 路径', '/mnt/c/Open Science/Workspace 路径'],
-  ['C:\\Open Science\\handoff', '/mnt/c/Open Science/handoff'],
-  ['C:\\Open Science\\cache', '/mnt/c/Open Science/cache'],
+  ['C:\\Open-Science\\Workspace 路径', '/mnt/c/Open-Science/Workspace 路径'],
+  ['C:\\Open-Science\\handoff', '/mnt/c/Open-Science/handoff'],
+  ['C:\\Open-Science\\inputs', '/mnt/c/Open-Science/inputs'],
+  ['C:\\Open-Science\\cache', '/mnt/c/Open-Science/cache'],
   ['C:\\private', '/mnt/c/private']
 ])
 const reconciled = async (): Promise<boolean> => true
@@ -62,7 +63,7 @@ describe('WSL2 sandbox adapter', () => {
   })
 
   it('compiles Windows policy into a gateway-only bwrap Bash launch', async () => {
-    const runtimeRoot = 'C:\\Open Science\\runtime 路径'
+    const runtimeRoot = 'C:\\Open-Science\\runtime 路径'
     const cacheEnvironment = notebookWorkloadCacheEnv(runtimeRoot)
     const cacheRoot = cacheEnvironment.OPEN_SCIENCE_NOTEBOOK_CACHE_DIR!
     const mapPath = vi.fn(async (path: string) => {
@@ -89,7 +90,7 @@ describe('WSL2 sandbox adapter', () => {
         user: 'open-science-spike'
       },
       command: `printf '你好 world'`,
-      cwd: 'C:\\Open Science\\Workspace 路径',
+      cwd: 'C:\\Open-Science\\Workspace 路径',
       env: {
         PATH: 'C:\\Windows\\System32',
         AWS_SECRET_ACCESS_KEY: 'must-not-leak'
@@ -97,15 +98,16 @@ describe('WSL2 sandbox adapter', () => {
       gatewayPort: 4312,
       gatewayCredentials: { username: 'command-user', password: 'command-secret' },
       pathEnvironment: {
-        OPEN_SCIENCE_HANDOFF_DIR: 'C:\\Open Science\\handoff',
+        OPEN_SCIENCE_HANDOFF_DIR: 'C:\\Open-Science\\handoff',
+        OPEN_SCIENCE_INPUT_DIR: 'C:\\Open-Science\\inputs',
         ...cacheEnvironment
       },
       filesystem: {
         privateRoot: 'C:\\private',
-        readOnlyRoots: ['/usr', '/bin'],
+        readOnlyRoots: ['/usr', '/bin', 'C:\\Open-Science\\inputs'],
         readWriteRoots: [
-          'C:\\Open Science\\Workspace 路径',
-          'C:\\Open Science\\handoff',
+          'C:\\Open-Science\\Workspace 路径',
+          'C:\\Open-Science\\handoff',
           cacheRoot
         ],
         deniedReadRoots: ['C:\\private'],
@@ -141,10 +143,10 @@ describe('WSL2 sandbox adapter', () => {
         '/tmp/open-science-network-command/gateway.sock',
         '/run/open-science-notebook/gateway.sock',
         '--bind',
-        '/mnt/c/Open Science/Workspace 路径',
-        '/mnt/c/Open Science/Workspace 路径',
+        '/mnt/c/Open-Science/Workspace 路径',
+        '/mnt/c/Open-Science/Workspace 路径',
         '--chdir',
-        '/mnt/c/Open Science/Workspace 路径',
+        '/mnt/c/Open-Science/Workspace 路径',
         '/usr/bin/python3',
         '-c',
         expect.stringMatching(/^import base64,zlib;exec\(zlib\.decompress/u),
@@ -163,10 +165,13 @@ describe('WSL2 sandbox adapter', () => {
         '/usr/bin:/bin',
         '--setenv',
         'OPEN_SCIENCE_HANDOFF_DIR',
-        '/mnt/c/Open Science/handoff',
+        '/mnt/c/Open-Science/handoff',
+        '--setenv',
+        'OPEN_SCIENCE_INPUT_DIR',
+        '/mnt/c/Open-Science/inputs',
         '--setenv',
         'OPEN_SCIENCE_NOTEBOOK_CACHE_DIR',
-        '/mnt/c/Open Science/runtime 路径/cache/notebook'
+        '/mnt/c/Open-Science/runtime 路径/cache/notebook'
       ])
     )
     expect(openBridge).toHaveBeenCalledWith(
@@ -181,9 +186,22 @@ describe('WSL2 sandbox adapter', () => {
       expect(launch.argv[keyIndex + 1]).toBe(`/mnt/c/${value!.slice(3).replaceAll('\\', '/')}`)
     }
     expect(launch.argv.join('\n')).not.toContain('AWS_SECRET_ACCESS_KEY')
+    expect(launch.argv).toEqual(
+      expect.arrayContaining([
+        '--ro-bind',
+        '/mnt/c/Open-Science/inputs',
+        '/mnt/c/Open-Science/inputs'
+      ])
+    )
+    expect(
+      launch.argv.some(
+        (value, index) =>
+          value === '--bind' && launch.argv[index + 1] === '/mnt/c/Open-Science/inputs'
+      )
+    ).toBe(false)
     expect(launch.env.PATH).toBeUndefined()
     expect(launch.env.AWS_SECRET_ACCESS_KEY).toBeUndefined()
-    expect(mapPath).toHaveBeenCalledWith('C:\\Open Science\\Workspace 路径', undefined)
+    expect(mapPath).toHaveBeenCalledWith('C:\\Open-Science\\Workspace 路径', undefined)
     launch.beginSpawn().started()
     await expect(launch.release()).resolves.toEqual({
       processesTerminated: true,
@@ -588,7 +606,7 @@ describe('WSL2 sandbox adapter', () => {
     ).rejects.toThrow('WSL2 sandbox path mapping failed')
   })
 
-  it('fails closed when a declared cache path is outside every writable root', async () => {
+  it('fails closed when a declared path environment value is outside every authorized root', async () => {
     await expect(
       wsl2Launch({
         target: {
@@ -610,7 +628,7 @@ describe('WSL2 sandbox adapter', () => {
         reconcileGuest: reconciled,
         mapPath: async (path) => `/mnt/c/${path.slice(3).replaceAll('\\', '/')}`
       })
-    ).rejects.toThrow('WSL2 sandbox path environment is not writable')
+    ).rejects.toThrow('WSL2 sandbox path environment is not authorized')
   })
 
   it('fails closed rather than overriding the fixed guest PATH', async () => {

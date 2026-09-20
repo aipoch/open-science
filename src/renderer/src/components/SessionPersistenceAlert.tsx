@@ -35,6 +35,7 @@ const SessionPersistenceAlert = ({
   return (
     <div
       data-testid="session-persistence-alert"
+      data-bottom-notice={inline ? undefined : true}
       className={cn(
         inline
           ? 'pointer-events-auto w-full max-w-md'

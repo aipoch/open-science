@@ -1,3 +1,4 @@
+import { InlineNotice } from '@/components/ui/inline-notice'
 import { MessageScrollerItem } from '@/components/ui/message-scroller'
 import type { ToolActivity } from '@/stores/session-store'
 import {
@@ -187,7 +188,10 @@ const WorkspacePlanActivityRecord = ({
   ) : projection.kind === 'failed' ? (
     <AlertCircle className="size-3.5" aria-hidden="true" />
   ) : projection.kind === 'revision-conflict' ? (
-    <TriangleAlert className="size-3.5 text-warning-900" aria-hidden="true" />
+    <TriangleAlert
+      className="size-3.5 text-status-warning-foreground dark:text-status-warning-dark-foreground"
+      aria-hidden="true"
+    />
   ) : projection.kind === 'already-pending' ? (
     <Circle className="size-3.5 text-text-300" aria-hidden="true" />
   ) : projection.kind === 'rejected' ? (
@@ -351,9 +355,7 @@ const WorkspacePlanActivityRecord = ({
               </div>
             </div>
           ) : projection.kind === 'revision-conflict' ? (
-            <div className="mb-[7px] ml-[31px] mr-[7px] rounded-[9px] border border-warning-100/50 bg-warning-100/10 px-[13px] py-[11px] text-[12px] text-text-300">
-              {t(projection.detail)}
-            </div>
+            <InlineNotice className="mb-2 ml-8 mr-2">{t(projection.detail)}</InlineNotice>
           ) : projection.kind === 'unavailable' ? (
             <div className="mb-[7px] ml-[31px] mr-[7px] rounded-[9px] border border-border-200 bg-bg-000 px-[13px] py-[11px] text-[12px] text-text-300">
               {t('Plan details unavailable')}

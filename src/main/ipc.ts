@@ -1,3 +1,5 @@
+import { RuntimeWriterOwner } from './session-persistence/runtime-writer'
+import { getDefaultPermissionProfile } from '../shared/permission-profiles'
 import { PackageLiteratureReader } from './session-package/literature-reader'
 import { PdfElementAgentReader } from './literature/pdf-structure/agent-reader'
 import { transactLiterature } from './literature/transact'
@@ -8,6 +10,7 @@ import { PdfStructureReader } from './literature/pdf-structure/reader'
 import { createSpecialistApplicationOwner } from './specialist/application-commands'
 import { dirname, join } from 'node:path'
 import { mkdir, realpath } from 'node:fs/promises'
+import { initializeDataLocation } from './storage/initialize-location'
 
 import {
   app,
@@ -64,7 +67,8 @@ import {
   LIFECYCLE_CHANNELS,
   MAIN_DELEGATED_WORK_LIFECYCLE_CLIENT_ID,
   MAIN_SESSION_DETAILS_LIFECYCLE_CLIENT_ID,
-  MAIN_RUNTIME_CONTEXT_LIFECYCLE_CLIENT_ID
+  MAIN_RUNTIME_CONTEXT_LIFECYCLE_CLIENT_ID,
+  MAIN_RUNTIME_TRANSCRIPT_LIFECYCLE_CLIENT_ID
 } from '../shared/lifecycle-events'
 import { parseLiteratureAttachmentVersionReference } from '../shared/literature'
 
@@ -299,6 +303,7 @@ import { linkPdfContextWithCapability } from './session-persistence/pdf-context-
 import { LiteratureDocumentReader } from './literature/document-reader'
 import { SessionDeletionOwner } from './session-deletion/owner'
 import { buildSessionDetailsUserPrompt, createSessionDetailsOwner } from './session-details/owner'
+import { selectSessionDetailsStartupCandidates } from './session-details/startup-catalog'
 import { tryDecryptKey } from './settings/crypto'
 import { SETTINGS_INSTALL_LOG_CHANNEL } from './settings/ipc'
 import { createCoreElectronSurfaces } from './ipc-surfaces/core'
@@ -553,6 +558,7 @@ const createApplicationModules = async (
     settingsStore ?? resolveConfigRoot(),
     (operation) => specialistPackageSkillAdapter.runMutationExclusive(operation)
   )
+  await initializeDataLocation(settingsRepository)
   initializeWsl2BashPreview({
     platform: process.platform,
     arch: process.arch,
@@ -630,6 +636,7 @@ const createApplicationModules = async (
   }
   const notebookNetworkSandbox = await modules.add(undefined, () => {
     const capability = new NotebookNetworkSandboxOwner({
+      packaged: app.isPackaged,
       allowRuntimeAccessPrompt: !headless,
       resourceRoot: app.isPackaged
         ? join(process.resourcesPath, 'notebook-network-sandbox')
@@ -725,6 +732,9 @@ const createApplicationModules = async (
   const settingsService = await modules.add(undefined, () => {
     const capability = new SettingsService({
       repository: settingsRepository,
+      onProviderHealthChanged: async () => {
+        await settingsSnapshotCommits.projectAfter(Promise.resolve())
+      },
       installCoordinator: settingsInstallCoordinator,
       skillRuntimeMcpEntryPath: mainEntryPath,
       openAlexFetch: netFetchStandard,
@@ -758,7 +768,8 @@ const createApplicationModules = async (
       wslSetupSessions,
       ensureDefaultWslSetupWorkspace: async () => {
         const settings = await settingsRepository.getSettings()
-        if (!settings.dataRoot?.trim()) await mkdir(resolveDataRoot(), { recursive: true })
+        if (!settings.dataRoot && settings.onboardingCompletedAt === undefined)
+          await mkdir(resolveDataRoot(), { recursive: true })
       },
       resolveCodexProxyEnvironment: () =>
         Promise.resolve(networkProxyRuntime.getChildProcessProxyEnvironment())
@@ -809,9 +820,10 @@ const createApplicationModules = async (
   })
   // Prime the data-root cache from settings before any data repository is constructed below. A change
   // to this value only takes effect after a restart, so reading it once here is sufficient.
-  initDataRoot(storedSettings.dataRoot)
+  initDataRoot(storedSettings.dataRoot, storedSettings.onboardingCompletedAt)
   const configuredDataRootMissing =
-    Boolean(storedSettings.dataRoot?.trim()) && (await isDataRootMissing(resolveDataRoot()))
+    (Boolean(storedSettings.dataRoot) || storedSettings.onboardingCompletedAt !== undefined) &&
+    (await isDataRootMissing(resolveDataRoot()))
   initializeDataRootWriteAvailability(configuredDataRootMissing)
   const dataRootCleanupJournal = new DataRootCleanupJournal(resolveConfigRoot())
   const cleanupDataRootSources = createDataRootSourceCleanup((runtimeRoot) =>
@@ -1133,14 +1145,24 @@ const createApplicationModules = async (
     isActive: () => false
   }
   let packageHandoffHeld = false
+  // Startup package recovery precedes catalog construction. After construction every live
+  // publication must update the same owner consulted by resume/save admission.
+  const packagePublicationOwner: {
+    current?: Pick<SessionPersistenceCoordinator, 'adoptPublishedSession'>
+  } = {}
   const sessionPackageService = await modules.add(undefined, () => {
     const service = new SessionPackageService({
+      getDefaultPermissionProfile: async () =>
+        getDefaultPermissionProfile(await settingsRepository.getSettings()),
+      onSessionPublished: async ({ projectId, sessionId }) => {
+        await packagePublicationOwner.current?.adoptPublishedSession(projectId, sessionId)
+      },
       inspectPackage: createPackageInspector(createInspectionWorker),
       configRoot: resolveConfigRoot(),
       storageRoot: resolveDataRoot(),
       getClient: () => getProjectDbClient(resolveConfigRoot()),
       isSessionActive: (projectId, sessionId) =>
-        detectArchiveBlockingSessions().some(
+        detectSessionExportBlockingSessions().some(
           (item) => item.projectId === projectId && item.sessionId === sessionId
         )
     })
@@ -1425,6 +1447,9 @@ const createApplicationModules = async (
   const delegatedActivity = createDelegatedActivityProjection()
   const getActiveDelegatedSessions = (): { projectId: string; sessionId: string }[] =>
     delegatedActivity.getActiveDelegatedSessions()
+  // Side Chat prompts remain activity for disruptive archive, migration and shutdown operations.
+  // Package export uses a narrower projection because auxiliary transcripts are excluded; delivered
+  // relays already live in the main conversation graph independently of this activity projection.
   const getActiveSideChatSessions = (): { projectId: string; sessionId: string }[] =>
     (sideChatOwnerRef.current?.list().chats ?? [])
       .filter((chat) => chat.running)
@@ -1454,6 +1479,13 @@ const createApplicationModules = async (
         })
         return
       }
+      if (owner === 'runtime-transcript') {
+        broadcastToRenderers(LIFECYCLE_CHANNELS.sessionUpdated, {
+          session,
+          originClientId: MAIN_RUNTIME_TRANSCRIPT_LIFECYCLE_CLIENT_ID
+        })
+        return
+      }
       delegatedActivity.recordSession(session)
       broadcastToRenderers(LIFECYCLE_CHANNELS.sessionUpdated, {
         session,
@@ -1477,6 +1509,7 @@ const createApplicationModules = async (
     },
     (session) => sessionPackageService.prepareSessionDeletion(session)
   )
+  packagePublicationOwner.current = sessionPersistenceCoordinator
   const bookmarkService = new BookmarkService({
     repository: bookmarkRepository,
     sessions: sessionRepository,
@@ -1571,21 +1604,10 @@ const createApplicationModules = async (
       if (!runtime) return 'completed'
       const snapshot = runtime.getSnapshot()
       if (snapshot.promptInFlightSessionIds.includes(parentSessionId)) {
-        return snapshot.pendingPermissions.some(
-          (permission) => permission.sessionId === parentSessionId
-        )
-          ? 'waiting'
-          : 'running'
+        return runtime.hasPendingSideChatInteraction(parentSessionId) ? 'waiting' : 'running'
       }
       return runtime.liveSessionProjectId(parentSessionId) ? 'idle' : 'completed'
-    },
-    appendRelay: ({ projectId, parentSessionId, sideChatId, relay }) =>
-      sessionPersistenceCoordinator.appendSideChatRelay({
-        projectId,
-        sessionId: parentSessionId,
-        sideChatId,
-        relay
-      })
+    }
   })
   const mainPromptSideChatRelay = createMainPromptSideChatRelay({
     relay: sideChatRelay,
@@ -1659,18 +1681,26 @@ const createApplicationModules = async (
     },
     applicationEvents
   )
-  const detectArchiveBlockingSessions = (): ReturnType<typeof detectActiveSessions> =>
+  const detectBlockingSessions = (
+    includeSideChat: boolean
+  ): ReturnType<typeof detectActiveSessions> =>
     detectActiveSessions({
       runtime: {
         getActivePromptSessions: () => runtimeRef.current?.getActivePromptSessions() ?? []
       },
-      sideChat: { getActivePromptSessions: getActiveSideChatSessions },
+      sideChat: {
+        getActivePromptSessions: () => (includeSideChat ? getActiveSideChatSessions() : [])
+      },
       delegated: { getActiveDelegatedSessions },
       notebook: {
         getActiveNotebookSessions: () =>
           notebookActivityRef.current?.getActiveNotebookSessions() ?? []
       }
     })
+  const detectArchiveBlockingSessions = (): ReturnType<typeof detectActiveSessions> =>
+    detectBlockingSessions(true)
+  const detectSessionExportBlockingSessions = (): ReturnType<typeof detectActiveSessions> =>
+    detectBlockingSessions(false)
   const archiveCoordinator = new ArchiveCoordinator(
     projectRepository,
     sessionPersistenceCoordinator,
@@ -1684,6 +1714,17 @@ const createApplicationModules = async (
           jobs > 0 ||
           sideChatOwnerRef.current?.hasForParent(sessionId) === true ||
           detectArchiveBlockingSessions().some(
+            (session) => session.projectId === projectId && session.sessionId === sessionId
+          )
+        )
+      },
+      isSessionExportBusy: async (projectId, sessionId) => {
+        const computeJobs = computeJobActivityRef.current
+        if (!computeJobs) throw new Error('Compute Job activity is not initialized.')
+        const jobs = await computeJobs.countNonTerminalBySession(sessionId)
+        return (
+          jobs > 0 ||
+          detectSessionExportBlockingSessions().some(
             (session) => session.projectId === projectId && session.sessionId === sessionId
           )
         )
@@ -1774,6 +1815,9 @@ const createApplicationModules = async (
     sessionLoader: sessionPersistenceCoordinator
   })
   const loadAllSessions = (): Promise<LoadAllSessionsResult> => sessionCatalogHydration.loadAll()
+  // Consume only during composition, before client adapters are installed. Keep just details
+  // recovery candidates, not a long-lived cache of every historical transcript.
+  let startupSessionDetails: LoadAllSessionsResult['sessions'] | undefined
   const sessionProjectionDiagnostics = new SessionProjectionDiagnostics()
   let wslSetupSessionsReconciliation: Promise<void> | undefined
   const reconcileWslSetupSessions = async (sessions: readonly SessionSummary[]): Promise<void> => {
@@ -1896,6 +1940,8 @@ const createApplicationModules = async (
   // One runner owns Windows integrity/preflight/fallback state for every production micromamba
   // consumer in this main-process generation. Each consumer receives only its narrow resolve seam.
   const micromambaRunner = createProductionMicromambaRunner({
+    packaged: app.isPackaged,
+    configHome: app.getPath('home'),
     home: dirname(dirname(provisioningRoot)),
     resourcesPath: process.resourcesPath
   })
@@ -1938,6 +1984,7 @@ const createApplicationModules = async (
       translate,
       helperModuleCatalog: settingsService.registeredHelperCatalog(),
       processSandbox: notebookNetworkSandbox,
+      getGrantedLocalRoots: () => grantedRootsRepository.list(),
       onBackgroundRunTerminal: (source) =>
         backgroundResultDelivery.enqueue(source).then(() => undefined),
       onBackgroundRunAdmitted: (source) =>
@@ -2154,6 +2201,7 @@ const createApplicationModules = async (
       }
     },
     skillPort: specialistPackageSkillAdapter,
+    skillSettings: settingsRepository,
     marketplaceOperationCoordinator,
     onSpecialistDeleted: (specialistId) =>
       marketplaceRepository.removeInstallationsForSpecialist(specialistId),
@@ -2174,7 +2222,7 @@ const createApplicationModules = async (
       ]),
     onCommitted: () => {
       broadcastToRenderers(SPECIALIST_IPC.CATALOG_CHANGED, undefined)
-      void runtime.requestSkillsReload()
+      requestSkillCatalogRefresh()
     }
   })
   specialistPackageRecovery.current = (operation) =>
@@ -2187,8 +2235,6 @@ const createApplicationModules = async (
     packages: specialistPackageService,
     fetch: netFetchWithManualRedirect,
     officialSource: OFFICIAL_MARKETPLACE_SOURCE,
-    getDisabledSkillIds: async () =>
-      (await settingsRepository.getSettings()).disabledSkillIds ?? [],
     getInstalledSpecialists: async () =>
       (await specialistService.list()).map((profile) => ({
         id: profile.id,
@@ -2877,12 +2923,6 @@ const createApplicationModules = async (
                     agentConfiguration: toSessionAgentConfiguration(agentTarget)
                   })
                 }
-                const started = await delivery.startDispatch()
-                if (started !== 'started') {
-                  throw new DelegateMessageParkedError(
-                    'Parent message dispatch fence was not acquired.'
-                  )
-                }
                 if (!runtime.hasLiveSession(latest.projectId, latest.id) || agentTarget) {
                   await runtime.resumeSession({
                     sessionId: latest.id,
@@ -2909,7 +2949,14 @@ const createApplicationModules = async (
                     ...(agentTarget ? { agentTarget } : {})
                   })
                 }
-              }
+                const started = await delivery.startDispatch()
+                if (started !== 'started') {
+                  throw new DelegateMessageParkedError(
+                    'Parent message dispatch fence was not acquired.'
+                  )
+                }
+              },
+              delivery.messageId
             )
           }
         )
@@ -3294,6 +3341,11 @@ const createApplicationModules = async (
       initializationBarrier: initialConnectorSkillsReady,
       specialistService,
       sessionPersistenceCoordinator,
+      finalizeRuntimeArtifacts: async (request) => {
+        const handlers = artifactHandlersRef.current
+        if (!handlers) throw new Error('Artifact finalization is not initialized.')
+        return handlers.finalizeRunArtifacts(request)
+      },
       literatureReader: literatureDocumentReader,
       pdfElementReader,
       literatureAttachments: literatureAttachmentAuthority,
@@ -3301,8 +3353,11 @@ const createApplicationModules = async (
       literaturePdfAcquisition,
       delegatedWork: delegatedWork.root,
       sideChatRelays: mainPromptSideChatRelay,
+      hasPendingCredentialRequest: (sessionId) =>
+        credentialRequestBroker.hasPendingForSession(sessionId),
       imageInputCompatibility,
       memory: memoryService,
+      classifySkills: settingsService.classification.selectSkills,
       auxiliaryUsage: {
         projectIdForSession: (sessionId) =>
           sessionPersistenceCoordinator.sessionProjectId(sessionId),
@@ -3383,20 +3438,6 @@ const createApplicationModules = async (
       relay: sideChatRelay,
       deliverRelay: (parentSessionId, queued) =>
         mainPromptSideChatRelay.tryInject(parentSessionId, queued),
-      persistence: {
-        save: ({ projectId, parentSessionId, sideChat }) =>
-          sessionPersistenceCoordinator.saveSideChatProjection({
-            projectId,
-            sessionId: parentSessionId,
-            sideChat
-          }),
-        clear: ({ projectId, parentSessionId, sideChatId }) =>
-          sessionPersistenceCoordinator.clearSideChat({
-            projectId,
-            sessionId: parentSessionId,
-            sideChatId
-          })
-      },
       recordUsage: recordAuxiliaryUsage,
       onEvent: (event) => broadcastToRenderers('side-chat:event', event)
     } satisfies ConstructorParameters<typeof SideChatRuntimeOwner>[0],
@@ -3432,20 +3473,14 @@ const createApplicationModules = async (
       }
     }
   })
-  try {
-    const persistedSideChats = await sessionPersistenceCoordinator.loadPersistedSideChats()
-    sideChatRuntime.hydrate(persistedSideChats.sideChats)
-    sideChatRelay.hydrate(persistedSideChats.relays)
-    await sideChatRuntime.sweepStaleProfiles(
-      new Set(persistedSideChats.sideChats.map(({ sideChat }) => sideChat.id)),
-      persistedSideChats.isComplete
-    )
-  } catch (error) {
-    sideChatLog.error('durable Side chat hydration failed', diagnosticErrorFields(error))
-  }
+  // Side chats and undelivered advisories belong to this application run only. Never scan
+  // Session JSON to recover them. Profile cleanup is independent of startup readiness.
+  void sideChatRuntime.sweepStaleProfiles().catch((error) => {
+    sideChatLog.warn('temporary Side chat profile cleanup failed', diagnosticErrorFields(error))
+  })
   composition.phase('side-chat')
   // Start the JobPoller wired to the shared broadcaster only after Project runtime quiescence and
-  // Side Chat recovery are available. Queue startup loads the Session catalog, which may first need
+  // Side Chat ownership are available. Queue startup loads the Session catalog, which may first need
   // to finish a pending Project deletion through those owners before restoring concurrency limits.
   await modules.add(
     {
@@ -3482,6 +3517,7 @@ const createApplicationModules = async (
         name: 'compute-job-runtime',
         capability: undefined,
         start: async () => {
+          composition.phase('compute-file-evidence')
           try {
             const owners = await jobRepository.listOwners()
             const jobs = (
@@ -3525,6 +3561,7 @@ const createApplicationModules = async (
               diagnosticErrorFields(error)
             )
           }
+          composition.phase('compute-result-delivery')
           try {
             await computeJobResultDelivery.takeOver(
               await computeIpcModule.handlers.jobsList({ nonTerminal: true })
@@ -3545,14 +3582,19 @@ const createApplicationModules = async (
           }
           // Catalog hydration also restores non-Compute projections and enabled Host selections.
           // Keep those startup effects, but never make dispatch depend on catalog completeness.
+          composition.phase('session-catalog')
           await Promise.all([
             jobPoller.start(),
-            loadAllSessions().catch((error) => {
-              createLogger('session-persistence').warn(
-                'Startup Session hydration failed',
-                errorLogFields(error)
-              )
-            })
+            loadAllSessions()
+              .then((catalog) => {
+                startupSessionDetails = selectSessionDetailsStartupCandidates(catalog)
+              })
+              .catch((error) => {
+                createLogger('session-persistence').warn(
+                  'Startup Session hydration failed',
+                  errorLogFields(error)
+                )
+              })
           ])
         },
         disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS,
@@ -3560,6 +3602,7 @@ const createApplicationModules = async (
       }
     }
   )
+  composition.phase('compute-runtime-ready')
   // Recovery quiesces every runtime owner, so do not start its first attempt until ACP, Delegation,
   // Notebook, Side Chat, and the composed quiescence boundary are all initialized. The bounded
   // durable barrier restoration above still runs early enough to block admission during startup.
@@ -4115,7 +4158,11 @@ const createApplicationModules = async (
             .catch((error) =>
               log.warn('stale Session details profile cleanup failed', diagnosticErrorFields(error))
             )
-          await owner.start()
+          composition.phase('session-details-recovery')
+          const candidates = startupSessionDetails
+          startupSessionDetails = undefined
+          await owner.start(candidates)
+          composition.phase('session-details-ready')
         },
         dispose: async () => {
           await owner.shutdown()
@@ -4208,7 +4255,11 @@ const createApplicationModules = async (
         // Mirror probing never changes the configured enterprise CA bundle, so it is safe to pass
         // through synchronously while channel selection warms in the background.
         caBundle: configuredMirror?.caBundle,
-        micromamba: { resourcesPath: process.resourcesPath },
+        micromamba: {
+          resourcesPath: process.resourcesPath,
+          packaged: app.isPackaged,
+          configHome: app.getPath('home')
+        },
         // Self-guard the provisioner's prefix writes (startup restore/upgrade/repair, named create, lazy
         // materialize) against a prefix crash-recovery could not confirm free of a live orphan — closes
         // the startup-gate path the UI-only assertProvisionAllowed guard did not cover. Reads the live
@@ -4444,8 +4495,14 @@ const createApplicationModules = async (
         )
     }
   })
+  const runtimeWriter = new RuntimeWriterOwner(undefined, undefined, (clientId) => {
+    if (!clientId.startsWith('electron:')) return undefined
+    const sender = webContents.fromId(Number(clientId.slice('electron:'.length)))
+    return Boolean(sender && !sender.isDestroyed() && !sender.isCrashed())
+  })
   surfaceAdapters.push(
     createSessionPersistenceElectronSurface({
+      runtimeWriter,
       sessionPersistenceBackend,
       reviewRepository,
       sessionPersistenceHandlers,
@@ -4558,6 +4615,18 @@ const createApplicationModules = async (
     artifactProvenanceRepository,
     pagedContentResolver: createReviewerElectronPagedContentResolver(previewResources),
     resolveSessionAgentTarget,
+    // Reviewer reads transcripts but never owns them. Injecting the composed owner keeps those
+    // reads on its scheduler and projection instead of a second SessionRepository over the same
+    // tree, whose corrupt-file recovery would rename live files outside this write lane.
+    sessionReader: {
+      loadSession: (projectId: string, sessionId: string) =>
+        sessionPersistenceCoordinator.readSessionSnapshot(projectId, sessionId),
+      findSessionById: async (sessionId: string) => {
+        const projectId = await sessionPersistenceCoordinator.sessionProjectId(sessionId)
+        if (!projectId) return undefined
+        return sessionPersistenceCoordinator.readSessionSnapshot(projectId, sessionId)
+      }
+    },
     saveSessionAgentConfiguration: (
       session: PersistedChatSession,
       configuration: SessionAgentConfiguration
@@ -4810,10 +4879,16 @@ const createApplicationModules = async (
       clearAll: () => memoryService.clearAll()
     },
     dataContent: {
+      runtimeWriter,
       artifacts: artifactHandlers,
       electron: {
         sessionPackageOperation: async (invocation) =>
           sessionPackageDesktop.respond(invocation.args[0]),
+        forkSession: (invocation) =>
+          sessionPackageDesktop.fork(
+            invocation.args[0],
+            invocation.callerContext.lifecycleClientId
+          ),
         exportSessionPackage: (invocation) =>
           sessionPackageDesktop.export(
             invocation.args[0],
@@ -4894,6 +4969,8 @@ const createApplicationModules = async (
           return context
         },
         editDetails: (request) => sessionDetailsOwner.edit(request),
+        bindTaskSession: (request) => sessionPersistenceCoordinator.bindTaskSession(request),
+        admitTaskTurn: (request) => sessionPersistenceCoordinator.admitTaskTurn(request),
         stageTaskCompletion: (request) =>
           sessionPersistenceCoordinator.stageTaskCompletion(request),
         settleTaskCompletion: (request) =>

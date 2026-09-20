@@ -46,6 +46,7 @@ const runtime = vi.hoisted(() => ({
   cancelRun: vi.fn().mockResolvedValue(undefined),
   deleteRuntimeSession: vi.fn(),
   respondToPermission: vi.fn(),
+  setPermissionProfile: vi.fn().mockResolvedValue(true),
   setMemoryEnabled: vi.fn()
 }))
 
@@ -72,6 +73,7 @@ vi.mock('@/lib/acp/useWorkspaceAgentRuntime', () => ({
     cancelRun: runtime.cancelRun,
     deleteRuntimeSession: runtime.deleteRuntimeSession,
     respondToPermission: runtime.respondToPermission,
+    setPermissionProfile: runtime.setPermissionProfile,
     setMemoryEnabled: runtime.setMemoryEnabled
   })
 }))
@@ -120,6 +122,15 @@ const createSession = (overrides: Partial<ChatSession> = {}): ChatSession => {
 const createReviewableSession = (): ChatSession =>
   createSession({
     messages: [
+      {
+        id: 'user-before-analysis',
+        role: 'user',
+        content: 'Analyze',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 0,
+        updatedAt: 0
+      },
       {
         id: 'agent-1',
         role: 'agent',
@@ -1142,7 +1153,41 @@ describe('WorkspacePage send gate while compacting', () => {
     expect(conversationProps.agentControls.canChangeAutoReview).toBe(true)
     expect(conversationProps.agentControls.canChangeMemory).toBe(true)
     expect(conversationProps.agentControls.canChangeSpecialist).toBe(true)
-    expect(conversationProps.permissions.canChangePermissionProfile).toBe(false)
+    expect(conversationProps.permissions.canChangePermissionProfile).toBe(true)
+    await act(async () => conversationProps.permissions.changeProfile('ask'))
+    expect(runtime.setPermissionProfile).toHaveBeenCalledWith('sess-a', 'ask')
+    expect(conversationProps.view.sideChatDisabledReason).toBeUndefined()
+    expect(useSessionStore.getState().sessions[0].pendingHistoryReplay).toEqual({ kind: 'all' })
+  })
+
+  it.each(['creating', 'preparing', 'compacting'] as const)(
+    'keeps permission changes blocked while a replay Session is %s',
+    async (phase) => {
+      useSessionStore.setState({
+        sessions: [
+          createSession({
+            pendingHistoryReplay: { kind: 'all' },
+            isPending: phase === 'creating',
+            compacting: phase === 'compacting'
+          })
+        ]
+      })
+      if (phase === 'preparing') runtime.sendPreparationInFlightSessionIds = ['sess-a']
+      await renderPage()
+
+      expect(conversationProps.permissions.canChangePermissionProfile).toBe(false)
+      await act(async () => conversationProps.permissions.changeProfile('full'))
+      expect(runtime.setPermissionProfile).not.toHaveBeenCalled()
+      expect(useSessionStore.getState().sessions[0].pendingHistoryReplay).toEqual({ kind: 'all' })
+    }
+  )
+
+  it('keeps Side chat blocked while the parent Session is still being created', async () => {
+    useSessionStore.setState({
+      sessions: [{ ...createReviewableSession(), isPending: true }]
+    })
+    await renderPage()
+
     expect(conversationProps.view.sideChatDisabledReason).toBe(
       'Resolve the current Session operation first.'
     )

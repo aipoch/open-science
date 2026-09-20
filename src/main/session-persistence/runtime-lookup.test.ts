@@ -1,3 +1,4 @@
+import { initDataRoot } from '../storage-root'
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
@@ -51,6 +52,7 @@ const createLookup = async (
   findSessions: ReturnType<typeof createSessionRuntimeLookup>
 }> => {
   const root = await mkdtemp(join(tmpdir(), 'session-runtime-lookup-'))
+  initDataRoot(root)
   roots.push(root)
   const repository = new SessionRepository(root, dependencies)
   await repository.saveSession(session('current'))
@@ -134,6 +136,7 @@ describe('runtime Session lookup', () => {
     '%s %s becomes ready without waiting for unrelated Session contents',
     async (frameworkId, boundary) => {
       const root = await mkdtemp(join(tmpdir(), 'session-runtime-lookup-'))
+      initDataRoot(root)
       roots.push(root)
       let holdUnrelatedReads = false
       let release!: () => void

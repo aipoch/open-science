@@ -3,7 +3,11 @@ import { useTranslation } from 'react-i18next'
 import { X } from 'lucide-react'
 import * as Dialog from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
-import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
+import {
+  dialogOverlayClassName,
+  dialogPanelClassName,
+  dialogTitleClassName
+} from '@/components/ui/dialog-chrome'
 import type { ChatSession } from '@/stores/session-store'
 import type {
   SessionReproducibilityBatch,
@@ -138,7 +142,7 @@ const SessionCheck = ({
         >
           <div className="flex items-center justify-between gap-3 border-b border-border-300 px-5 py-3">
             <div className="min-w-0">
-              <Dialog.Title className="text-sm font-semibold">
+              <Dialog.Title className={dialogTitleClassName}>
                 {t('Check session artifacts')}
               </Dialog.Title>
               <Dialog.Description className="truncate text-xs text-text-300">

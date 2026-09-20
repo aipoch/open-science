@@ -397,11 +397,14 @@ describe('codexFramework', () => {
     const codexConfigs = configurations.map(({ env }) => JSON.parse(env?.CODEX_CONFIG ?? '{}'))
 
     expect(codexConfigs.map(({ features }) => features)).toEqual(
-      configurations.map(() => ({
+      configurations.map((_configuration, index) => ({
         memories: false,
         multi_agent: false,
         multi_agent_v2: false,
-        code_mode: { direct_only_tool_namespaces: ['mcp__skills'] },
+        code_mode: {
+          direct_only_tool_namespaces:
+            index === 2 ? ['mcp__skills', 'mcp__open_science_plan'] : ['mcp__skills']
+        },
         shell_tool: false
       }))
     )
@@ -676,6 +679,11 @@ describe('codexFramework', () => {
     expect(JSON.parse(config.env?.CODEX_CONFIG ?? '')).toMatchObject({
       model: CODEX_BRIDGE_MODEL,
       developer_instructions: 'Stable bridge guidance.',
+      features: {
+        code_mode: {
+          direct_only_tool_namespaces: ['mcp__skills', 'mcp__open_science_plan']
+        }
+      },
       model_context_window: 128_000,
       model_auto_compact_token_limit: 121_600,
       model_provider: 'open-science',
@@ -766,7 +774,7 @@ describe('codexFramework', () => {
           visibility: 'list',
           supported_in_api: true,
           base_instructions: expect.stringContaining(
-            'inside Open Science through the Agent Client Protocol'
+            'inside Open-Science through the Agent Client Protocol'
           ),
           include_skills_usage_instructions: true,
           default_reasoning_level: 'none',
@@ -1108,7 +1116,7 @@ describe('codexFramework', () => {
     })
   })
 
-  it('delivers Open Science session guidance as persistent developer instructions', () => {
+  it('delivers Open-Science session guidance as persistent developer instructions', () => {
     const framework = createCodexFramework()
 
     const config = framework.prepareModelConfig(
@@ -1212,7 +1220,7 @@ describe('codexFramework', () => {
   it('runs an app-managed JavaScript adapter with Electron as Node', () => {
     const spawnProcess = vi.fn().mockReturnValue(fakeChild)
     const framework = createCodexFramework({
-      execPath: '/Applications/Open Science/Electron',
+      execPath: '/Applications/Open-Science/Electron',
       platform: 'darwin',
       spawnProcess
     })
@@ -1225,7 +1233,7 @@ describe('codexFramework', () => {
       })
     ).toBe(fakeChild)
     expect(spawnProcess).toHaveBeenCalledWith(
-      '/Applications/Open Science/Electron',
+      '/Applications/Open-Science/Electron',
       ['/data/codex-acp/dist/index.js', '--flag'],
       expect.objectContaining({
         env: expect.objectContaining({
@@ -1393,4 +1401,33 @@ describe('buildCodexConfig reasoning effort', () => {
 
     expect(JSON.parse(config.env?.CODEX_CONFIG ?? '').model_reasoning_effort).toBe('max')
   })
+})
+
+it('prevents physical launch when delegated ownership admission fails', () => {
+  const ordinarySpawn = vi.fn(() => ({}) as ChildProcessWithoutNullStreams)
+  const ownedSpawn = vi.fn(() => {
+    throw new Error('ownership receipt write failed')
+  })
+  const framework = createCodexFramework({
+    platform: 'win32',
+    sourceEnv: { PATH: 'C:\\bin' },
+    spawnProcess: ordinarySpawn
+  })
+  const input = {
+    executablePath: 'C:\\runtime\\codex.exe',
+    args: ['--trace'],
+    env: { OWNED: 'yes' },
+    spawnProcess: ownedSpawn
+  }
+  expect(() => framework.spawn(input)).toThrow('ownership receipt write failed')
+  expect(ordinarySpawn).not.toHaveBeenCalled()
+  expect(ownedSpawn).toHaveBeenCalledWith(
+    input.executablePath,
+    ['--trace'],
+    expect.objectContaining({
+      env: expect.objectContaining({ OWNED: 'yes' }),
+      stdio: 'pipe',
+      windowsHide: true
+    })
+  )
 })

@@ -423,7 +423,7 @@ const ProviderStep = ({
           {t('Connect a model')}
         </h2>
         <CardDescription className="text-xs leading-5">
-          {t('Choose the provider Open Science should use for new research sessions.')}
+          {t('Choose the provider Open-Science should use for new research sessions.')}
         </CardDescription>
       </CardHeader>
       <Separator className="bg-border-200" />
@@ -432,6 +432,7 @@ const ProviderStep = ({
         <section aria-label={t('Configure model')}>
           {!encryptionAvailable ? (
             <ErrorNotice
+              inline
               className="mb-4"
               tone="amber"
               description={t(
@@ -511,14 +512,17 @@ const ProviderStep = ({
           onClick={() => void handleSaveProvider()}
           disabled={isSaving}
           className="px-4"
+          aria-busy={Boolean(isSaving)}
         >
-          {isSaving
-            ? isBrowserSignInProvider(formValue.type)
-              ? t('Waiting for sign-in…')
-              : t('Testing connection…')
-            : isBrowserSignInProvider(formValue.type)
-              ? t('Sign in & continue')
-              : t('Test & continue')}
+          <span key={String(isSaving)} className="button-feedback">
+            {isSaving
+              ? isBrowserSignInProvider(formValue.type)
+                ? t('Waiting for sign-in…')
+                : t('Testing connection…')
+              : isBrowserSignInProvider(formValue.type)
+                ? t('Sign in & continue')
+                : t('Test & continue')}
+          </span>
         </Button>
       </CardFooter>
       <ClaudeIsolatedSignInModal

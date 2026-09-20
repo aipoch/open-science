@@ -180,6 +180,7 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
       is_absolute: { effect: 'read' },
       is_relative_to: { effect: 'read' },
       relative_to: { effect: 'read', returnType: 'pathlib.PurePath' },
+      open: { effect: 'read' },
       // These do not mutate the path object. The file parser captures their receiver path.
       read_text: { effect: 'read' },
       read_bytes: { effect: 'read' },
@@ -325,10 +326,21 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
       to_parquet: { effect: 'read', file: { kind: 'write', position: 0, keywords: ['path'] } }
     }
   },
+  decimal: {
+    kind: 'module',
+    methods: { Decimal: { effect: 'read', returnType: 'decimal.Decimal' } }
+  },
+  'decimal.Decimal': { kind: 'type', methods: {}, unknownMethodsHaveExternalState: true },
   collections: {
     kind: 'module',
     methods: {
-      Counter: { effect: 'read', returnType: 'collections.Counter' }
+      Counter: { effect: 'read', returnType: 'collections.Counter' },
+      defaultdict: {
+        effect: 'read',
+        returnType: 'python.container',
+        callbackKeywords: ['default_factory'],
+        callbackPositionalKeywords: { 0: 'default_factory' }
+      }
     }
   },
   'collections.Counter': {

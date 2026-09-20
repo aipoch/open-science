@@ -39,7 +39,7 @@ describe.skipIf(process.platform !== 'win32')('Windows PowerShell search preflig
     'Remove-Item Alias:where; where /r C:\\ chart.png',
     'where.exe /r C:\\ chart.png'
   ])('rejects unsafe discovery without running the command: %s', async (source) => {
-    await expect(assertShellSearchScope(source, process.cwd())).rejects.toThrow(
+    await expect(assertShellSearchScope(source, process.cwd(), [])).rejects.toThrow(
       /search scope denied/i
     )
   })
@@ -53,6 +53,6 @@ describe.skipIf(process.platform !== 'win32')('Windows PowerShell search preflig
     'rg --ignore-file ./ignore needle .',
     "Write-Output 'Get-ChildItem C:\\ is documentation'"
   ])('retains scoped discovery and ordinary output: %s', async (source) => {
-    await expect(assertShellSearchScope(source, process.cwd())).resolves.toBeUndefined()
+    await expect(assertShellSearchScope(source, process.cwd(), [])).resolves.toBeUndefined()
   })
 })

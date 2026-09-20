@@ -154,6 +154,7 @@ const ELECTRON_NATIVE_COMMAND_NAMES = Object.freeze([
   'remote-access:disable',
   'remote-access:set-mode',
   'sessions:export-conversation',
+  'sessions:fork',
   'sessions:export-package',
   'sessions:import-package',
   'sessions:package-operation',
@@ -168,6 +169,8 @@ const TASK_NATIVE_COMMAND_NAMES = Object.freeze([
   'settings:set-agent-routing',
   'sessions:fail-task-run',
   'sessions:settle-task-completion',
+  'sessions:bind-task-session',
+  'sessions:admit-task-turn',
   'sessions:stage-task-completion',
   'sessions:update-configuration'
 ])
@@ -197,6 +200,8 @@ const TASK_COMMAND_NAMES = Object.freeze([
   'settings:set-agent-routing',
   'sessions:load-all',
   'sessions:save-session',
+  'sessions:bind-task-session',
+  'sessions:admit-task-turn',
   'sessions:stage-task-completion',
   'sessions:settle-task-completion',
   'sessions:fail-task-run',
@@ -318,7 +323,8 @@ const createRemoteAccessSlot = (): Readonly<{
     disable: (...args) => current().disable(...args),
     approve: (...args) => current().approve(...args),
     reject: (...args) => current().reject(...args),
-    revoke: (...args) => current().revoke(...args)
+    revoke: (...args) => current().revoke(...args),
+    revokeBrowsers: (...args) => current().revokeBrowsers(...args)
   })
 
   return Object.freeze({

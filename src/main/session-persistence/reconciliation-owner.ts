@@ -5,6 +5,7 @@ import { ARTIFACT_FINALIZATION_INVALID_PROOF, artifactCreatedAtMs } from '../../
 import type { ProjectFileSource } from '../../shared/project-files'
 import {
   materializeSessionConversationGraph,
+  sessionRevision,
   type LoadAllSessionsResult,
   type PersistedArtifact,
   type PersistedChatSession
@@ -16,6 +17,10 @@ import { saveSessionWithRevision } from './save-session'
 
 type SessionReconciliationRepository = {
   saveSession(session: PersistedChatSession): Promise<PersistedChatSession>
+  saveSessionWithBindingRepair?(
+    session: PersistedChatSession,
+    expectedRevision: number
+  ): Promise<PersistedChatSession>
 }
 
 type SessionReconciliationFileIndex = {
@@ -27,6 +32,9 @@ type SessionReconciliationFileIndex = {
 }
 
 type SessionReconciliationProvenance = {
+  recoverLegacySessionGraph?(
+    session: PersistedChatSession
+  ): Promise<PersistedChatSession | undefined>
   captureFinalizedMessages(session: PersistedChatSession): Promise<void>
   reconcileSessionDeletions(activeSessions: PersistedChatSession[]): Promise<void>
   reconcileSessionCleanup?(activeSessions: PersistedChatSession[]): Promise<void>
@@ -292,6 +300,21 @@ class SessionPersistenceReconciliationOwner {
     input.phase('reconcile-derived-state')
     try {
       const provenance = this.provenance
+      if (provenance?.recoverLegacySessionGraph && this.repository.saveSessionWithBindingRepair) {
+        for (let index = 0; index < sessions.length; index += 1) {
+          const session = sessions[index]
+          const repaired = await provenance.recoverLegacySessionGraph(session)
+          if (!repaired) continue
+          const persisted = await this.repository.saveSessionWithBindingRepair(
+            repaired,
+            sessionRevision(session)
+          )
+          sessions = sessions.map((candidate, candidateIndex) =>
+            candidateIndex === index ? persisted : candidate
+          )
+          result = { ...result, sessions }
+        }
+      }
       const splitProvenance =
         provenance?.reconcileSessionCleanup && provenance.reconcileMessageSnapshots
           ? {

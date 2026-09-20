@@ -72,13 +72,13 @@ const localizeHostEnvironmentCheck = (
       return {
         ...check,
         label: localizedLabel(check, t),
-        summary: t('Open Science can write to its private data folder.')
+        summary: t('Open-Science can write to its private data folder.')
       }
     case 'storage-unwritable':
       return {
         ...check,
         label: localizedLabel(check, t),
-        summary: t('Open Science cannot write to its private data folder.')
+        summary: t('Open-Science cannot write to its private data folder.')
       }
     case 'file-credential-storage':
       return {

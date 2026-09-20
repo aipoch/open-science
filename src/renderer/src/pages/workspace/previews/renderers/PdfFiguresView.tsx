@@ -238,32 +238,38 @@ const TableDetails = ({
                 variant="outline"
                 disabled={!reviewed || action !== null}
                 onClick={() => void exportTable('copy')}
+                aria-busy={Boolean(action === 'copy')}
               >
-                {action === 'copy' ? (
-                  <LoaderCircle
-                    className="size-4 animate-spin motion-reduce:animate-none"
-                    aria-hidden="true"
-                  />
-                ) : (
-                  <Copy className="size-4" aria-hidden="true" />
-                )}
-                {t('Copy')}
+                <span key={String(action === 'copy')} className="button-feedback">
+                  {action === 'copy' ? (
+                    <LoaderCircle
+                      className="size-4 animate-spin motion-reduce:animate-none"
+                      aria-hidden="true"
+                    />
+                  ) : (
+                    <Copy className="size-4" aria-hidden="true" />
+                  )}
+                  {t('Copy')}
+                </span>
               </Button>
               <Button
                 size="sm"
                 variant="outline"
                 disabled={!reviewed || action !== null}
                 onClick={() => void exportTable('download')}
+                aria-busy={Boolean(action === 'download')}
               >
-                {action === 'download' ? (
-                  <LoaderCircle
-                    className="size-4 animate-spin motion-reduce:animate-none"
-                    aria-hidden="true"
-                  />
-                ) : (
-                  <Download className="size-4" aria-hidden="true" />
-                )}
-                {t('Download')}
+                <span key={String(action === 'download')} className="button-feedback">
+                  {action === 'download' ? (
+                    <LoaderCircle
+                      className="size-4 animate-spin motion-reduce:animate-none"
+                      aria-hidden="true"
+                    />
+                  ) : (
+                    <Download className="size-4" aria-hidden="true" />
+                  )}
+                  {t('Download')}
+                </span>
               </Button>
             </div>
           </div>
@@ -511,16 +517,19 @@ const CandidateDetails = ({
                       title={t('Download image')}
                       disabled={imageAction !== null}
                       onClick={() => void exportImage('download')}
+                      aria-busy={Boolean(imageAction === 'download')}
                     >
-                      {imageAction === 'download' ? (
-                        <LoaderCircle
-                          className="size-4 animate-spin motion-reduce:animate-none"
-                          aria-hidden="true"
-                        />
-                      ) : (
-                        <Download className="size-4" aria-hidden="true" />
-                      )}
-                      <span className="hidden sm:inline">{t('Download image')}</span>
+                      <span key={String(imageAction === 'download')} className="button-feedback">
+                        {imageAction === 'download' ? (
+                          <LoaderCircle
+                            className="size-4 animate-spin motion-reduce:animate-none"
+                            aria-hidden="true"
+                          />
+                        ) : (
+                          <Download className="size-4" aria-hidden="true" />
+                        )}
+                        <span className="hidden sm:inline">{t('Download image')}</span>
+                      </span>
                     </Button>
                     <Button
                       variant="ghost"
@@ -530,16 +539,19 @@ const CandidateDetails = ({
                       title={t('Copy image')}
                       disabled={imageAction !== null}
                       onClick={() => void exportImage('copy')}
+                      aria-busy={Boolean(imageAction === 'copy')}
                     >
-                      {imageAction === 'copy' ? (
-                        <LoaderCircle
-                          className="size-4 animate-spin motion-reduce:animate-none"
-                          aria-hidden="true"
-                        />
-                      ) : (
-                        <Copy className="size-4" aria-hidden="true" />
-                      )}
-                      <span className="hidden sm:inline">{t('Copy image')}</span>
+                      <span key={String(imageAction === 'copy')} className="button-feedback">
+                        {imageAction === 'copy' ? (
+                          <LoaderCircle
+                            className="size-4 animate-spin motion-reduce:animate-none"
+                            aria-hidden="true"
+                          />
+                        ) : (
+                          <Copy className="size-4" aria-hidden="true" />
+                        )}
+                        <span className="hidden sm:inline">{t('Copy image')}</span>
+                      </span>
                     </Button>
                     <Dialog.Close asChild>
                       <Button variant="ghost" size="icon-sm" aria-label={t('Close')}>

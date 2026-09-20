@@ -1,6 +1,8 @@
+import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { useTranslation } from 'react-i18next'
 import * as Dialog from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import { DiffViewer } from '@/components/diff-viewer'
 import { ErrorNotice } from '@/components/error-notice'
 import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
 import type { SkillMarketplaceUpdatePreview } from '../../../../shared/skill-marketplace'
@@ -22,6 +24,7 @@ export function SkillMarketplaceUpdateDialog({
   onConfirm: () => void
 }): React.JSX.Element {
   const { t } = useTranslation()
+  const dialogPreview = useRetainedDialogValue(preview)
   return (
     <Dialog.Root
       open={Boolean(preview)}
@@ -46,59 +49,53 @@ export function SkillMarketplaceUpdateDialog({
               )}
             </Dialog.Description>
           </div>
-          {preview ? (
+          {dialogPreview ? (
             <div className="min-h-0 overflow-y-auto px-5 py-4">
-              <p className="font-medium">{preview.displayName}</p>
+              <p className="font-medium">{dialogPreview.displayName}</p>
               <p className="mt-1 text-sm text-muted-foreground">
                 {t('Update Skill from {{from}} to {{to}}?', {
-                  from: preview.installedVersion ?? t('Unknown'),
+                  from: dialogPreview.installedVersion ?? t('Unknown'),
                   to: version
                 })}
               </p>
               <p className="mt-3 text-sm">
                 {t('Affected Specialists')}:{' '}
-                {preview.specialists.length
-                  ? preview.specialists.map((item) => item.name).join(', ')
+                {dialogPreview.specialists.length
+                  ? dialogPreview.specialists.map((item) => item.name).join(', ')
                   : t('None')}
               </p>
-              {preview.mainEnabled ? (
+              {dialogPreview.mainEnabled ? (
                 <p className="mt-1 text-sm">
                   {t('This Skill is also enabled for the Main Agent.')}
                 </p>
               ) : null}
               <p className="mt-3 text-sm text-muted-foreground">
-                {preview.localChanges === 'unknown'
+                {dialogPreview.localChanges === 'unknown'
                   ? t(
                       'The original installed content is unavailable. Local changes cannot be determined.'
                     )
-                  : preview.localChanges === 'modified'
+                  : dialogPreview.localChanges === 'modified'
                     ? t('This Skill has local changes. Updating will replace them.')
                     : t('The installed files match the previous Marketplace release.')}
               </p>
               <SkillReplacementSummary
                 replacement={{
-                  targetId: preview.localSkillId,
-                  sourceLabel: preview.source === 'personal' ? t('Personal') : t('Imported'),
-                  added: preview.added,
-                  modified: preview.modified,
-                  removed: preview.removed
+                  targetId: dialogPreview.localSkillId,
+                  sourceLabel: dialogPreview.source === 'personal' ? t('Personal') : t('Imported'),
+                  added: dialogPreview.added,
+                  modified: dialogPreview.modified,
+                  removed: dialogPreview.removed
                 }}
               />
-              {preview.differences.map((file) => (
-                <details key={file.path} className="mt-2 rounded-md border border-border p-3">
-                  <summary className="cursor-pointer break-all font-mono text-xs">
-                    {file.path}
-                  </summary>
-                  {file.patch ? (
-                    <pre className="mt-3 overflow-x-auto whitespace-pre text-xs">{file.patch}</pre>
-                  ) : (
-                    <p className="mt-2 text-xs text-muted-foreground">
-                      {t(
-                        'Text comparison is unavailable for this file. It will be replaced or removed as listed above.'
-                      )}
-                    </p>
+              {dialogPreview.differences.map((file) => (
+                <DiffViewer
+                  key={file.path}
+                  name={file.path}
+                  patch={file.patch}
+                  unavailable={t(
+                    'Text comparison is unavailable for this file. It will be replaced or removed as listed above.'
                   )}
-                </details>
+                />
               ))}
               {error ? (
                 <div className="mt-3">

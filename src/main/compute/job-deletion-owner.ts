@@ -1,7 +1,7 @@
 import type { ComputeJob, SetComputeJobRemoteCleanupRequest } from '../../shared/compute'
 import { sharedDispatchTracker, type DispatchTracker } from './dispatch-tracker'
 import {
-  computeRemoteWorkdir,
+  computeLegacyRemoteWorkdir,
   quoteRemotePath,
   type ComputeRemoteHandle,
   type SlurmRemoteHandle
@@ -102,8 +102,10 @@ const cleanupCommand = (
   requirePidWitness = false,
   allowPidCleanup = true
 ): string => {
-  const marker = '/.openscience/jobs/'
-  const markerIndex = workdir.lastIndexOf(marker)
+  const markerIndex = Math.max(
+    workdir.lastIndexOf('/.open-science/jobs/'),
+    workdir.lastIndexOf('/.openscience/jobs/')
+  )
   if (markerIndex < 0) throw new Error('Unsafe remote Compute Job cleanup path.')
   const scratchRoot = markerIndex === 0 ? '/' : workdir.slice(0, markerIndex)
   const workdirSuffix = workdir.slice(markerIndex + 1)
@@ -544,7 +546,9 @@ class ComputeJobDeletionOwner {
     }
     if (job.status === 'queued') return undefined
     const host = await this.deps.hostRepository.get(job.provider_id)
-    const fallbackWorkdir = host ? computeRemoteWorkdir(host.scratchRoot, job.job_id) : undefined
+    const fallbackWorkdir = host
+      ? computeLegacyRemoteWorkdir(host.scratchRoot, job.job_id)
+      : undefined
     const workdir = parseRemoteJobWorkdir(job.job_id, job.remote_workdir, fallbackWorkdir)
     if (!workdir) {
       throw new Error(`Unsafe remote work directory for Compute Job ${job.job_id}.`)

@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, readdir, readFile, rm, truncate, writeFile } from 'node:fs/promises'
+import { spawnSync } from 'node:child_process'
+import { cp, mkdir, mkdtemp, readdir, readFile, rm, truncate, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
@@ -27,10 +28,41 @@ const listFiles = async (directory: string): Promise<string[]> => {
 }
 
 describe('skill-creator bundled package', () => {
+  it.each(['module', 'commonjs', undefined])(
+    'loads both helper entry points beneath an ancestor package with type %s',
+    async (type) => {
+      const root = await mkdtemp(join(tmpdir(), 'skill-package-scope-'))
+      roots.push(root)
+      await writeFile(join(root, 'package.json'), JSON.stringify({ type }))
+      const installed = join(root, 'app.asar.unpacked', 'resources', 'skills', 'skill-creator')
+      await cp(skillRoot, installed, { recursive: true })
+      const runner = join(root, 'check.cjs')
+      await writeFile(
+        runner,
+        `const { join } = require('node:path')
+const helpers = require(join(process.argv[2], 'scripts', 'index.js'))
+const viewer = require(join(process.argv[2], 'eval-viewer', 'generate-review.js'))
+const valid = helpers.validateSkillDocument('---\\nname: test-skill\\ndescription: Test skill.\\n---\\n')
+if (!valid.valid || typeof viewer.generateReview !== 'function') process.exit(1)
+process.stdout.write('ready')`
+      )
+      const result = spawnSync(process.execPath, [runner, installed], {
+        cwd: root,
+        encoding: 'utf8',
+        timeout: 10_000,
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
+      })
+      expect(result.stderr).toBe('')
+      expect(result.status).toBe(0)
+      expect(result.stdout).toBe('ready')
+    }
+  )
+
   it('ships the reusable workflow as JavaScript-first progressive resources', async () => {
     await expect(listFiles(skillRoot)).resolves.toEqual(
       [
         'SKILL.md',
+        'package.json',
         'agents/analyzer.md',
         'agents/comparator.md',
         'agents/grader.md',
@@ -90,7 +122,7 @@ describe('skill-creator bundled package', () => {
     expect(result.run_summary.delta.pass_rate).toBe(0.5)
   })
 
-  it('validates the Open Science frontmatter contract without third-party packages', () => {
+  it('validates the Open-Science frontmatter contract without third-party packages', () => {
     const { validateSkillDocument } = require(join(skillRoot, 'scripts', 'index.js')) as {
       validateSkillDocument(
         content: string,

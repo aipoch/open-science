@@ -76,19 +76,36 @@ export const sessionLiteratureReferences = (
 export const capturePackageLiterature = async (
   client: PrismaClient,
   session: PersistedChatSession,
-  records: PackageRecords
+  records: PackageRecords,
+  additionalVersionIds: readonly string[] = []
 ): Promise<Map<string, string>> => {
   const references = sessionLiteratureReferences(session)
+  for (const id of additionalVersionIds) references.versionIds.add(id)
   const sources = new Map<string, string>()
-  if (!references.versionIds.size && !references.items.length) return sources
-  const literature: PackageLiterature = { items: references.items, attachments: [] }
+  if (!references.versionIds.size && !references.items.length && !records.literature) return sources
+  // Forks retain packaged Library metadata without installing it into the live Library.
+  // Their PDF Versions already exist as native Upload rows and must not be queried as live attachments.
+  const literature: PackageLiterature = {
+    items: [
+      ...new Map(
+        [...(records.literature?.items ?? []), ...references.items].map((item) => [
+          item.itemId,
+          item
+        ])
+      ).values()
+    ],
+    attachments: [...(records.literature?.attachments ?? [])]
+  }
+  const localVersionIds = [...references.versionIds].filter(
+    (id) => !literature.attachments.some((entry) => entry.versionId === id)
+  )
   const catalog = new LiteratureCatalog(async () => client)
   const rows = await client.literatureAttachmentVersion.findMany({
-    where: { id: { in: [...references.versionIds] } },
+    where: { id: { in: localVersionIds } },
     include: { attachment: { include: { item: true } }, contentBlob: true },
     orderBy: [{ attachmentId: 'asc' }, { versionNumber: 'asc' }]
   })
-  if (rows.length !== references.versionIds.size)
+  if (rows.length !== localVersionIds.length)
     throw new Error('Literature PDF Version is unavailable.')
   if (
     rows.length &&

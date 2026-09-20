@@ -1,3 +1,4 @@
+import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { X } from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
 import { useTranslation } from 'react-i18next'
@@ -40,6 +41,7 @@ const RepairFrameworkDialog = ({
   onRepair
 }: RepairFrameworkDialogProps): React.JSX.Element => {
   const { t } = useTranslation()
+  const dialogName = useRetainedDialogValue(name)
   return (
     <AlertDialog.Root
       open={Boolean(name)}
@@ -55,7 +57,7 @@ const RepairFrameworkDialog = ({
           <div className={dialogHeaderClassName}>
             <div className="min-w-0">
               <AlertDialog.Title className={dialogTitleClassName}>
-                {t('{{name}} needs repair', { name })}
+                {t('{{name}} needs repair', { name: dialogName })}
               </AlertDialog.Title>
             </div>
             <AlertDialog.Cancel asChild>
@@ -83,9 +85,9 @@ const RepairFrameworkDialog = ({
                 {t('Cancel')}
               </Button>
             </AlertDialog.Cancel>
-            {name ? (
+            {dialogName ? (
               <AgentInstallSourceMenu
-                name={name}
+                name={dialogName}
                 intent="repair"
                 sources={sources}
                 installing={installing}

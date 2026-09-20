@@ -37,7 +37,7 @@ export function inspectReadRequest(
     return { kind: 'invalid', reason: 'ambiguous-framing' }
   if (request.method !== 'GET' && request.method !== 'HEAD')
     return { kind: 'approval', reason: 'method-needs-approval' }
-  const headers: Record<string, string> = { host, 'user-agent': 'OpenScience/1.0' }
+  const headers: Record<string, string> = { host, 'user-agent': 'Open-Science/1.0' }
   for (const [name, value] of fields) {
     switch (name) {
       case 'host':

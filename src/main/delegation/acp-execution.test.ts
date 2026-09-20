@@ -13,7 +13,7 @@ import {
   type DelegatedWorkCertificationDriver
 } from './certification-contract.test'
 import { delegateExecutionContract } from './execution-contract.test'
-import type { DelegateExecutionInput } from './execution-port'
+import { DelegateExecutionCleanupError, type DelegateExecutionInput } from './execution-port'
 
 type Deferred<Value> = Readonly<{
   promise: Promise<Value>
@@ -57,6 +57,9 @@ const makeHarness = (
   scopePaths: Readonly<{
     runtimeHome?(input: DelegateExecutionInput): string
     workspace?(input: DelegateExecutionInput): string
+    shutdownResult?(): Promise<{ reaped: boolean }>
+    createRuntimeError?: Error
+    dispose?(): Promise<void>
     createSessionError?(executionId: string): Error | undefined
     permissionResponseError?(executionId: string): Error | undefined
     permissionProfile?(
@@ -97,8 +100,12 @@ const makeHarness = (
             cleanup.push(`revoke:${input.attemptId}`)
           }
         },
+        releaseResources: async () => {
+          cleanup.push(`release:${input.attemptId}`)
+        },
         disposeResources: async () => {
           cleanup.push(`resources:${input.attemptId}`)
+          await scopePaths.dispose?.()
         }
       }
       prepared.push(scope)
@@ -106,6 +113,7 @@ const makeHarness = (
     },
     assertFrameworkNativeDelegationDisabled: async () => undefined,
     createRuntime: (scope, callbacks): AcpDelegateRuntime => {
+      if (scopePaths.createRuntimeError) throw scopePaths.createRuntimeError
       const prompt = deferred<PromptResponse>()
       const createdSessions: Parameters<AcpDelegateRuntime['createSession']>[0][] = []
       const permissionProfiles: string[] = []
@@ -151,7 +159,7 @@ const makeHarness = (
         },
         shutdownForQuit: async () => {
           cleanup.push(`shutdown:${scope.executionId}`)
-          return { reaped: true }
+          return scopePaths.shutdownResult ? scopePaths.shutdownResult() : { reaped: true }
         }
       }
     }
@@ -717,7 +725,7 @@ describe('ACP delegate execution production adapter', () => {
   })
 
   it('does not let failed duplicate scope cleanup release a running sibling scope', async () => {
-    const { execution, controls } = makeHarness(3, {
+    const { execution, controls, cleanup } = makeHarness(3, {
       runtimeHome: () => '/runtime/shared'
     })
     const reservation = await execution.reserve(2)
@@ -730,6 +738,8 @@ describe('ACP delegate execution production adapter', () => {
     const stillDuplicate = execution.run(makeInput('scope-third'), nextReservation.slotIds[0])
     await expect(stillDuplicate.completion).rejects.toThrow('runtime home is already active')
 
+    expect(cleanup).not.toContain('resources:scope-duplicate')
+    expect(cleanup).not.toContain('resources:scope-third')
     controls.get('scope-owner')!.complete()
     await expect(first.completion).resolves.toMatchObject({ status: 'completed' })
     const afterRelease = await execution.reserve(1)
@@ -761,6 +771,9 @@ describe('ACP delegate execution production adapter', () => {
       sessionId: 'provider-two',
       toolCallId: 'tool-two',
       title: 'second only',
+      providerToolName: 'WebFetch',
+      toolKind: 'fetch',
+      isMcp: false,
       options: [{ optionId: 'allow', name: 'Allow', kind: 'allow_always', scope: 'session' }]
     })
     await second.respondToPermission({ requestId: 'permission-two', optionId: 'allow' })
@@ -785,6 +798,9 @@ describe('ACP delegate execution production adapter', () => {
     expect(firstEvents.join('\n')).not.toContain('second only')
     expect(secondEvents.join('\n')).toContain('permission-two')
     expect(secondEvents.join('\n')).toContain('"scope":"session"')
+    expect(secondEvents.join('\n')).toContain('"providerToolName":"WebFetch"')
+    expect(secondEvents.join('\n')).toContain('"isMcp":false')
+    expect(secondEvents.join('\n')).toContain('"toolKind":"fetch"')
     expect(controls.get('two')?.responses).toEqual([
       { requestId: 'permission-two', optionId: 'allow' }
     ])
@@ -1106,9 +1122,166 @@ describe('ACP delegate execution production adapter', () => {
       'revoke:cleanup',
       'delete:cleanup',
       'shutdown:cleanup',
+      'release:cleanup',
       'resources:cleanup'
     ])
   })
+
+  it.each(['unreaped', 'throws'] as const)(
+    'retains resources and capacity when shutdown %s',
+    async (failure) => {
+      const { execution, controls, cleanup } = makeHarness(1, {
+        shutdownResult: async () => {
+          if (failure === 'throws') throw new Error('shutdown failed')
+          return { reaped: false }
+        }
+      })
+      const reservation = await execution.reserve(1)
+      const running = execution.run(makeInput('unreaped'), reservation.slotIds[0])
+      const events: string[] = []
+      running.subscribe((event) => events.push(JSON.stringify(event)))
+      await running.accepted
+      controls.get('unreaped')!.complete()
+
+      await expect(running.completion).rejects.toThrow(DelegateExecutionCleanupError)
+      expect(cleanup).toContain('revoke:unreaped')
+      expect(cleanup).not.toContain('resources:unreaped')
+      await expect(execution.reserve(1)).rejects.toMatchObject({ code: 'capacity' })
+      controls.get('unreaped')!.callbacks.onEvent({
+        id: 'late',
+        timestamp: 2,
+        kind: 'message',
+        level: 'info',
+        sessionId: 'provider-unreaped',
+        role: 'assistant',
+        text: 'late unreaped event'
+      })
+      expect(events.join('')).not.toContain('late unreaped event')
+    }
+  )
+
+  it('retains an unreaped runtime claim when another reserved slot attempts the same path', async () => {
+    const { execution, controls, cleanup } = makeHarness(2, {
+      runtimeHome: () => '/runtime/unreaped-shared',
+      shutdownResult: async () => ({ reaped: false })
+    })
+    const reservation = await execution.reserve(2)
+    const running = execution.run(makeInput('owner'), reservation.slotIds[0])
+    await running.accepted
+    controls.get('owner')!.complete()
+    await expect(running.completion).rejects.toThrow(DelegateExecutionCleanupError)
+    const duplicate = execution.run(makeInput('duplicate'), reservation.slotIds[1])
+    await expect(duplicate.completion).rejects.toThrow('runtime home is already active')
+    expect(cleanup).not.toContain('resources:owner')
+    expect(cleanup).not.toContain('resources:duplicate')
+    expect(controls.has('duplicate')).toBe(false)
+  })
+
+  it('does not dispose an unreaped runtime after cancellation', async () => {
+    const { execution, cleanup } = makeHarness(1, {
+      shutdownResult: async () => ({ reaped: false })
+    })
+    const reservation = await execution.reserve(1)
+    const running = execution.run(makeInput('cancel-unreaped'), reservation.slotIds[0])
+    await running.accepted
+    const completion = expect(running.completion).rejects.toThrow(DelegateExecutionCleanupError)
+    await running.cancel()
+    await completion
+    expect(cleanup).not.toContain('resources:cancel-unreaped')
+    await expect(execution.reserve(1)).rejects.toMatchObject({ code: 'capacity' })
+  })
+
+  it('waits for confirmed teardown before disposing resources and releasing capacity', async () => {
+    const shutdown = deferred<{ reaped: boolean }>()
+    const harness = makeHarness(1, { shutdownResult: () => shutdown.promise })
+    const reservation = await harness.execution.reserve(1)
+    const running = harness.execution.run(makeInput('pending-shutdown'), reservation.slotIds[0])
+    await running.accepted
+    harness.controls.get('pending-shutdown')!.complete()
+    await vi.waitFor(() => expect(harness.cleanup).toContain('shutdown:pending-shutdown'))
+    await reservation.release(reservation.slotIds[0])
+    await reservation.releaseAll()
+    expect(harness.cleanup).not.toContain('resources:pending-shutdown')
+    await expect(harness.execution.reserve(1)).rejects.toMatchObject({ code: 'capacity' })
+    shutdown.resolve({ reaped: true })
+    await expect(running.completion).resolves.toMatchObject({ status: 'completed' })
+    expect(harness.cleanup).toContain('resources:pending-shutdown')
+    await expect(harness.execution.reserve(1)).resolves.toHaveProperty('slotIds')
+  })
+
+  it('holds path ownership until asynchronous disposal finishes', async () => {
+    const disposal = deferred<void>()
+    const harness = makeHarness(2, {
+      runtimeHome: () => '/runtime/disposal-owner',
+      dispose: () => disposal.promise
+    })
+    const reservation = await harness.execution.reserve(2)
+    const running = harness.execution.run(makeInput('disposing'), reservation.slotIds[0])
+    await running.accepted
+    harness.controls.get('disposing')!.complete()
+    await vi.waitFor(() => expect(harness.cleanup).toContain('resources:disposing'))
+    const duplicate = harness.execution.run(makeInput('during-disposal'), reservation.slotIds[1])
+    await expect(duplicate.completion).rejects.toThrow('runtime home is already active')
+    expect(harness.cleanup).not.toContain('resources:during-disposal')
+    disposal.resolve()
+    await expect(running.completion).resolves.toMatchObject({ status: 'completed' })
+  })
+
+  it('releases unused reservations without freeing a running slot', async () => {
+    const { execution, controls } = makeHarness(3)
+    const reservation = await execution.reserve(3)
+    const running = execution.run(makeInput('owned-slot'), reservation.slotIds[0])
+    await running.accepted
+    await reservation.release(reservation.slotIds[1])
+    await reservation.releaseAll()
+    const unused = await execution.reserve(2)
+    await expect(execution.reserve(1)).rejects.toMatchObject({ code: 'capacity' })
+    controls.get('owned-slot')!.complete()
+    await expect(running.completion).resolves.toMatchObject({ status: 'completed' })
+    await unused.releaseAll()
+    await expect(execution.reserve(3)).resolves.toHaveProperty('slotIds')
+  })
+
+  it.each(
+    (['unreaped', 'throws', 'construction'] as const).flatMap((failure) =>
+      (['release', 'releaseAll'] as const).map((release) => ({ failure, release }))
+    )
+  )(
+    'retains unsafe runtime ownership when shutdown is $failure and the caller invokes $release',
+    async ({ failure, release }) => {
+      const shutdownResult = vi.fn(async () => {
+        if (failure === 'throws') throw new Error('shutdown failed')
+        return { reaped: false }
+      })
+      const { execution, controls, cleanup } = makeHarness(2, {
+        runtimeHome: () => '/runtime/shared-unsafe',
+        shutdownResult,
+        ...(failure === 'construction'
+          ? { createRuntimeError: new Error('construction failed') }
+          : {})
+      })
+      const reservation = await execution.reserve(1)
+      const running = execution.run(makeInput('unsafe'), reservation.slotIds[0])
+      if (failure !== 'construction') {
+        await running.accepted
+        controls.get('unsafe')!.complete()
+      }
+      await expect(running.completion).rejects.toThrow(DelegateExecutionCleanupError)
+      expect(cleanup).toContain('revoke:unsafe')
+      expect(cleanup.filter((entry) => entry === 'release:unsafe')).toHaveLength(1)
+      expect(cleanup).not.toContain('resources:unsafe')
+      expect(shutdownResult).toHaveBeenCalledTimes(failure === 'construction' ? 0 : 1)
+      // Mirror the outer launcher's finally blocks: neither release may free an unsafe slot.
+      if (release === 'release') await reservation.release(reservation.slotIds[0])
+      else await reservation.releaseAll()
+      // The failed Attempt still owns its slot and runtime path; a sibling cannot delete/reuse it.
+      await expect(execution.reserve(2)).rejects.toMatchObject({ code: 'capacity' })
+      const next = await execution.reserve(1)
+      const duplicate = execution.run(makeInput('duplicate'), next.slotIds[0])
+      await expect(duplicate.completion).rejects.toThrow('runtime home is already active')
+      expect(cleanup).not.toContain('resources:duplicate')
+    }
+  )
 
   it('fails closed before runtime creation when framework certification fails', async () => {
     const createRuntime = vi.fn()
@@ -1163,7 +1336,11 @@ describe('ACP delegate execution production adapter', () => {
       'workspace does not match the staged Frame cwd'
     )
     expect(controls.size).toBe(0)
-    expect(cleanup).toEqual(['revoke:workspace-scope', 'resources:workspace-scope'])
+    expect(cleanup).toEqual([
+      'revoke:workspace-scope',
+      'release:workspace-scope',
+      'resources:workspace-scope'
+    ])
   })
 
   it('contains provider startup failure to its child and keeps the sibling runtime alive', async () => {
@@ -1206,3 +1383,83 @@ describe('ACP delegate execution production adapter', () => {
 
 const _eventTypeCheck: AcpRuntimeEvent | undefined = undefined
 void _eventTypeCheck
+
+it('preserves provider cancellation without a local cancel request', async () => {
+  const harness = makeHarness(1)
+  const reservation = await harness.execution.reserve(1)
+  const run = harness.execution.run(makeInput('audit-cancel'), reservation.slotIds[0])
+  await vi.waitFor(() => expect(harness.controls.get('audit-cancel')?.prompts.length).toBe(1))
+  harness.controls.get('audit-cancel')!.complete({ stopReason: 'cancelled' })
+  await expect(run.completion).resolves.toMatchObject({ status: 'cancelled' })
+})
+it.each(['unreaped', 'throws', 'recoverable'] as const)(
+  'does not reuse resources when shutdown %s',
+  async (mode) => {
+    let cleanupProven = false
+    const disposeResources = vi.fn()
+    const shutdownForQuit = vi
+      .fn(async () => ({ reaped: true }))
+      .mockImplementationOnce(async () => {
+        if (mode === 'throws') throw new Error('process teardown failed')
+        return { reaped: false }
+      })
+    const revoke = vi.fn()
+    const releaseResources = vi.fn()
+    const execution = createAcpDelegateExecution({
+      capacity: 1,
+      prepare: async (input) => ({
+        executionId: input.attemptId,
+        provenance: {
+          projectId: input.session.projectId,
+          sessionId: input.session.sessionId,
+          agentFrameId: input.frameId,
+          runtimeSegmentId: input.runtimeSegmentId
+        },
+        workspace: { cwd: '/audit/workspace' },
+        runtimeHome: '/audit/home',
+        frameworkId: 'test',
+        capability: { revoke },
+        disposeResources,
+        releaseResources,
+        ...(mode === 'recoverable'
+          ? {
+              confirmProcessCleanup: async () => {
+                if (!cleanupProven) throw new Error('owned process tree is still unconfirmed')
+              }
+            }
+          : {})
+      }),
+      assertFrameworkNativeDelegationDisabled: async () => undefined,
+      createRuntime: () => ({
+        createSession: async () => ({ sessionId: 'provider-audit' }),
+        sendAppContinuation: async () => ({ stopReason: 'end_turn' }),
+        cancelPrompt: async () => undefined,
+        setPermissionProfile: async () => undefined,
+        respondToPermission: async () => undefined,
+        deleteSession: async () => undefined,
+        shutdownForQuit
+      })
+    })
+    const reservation = await execution.reserve(1)
+    const run = execution.run(makeInput('audit-reap'), reservation.slotIds[0])
+    const outcome = await run.completion.catch((error: unknown) => error)
+    expect.soft(outcome).toBeInstanceOf(Error)
+    expect.soft(shutdownForQuit).toHaveBeenCalledOnce()
+    expect.soft(revoke).toHaveBeenCalledOnce()
+    expect.soft(disposeResources).not.toHaveBeenCalled()
+    expect(releaseResources).toHaveBeenCalledOnce()
+    // The durable caller releases its reservation again in finally. That must not
+    // erase the execution owner's knowledge that the process may still be alive.
+    await reservation.releaseAll()
+    const next = await execution.reserve(1).catch((error: unknown) => error)
+    expect(next).toBeInstanceOf(Error)
+    if (mode === 'recoverable') {
+      cleanupProven = true
+      await execution.recoverCleanup!()
+      expect(disposeResources).toHaveBeenCalledOnce()
+      expect(releaseResources).toHaveBeenCalledOnce()
+      expect(shutdownForQuit).toHaveBeenCalledOnce()
+      await expect(execution.reserve(1)).resolves.toHaveProperty('slotIds')
+    }
+  }
+)

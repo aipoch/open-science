@@ -1,9 +1,10 @@
+import { ErrorNotice } from '@/components/error-notice'
 import { useTranslation } from 'react-i18next'
 
 import { DownloadProgressLine } from '@/components/DownloadProgressLine'
 import type { ProvisionUiState } from './provisioning-view'
 
-// Floating top-of-app pill for the launch-time upgrade gate (spec §6.2). First-run python preparation
+// Bottom-right notice for the launch-time upgrade gate (spec §6.2). First-run python preparation
 // is surfaced by the onboarding step and the notebook pane gate instead, so this banner only shows for
 // an in-progress background upgrade or a blocking failure — never for the initial python bootstrap.
 // It overlays content instead of taking layout space: the pages below are h-screen with
@@ -48,43 +49,40 @@ const EnvStatusBanner = ({
       {readyAnnouncement}
       <div
         data-testid="env-status-banner"
+        data-bottom-notice
         role={isError ? 'alert' : 'status'}
         aria-live={isError ? 'assertive' : 'polite'}
-        className={`fixed left-1/2 top-2 z-50 -translate-x-1/2 border border-border bg-card text-foreground shadow-dialog ${
+        className={`pointer-events-auto fixed bottom-3 right-3 z-toast w-[min(420px,calc(100vw-24px))] shadow-dialog ${
           isError
-            ? 'flex max-w-[min(90vw,560px)] items-start gap-3 rounded-xl px-4 py-3 text-left text-xs'
-            : 'flex max-w-[min(90vw,640px)] items-center justify-center gap-2 rounded-full px-3 py-1 text-center text-xs'
+            ? 'rounded-2xl bg-card text-left'
+            : 'border border-border bg-card text-foreground flex items-center justify-center gap-2 rounded-3xl px-4 py-2 text-center text-xs'
         }`}
       >
         {ui.kind === 'error' ? (
-          <>
-            <div className="min-w-0 flex-1">
-              <p className="font-medium text-foreground">
-                {recoveryBlocked ? t('Runtime recovery blocked') : t('Environment update failed')}
-              </p>
-              <p className="mt-0.5 max-h-28 overflow-y-auto whitespace-pre-wrap break-words text-muted-foreground">
-                {recoveryBlocked
-                  ? t(
-                      'Use Recheck to retry safe recovery. Only confirmed stopped operations can be reconciled; permissions and repair requirements remain in force.'
-                    )
-                  : ui.message}
-              </p>
-            </div>
-            {onAction ? (
-              <button
-                type="button"
-                data-testid="env-status-banner-retry"
-                onClick={onAction}
-                className="shrink-0 rounded-lg border border-border px-2 py-0.5 text-xs text-foreground hover:bg-muted"
-              >
-                {recoveryBlocked
-                  ? onOpenRuntimes
-                    ? t('Open Settings')
-                    : t('Recheck')
-                  : t('Retry')}
-              </button>
-            ) : null}
-          </>
+          <ErrorNotice
+            title={recoveryBlocked ? t('Runtime recovery blocked') : t('Environment update failed')}
+            description={
+              recoveryBlocked
+                ? t(
+                    'Use Recheck to retry safe recovery. Only confirmed stopped operations can be reconciled; permissions and repair requirements remain in force.'
+                  )
+                : ui.message
+            }
+            className="[&_p]:max-h-28 [&_p]:overflow-y-auto"
+            primaryButton={
+              onAction
+                ? {
+                    label: recoveryBlocked
+                      ? onOpenRuntimes
+                        ? t('Open Settings')
+                        : t('Recheck')
+                      : t('Retry'),
+                    onClick: onAction,
+                    testId: 'env-status-banner-retry'
+                  }
+                : undefined
+            }
+          />
         ) : ui.download ? (
           // Task 8: keep the existing overall provision phase text (with its percent), and render the
           // shared DownloadProgressLine (speed/ETA + resume bar) BELOW it — not a second overall bar.

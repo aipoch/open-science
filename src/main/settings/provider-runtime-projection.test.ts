@@ -145,6 +145,34 @@ describe('ProviderRuntimeProjectionOwner', () => {
     expect(provider.keyMask).toBe('secr…-key')
   })
 
+  it.each(['claude-code', 'opencode', 'codex', 'codebuddy'] as const)(
+    'preserves pinned DeepSeek legacy ids after a cached refresh for %s',
+    (frameworkId) => {
+      const owner = new ProviderRuntimeProjectionOwner()
+      const provider: StoredProvider = {
+        id: 'deepseek',
+        type: 'official',
+        vendorId: 'deepseek',
+        name: 'DeepSeek',
+        fetchedModels: ['deepseek-flash', 'deepseek-v4-pro']
+      }
+      for (const model of [
+        'deepseek-v4-pro[1m]',
+        'deepseek-v4-flash',
+        'deepseek-v4-flash-vision-exp'
+      ]) {
+        expect(owner.toProviderView(provider).models).toContain(model)
+        expect(
+          owner.resolveRuntimeTarget(
+            provider,
+            { kind: 'required', model },
+            getAgentFramework(frameworkId)
+          )
+        ).toMatchObject({ effectiveModel: model, provider: { model }, frameworkCompatible: true })
+      }
+    }
+  )
+
   it('routes DeepSeek V4 Pro through native Responses for Codex', () => {
     const owner = new ProviderRuntimeProjectionOwner()
     const provider: StoredProvider = {
@@ -167,6 +195,43 @@ describe('ProviderRuntimeProjectionOwner', () => {
       needsNativeResponsesCompatibility: true
     })
   })
+
+  it.each(['claude-code', 'opencode', 'codex'] as const)(
+    'projects Ark capabilities without changing a saved selection for %s',
+    (frameworkId) => {
+      const owner = new ProviderRuntimeProjectionOwner()
+      const provider: StoredProvider = {
+        id: 'ark',
+        type: 'official',
+        vendorId: 'volcengine',
+        name: 'Ark',
+        model: 'doubao-seed-2-1-pro-260628'
+      }
+      const before = structuredClone(provider)
+      const framework = getAgentFramework(frameworkId)
+      for (const model of [
+        'doubao-seed-2-1-pro-260915',
+        'deepseek-v4-1-flash-260910',
+        'glm-5-3-flash-260828'
+      ]) {
+        const target = owner.resolveRuntimeTarget(provider, { kind: 'required', model }, framework)
+        expect(target).toMatchObject({
+          effectiveModel: model,
+          frameworkCompatible: true,
+          needsChatResponsesBridge: false,
+          needsNativeResponsesCompatibility: frameworkId === 'codex',
+          provider: { supportsImageInput: true, contextWindow: 1_024_000 }
+        })
+      }
+      expect(
+        owner.resolveRuntimeTarget(provider, { kind: 'configured' }, framework).effectiveModel
+      ).toBe('doubao-seed-2-1-pro-260628')
+      expect(provider).toEqual(before)
+      expect(
+        resolveProviderDraft({ type: 'official', vendorId: 'volcengine', key: 'synthetic-key' })
+      ).toMatchObject({ model: 'doubao-seed-2-1-pro-260915' })
+    }
+  )
 
   it.each(['claude-code', 'opencode', 'codex', 'codebuddy'] as const)(
     'projects the SenseNova catalog and preserves a pinned legacy model for %s',
@@ -273,7 +338,7 @@ describe('ProviderRuntimeProjectionOwner', () => {
     }
   )
 
-  it('enables image input only for DeepSeek vision-exp while keeping native Responses', () => {
+  it('enables image input for DeepSeek V4.1 Flash and aliases while keeping native Responses', () => {
     const owner = new ProviderRuntimeProjectionOwner()
     const provider: StoredProvider = {
       id: 'deepseek',
@@ -282,24 +347,19 @@ describe('ProviderRuntimeProjectionOwner', () => {
       name: 'DeepSeek'
     }
 
-    expect(
-      owner.resolveRuntimeTarget(
-        provider,
-        { kind: 'required', model: 'deepseek-v4-flash-vision-exp' },
-        getAgentFramework('codex')
-      )
-    ).toMatchObject({
-      apiEndpoints: ['anthropic', 'openai', 'responses'],
-      needsNativeResponsesCompatibility: true,
-      provider: { supportsImageInput: true, model: 'deepseek-v4-flash-vision-exp' }
-    })
-    expect(
-      owner.resolveRuntimeTarget(
-        provider,
-        { kind: 'required', model: 'deepseek-v4-flash' },
-        getAgentFramework('codex')
-      ).provider.supportsImageInput
-    ).toBe(false)
+    for (const model of ['deepseek-flash', 'deepseek-v4-flash', 'deepseek-v4-flash-vision-exp']) {
+      expect(
+        owner.resolveRuntimeTarget(
+          provider,
+          { kind: 'required', model },
+          getAgentFramework('codex')
+        )
+      ).toMatchObject({
+        apiEndpoints: ['anthropic', 'openai', 'responses'],
+        needsNativeResponsesCompatibility: true,
+        provider: { supportsImageInput: true, model }
+      })
+    }
     expect(owner.toProviderView(provider).supportsImageInput).toBe(false)
   })
 

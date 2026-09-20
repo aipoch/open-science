@@ -269,7 +269,9 @@ def verify_dois(dois: list[str]) -> dict[str, dict]:
       ok=None  — could not be verified (network/transient/5xx); do not flag as
                  fabricated.
     `retracted` is True/False only on a CrossRef hit; None when the registry
-    is non-CrossRef or the lookup was unverified."""
+    is non-CrossRef or the lookup was unverified. True flags retraction-related
+    metadata (including notices); False means no checked marker was found,
+    not proof that the work has never been retracted."""
     out: dict[str, dict] = {}
     for d in dois:
         d = d.strip()
@@ -288,7 +290,13 @@ def verify_dois(dois: list[str]) -> dict[str, dict]:
         if j and "message" in j:
             m = j["message"]
             title = (m.get("title") or [""])[0]
-            upd = [u.get("type", "") for u in (m.get("update-to") or [])]
+            # updated-by links a work to its notices; update-to links a notice
+            # to affected works. Retain notice detection as well as work flags.
+            upd = [
+                u.get("type", "")
+                for field in ("updated-by", "update-to")
+                for u in (m.get(field) or [])
+            ]
             retracted = (
                 any("retract" in t.lower() for t in upd)
                 or str(m.get("subtype") or "").lower() == "retraction"

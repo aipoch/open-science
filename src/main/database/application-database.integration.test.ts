@@ -225,7 +225,8 @@ describe('application database (integration)', () => {
         '0038_literature_search_text',
         '0039_literature_metadata_commit_receipt',
         '0040_literature_collection_revision',
-        '0041_bookmarks'
+        '0041_bookmarks',
+        '0042_classification_usage'
       ]
     })
 
@@ -853,7 +854,7 @@ describe('application database (integration)', () => {
   })
 
   it('backs up legacy data through the shared client on a portable storage path', async () => {
-    storageRoot = await mkdtemp(join(tmpdir(), 'open science 数据 legacy backup-'))
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science 数据 legacy backup-'))
     const databasePath = join(storageRoot, 'open-science.db')
     const backupPath = `${databasePath}.before-0001_runtime_schema_baseline.backup`
     const seedClient = createProjectDbClient(storageRoot)
@@ -1296,7 +1297,8 @@ describe('application database (integration)', () => {
         '0038_literature_search_text',
         '0039_literature_metadata_commit_receipt',
         '0040_literature_collection_revision',
-        '0041_bookmarks'
+        '0041_bookmarks',
+        '0042_classification_usage'
       ]
     })
 

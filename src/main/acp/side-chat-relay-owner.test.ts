@@ -195,3 +195,30 @@ describe('SideChatRelayOwner', () => {
     expect(owner.claim('main-1')).toBeUndefined()
   })
 })
+
+it('bounds the in-memory queue including claimed advisories and releases capacity on commit', async () => {
+  const owner = new SideChatRelayOwner({ targetState: () => 'idle' })
+  owner.bind({
+    sideSessionId: 'side',
+    sideChatId: 'side-chat-one',
+    parentSessionId: 'main',
+    projectId: 'project'
+  })
+  const send = (): ReturnType<SideChatRelayOwner['send']> =>
+    owner.send({ sideSessionId: 'side', target: 'main', text: 'Advisory' })
+  for (let index = 0; index < 100; index++) await send()
+  const claim = owner.claim('main', { selectCount: () => 1 })!
+  await expect(send()).rejects.toThrow('queue is full')
+  claim.restore()
+  await expect(send()).rejects.toThrow('queue is full')
+  owner.claim('main', { selectCount: () => 1 })!.commit()
+  await expect(send()).resolves.toMatchObject({ persisted: false })
+  owner.releaseParent('main')
+  owner.bind({
+    sideSessionId: 'side',
+    sideChatId: 'side-chat-two',
+    parentSessionId: 'main',
+    projectId: 'project'
+  })
+  await expect(send()).resolves.toMatchObject({ persisted: false })
+})

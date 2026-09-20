@@ -29,6 +29,8 @@ import {
   analyzePythonFileAccesses,
   analyzePythonNotebookSource
 } from './dependency-analysis-python'
+import { managedEnvironmentIsReadOnly } from './managed-path-context'
+import { analyzeReplNotebookSource } from './dependency-analysis-repl'
 import { analyzeRFileAccesses, analyzeRNotebookSource } from './dependency-analysis-r'
 import { projectNotebookFileContext, type FileContextEntry } from './dependency-file-context'
 import { serializedFileContext, serializedValueDescriptors } from './serialized-file-provenance'
@@ -1327,7 +1329,17 @@ const projectSourceFileAccessContext = (
         ? {
             // Code before an exception may already have modified a module. The
             // projection keeps only tainted identities at this unsafe boundary.
-            facts: run.status === 'completed' ? cached.facts : unknownFacts('execution-incomplete'),
+            facts:
+              run.status === 'completed'
+                ? cached.facts
+                : {
+                    ...cached.facts,
+                    state: 'unknown',
+                    reasons: [
+                      ...(cached.facts.state === 'unknown' ? cached.facts.reasons : []),
+                      'execution-incomplete'
+                    ]
+                  },
             fileContext
           }
         : undefined
@@ -1360,12 +1372,14 @@ const projectionGroupChecksum = (checksums: readonly string[]): string =>
   createHash('sha256').update(JSON.stringify(checksums)).digest('hex')
 
 const projectionGroupKey = ({ run }: AnalyzedNotebookRun): string =>
-  run.kernelEpochId && (run.kernelKind === 'python' || run.kernelKind === 'r')
+  run.kernelEpochId &&
+  (run.kernelKind === 'python' || run.kernelKind === 'r' || run.kernelKind === 'repl')
     ? JSON.stringify([run.kernelKind, run.environment ?? '', run.kernelEpochId])
     : JSON.stringify(['run', run.runId])
 
 const projectionRuntimeKey = ({ run }: AnalyzedNotebookRun): string | undefined =>
-  run.kernelEpochId && (run.kernelKind === 'python' || run.kernelKind === 'r')
+  run.kernelEpochId &&
+  (run.kernelKind === 'python' || run.kernelKind === 'r' || run.kernelKind === 'repl')
     ? JSON.stringify([run.kernelKind, run.environment ?? ''])
     : undefined
 
@@ -1588,7 +1602,32 @@ class NotebookDependencyAnalyzer {
         { runs, sidecar }
       )
     }
-    const context = projectSourceFileAccessContext(runs, sidecar, request)
+    let context = projectSourceFileAccessContext(runs, sidecar, request)
+    if (request.includeManagedEnvironment && request.language !== 'r') {
+      const currentIndex = runs.findIndex((run) => run.runId === request.currentRunId)
+      const preceding = (currentIndex < 0 ? runs : runs.slice(0, currentIndex)).filter(
+        (run) => isSourceFileAccessContextRun(run, request) && run.kernelDispatched !== false
+      )
+      let managedEnvironmentSafe = true
+      for (const run of preceding) {
+        const facts = sidecar.runs[run.runId]?.facts
+        if (
+          !facts ||
+          (facts.state === 'unknown' &&
+            facts.reasons.some(
+              (reason) => !['external-state', 'control-flow', 'function-scope'].includes(reason)
+            )) ||
+          !(await managedEnvironmentIsReadOnly(request.language, run.script))
+        ) {
+          managedEnvironmentSafe = false
+          break
+        }
+      }
+      context = {
+        ...(context ?? { staticStrings: [], staticCollections: [], localFileWrappers: [] }),
+        managedEnvironmentSafe
+      }
+    }
     return ['r', 'python'].includes(request.language)
       ? serializedFileContext(
           this.options.storageRoot,
@@ -1659,7 +1698,8 @@ class NotebookDependencyAnalyzer {
       NotebookDependencyInterpreter | undefined
     >()
     for (const run of runsToAnalyze) {
-      if (run.kernelKind !== 'python' && run.kernelKind !== 'r') continue
+      if (run.kernelKind !== 'python' && run.kernelKind !== 'r' && run.kernelKind !== 'repl')
+        continue
       const checksum = checksumFor(run)
       if (
         attemptedRunIds.has(run.runId) ||
@@ -1668,7 +1708,7 @@ class NotebookDependencyAnalyzer {
       ) {
         continue
       }
-      if (!this.options.analyze) {
+      if (!this.options.analyze || run.kernelKind === 'repl') {
         const key = `in-process:${run.kernelKind}`
         const group = missingByInterpreter.get(key) ?? { runs: [] }
         group.runs.push(run)
@@ -1728,9 +1768,9 @@ class NotebookDependencyAnalyzer {
     )
     if (pending.length === 0) return false
     const language = pending[0]?.kernelKind
-    if (language !== 'python' && language !== 'r') return false
+    if (language !== 'python' && language !== 'r' && language !== 'repl') return false
     const externalFacts =
-      this.options.analyze && interpreter
+      language !== 'repl' && this.options.analyze && interpreter
         ? await this.options.analyze(
             interpreter,
             language,
@@ -1764,10 +1804,13 @@ class NotebookDependencyAnalyzer {
               ? await analyzePythonFileAccesses([run.script], priorContext)
               : await analyzeRFileAccesses([run.script], priorContext))[0]
           }
-        : await (language === 'python' ? analyzePythonNotebookSource : analyzeRNotebookSource)(
-            run.script,
-            priorContext
-          )
+        : await (
+            language === 'repl'
+              ? analyzeReplNotebookSource
+              : language === 'python'
+                ? analyzePythonNotebookSource
+                : analyzeRNotebookSource
+          )(run.script, priorContext)
       const normalizedFacts = normalizeFacts(analysis.facts)
       const fileAccess = analysis.fileAccess
       const fileContext = fileAccess?.context

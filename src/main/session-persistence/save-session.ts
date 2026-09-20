@@ -16,3 +16,15 @@ export const saveSessionWithRevision = async (
     ? repository.saveSession(session)
     : repository.saveSession(session, expectedRevision)
 }
+
+// Only constructed after authoritative JSON replacement has returned successfully. A derived
+// catalog failure cannot turn that known commit into a failed provider execution.
+export class SessionProjectionAfterCommitError extends Error {
+  constructor(
+    readonly committedSession: PersistedChatSession,
+    cause: unknown
+  ) {
+    super('Session JSON committed; derived Session catalog update is incomplete.', { cause })
+    this.name = 'SessionProjectionAfterCommitError'
+  }
+}

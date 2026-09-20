@@ -1,10 +1,15 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import * as fs from 'node:fs/promises'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { migrateApplicationDatabase } from '../projects/prisma-client'
 import {
   createArtifactVersionRequest,
   createProvenanceTestFixture
 } from './provenance-test-fixtures'
+
+vi.mock('node:fs/promises', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('node:fs/promises')>())
+}))
 
 type Fixture = Awaited<ReturnType<typeof createProvenanceTestFixture>>
 const fixtures: Fixture[] = []
@@ -45,4 +50,55 @@ describe('artifact provenance startup contract (issue 2544)', () => {
       ).resolves.toEqual(versions)
     }
   )
+})
+
+it('copies a migrated empty database without sharing fixture data or lifetime', async () => {
+  vi.resetModules()
+  const database = await import('../projects/prisma-client')
+  const { createProvenanceTestFixture } = await import('./provenance-test-fixtures')
+  const directories: string[] = []
+  const fixtures: Awaited<ReturnType<typeof createProvenanceTestFixture>>[] = []
+  const mkdtemp = fs.mkdtemp
+  vi.spyOn(fs, 'mkdtemp').mockImplementation(async (prefix) => {
+    const directory = await mkdtemp(prefix)
+    directories.push(directory)
+    return directory
+  })
+  const migrate = vi
+    .spyOn(database, 'migrateApplicationDatabase')
+    .mockRejectedValueOnce(new Error('fixture migration failed'))
+
+  try {
+    await expect(createProvenanceTestFixture()).rejects.toThrow('fixture migration failed')
+    await expect(fs.stat(directories[0])).rejects.toMatchObject({ code: 'ENOENT' })
+
+    const [first, second] = await Promise.all([
+      createProvenanceTestFixture(),
+      createProvenanceTestFixture()
+    ])
+    fixtures.push(first, second)
+    expect(migrate).toHaveBeenCalledTimes(2) // One failed attempt, one real migration.
+    expect(first.storageRoot).not.toBe(second.storageRoot)
+    await first.client.project.create({ data: { id: 'isolated', name: 'First fixture' } })
+    expect(await second.client.project.count()).toBe(0)
+
+    await first.dispose()
+    await expect(fs.stat(first.storageRoot)).rejects.toMatchObject({ code: 'ENOENT' })
+    const third = await createProvenanceTestFixture()
+    fixtures.push(third)
+    expect(migrate).toHaveBeenCalledTimes(2)
+    expect(await third.client.project.count()).toBe(0)
+    await second.client.project.create({ data: { id: 'isolated', name: 'Second fixture' } })
+    expect(await third.client.project.count()).toBe(0)
+    // Exercise real schema/ledger validation on a clone, without replaying migrations.
+    await expect(database.migrateApplicationDatabase(third.client)).resolves.toMatchObject({
+      applied: []
+    })
+  } finally {
+    await Promise.all(fixtures.map((fixture) => fixture.dispose()))
+    vi.restoreAllMocks()
+    await Promise.all(
+      directories.map((directory) => fs.rm(directory, { recursive: true, force: true }))
+    )
+  }
 })

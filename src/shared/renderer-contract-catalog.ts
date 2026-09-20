@@ -1,3 +1,10 @@
+import type {
+  ClassificationSnapshot,
+  ClassificationMutation,
+  ClassificationMutationResult,
+  ClassificationProbe,
+  ClassificationProbeResult
+} from './classification'
 import type { MessageSearchRequest, MessageSearchPage } from './message-search'
 import type {
   SkillMarketplaceCatalog,
@@ -492,6 +499,7 @@ import type {
   RespondApprovalRequest,
   RespondConnectorCredentialRequest,
   UpsertProviderRequest,
+  SaveValidatedProviderResult,
   ValidateProviderRequest,
   ValidateProviderResult
 } from './settings'
@@ -502,6 +510,7 @@ import type { NetworkInfo } from './network'
 import type {
   ActiveSessionInfo,
   DataRootInspection,
+  DataRootSelection,
   DataRootValidationResult,
   DiscardMigratedCopyResult,
   MigrationOutcome,
@@ -536,6 +545,7 @@ import type {
   RemoteAccessSnapshot,
   RemotePairingRequestId,
   RevokeRemoteBrowserRequest,
+  RevokeRemoteBrowsersRequest,
   SetRemoteAccessModeRequest
 } from './remote-access'
 import type {
@@ -1222,6 +1232,15 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     'handoff-lifecycle:retry',
     ELECTRON
   ]),
+  'lifecycle.claimRuntimeWriter': callable<
+    () => Promise<import('./runtime-writer').RuntimeWriterLease>
+  >()('lifecycle', [
+    'lifecycle:claim-runtime-writer',
+    WEB,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
   'lifecycle.getClientId': callable<() => Promise<string>>()('lifecycle', ['lifecycle:client-id']),
   'locale.initialize': callable<
     (request: InitializeLocalePreferenceRequest) => Promise<LocalePreferenceSnapshot>
@@ -1715,6 +1734,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'remoteAccess.revokeBrowser': callable<
     (request: RevokeRemoteBrowserRequest) => Promise<RemoteAccessSnapshot>
   >()('remote-access', ['remote-access:revoke-browser']),
+  'remoteAccess.revokeBrowsers': callable<
+    (request: RevokeRemoteBrowsersRequest) => Promise<RemoteAccessSnapshot>
+  >()('remote-access', ['remote-access:revoke-browsers']),
   'remoteAccess.setMode': callable<
     (request: SetRemoteAccessModeRequest) => Promise<RemoteAccessSnapshot>
   >()('remote-access', ['remote-access:set-mode', ELECTRON]),
@@ -1824,6 +1846,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'sessions.exportConversation': callable<
     (request: ExportConversationRequest) => Promise<ExportConversationResult>
   >()('sessions', ['sessions:export-conversation', MAPPED_ELECTRON]),
+  'sessions.fork': callable<
+    (request: SessionPackageRequest) => Promise<SessionPackageRequest | null>
+  >()('sessions', ['sessions:fork', MAPPED_ELECTRON, undefined, undefined, RUNTIME_VALIDATED]),
   'sessions.exportPackage': callable<
     (request: SessionPackageRequest) => Promise<SessionPackageExportResult>
   >()('sessions', [
@@ -2272,6 +2297,16 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'settings.setNcbiCredentials': callable<
     (request: SetNcbiCredentialsRequest) => Promise<ConnectorsSnapshot>
   >()('settings', ['settings:set-ncbi-credentials']),
+  'settings.getClassification': callable<() => Promise<ClassificationSnapshot>>()('settings', [
+    'settings:get-classification',
+    LOCAL
+  ]),
+  'settings.updateClassification': callable<
+    (request: ClassificationMutation) => Promise<ClassificationMutationResult>
+  >()('settings', ['settings:update-classification', LOCAL]),
+  'settings.testClassification': callable<
+    (request: ClassificationProbe) => Promise<ClassificationProbeResult>
+  >()('settings', ['settings:test-classification', LOCAL]),
   'settings.setOpenAlexCredential': callable<
     (request: SetOpenAlexCredentialRequest) => Promise<ConnectorsSnapshot>
   >()('settings', ['settings:set-openalex-credential', LOCAL]),
@@ -2405,6 +2440,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'settings.upsertProvider': callable<
     (request: UpsertProviderRequest) => Promise<SettingsSnapshot>
   >()('settings', ['settings:upsert-provider']),
+  'settings.saveValidatedProvider': callable<
+    (request: UpsertProviderRequest) => Promise<SaveValidatedProviderResult>
+  >()('settings', ['settings:save-validated-provider']),
   'settings.validateProvider': callable<
     (request: ValidateProviderRequest) => Promise<ValidateProviderResult>
   >()('settings', ['settings:validate-provider']),
@@ -2592,11 +2630,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     'storage',
     ['storage:inspect-data-root', LOCAL, STORAGE_PARENT]
   ),
-  'storage.migrate': callable<(parent: string) => Promise<MigrationOutcome>>()('storage', [
-    'storage:migrate',
-    LOCAL,
-    STORAGE_PARENT
-  ]),
+  'storage.migrate': callable<
+    (parent: string, selection?: DataRootSelection) => Promise<MigrationOutcome>
+  >()('storage', ['storage:migrate', LOCAL, STORAGE_PARENT]),
   'storage.onProgress': callable<(listener: AcpListener<MigrationProgress>) => RemoveListener>()(
     'storage',
     ['storage:migrate-progress', EVENT]
@@ -2610,7 +2646,11 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     LOCAL
   ]),
   'storage.setDataRootAndRelaunch': callable<
-    (parent: string, markOnboarding?: boolean) => Promise<DataRootValidationResult>
+    (
+      parent: string,
+      markOnboarding?: boolean,
+      selection?: DataRootSelection
+    ) => Promise<DataRootValidationResult>
   >()('storage', ['storage:set-data-root-and-relaunch', LOCAL, STORAGE_ROOT]),
   'storage.validateDataRoot': callable<(parent: string) => Promise<DataRootValidationResult>>()(
     'storage',

@@ -1,0 +1,60 @@
+{
+  "ownerPaths": [
+    "src/main/remote-access/README.md",
+    "src/main/remote-access/index.ts",
+    "src/main/remote-access/ipc.test.ts",
+    "src/main/remote-access/ipc.ts",
+    "src/main/remote-access/pairing-page.test.ts",
+    "src/main/remote-access/pairing-page.ts",
+    "src/main/remote-access/pairing.test.ts",
+    "src/main/remote-access/pairing.ts",
+    "src/main/remote-access/remoteit.test.ts",
+    "src/main/remote-access/remoteit.ts",
+    "src/main/remote-access/repository.test.ts",
+    "src/main/remote-access/repository.ts",
+    "src/main/remote-access/service.test.ts",
+    "src/main/remote-access/service.ts",
+    "src/main/remote-access/open-science-logo.svg"
+  ],
+  "interfacePaths": [
+    "src/main/remote-access/index.ts",
+    "src/main/remote-access/ipc.ts",
+    "src/main/remote-access/service.ts"
+  ],
+  "consumerModules": [],
+  "testFiles": {
+    "owner": [
+      "src/main/remote-access/ipc.test.ts",
+      "src/main/remote-access/pairing-page.test.ts",
+      "src/main/remote-access/pairing.test.ts",
+      "src/main/remote-access/remoteit.test.ts",
+      "src/main/remote-access/repository.test.ts",
+      "src/main/remote-access/service.test.ts"
+    ],
+    "contract": [
+      "src/preload/index.test.ts",
+      "src/renderer/web/api-installer.test.ts",
+      "src/shared/renderer-contract-catalog.test.ts"
+    ],
+    "consumer": [
+      "src/main/acp/runtime.test.ts",
+      "src/main/application-command-client.test.ts",
+      "src/main/application-command-composition.test.ts",
+      "src/main/application-command-electron-adapter.test.ts",
+      "src/main/host-application-commands.test.ts",
+      "src/main/index-fatal-errors.test.ts",
+      "src/main/index-startup-failure.test.ts",
+      "src/main/literature/scale-regressions.test.ts",
+      "src/main/runtime-electron-wiring.test.ts",
+      "src/main/settings/bootstrap.integration.test.ts",
+      "src/main/web-service/artifact-download.integration.test.ts",
+      "src/main/web-service/controller.test.ts",
+      "src/main/web-service/http-server.test.ts",
+      "src/main/web-service/task-api.test.ts",
+      "src/shared/renderer-surface-inventory.test.ts",
+      "src/shared/renderer-surface-matrix.test.ts"
+    ]
+  },
+  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
+  "fallbackCapability": "main_runtime"
+}

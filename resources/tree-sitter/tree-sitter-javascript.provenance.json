@@ -1,0 +1,10 @@
+{
+  "name": "tree-sitter-javascript",
+  "version": "0.25.0",
+  "repository": "https://github.com/tree-sitter/tree-sitter-javascript",
+  "archive": "https://registry.npmjs.org/tree-sitter-javascript/-/tree-sitter-javascript-0.25.0.tgz",
+  "integrity": "sha512-1fCbmzAskZkxcZzN41sFZ2br2iqTYP3tKls1b/HKGNPQUVOpsUxpmGxdN/wMqAk3jYZnYBR1dd/y/0avMeU7dw==",
+  "wasmSha256": "5fb488d0cabb4775a594bab85682de5ad6ce83c0d6ac997a9f82dd084d571240",
+  "license": "MIT",
+  "acquisition": "Extracted WASM and LICENSE only; no lifecycle scripts executed."
+}

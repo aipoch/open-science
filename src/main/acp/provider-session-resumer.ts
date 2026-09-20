@@ -209,73 +209,95 @@ export class AcpProviderSessionResumer {
     request: AcpResumeSessionRequest,
     attachment: AcpSessionAttachment
   ): Promise<AcpCreateSessionResponse> {
-    if (request.specialistBindingPending === true) {
-      throw new Error(
-        'A pending Specialist binding cannot be reconciled through an already attached provider session.'
-      )
-    }
-    const entry = this.deps.registry.lookup(request.sessionId)
-    if (!entry) throw new Error(`ACP session is not registered: ${request.sessionId}`)
-    const connection = this.deps.currentConnection()
-    if (!connection) throw new Error('ACP connection is not available.')
+    // Refreshing an attachment must not tear down its running turn. Unrelated prompt progress
+    // cannot extend this wait, and cancellation prevents late refresh results from committing.
+    let permissionUpdateStarted = false
+    return this.withTimeout(
+      async (cancellationSignal) => {
+        if (request.specialistBindingPending === true) {
+          throw new Error(
+            'A pending Specialist binding cannot be reconciled through an already attached provider session.'
+          )
+        }
+        const entry = this.deps.registry.lookup(request.sessionId)
+        if (!entry) throw new Error(`ACP session is not registered: ${request.sessionId}`)
+        const connection = this.deps.currentConnection()
+        if (!connection) throw new Error('ACP connection is not available.')
 
-    const cwd = resolve(request.cwd || this.deps.currentCwd() || this.deps.defaultCwd)
-    const projectId = request.projectId?.trim() || this.deps.defaultProjectId
-    const backend = this.deps.currentBackend()
-    if (
-      backend.framework.id === 'codex' &&
-      backend.session.options?.openScienceSkillRuntime &&
-      request.specialistId &&
-      request.specialistId !== entry.aggregate.snapshot().specialistId
-    ) {
-      throw new Error(
-        'Use Specialist switching to change the Skill scope of an attached Codex session.'
-      )
-    }
-    const wslSetup = (await this.deps.capabilities.isWslSetupSession?.(request.sessionId)) === true
-    if (request.specialistId) entry.aggregate.setSpecialistId(request.specialistId)
-    const permissionProfile = await this.deps.configurator.configurePermissionProfile({
-      backend,
-      connection,
-      session: attachment.session,
-      permissionProfile: normalizePermissionProfile(
-        request.permissionProfile ??
-          entry.aggregate.snapshot().permissionProfile?.selectedProfile ??
-          DEFAULT_PERMISSION_PROFILE
-      )
-    })
-    const current = this.deps.registry.lookup(request.sessionId)
-    if (
-      current?.attachment?.generation !== attachment.generation ||
-      current.attachment.session !== attachment.session
-    ) {
-      throw new Error('ACP session startup was superseded.')
-    }
-    this.deps.assertCurrentConnection(connection)
-    current.aggregate.setPermissionProfile(structuredClone(permissionProfile))
-    this.deps.clearLivePermissionProfile(request.sessionId)
-    this.deps.registry.select(request.sessionId)
-    this.deps.updateCwd(cwd)
-    current.aggregate.updateLocation(cwd, projectId)
-    this.deps.emitState()
+        const cwd = resolve(request.cwd || this.deps.currentCwd() || this.deps.defaultCwd)
+        const projectId = request.projectId?.trim() || this.deps.defaultProjectId
+        const backend = this.deps.currentBackend()
+        if (
+          backend.framework.id === 'codex' &&
+          backend.session.options?.openScienceSkillRuntime &&
+          request.specialistId &&
+          request.specialistId !== entry.aggregate.snapshot().specialistId
+        ) {
+          throw new Error(
+            'Use Specialist switching to change the Skill scope of an attached Codex session.'
+          )
+        }
+        const wslSetup =
+          (await this.deps.capabilities.isWslSetupSession?.(request.sessionId)) === true
+        cancellationSignal.throwIfAborted()
+        permissionUpdateStarted = true
+        const permissionProfile = await this.deps.configurator.configurePermissionProfile({
+          backend,
+          connection,
+          session: attachment.session,
+          cancellationSignal,
+          permissionProfile: normalizePermissionProfile(
+            request.permissionProfile ??
+              entry.aggregate.snapshot().permissionProfile?.selectedProfile ??
+              DEFAULT_PERMISSION_PROFILE
+          )
+        })
+        cancellationSignal.throwIfAborted()
+        const current = this.deps.registry.lookup(request.sessionId)
+        if (
+          current?.attachment?.generation !== attachment.generation ||
+          current.attachment.session !== attachment.session
+        ) {
+          throw new Error('ACP session startup was superseded.')
+        }
+        this.deps.assertCurrentConnection(connection)
+        if (request.specialistId) current.aggregate.setSpecialistId(request.specialistId)
+        current.aggregate.setPermissionProfile(structuredClone(permissionProfile))
+        this.deps.clearLivePermissionProfile(request.sessionId)
+        this.deps.registry.select(request.sessionId)
+        this.deps.updateCwd(cwd)
+        current.aggregate.updateLocation(cwd, projectId)
+        this.deps.emitState()
 
-    const responseBackend = this.deps.currentBackend()
-    return {
-      sessionId: request.sessionId,
-      providerSessionId: attachment.providerSessionId,
-      ...(responseBackend.providerContinuityToken
-        ? { providerContinuityToken: responseBackend.providerContinuityToken }
-        : {}),
-      cwd,
-      frameworkId: responseBackend.framework.id,
-      ...(responseBackend.backendId ? { backendId: responseBackend.backendId } : {}),
-      ...(wslSetup ? { wslSetup: true as const } : {})
-    }
+        const responseBackend = this.deps.currentBackend()
+        return {
+          sessionId: request.sessionId,
+          providerSessionId: attachment.providerSessionId,
+          ...(responseBackend.providerContinuityToken
+            ? { providerContinuityToken: responseBackend.providerContinuityToken }
+            : {}),
+          cwd,
+          frameworkId: responseBackend.framework.id,
+          ...(responseBackend.backendId ? { backendId: responseBackend.backendId } : {}),
+          ...(wslSetup ? { wslSetup: true as const } : {})
+        }
+      },
+      [],
+      {
+        preserveConnection: true,
+        timeoutMessage: () =>
+          'ACP attached session refresh timed out. The existing session remains attached. ' +
+          (permissionUpdateStarted
+            ? 'The permission update outcome is unknown.'
+            : 'No permission update was attempted.')
+      }
+    )
   }
 
   private async withTimeout<Result>(
     operation: (cancellationSignal: AbortSignal) => Promise<Result>,
-    progressSessionIds: readonly string[] = []
+    progressSessionIds: readonly string[] = [],
+    options: { preserveConnection?: boolean; timeoutMessage?: () => string } = {}
   ): Promise<Result> {
     const cancellation = new AbortController()
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -290,7 +312,7 @@ export class AcpProviderSessionResumer {
       if (timer !== undefined) this.deps.clearTimer(timer)
       timer = this.deps.setTimer(() => {
         timedOut = true
-        const error = new Error('ACP session resume timed out.')
+        const error = new Error(options.timeoutMessage?.() ?? 'ACP session resume timed out.')
         cancellation.abort(error)
         rejectTimeout(error)
       }, this.deps.resumeTimeoutMs)
@@ -301,7 +323,7 @@ export class AcpProviderSessionResumer {
     try {
       return await Promise.race([operation(cancellation.signal), timeout])
     } catch (error) {
-      if (timedOut) await this.deps.disconnectTimedOutConnection()
+      if (timedOut && !options.preserveConnection) await this.deps.disconnectTimedOutConnection()
       throw error
     } finally {
       settled = true

@@ -364,7 +364,11 @@ const usePermissionGrantsStore = create<PermissionGrantsStore>((set, get) => ({
 
     try {
       const receipt = await window.api.permissions.extendUndo({ undoToken: token })
+      // Restore recovery replaces the item even when it retains the same receipt token.
+      const current = allUndoItems(get()).find((item) => item.token === token)
+      if (current !== undo) return current?.expiresAt
       if (!receipt) {
+        if (get().isRestoring) return undefined
         set((state) => withoutUndoToken(state, token))
         return undefined
       }
@@ -377,6 +381,9 @@ const usePermissionGrantsStore = create<PermissionGrantsStore>((set, get) => ({
       )
       return receipt.expiresAt
     } catch {
+      const current = allUndoItems(get()).find((item) => item.token === token)
+      if (current !== undo) return current?.expiresAt
+      if (get().isRestoring) return undefined
       // A receipt that cannot be renewed must not remain as a visible but ineffective action.
       set((state) => withoutUndoToken(state, token))
       return undefined

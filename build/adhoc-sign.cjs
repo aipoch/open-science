@@ -57,6 +57,27 @@ exports.default = async function adhocSign(context) {
     console.log('[adhoc-sign] signed bundled micromamba')
   }
 
+  // Loose executables in Resources are not covered by --deep's nested-code discovery.
+  const credentialHelperDirectory = path.join(
+    appPath,
+    'Contents',
+    'Resources',
+    'app.asar.unpacked',
+    'node_modules',
+    '@aipoch',
+    'credential-identity-probe-native',
+    'build',
+    'Release'
+  )
+  for (const name of ['credential_identity_probe', 'credential_key_validator']) {
+    const executable = path.join(credentialHelperDirectory, name)
+    if (fs.existsSync(executable)) {
+      execFileSync('codesign', ['--force', '--options', 'runtime', '--sign', '-', executable], {
+        stdio: 'inherit'
+      })
+    }
+  }
+
   // --deep signs nested frameworks, helpers and the bundled native `claude` binary.
   execFileSync(
     'codesign',

@@ -1,5 +1,5 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
-Upstream-Name: Open Science
+Upstream-Name: Open-Science
 Source: https://github.com/aipoch/open-science
 
 Files: *
@@ -9,5 +9,5 @@ License: Apache-2.0
  On Debian systems, the complete text of the Apache License, Version 2.0,
  can be found in /usr/share/common-licenses/Apache-2.0.
 Comment:
- This entry describes the Open Science project license. Bundled third-party
+ This entry describes the Open-Science project license. Bundled third-party
  components retain their respective licenses and copyright notices.

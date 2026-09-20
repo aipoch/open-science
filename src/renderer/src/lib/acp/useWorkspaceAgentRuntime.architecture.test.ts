@@ -38,6 +38,8 @@ import {
   type TypeLiteralNode
 } from 'typescript'
 import { describe, expect, it } from 'vitest'
+
+import { loadModuleImpactManifest } from '../../../../../scripts/ci/load-module-impact.mjs'
 const rendererRoot = resolve(__dirname, '../..')
 const facadePath = resolve(__dirname, 'useWorkspaceAgentRuntime.ts')
 const manifestPath = resolve(__dirname, '../../../../../scripts/ci/module-impact.json')
@@ -502,6 +504,7 @@ const sendIntentKeys = [
   'expectedFrameworkId',
   'sessionId',
   'messageId',
+  'onMessageAppended',
   'branchSourceSessionId',
   'branchSourceMessageId',
   'text',
@@ -526,6 +529,7 @@ const sendIntentKeys = [
   'selectedComputeHosts',
   'agentConfiguration',
   'memoryEnabled',
+  'autoReviewEnabled',
   'delegationPolicy',
   'preserveSelection',
   'setupSessionToken'
@@ -847,27 +851,38 @@ describe('workspace runtime architecture', () => {
     ])
   })
   it('keeps the module-impact owner and test closure complete', () => {
-    const manifest = JSON.parse(readSource(manifestPath)) as {
-      modules: {
-        workspace_runtime: {
-          ownerPaths: string[]
-          interfacePaths: string[]
-          consumerModules: string[]
-          testFiles: { owner: string[] }
-          capabilityOverlays: string[]
-          fallbackCapability: string
-        }
-      }
-    }
+    const manifest = loadModuleImpactManifest(manifestPath)
     const workspaceRuntime = manifest.modules.workspace_runtime
     expect(workspaceRuntime.ownerPaths).toEqual([
       'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.ts',
       'src/renderer/src/lib/acp/workspace-events.ts',
-      ...ownerNames.map((name) => `src/renderer/src/lib/acp/${name}.ts`),
-      'src/renderer/src/lib/acp/workspace-subagent-runtime-presentation.ts'
+      'src/renderer/src/lib/acp/workspace-runtime-event-owner.ts',
+      'src/renderer/src/lib/acp/workspace-runtime-prompt-preparation-owner.ts',
+      'src/renderer/src/lib/acp/workspace-runtime-session-branch-owner.ts',
+      'src/renderer/src/lib/acp/workspace-runtime-attachment-owner.ts',
+      'src/renderer/src/lib/acp/workspace-runtime-command-owner.ts',
+      'src/renderer/src/lib/acp/workspace-runtime-session-lifecycle-owner.ts',
+      'src/renderer/src/lib/acp/workspace-runtime-session-memory-owner.ts',
+      'src/renderer/src/lib/acp/workspace-runtime-selection-owner.ts',
+      'src/renderer/src/lib/acp/workspace-runtime-save-as-skill-owner.ts',
+      'src/renderer/src/lib/acp/workspace-subagent-runtime-presentation.ts',
+      'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.architecture.test.ts',
+      'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.characterization.test.tsx',
+      'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.test.ts',
+      'src/renderer/src/lib/acp/workspace-events.test.ts',
+      'src/renderer/src/lib/acp/workspace-runtime-event-owner.test.ts',
+      'src/renderer/src/lib/acp/workspace-runtime-save-as-skill-owner.test.tsx',
+      'src/renderer/src/lib/acp/workspace-runtime-session-branch-owner.test.ts',
+      'src/renderer/src/lib/acp/workspace-runtime-session-memory.test.ts',
+      'src/renderer/src/lib/acp/runtime-observer.test.ts',
+      'src/renderer/src/lib/acp/runtime-writer-takeover.test.ts'
     ])
     expect(workspaceRuntime.interfacePaths).toEqual([
-      'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.ts'
+      'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.ts',
+      'src/renderer/src/lib/acp/workspace-events.ts',
+      'src/renderer/src/lib/acp/workspace-runtime-command-owner.ts',
+      'src/renderer/src/lib/acp/workspace-runtime-event-owner.ts',
+      'src/renderer/src/lib/acp/workspace-subagent-runtime-presentation.ts'
     ])
     expect(workspaceRuntime.consumerModules).toEqual(['workspace_page'])
     expect(workspaceRuntime.testFiles.owner).toContain(architectureTestPath)

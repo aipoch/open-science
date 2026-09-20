@@ -129,6 +129,52 @@ const createReadyDeps = (): {
 }
 
 describe('RemoteAccessService', () => {
+  it('disconnects all selected browsers before the batch save finishes and preserves other connections', async () => {
+    const repository = await createRepository()
+    const now = Date.now()
+    await repository.save({
+      version: 5,
+      mode: 'off',
+      trustedBrowsers: ['first', 'second', 'other'].map((id) => ({
+        id,
+        browser: 'Chrome',
+        platform: 'macOS',
+        tokenHash: '00',
+        createdAt: now,
+        lastSeenAt: now,
+        expiresAt: Number.MAX_SAFE_INTEGER
+      }))
+    })
+    const service = await RemoteAccessService.create({
+      repository,
+      ...createReadyDeps(),
+      broadcast: vi.fn()
+    })
+    const controller = webController()
+    service.attachWebController(controller)
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const saveOriginal = repository.save.bind(repository)
+    const save = vi.spyOn(repository, 'save').mockImplementationOnce(async (value) => {
+      await gate
+      await saveOriginal(value)
+    })
+    const revocation = service.revokeBrowsers(['first', 'second', 'first'], false, true)
+    await vi.waitFor(() => expect(save).toHaveBeenCalledOnce())
+    expect(controller.closeExternalConnections).toHaveBeenCalledTimes(2)
+    expect(controller.closeExternalConnections).toHaveBeenNthCalledWith(1, 'first')
+    expect(controller.closeExternalConnections).toHaveBeenNthCalledWith(2, 'second')
+    release()
+    await expect(revocation).resolves.toMatchObject({
+      canManage: false,
+      canManagePairing: true,
+      trustedBrowsers: [{ id: 'other' }]
+    })
+    expect((await repository.load()).trustedBrowsers.map(({ id }) => id)).toEqual(['other'])
+  })
+
   it('keeps access locally off after a failed preference save and supports retry before restart', async () => {
     const repository = await createRepository()
     const deps = createReadyDeps()

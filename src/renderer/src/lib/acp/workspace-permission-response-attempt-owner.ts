@@ -197,8 +197,9 @@ const createPermissionResponseAttemptOwner = (): PermissionResponseAttemptOwner 
       const liveRequestIds = new Set(requests.map((request) => request.requestId))
       for (const [requestId, attempt] of attempts) {
         if (attempt.accepted && !attempt.restored && !liveRequestIds.has(requestId)) {
-          observedLifecycleEvents.delete(requestId)
-          release(requestId, attempt)
+          // Live authority can clear before an observer receives the durable Session update.
+          // Retain the accepted response so that stale history cannot re-open the same request.
+          retire(requestId, attempt)
         }
       }
     }

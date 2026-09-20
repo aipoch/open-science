@@ -680,9 +680,11 @@ const createGuestEnvironment = async (
     }
     if (
       !WINDOWS_PATH.test(value) ||
-      !request.filesystem.readWriteRoots.some((root) => containsWindowsPath(root, value))
+      ![...request.filesystem.readOnlyRoots, ...request.filesystem.readWriteRoots].some((root) =>
+        containsWindowsPath(root, value)
+      )
     ) {
-      throw new Error('WSL2 sandbox path environment is not writable.')
+      throw new Error('WSL2 sandbox path environment is not authorized.')
     }
     environment[key] = await map(value)
   }

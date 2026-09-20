@@ -16,6 +16,17 @@ const loadOcl = (): Promise<OclModule> => {
   return oclPromise
 }
 
+// Heavy atoms are all atoms with an atomic number greater than hydrogen's 1. Counting by atomic
+// number excludes explicit hydrogen atoms and hydrogen isotopes while retaining isotopes of heavier
+// elements.
+const countHeavyAtoms = (molecule: InstanceType<OclModule['Molecule']>): number => {
+  let count = 0
+  for (let atom = 0; atom < molecule.getAllAtoms(); atom++) {
+    if (molecule.getAtomicNo(atom) > 1) count++
+  }
+  return count
+}
+
 // Keeps a suggested filename safe for the artifact layout and guarantees a .mol extension.
 const toMoleculeFilename = (raw: unknown, fallback: string): string => {
   const base =
@@ -43,12 +54,14 @@ export const renderMoleculeStructure = async (
   args: Record<string, unknown>
 ): Promise<MoleculeRenderResult> => {
   const smiles = typeof args.smiles === 'string' ? args.smiles.trim() : ''
-  const molfileInput = typeof args.molfile === 'string' ? args.molfile.trim() : ''
+  // Molfile headers are positional: an empty title line must not be trimmed away.
+  const molfileInput = typeof args.molfile === 'string' ? args.molfile : ''
+  const hasMolfile = molfileInput.trim().length > 0
 
-  if (!smiles && !molfileInput) {
+  if (!smiles && !hasMolfile) {
     throw new Error('render_molecule requires either smiles or molfile.')
   }
-  if (smiles && molfileInput) {
+  if (smiles && hasMolfile) {
     throw new Error('render_molecule takes only one of smiles or molfile, not both.')
   }
 
@@ -60,6 +73,9 @@ export const renderMoleculeStructure = async (
   } catch (error) {
     return { valid: false, error: error instanceof Error ? error.message : 'Invalid structure' }
   }
+  if (molecule.getAllAtoms() === 0) {
+    return { valid: false, error: 'Invalid structure: no atoms found.' }
+  }
 
   // Compute the string/atom outputs BEFORE reading descriptors: on a molfile-parsed molecule,
   // calling getMolecularFormula() first can leave OpenChemLib in a state where a later toSmiles()
@@ -67,7 +83,7 @@ export const renderMoleculeStructure = async (
   // formula comes back empty, recompute it from the canonical SMILES.
   const canonicalSmiles = molecule.toSmiles()
   const canonicalMolfile = molecule.toMolfile()
-  const heavyAtomCount = molecule.getAllAtoms()
+  const heavyAtomCount = countHeavyAtoms(molecule)
 
   let formula = molecule.getMolecularFormula()
   if (!formula.formula && canonicalSmiles) {
@@ -105,7 +121,7 @@ export const MOLECULE_TOOLS: ToolDescriptor[] = [
       'Validate and normalize a 2D chemical structure with OpenChemLib. Pass a `smiles` string or a `molfile` (MDL molblock); returns a canonical molfile plus formula, molecular weight and heavy-atom count. Save the returned `molfile` as a .mol artifact (write_artifact_file) to preview it, or use `preview_molecule` to do both in one call.',
     input: STRUCTURE_INPUT_SCHEMA,
     returns:
-      '`{ "valid": bool, "molfile": str, "smiles": str, "formula": str, "molecular_weight": float, "heavy_atom_count": int, "filename_suggestion": str }` on success. On an unparseable structure: `{ "valid": false, "error": str }`. `molfile` is the canonical MDL molblock; `smiles` is the canonical SMILES; `molecular_weight` is the average (relative) weight; `heavy_atom_count` excludes implicit hydrogens.',
+      '`{ "valid": bool, "molfile": str, "smiles": str, "formula": str, "molecular_weight": float, "heavy_atom_count": int, "filename_suggestion": str }` on success. On an unparseable structure: `{ "valid": false, "error": str }`. `molfile` is the canonical MDL molblock; `smiles` is the canonical SMILES; `molecular_weight` is the average (relative) weight; `heavy_atom_count` excludes implicit and explicit hydrogens, including hydrogen isotopes.',
     example:
       'const result = await host.mcp("molecule", "render_molecule", {"smiles": "CC(=O)Oc1ccccc1C(=O)O", "filename": "aspirin"})',
     run: async (_ctx: ToolContext, args: Record<string, unknown>): Promise<unknown> =>
@@ -118,7 +134,7 @@ export const MOLECULE_TOOLS: ToolDescriptor[] = [
       'Validate a 2D chemical structure and open it in the preview panel in one call. Pass a `smiles` or a `molfile`; the structure is saved as a canonical .mol artifact this turn and rendered read-only with OpenChemLib. Returns the saved artifact id. Call it during an assistant turn (the file is attached to the current turn).',
     input: STRUCTURE_INPUT_SCHEMA,
     returns:
-      '`{ "valid": bool, "artifact_id": str, "version_id": str, "version_number": int, "filename": str, "smiles": str, "formula": str, "molecular_weight": float, "heavy_atom_count": int }` on success. `artifact_id` identifies the stable Artifact lineage; `version_id` identifies the immutable saved Version. On an unparseable structure: `{ "valid": false, "error": str }`. The saved .mol artifact opens automatically in the preview panel.',
+      '`{ "valid": bool, "artifact_id": str, "version_id": str, "version_number": int, "filename": str, "smiles": str, "formula": str, "molecular_weight": float, "heavy_atom_count": int }` on success. `artifact_id` identifies the stable Artifact lineage; `version_id` identifies the immutable saved Version. `heavy_atom_count` excludes implicit and explicit hydrogens, including hydrogen isotopes. On an unparseable structure: `{ "valid": false, "error": str }`. The saved .mol artifact opens automatically in the preview panel.',
     example:
       'const result = await host.mcp("molecule", "preview_molecule", {"smiles": "CC(=O)Oc1ccccc1C(=O)O", "filename": "aspirin"})',
     // The real write + preview is performed by the app runtime via ConnectorService.localToolHandlers;

@@ -170,7 +170,7 @@ describe('Connector configuration transfer views', () => {
 
     const alert = document.body.querySelector('[role="alert"]')
     expect(alert?.textContent).toContain('Could not read file')
-    expect(alert?.closest('section')?.className).toContain('border-border')
+    expect(alert?.closest('section')?.getAttribute('data-notice-inline')).toBe('true')
   })
 
   it('keeps a local-only path warning importable', async () => {
@@ -311,6 +311,6 @@ describe('Connector configuration transfer views', () => {
 
     const alert = document.body.querySelector('[role="alert"]')
     expect(alert?.textContent).toContain('Could not prepare export')
-    expect(alert?.closest('section')?.className).toContain('border-border')
+    expect(alert?.closest('section')?.getAttribute('data-notice-inline')).toBe('true')
   })
 })

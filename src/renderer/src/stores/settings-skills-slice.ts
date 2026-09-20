@@ -18,7 +18,7 @@ import { createOptimisticBooleanCoordinator } from './settings-optimistic-boolea
 export type SettingsSkillsState = { skills: SkillView[]; skillsLoaded: boolean }
 
 export type SettingsSkillsActions = {
-  loadSkills: () => Promise<void>
+  loadSkills: (force?: boolean) => Promise<void>
   setSkillEnabled: (id: string, enabled: boolean) => Promise<void>
   setSkillsEnabled: (ids: string[], enabled: boolean) => Promise<void>
   createSkill: (request: CreateSkillRequest) => Promise<void>
@@ -132,13 +132,13 @@ export const createSettingsSkillsSlice = ({
   }
 
   return {
-    loadSkills: async () => {
+    loadSkills: async (force = false) => {
       // Keep subscription and command lookup inside this async action so a missing Settings
       // surface rejects the returned promise. Marketplace install settles that rejection and
       // must not treat it as a synchronous install failure.
       subscribeToCatalogChanges()
-      if (getState().skillsLoaded) return
-      if (catalogLoadRequest) {
+      if (!force && getState().skillsLoaded) return
+      if (!force && catalogLoadRequest) {
         await catalogLoadRequest
         return
       }

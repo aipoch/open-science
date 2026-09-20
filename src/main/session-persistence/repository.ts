@@ -1,6 +1,9 @@
+import { SessionProjectionAfterCommitError } from './save-session'
+import { packageOriginSchema } from '../../shared/session-package'
 import { decodeSessionComputePolicy, type SessionComputePolicy } from './compute-policy'
 import { copyFile, lstat, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { constants as fsConstants } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { Buffer } from 'node:buffer'
 import { basename, dirname, join } from 'node:path'
 import { isSessionPackagePending } from '../storage/session-package-state'
@@ -28,6 +31,7 @@ import {
 } from '../../shared/session-persistence'
 import { decodeSessionDataPaths, encodeSessionDataPaths } from './session-data-paths'
 import { SessionPersistenceOperationScheduler } from './operation-scheduler'
+import { defaultFileDurability } from '../storage/file-durability'
 import {
   assertSessionProjectionStorageShape,
   buildSessionProjection,
@@ -67,6 +71,26 @@ const nextSessionRevision = (revision: number): number => {
     throw new Error('Session revision cannot be incremented safely.')
   }
   return revision + 1
+}
+
+// A package copy starts with already-versioned history and has no local pre-upgrade image.
+// Require matching durable provenance: caller-supplied metadata cannot bypass a local backup.
+const isSamePublishedPackageCopy = (value: unknown, next: PersistedChatSession): boolean => {
+  if (!value || typeof value !== 'object') return false
+  const envelope = value as Record<string, unknown>
+  const current =
+    envelope.session && typeof envelope.session === 'object'
+      ? (envelope.session as Record<string, unknown>)
+      : envelope
+  const origin = packageOriginSchema.safeParse(current.packageOrigin ?? current.forkOrigin)
+  const nextOrigin = next.packageOrigin ?? next.forkOrigin
+  return (
+    origin.success &&
+    Boolean(nextOrigin) &&
+    current.id === next.id &&
+    current.projectId === next.projectId &&
+    origin.data.importId === nextOrigin?.importId
+  )
 }
 
 const hasS2AttemptSchema = (value: unknown): boolean => {
@@ -996,9 +1020,28 @@ class SessionRepository {
     )
   }
 
+  // Startup-only repair: never rename graph identities underneath an attached runtime. The backup
+  // and revisioned replacement share the normal repository lane, so a retry cannot overwrite a
+  // newer Session or lose the original bytes after an interrupted repair.
+  async saveSessionWithBindingRepair(
+    session: PersistedChatSession,
+    expectedRevision: number
+  ): Promise<PersistedChatSession> {
+    return this.operationScheduler.runSession(session.projectId, session.id, async () => {
+      if (
+        this.dependencies.hasLiveRuntimeSession(session.projectId, session.id) ||
+        this.dependencies.hasActiveRuntimePrompt(session.projectId, session.id)
+      ) {
+        throw new Error('Cannot repair Session graph bindings while its runtime is attached.')
+      }
+      return this.saveSessionNow(session, expectedRevision, true)
+    })
+  }
+
   private async saveSessionNow(
     session: PersistedChatSession,
-    expectedRevision?: number
+    expectedRevision?: number,
+    preserveBindingBackup = false
   ): Promise<PersistedChatSession> {
     // Imported IDs keep the readonly authority check off ordinary Session save hot paths,
     // including when imported history belongs to an existing Project.
@@ -1034,6 +1077,9 @@ class SessionRepository {
       if (actualRevision !== expectedRevision) {
         throw new SessionRevisionConflictError(expectedRevision, actualRevision)
       }
+    }
+    if (preserveBindingBackup) {
+      await this.preserveArtifactBindingBackup(this.sessionFilePath(session.projectId, session.id))
     }
     const nextRevision = nextSessionRevision(actualRevision)
 
@@ -1102,7 +1148,12 @@ class SessionRepository {
         sessionId: session.id
       })
     } else {
-      await this.projection?.commitSave(durableSession)
+      try {
+        await this.projection?.commitSave(durableSession)
+      } catch (error) {
+        this.sessionRevisions.set(key, durableSession.revision!)
+        throw new SessionProjectionAfterCommitError(durableSession, error)
+      }
     }
     this.sessionRevisions.set(key, durableSession.revision!)
     return durableSession
@@ -1141,6 +1192,7 @@ class SessionRepository {
     if (diagnostic.status === 'unreadable') {
       throw new Error('Cannot delete a Session whose durable JSON is unreadable.')
     }
+    await this.removeBindingRepairBackups(safeProjectId, safeSessionId)
     const revisionKey = `${safeProjectId}:${safeSessionId}`
     if (diagnostic.status === 'missing') {
       this.sessionRevisions.delete(revisionKey)
@@ -1207,6 +1259,27 @@ class SessionRepository {
       await this.projection?.commitDelete(safeProjectId, safeSessionId).catch((error: unknown) => {
         throw new SessionDeletionCommittedError(error)
       })
+    }
+  }
+
+  private async removeBindingRepairBackups(projectId: string, sessionId: string): Promise<void> {
+    const boundary = await this.inspectActiveProjectBoundary(projectId)
+    if (boundary === 'missing') return
+    if (boundary !== 'valid')
+      throw new Error('Session Project directory is not a regular directory.')
+    const directory = this.projectDir(projectId)
+    const prefix = `${sessionId}.json.pre-artifact-binding-`
+    const entries = await this.dependencies.readDirectoryEntries(directory)
+    for (const entry of entries) {
+      if (
+        !entry.name.startsWith(prefix) ||
+        !/^[a-f0-9]{64}\.backup$/.test(entry.name.slice(prefix.length))
+      ) {
+        continue
+      }
+      const path = join(directory, entry.name)
+      await this.assertFileBoundary(path, 'Session binding repair backup')
+      await this.dependencies.remove(path, { force: true, recursive: false })
     }
   }
 
@@ -1434,6 +1507,39 @@ class SessionRepository {
     }
   }
 
+  private async preserveArtifactBindingBackup(filePath: string): Promise<void> {
+    await this.ensureDirectoryBoundary(this.sessionsDir, 'Active Session root')
+    await this.ensureDirectoryBoundary(dirname(filePath), 'Session Project directory')
+    await this.assertFileBoundary(filePath, 'Session file')
+    const original = await this.readSessionFileForBackup(filePath)
+    if (original === undefined)
+      throw new Error('Cannot back up a missing Session for binding repair.')
+    const checksum = createHash('sha256').update(original).digest('hex')
+    const backupPath = `${filePath}.pre-artifact-binding-${checksum}.backup`
+    await this.assertFileBoundary(backupPath, 'Session binding repair backup')
+    try {
+      await copyFile(filePath, backupPath, fsConstants.COPYFILE_EXCL)
+    } catch (error) {
+      if (!(
+        typeof error === 'object' &&
+        error !== null &&
+        'code' in error &&
+        error.code === 'EEXIST'
+      )) {
+        throw error
+      }
+    }
+    await this.assertFileBoundary(backupPath, 'Session binding repair backup')
+    const preserved = await this.dependencies.readSessionFileWithinLimit(
+      backupPath,
+      this.dependencies.maxSessionBytes
+    )
+    if (preserved !== original)
+      throw new Error('Session binding repair backup does not match its source.')
+    await defaultFileDurability.syncFile(backupPath)
+    await defaultFileDurability.syncDirectory(dirname(backupPath))
+  }
+
   private async preservePreS2Backup(
     filePath: string,
     nextSession: PersistedChatSession
@@ -1456,6 +1562,7 @@ class SessionRepository {
     const currentWritesS2Attempt = hasS2AttemptSchema(current)
     const backupPath = `${filePath}${PRE_S2_BACKUP_SUFFIX}`
     if (currentWritesS2Attempt) {
+      if (isSamePublishedPackageCopy(current, nextSession)) return
       try {
         await lstat(backupPath)
         return
@@ -1499,6 +1606,7 @@ class SessionRepository {
     }
     const backupPath = `${filePath}${PRE_SUBAGENT_MODEL_BACKUP_SUFFIX}`
     if (hasSubagentModelAttemptSchema(current)) {
+      if (isSamePublishedPackageCopy(current, nextSession)) return
       try {
         await lstat(backupPath)
         return

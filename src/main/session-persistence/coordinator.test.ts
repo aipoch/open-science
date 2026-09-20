@@ -45,6 +45,7 @@ import {
   type SessionProvenancePersistence
 } from './coordinator'
 import { SessionRepository } from './repository'
+import { initDataRoot } from '../storage-root'
 
 const createSession = (overrides: Partial<PersistedChatSession> = {}): PersistedChatSession => ({
   id: 'session-1',
@@ -463,8 +464,81 @@ describe('SessionPersistenceCoordinator', () => {
     expect(mutation).toHaveBeenCalledTimes(2)
   })
 
+  it('persists excluded Side chat projections while export keeps parent mutations frozen', async () => {
+    let durable = createSession({
+      runtimeContext: { version: 1, revision: 1, sideChat: createSideChatProjection() }
+    })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      })),
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
+        durable = structuredClone(session)
+        return structuredClone(durable)
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    const release = await coordinator.reserveSessionExport('project-1', 'session-1')
+
+    await expect(
+      coordinator.saveSideChatProjection({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        sideChat: createSideChatProjection({
+          entries: [
+            { id: 'assistant-1', kind: 'message', role: 'assistant', text: 'Saved output' }
+          ],
+          updatedAt: 11
+        })
+      })
+    ).resolves.toMatchObject({ entries: [expect.objectContaining({ text: 'Saved output' })] })
+    await expect(
+      coordinator.appendSideChatRelay({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        sideChatId: 'side-chat-1',
+        relay: { id: 'relay-1', text: 'Deliver later', createdAt: 12 }
+      })
+    ).rejects.toThrow('locked')
+    expect(durable.runtimeContext?.sideChat?.entries).toEqual([
+      expect.objectContaining({ text: 'Saved output' })
+    ])
+    expect(durable.runtimeContext?.sideChatRelays).toBeUndefined()
+    release()
+  })
+
+  it('preserves the fork head across renderer saves and restart', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'fork-head-save-'))
+    try {
+      const repository = new SessionRepository(root)
+      await repository.saveSession(
+        createSession({
+          forkOrigin: {
+            importId: 'copy',
+            sourceProjectId: 'project-1',
+            sourceSessionId: 'source',
+            importedAt: 1,
+            manifestChecksum: 'a'.repeat(64)
+          },
+          forkHeadMessageId: 'copied-head'
+        })
+      )
+      const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+      for (const submittedHead of [undefined, 'new-reply']) {
+        const current = (await repository.loadSession('project-1', 'session-1'))!
+        await coordinator.saveSession({ ...current, forkHeadMessageId: submittedHead })
+        const reopened = await new SessionRepository(root).loadSession('project-1', 'session-1')
+        expect(reopened?.forkHeadMessageId).toBe('copied-head')
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('saves an imported renderer projection through Main without losing runtime evidence', async () => {
     const root = await mkdtemp(join(tmpdir(), 'imported-session-save-'))
+    initDataRoot(root)
     try {
       const repository = new SessionRepository(root)
       await repository.saveSession(
@@ -1601,6 +1675,7 @@ describe('SessionPersistenceCoordinator', () => {
 
   it('atomically archives the replaced Plan and preserves Main-owned history across restart and renderer saves', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-plan-history-owner-'))
+    initDataRoot(root)
     const repository = new SessionRepository(root)
     const oldPlan = createRuntimePlan({
       approval: 'approved',
@@ -1965,6 +2040,7 @@ describe('SessionPersistenceCoordinator', () => {
 
   it('preserves a running Session while committing Session-details authority before prompt admission', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-live-session-details-'))
+    initDataRoot(root)
     const repository = new SessionRepository(root, { hasActiveRuntimePrompt: () => false })
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
     const prompt: PersistedChatMessage = {
@@ -2012,6 +2088,7 @@ describe('SessionPersistenceCoordinator', () => {
 
   it('preserves a running Session across an unrelated Main-owned policy mutation', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-live-policy-mutation-'))
+    initDataRoot(root)
     const repository = new SessionRepository(root, { hasActiveRuntimePrompt: () => false })
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
     const prompt: PersistedChatMessage = {
@@ -2932,6 +3009,7 @@ describe('SessionPersistenceCoordinator', () => {
 
   it('preserves startup interruption recovery while pruning missing Compute Hosts', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-startup-compute-prune-'))
+    initDataRoot(root)
     const repository = new SessionRepository(root)
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
     const prompt: PersistedChatMessage = {
@@ -3125,6 +3203,7 @@ describe('SessionPersistenceCoordinator', () => {
   it('rejects archive while an idle Session has an answerable delegated question', async () => {
     const delegated = createIdleSessionWithPendingDelegatedQuestion()
     const root = await mkdtemp(join(tmpdir(), 'open-science-pending-question-archive-'))
+    initDataRoot(root)
     const repository = new SessionRepository(root)
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
     try {
@@ -4430,6 +4509,7 @@ describe('SessionPersistenceCoordinator', () => {
 
   it('keeps cleanup closed across scans after quarantining corrupt Session authority', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-corrupt-session-reconciliation-'))
+    initDataRoot(root)
     const projectDir = join(root, 'sessions', 'project-1')
     await mkdir(projectDir, { recursive: true })
     await writeFile(join(projectDir, 'corrupt-session.json'), '{broken json', 'utf8')
@@ -4482,6 +4562,7 @@ describe('SessionPersistenceCoordinator', () => {
 
   it('preserves a main-owned permission wait when another client hydrates in the same process', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-live-permission-hydration-'))
+    initDataRoot(root)
     const repository = new SessionRepository(root, { hasActiveRuntimePrompt: () => true })
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
 
@@ -4935,6 +5016,7 @@ describe('SessionPersistenceCoordinator', () => {
 
   it('reconciles path-free Upload copies only on the first complete load from multiple clients', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-upload-startup-reconcile-'))
+    initDataRoot(root)
     const client = createProjectDbClient(root)
     await migrateApplicationDatabase(client)
     const content = Buffer.from('sample,value\na,1\n')
@@ -5101,6 +5183,7 @@ describe('SessionPersistenceCoordinator', () => {
 
   it('retains every legacy source when one Upload prevents a complete startup projection', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-upload-startup-partial-'))
+    initDataRoot(root)
     const client = createProjectDbClient(root)
     await migrateApplicationDatabase(client)
     await client.project.create({ data: { id: 'project-1', name: 'Project one' } })

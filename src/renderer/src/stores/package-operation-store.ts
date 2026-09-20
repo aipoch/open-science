@@ -4,6 +4,7 @@ import type { PackageOperationSnapshot } from '../../../shared/session-package'
 
 export const usePackageOperationStore = create<{
   operation: PackageOperationSnapshot | null
+  errorKind?: 'fork'
   importError?: string
   setImportError: (error: string | undefined) => void
   open: boolean
@@ -95,7 +96,7 @@ export const sessionExportLocked = (
 ): boolean =>
   Boolean(
     session &&
-    operation?.kind === 'export' &&
+    (operation?.kind === 'export' || operation?.kind === 'fork') &&
     operation.progress.phase !== 'cleaning' &&
     packageOperationActive(operation) &&
     operation.session?.sessionId === session.id &&

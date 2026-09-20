@@ -19,7 +19,14 @@ const uuid = z.string().uuid()
 const importedIdentity = z
   .string()
   .refine((value) => uuid.safeParse(value.replace(/^import-/, '')).success)
-const scope = z.enum(['artifacts', 'uploads', 'notebooks', 'execution-file-evidence'])
+const scope = z.enum([
+  'artifacts',
+  'uploads',
+  'notebooks',
+  'execution-file-evidence',
+  'notebook-file-evidence',
+  'file-evidence'
+])
 const journalSchema = sessionPackageRequestSchema
   .extend({
     schemaVersion: z.literal(1),
@@ -57,9 +64,10 @@ export class SessionPackageDeletion {
     originSessionIds: string[]
   ): Promise<void> {
     if (
-      !session.packageOrigin ||
-      receipt.importId !== session.packageOrigin.importId ||
-      receipt.manifestChecksum !== session.packageOrigin.manifestChecksum ||
+      !(session.packageOrigin ?? session.forkOrigin) ||
+      receipt.importId !== (session.packageOrigin ?? session.forkOrigin)?.importId ||
+      receipt.manifestChecksum !==
+        (session.packageOrigin ?? session.forkOrigin)?.manifestChecksum ||
       receipt.projectId !== session.projectId ||
       receipt.sessionId !== session.id
     )
@@ -97,7 +105,7 @@ export class SessionPackageDeletion {
     await this.writeIntent(
       journalSchema.parse({
         schemaVersion: 1,
-        importId: session.packageOrigin?.importId,
+        importId: (session.packageOrigin ?? session.forkOrigin)?.importId,
         projectId: session.projectId,
         sessionId: session.id,
         identities: [],
@@ -335,7 +343,12 @@ export class SessionPackageDeletion {
       )
         return undefined
     }
-    for (const rootName of ['notebooks', 'execution-file-evidence']) {
+    for (const rootName of [
+      'notebooks',
+      'execution-file-evidence',
+      'notebook-file-evidence',
+      'file-evidence'
+    ]) {
       const notebooks = join(this.options.storageRoot, rootName)
       if (!(await exists(notebooks))) continue
       await assertPackageSourcePath(this.options.storageRoot, rootName)

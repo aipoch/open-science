@@ -1882,7 +1882,11 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
       event: { code: 'verifying-interpreter', environment: spec.name },
       progress: 0.9
     })
-    await this.deps.verify(bin, prefix)
+    // Creation can select a different R layout than the pre-install fallback path.
+    await this.deps.verify(
+      spec.language === 'python' ? pythonBin(prefix, this.platform) : rBin(prefix, this.platform),
+      prefix
+    )
     onProgress({
       phase: `${spec.language}-ready`,
       event: { code: 'environment-ready', environment: spec.name },

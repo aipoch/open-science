@@ -1,3 +1,4 @@
+import { sideChatBlock, sideChatBlockMessage } from './side-chat-availability'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { useTranslation } from 'react-i18next'
@@ -14,6 +15,7 @@ import {
   retryPendingArtifactFinalization,
   saveSessionInOrder
 } from '@/lib/session-persistence/session-persistence'
+import { forkSession, sessionForkAvailable } from '@/lib/session-fork'
 import { exportSessionPackage, sessionPackageExportAvailable } from '@/lib/session-package-export'
 import { usePackageOperationStore } from '@/stores/package-operation-store'
 import { useMemoryStore } from '@/stores/memory-store'
@@ -250,6 +252,7 @@ const WorkspacePage = ({
     Record<string, ManualReviewRequestState>
   >({})
   const previewFocusFallbackRef = useRef<HTMLElement>(null)
+  const sessionInfoReturnFocusRef = useRef<HTMLElement | null>(null)
   const manualReviewPendingSessionIdsRef = useRef(new Set<string>())
   const syncPreviewPanelState = usePreviewWorkbenchStore((state) => state.syncPanelState)
   const runtime = useWorkspaceAgentRuntime()
@@ -530,9 +533,18 @@ const WorkspacePage = ({
     activeSession ? { sessionId: activeSession.id, projectId: activeSession.projectId } : undefined
   )
   const awaitsHistoryReplay = sessionAwaitsHistoryReplay(activeSession)
-  const sideChatDisabledReason = awaitsHistoryReplay
-    ? t('Resolve the current Session operation first.')
-    : sideChat.unavailableReason
+  const sideChatDisabledReason =
+    sideChatBlockMessage(
+      sideChatBlock({
+        action: 'send',
+        parent: activeSession,
+        persistenceReady:
+          isSessionPersistenceReady &&
+          !persistenceBlockedSessionIds.includes(activeSession?.id ?? '')
+      }),
+      t
+    ) ?? sideChat.unavailableReason
+
   const canArchiveSession = sessionController.lifecycle.canArchive
   const visiblePermissionRequests = useMemo(
     () =>
@@ -631,9 +643,8 @@ const WorkspacePage = ({
     composer,
     session: sessionController,
     runtime,
-    sideChat: canEditDraft && !sideChatDisabledReason ? { start: sideChat.start } : undefined,
+    sideChat: !sideChatDisabledReason ? { start: sideChat.start } : undefined,
     sideChatOpen: sideChat.view !== undefined,
-    setAutoReviewEnabled,
     resetNewConversationSettings: () => {
       setNewConversationAutoReviewEnabled(false)
       setNewConversationMemoryPreference(undefined)
@@ -762,11 +773,12 @@ const WorkspacePage = ({
     sessionController.view.specialist.barrierInFlight,
     activeSessionActionability?.actions
   )
+  // A created Session can change permissions before its history is replayed on the next send.
   const canChangePermissionProfile =
     isSessionPersistenceReady &&
     !activeSessionHasSendPreparation &&
     !activeSession?.compacting &&
-    !awaitsHistoryReplay &&
+    !activeSession?.isPending &&
     !conversation.queue.hasPendingWork
   const canCompactContext =
     isSessionPersistenceReady &&
@@ -1037,6 +1049,22 @@ const WorkspacePage = ({
     openSession(sessionId)
   }
 
+  const openForkSource = async (sessionId: string): Promise<void> => {
+    const navigationRevision = useNavigationStore.getState().explicitNavigationRevision
+    try {
+      const source = await window.api.sessions.loadOne({ projectId: scopedProjectId, sessionId })
+      if (useNavigationStore.getState().explicitNavigationRevision !== navigationRevision) return
+      if (!source || source.archivedAt !== undefined) {
+        setAttachmentError(t('This session was deleted or is unavailable.'))
+        return
+      }
+      openSessionWithoutExportError(sessionId)
+    } catch {
+      if (useNavigationStore.getState().explicitNavigationRevision !== navigationRevision) return
+      setAttachmentError(t('This session was deleted or is unavailable.'))
+    }
+  }
+
   // Forwards visible permission decisions to the runtime bridge.
   const respondToVisiblePermission = (requestId: string, optionId?: string): Promise<void> =>
     respondToPermission(requestId, optionId)
@@ -1270,6 +1298,7 @@ const WorkspacePage = ({
                 window.api.artifacts?.sessionReproducibility ? setCheckSession : undefined
               }
               onViewNotebook={sessionController.actions.openNotebook}
+              onForkSession={sessionForkAvailable() ? forkSession : undefined}
               onExportPackage={sessionPackageExportAvailable() ? openPackageExport : undefined}
               onExportSession={
                 typeof window.api.sessions?.exportConversation === 'function'
@@ -1358,6 +1387,14 @@ const WorkspacePage = ({
                 close()
                 sessionController.actions.openNotebook(session)
               }}
+              onForkSession={
+                sessionForkAvailable()
+                  ? async (session) => {
+                      close()
+                      await forkSession(session)
+                    }
+                  : undefined
+              }
               onExportPackage={
                 sessionPackageExportAvailable()
                   ? async (session) => {
@@ -1507,6 +1544,16 @@ const WorkspacePage = ({
                 }
               }}
               sessionTools={{
+                togglePin: isSessionPersistenceReady
+                  ? sessionController.actions.togglePin
+                  : undefined,
+                editSession: isSessionPersistenceReady
+                  ? (session) => {
+                      sessionInfoReturnFocusRef.current = document.activeElement as HTMLElement
+                      sessionController.actions.openEdit(session)
+                    }
+                  : undefined,
+                openSession: (sessionId) => void openForkSource(sessionId),
                 notebookReference: activeNotebookReference,
                 openNotebook: openNotebookPreview,
                 openJobs: sessionController.actions.openJobList,
@@ -1531,6 +1578,14 @@ const WorkspacePage = ({
         />
 
         <EditSessionDialog
+          onCloseAutoFocus={(event) => {
+            const target = sessionInfoReturnFocusRef.current
+            sessionInfoReturnFocusRef.current = null
+            if (target?.isConnected) {
+              event.preventDefault()
+              target.focus()
+            }
+          }}
           session={sessionController.view.dialogs.edit?.session}
           titleDraft={sessionController.view.dialogs.edit?.titleDraft ?? ''}
           descriptionDraft={sessionController.view.dialogs.edit?.descriptionDraft ?? ''}

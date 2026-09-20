@@ -281,8 +281,9 @@ describe('SkillsPanel (list view)', () => {
     const betaSwitch = document.body.querySelector<HTMLElement>('[aria-label="Toggle Beta"]')
     expect(alphaSwitch?.getAttribute('data-state')).toBe('checked')
     expect(alphaSwitch?.className).toContain('data-[state=checked]:bg-primary')
-    expect(alphaSwitch?.className).toContain('ml-1')
-    expect(alphaSwitch?.className).toContain('mr-3')
+    // No per-toggle hit-area margins: the row's control column owns right alignment.
+    expect(alphaSwitch?.className).not.toContain('ml-1')
+    expect(alphaSwitch?.className).not.toContain('mr-3')
     expect(betaSwitch?.getAttribute('data-state')).toBe('unchecked')
     expect(
       alphaSwitch?.querySelector<HTMLElement>('[data-slot="switch-thumb"]')?.className
@@ -375,7 +376,7 @@ describe('SkillsPanel (list view)', () => {
     const importedGroup = document.body.querySelector<HTMLElement>(
       '[data-slot="skills-source-group"][data-source="imported"]'
     )
-    expect(importedGroup?.textContent).toContain('Skills you imported into Open Science.')
+    expect(importedGroup?.textContent).toContain('Skills you imported into Open-Science.')
     expect(importedGroup?.textContent).toContain('No imported skills yet.')
 
     const importButton = Array.from(
@@ -430,7 +431,7 @@ describe('SkillsPanel (list view)', () => {
 
     expect(document.body.textContent).toContain('Conversation imports')
     expect(document.body.textContent).toContain(
-      'Choose what conversations can import into Open Science.'
+      'Choose what conversations can import into Open-Science.'
     )
     expect(document.body.textContent).toContain('Skill packages')
     expect(document.body.textContent).toContain('ask before importing them')
@@ -541,7 +542,7 @@ describe('SkillsPanel (list view)', () => {
     })
 
     expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
-      'Open Science could not load Skills.'
+      'Open-Science could not load Skills.'
     )
     const retry = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
       (button) => button.textContent?.trim() === 'Retry'

@@ -2,6 +2,9 @@ import type { RequestPermissionRequest, ToolKind } from '@agentclientprotocol/sd
 import { describe, expect, it } from 'vitest'
 
 import {
+  isNativeWebFetchPermission,
+  isNativeWebSearchPermission,
+  withTrustedNativeToolIdentity,
   canConservativelyAutoApprove,
   isMcpToolName,
   isWithinWorkspace,
@@ -37,6 +40,137 @@ const createPermissionRequest = (
 })
 
 describe('permission policy', () => {
+  it('requires correlated Claude search identity and a text-only search input', () => {
+    const raw = createPermissionRequest('fetch', undefined, {
+      providerToolName: 'WebSearch',
+      rawInput: { query: 'p63 squamous cell carcinoma' }
+    })
+    const policy = { profile: 'ask' as const, frameworkId: 'claude-code' as const }
+    const request = withTrustedNativeToolIdentity(raw, 'claude-code/websearch')
+    expect(isNativeWebSearchPermission(raw, policy)).toBe(false)
+    expect(isNativeWebSearchPermission(request, policy)).toBe(true)
+    for (const rawInput of [
+      undefined,
+      [],
+      {},
+      { query: '' },
+      { query: 1 },
+      { query: 'x', file: '/tmp/data' },
+      { query: 'x', allowed_domains: 'example.org' }
+    ]) {
+      expect(
+        isNativeWebSearchPermission(
+          { ...request, toolCall: { ...request.toolCall, rawInput } },
+          policy
+        )
+      ).toBe(false)
+    }
+    expect(
+      isNativeWebSearchPermission(
+        {
+          ...request,
+          toolCall: {
+            ...request.toolCall,
+            rawInput: { query: 'x', allowed_domains: ['example.org'], blocked_domains: [] }
+          }
+        },
+        policy
+      )
+    ).toBe(true)
+    expect(
+      isNativeWebSearchPermission(withTrustedMcpToolIdentity(request, 'external/search'), policy)
+    ).toBe(false)
+    expect(
+      isNativeWebSearchPermission(
+        withTrustedNativeToolIdentity(raw, 'claude-code/webfetch'),
+        policy
+      )
+    ).toBe(false)
+    expect(isNativeWebFetchPermission(request, policy)).toBe(false)
+  })
+  it.each([
+    ['OpenCode', 'opencode'],
+    ['Codex Responses', 'codex'],
+    ['Codex Bridge', 'codex'],
+    ['CodeBuddy', 'codebuddy']
+  ] as const)('does not apply Claude search authority to %s', (_path, frameworkId) => {
+    const request = withTrustedNativeToolIdentity(
+      createPermissionRequest('fetch', undefined, {
+        providerToolName: 'WebSearch',
+        rawInput: { query: 'p63' }
+      }),
+      'claude-code/websearch'
+    )
+    expect(isNativeWebSearchPermission(request, { profile: 'ask', frameworkId })).toBe(false)
+  })
+  it('recognizes only the supported native web-reading contracts', () => {
+    const raw = createPermissionRequest('fetch', undefined, {
+      rawInput: { url: 'https://example.org/' }
+    })
+    expect(isNativeWebFetchPermission(raw, { profile: 'ask', frameworkId: 'opencode' })).toBe(false)
+    const request = withTrustedNativeToolIdentity(raw, 'opencode/webfetch')
+    expect(isNativeWebFetchPermission(request, { profile: 'auto', frameworkId: 'opencode' })).toBe(
+      true
+    )
+    const claude = {
+      ...request,
+      toolCall: { ...request.toolCall, _meta: { claudeCode: { toolName: 'WebFetch' } } }
+    }
+    expect(
+      isNativeWebFetchPermission(withTrustedNativeToolIdentity(claude, 'claude-code/webfetch'), {
+        profile: 'ask',
+        frameworkId: 'claude-code'
+      })
+    ).toBe(true)
+    // Both Codex execution paths share this framework id; generic fetch is not their native identity.
+    for (const frameworkId of ['codex', 'claude-code', 'codebuddy'] as const) {
+      expect(isNativeWebFetchPermission(request, { profile: 'auto', frameworkId })).toBe(false)
+    }
+    for (const toolName of ['websearch', 'Bash', 'custom_fetch', 'mcp__external__webfetch']) {
+      expect(
+        isNativeWebFetchPermission(
+          { ...request, toolCall: { ...request.toolCall, _meta: { toolName } } },
+          { profile: 'auto', frameworkId: 'opencode' }
+        )
+      ).toBe(false)
+    }
+    expect(
+      isNativeWebFetchPermission(withTrustedMcpToolIdentity(request, 'external/webfetch'), {
+        profile: 'auto',
+        frameworkId: 'opencode'
+      })
+    ).toBe(false)
+    expect(
+      isNativeWebFetchPermission(
+        { ...request, toolCall: { ...request.toolCall, kind: 'other' } },
+        { profile: 'auto', frameworkId: 'opencode' }
+      )
+    ).toBe(false)
+    for (const url of ['invalid', 'file:///private', 'https://user:password@example.org/']) {
+      expect(
+        isNativeWebFetchPermission(
+          { ...request, toolCall: { ...request.toolCall, rawInput: { url } } },
+          { profile: 'auto', frameworkId: 'opencode' }
+        )
+      ).toBe(false)
+    }
+    expect(
+      isNativeWebFetchPermission(
+        {
+          ...request,
+          toolCall: { ...request.toolCall, title: 'https://example.org/', rawInput: undefined }
+        },
+        { profile: 'auto', frameworkId: 'opencode' }
+      )
+    ).toBe(false)
+    expect(
+      resolveAutomaticPermission(request, {
+        profile: 'auto',
+        frameworkId: 'opencode',
+        autoReviewStrategy: 'conservative'
+      })
+    ).toBeUndefined()
+  })
   it('approves only the runtime-verified Codex Skill loader without a redundant permission prompt', () => {
     const request = createPermissionRequest('other', undefined, {
       title: 'mcp__skills__load_skill'

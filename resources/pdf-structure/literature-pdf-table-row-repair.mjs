@@ -178,6 +178,69 @@ export function repairWrappedTableRows({
       return
     return stub + ':' + populated.join(',')
   }
+  // Repeated adjusted/unadjusted records provide complete native row ownership
+  // even when several model bands overlap. Preserve the existing header bands;
+  // every body line must be a complete record or an explicit left-side section.
+  if (captioned && columnRects.length >= 5) {
+    const values = sourceRows.map((g) => readSourceRow(g, sourceCuts))
+    const record = (n) =>
+      values[n] &&
+      /^(?:Unadjusted|Adjusted)$/i.test(values[n][1]) &&
+      values[n].slice(2).every((v) => /^[<>≤≥−+-]?(?:\d|\.\d)[\d.,()%±*–—−+\s/-]*[a-d*]*$/.test(v))
+    const section = (g) =>
+      g.every((i) => i.rect[2] <= sourceCuts[2] && /\p{L}/u.test(i.text) && !/\d/.test(i.text))
+    let start = values.findIndex((_, n) => record(n))
+    while (start > 0 && section(sourceRows[start - 1])) start--
+    const body = start >= 0 ? sourceRows.slice(start) : []
+    const records = body.flatMap((_, n) => (record(n + start) ? [values[n + start][1]] : []))
+    if (
+      records.length >= 6 &&
+      records.every((s, n) => s.toLowerCase() === (n % 2 ? 'adjusted' : 'unadjusted')) &&
+      body.filter(section).length >= 2 &&
+      body.every((g, n) => section(g) || record(n + start))
+    ) {
+      const rects = body.map((g) =>
+          union(g.filter((i) => !i.inlineSymbol || !/^\*+$/.test(i.text)))
+        ),
+        top = rects[0][1],
+        bottom = rects.at(-1)[3]
+      const headerItems = items.filter((i) => i.rect[3] < top)
+      const headerBottom = Math.max(...headerItems.map((i) => i.rect[3]))
+      const header = rows.filter(
+        (r) => r.rect[1] < top && headerItems.some((i) => inside(r.rect, i))
+      )
+      if (
+        header.length &&
+        top > headerBottom &&
+        rects.every((r, n) => !n || r[1] > rects[n - 1][3]) &&
+        rules.some(
+          (r) =>
+            r[1] === r[3] &&
+            r[0] <= sourceCuts[0] + font &&
+            r[2] >= right - font &&
+            r[1] >= bottom &&
+            r[1] - bottom < font
+        )
+      ) {
+        const edge = (headerBottom + top) / 2
+        rows.splice(
+          0,
+          rows.length,
+          ...header.map((r) => ({
+            ...r,
+            rect: [r.rect[0], r.rect[1], r.rect[2], Math.min(r.rect[3], edge)]
+          })),
+          ...rects.map((r, n) => ({
+            rect: [sourceCuts[0], r[1], right, r[3]],
+            origin: 'source-text',
+            section: section(body[n]),
+            numericRecord: !section(body[n])
+          }))
+        )
+        repairs.push('source-record-boundary-restored')
+      }
+    }
+  }
   for (const g of sourceRows) {
     const key = signature(g)
     if (

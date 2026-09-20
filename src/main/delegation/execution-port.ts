@@ -2,6 +2,7 @@ import type {
   AcpAgentRuntimeUpdate,
   AcpModelCallUsage,
   AcpPermissionScope,
+  AcpPermissionRequest,
   AcpTurnTokenUsage
 } from '../../shared/acp'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
@@ -19,6 +20,11 @@ class DelegateExecutionError extends Error {
     super(message)
     this.name = 'DelegateExecutionError'
   }
+}
+
+// Terminal execution failure whose process-owned resources must remain quarantined.
+class DelegateExecutionCleanupError extends Error {
+  readonly name = 'DelegateExecutionCleanupError'
 }
 
 class DelegateMessagePreAcceptanceError extends Error {
@@ -48,6 +54,9 @@ type DelegateExecutionEvent =
       awaiting: true
       requestId: string
       title: string
+      providerToolName?: AcpPermissionRequest['providerToolName']
+      isMcp?: AcpPermissionRequest['isMcp']
+      toolKind?: AcpPermissionRequest['toolKind']
       options: readonly Readonly<{
         optionId: string
         name: string
@@ -140,11 +149,17 @@ type DelegateCapacityReservation = Readonly<{
 }>
 
 type DelegateExecution = Readonly<{
+  recoverCleanup?(): Promise<void>
   reserve(count: number): Promise<DelegateCapacityReservation>
   run(input: DelegateExecutionInput, slotId: string): RunningDelegateExecution
 }>
 
-export { DelegateExecutionError, DelegateMessageParkedError, DelegateMessagePreAcceptanceError }
+export {
+  DelegateExecutionError,
+  DelegateExecutionCleanupError,
+  DelegateMessageParkedError,
+  DelegateMessagePreAcceptanceError
+}
 export type {
   DelegateCapacityReservation,
   DelegateExecutionBackendClaim,

@@ -182,8 +182,11 @@ const buildOrderedItems = (
 // A routed user message with responseToMessageId is an intervention injected into an already-live
 // prompt. It changes that Turn's requirements; it does not start a second Turn. Only an ordinary
 // user message opens the next review boundary.
+export const isReviewTurnStartingMessage = (message: PersistedChatMessage): boolean =>
+  message.role === 'user' && !message.responseToMessageId
+
 const isTurnStartingUserMessage = (item: TurnItem): boolean =>
-  item.kind === 'message' && item.message.role === 'user' && !item.message.responseToMessageId
+  item.kind === 'message' && isReviewTurnStartingMessage(item.message)
 
 // Resolves the flattened, ordered blocks for the single turn that contains turnMessageId. A turn runs
 // from a user message up to (but excluding) the next user message — the span the reviewer reads. Blocks

@@ -247,13 +247,16 @@ const ArtifactSourcesPanel = ({
                 styleId === literature.styleId
               }
               onClick={() => void saveFormat()}
+              aria-busy={Boolean(savingFormat)}
             >
-              {savingFormat ? (
-                <LoaderCircle className="animate-spin" aria-hidden="true" />
-              ) : (
-                <Check aria-hidden="true" />
-              )}
-              {savingFormat ? t('Saving…') : t('Save as new version')}
+              <span key={String(savingFormat)} className="button-feedback">
+                {savingFormat ? (
+                  <LoaderCircle className="animate-spin" aria-hidden="true" />
+                ) : (
+                  <Check aria-hidden="true" />
+                )}
+                {savingFormat ? t('Saving…') : t('Save as new version')}
+              </span>
             </Button>
           </div>
           {visibleFormatError ? (

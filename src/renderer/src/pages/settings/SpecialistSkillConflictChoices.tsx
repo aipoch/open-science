@@ -1,3 +1,4 @@
+import { inlineNoticeClassName } from '@/components/ui/notice-chrome'
 import { useTranslation } from 'react-i18next'
 
 import type { SpecialistPackageSkillPreview } from '../../../../shared/specialist-package'
@@ -16,7 +17,7 @@ export const SpecialistSkillConflictChoices = ({
   if (conflicts.length === 0) return null
 
   return (
-    <section className="rounded-xl border border-warning-100/50 bg-warning-100/5 p-4">
+    <section className={`${inlineNoticeClassName} block`}>
       <h3 className="text-sm font-semibold">{t('Resolve Skill conflicts')}</h3>
       <p className="mt-1 text-xs text-muted-foreground">
         {t('Choose one version for every conflicting Skill before installing the Specialist.')}
@@ -71,7 +72,7 @@ export const SpecialistSkillConflictChoices = ({
                 </label>
               </div>
               {affected.length > 0 ? (
-                <p className="mt-2 text-xs text-warning-100">
+                <p className="mt-2 text-xs text-status-warning-foreground dark:text-status-warning-dark-foreground">
                   {t('Affected now: {{targets}}', { targets: affected.join(', ') })}
                 </p>
               ) : null}

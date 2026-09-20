@@ -1,4 +1,8 @@
-import { spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import {
+  spawnSync,
+  type ChildProcess,
+  type ChildProcessWithoutNullStreams
+} from 'node:child_process'
 import { existsSync, realpathSync } from 'node:fs'
 import {
   chmod,
@@ -29,6 +33,7 @@ import {
   rBin,
   rScriptBin
 } from './runtime-paths'
+import { terminateProcessTree } from '../process-tree'
 import { TimeoutController } from './timeout-controller'
 import type { NotebookProcessSandbox } from './process-sandbox'
 import { NOTEBOOK_PROTOCOL_LINE_LIMIT_BYTES, NOTEBOOK_TEXT_LIMIT_BYTES } from './content-limits'
@@ -374,6 +379,110 @@ afterEach(async () => {
   }
 })
 
+it('executes an x64-only managed R through the public kernel boundary', async () => {
+  cwdDir = await mkdtemp(join(tmpdir(), 'os-managed-r-x64-'))
+  const request = baseRequest(cwdDir)
+  const bin = join(envPrefix(request.runtimeRoot, DEFAULT_R_ENV, 'win32'), 'Lib', 'R', 'bin', 'x64')
+  await mkdir(bin, { recursive: true })
+  await writeFile(join(bin, 'R.exe'), 'fixture')
+  await writeFile(join(bin, 'Rscript.exe'), 'fixture')
+  const wrap = vi.fn<NotebookProcessSandbox['wrap']>(async (invocation) => {
+    // The existing OS adapter boundary substitutes a portable protocol child only after validating
+    // the real selected executable. No interpreter override bypasses managed readiness or selection.
+    await stat(invocation.executable)
+    expect(invocation.executable).toBe(join(bin, 'Rscript.exe'))
+    return {
+      executable: process.execPath,
+      args: [
+        '-e',
+        `
+        let input = Buffer.alloc(0)
+        process.stdin.on('data', chunk => {
+          input = Buffer.concat([input, chunk])
+          const newline = input.indexOf(10)
+          if (newline < 0) return
+          const [req_id, size] = input.subarray(0, newline).toString().split(' ')
+          if (input.length < newline + 1 + Number(size)) return
+          input = input.subarray(newline + 1 + Number(size))
+          console.log(JSON.stringify({ req_id, stdout: '2', stderr: '', error: null, figures: [] }))
+        })
+      `
+      ],
+      env: invocation.env,
+      annotateStderr: (stderr) => stderr,
+      cleanup: async (_reason, outcome) => ({
+        processesTerminated: outcome.processesTerminated,
+        networkClosed: true,
+        temporaryResourcesRemoved: true
+      })
+    }
+  })
+  const executor = new NotebookKernelExecutor({ platform: 'win32', processSandbox: { wrap } })
+  try {
+    const result = await executor.execute({
+      ...request,
+      language: 'r',
+      code: '1 + 1',
+      sessionId: 'x64-test',
+      projectId: 'x64-test'
+    })
+    expect(result.status, result.stderr || result.traceback).toBe('completed')
+    expect(result.stdout).toBe('2')
+    expect(wrap).toHaveBeenCalledOnce()
+  } finally {
+    await executor.shutdown()
+  }
+})
+
+it.each([
+  { name: 'Python', request: { language: 'python' as const } },
+  { name: 'R', request: { language: 'r' as const } },
+  { name: 'REPL', request: { language: 'python' as const, kind: 'repl' as const } }
+])(
+  'requests Windows process-tree supervision for every persistent $name kernel',
+  async ({ request: kernelRequest }) => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-windows-supervision-'))
+    const request = baseRequest(cwdDir)
+    const python = pythonBin(envPrefix(request.runtimeRoot, DEFAULT_PY_ENV, 'win32'), 'win32')
+    const rscript = join(
+      envPrefix(request.runtimeRoot, DEFAULT_R_ENV, 'win32'),
+      'Lib',
+      'R',
+      'bin',
+      'x64',
+      'Rscript.exe'
+    )
+    const r = join(dirname(rscript), 'R.exe')
+    await mkdir(dirname(python), { recursive: true })
+    await mkdir(dirname(rscript), { recursive: true })
+    await writeFile(python, 'fixture')
+    await writeFile(r, 'fixture')
+    await writeFile(rscript, 'fixture')
+
+    const wrap = vi.fn<NotebookProcessSandbox['wrap']>(async () => {
+      throw new Error('sandbox invocation captured')
+    })
+    const executor = new NotebookKernelExecutor({
+      platform: 'win32',
+      processSandbox: { wrap }
+    })
+    try {
+      await expect(
+        executor.execute({
+          ...request,
+          ...kernelRequest,
+          code: '1',
+          sessionId: 'windows-supervision',
+          projectId: 'windows-supervision'
+        })
+      ).resolves.toMatchObject({ status: 'failed', stderr: 'sandbox invocation captured' })
+      expect(wrap).toHaveBeenCalledWith(expect.objectContaining({ superviseProcessTree: true }))
+    } finally {
+      await executor.shutdown()
+    }
+  }
+)
+
 describe.skipIf(process.platform === 'win32')('managed R kernel isolation', () => {
   it('ignores user startup files and uses only the managed environment library', async () => {
     cwdDir = await mkdtemp(join(tmpdir(), 'os-managed-r-kernel-home-'))
@@ -553,6 +662,7 @@ gate('NotebookKernelExecutor (fake loop)', () => {
       const [sandboxInvocation] = vi.mocked(processSandbox.wrap).mock.calls[0]
       expect(sandboxInvocation).not.toHaveProperty('signal')
       expect(sandboxInvocation.filesystem.readWriteRoots).not.toContain(request.dataRoot)
+      expect(sandboxInvocation.filesystem.deniedWriteRoots).toContain(request.inputRoot)
       expect(sandboxInvocation.filesystem.deniedWriteRoots).not.toContain(request.runtimeRoot)
       expect(beginExecution).toHaveBeenCalledTimes(2)
       expect(endExecution).toHaveBeenCalledTimes(2)
@@ -565,7 +675,7 @@ gate('NotebookKernelExecutor (fake loop)', () => {
 
   it('allows the sandbox to read a resolved interpreter prefix outside the runtime root', async () => {
     cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-resolved-prefix-sandbox-'))
-    const request = baseRequest(cwdDir)
+    const request = { ...baseRequest(cwdDir), inputRoot: undefined }
     const restoredPrefix = join(cwdDir, 'restored-environments', 'lock-checksum')
     const processSandbox: NotebookProcessSandbox = {
       wrap: vi.fn(async (invocation) => ({
@@ -603,6 +713,7 @@ gate('NotebookKernelExecutor (fake loop)', () => {
 
       const [sandboxInvocation] = vi.mocked(processSandbox.wrap).mock.calls[0]
       expect(sandboxInvocation.filesystem.readOnlyRoots).toContain(restoredPrefix)
+      expect(sandboxInvocation.filesystem.deniedWriteRoots).toEqual([])
     } finally {
       await executor.shutdown()
     }
@@ -1546,6 +1657,195 @@ gate('NotebookKernelExecutor (fake loop)', () => {
       await executor.shutdown()
     }
   }, 15_000)
+
+  it.each(['win32', 'linux'] as const)(
+    'waits for process teardown before settling cancellation on %s',
+    async (platform) => {
+      cwdDir = await makeDefaultEnvCwd('os-kernel-cancel-drain-', platform)
+      let release!: () => void
+      const stopping = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      let teardownStarted = false
+      const executor = new NotebookKernelExecutor({
+        pythonLoopPath: FIXTURE,
+        platform,
+        cancellationGraceMs: 1,
+        terminateTree: async (...args) => {
+          teardownStarted = true
+          await stopping
+          return terminateProcessTree(...args)
+        }
+      })
+      let settled = false
+      try {
+        await executor.execute({ ...baseRequest(cwdDir), code: 'warm' })
+        const cancellation = new AbortController()
+        const run = executor
+          .execute({
+            ...baseRequest(cwdDir),
+            code: '__IGNORE_SIGINT__',
+            signal: cancellation.signal
+          })
+          .then((result) => {
+            settled = true
+            return result
+          })
+        await vi.waitFor(() => expect(procFor(executor, 'python')?.pending).toBeDefined())
+        cancellation.abort()
+        await vi.waitFor(() => expect(teardownStarted).toBe(true))
+        await new Promise((resolve) => setTimeout(resolve, 50))
+        expect(settled).toBe(false)
+        release()
+        await expect(run).resolves.toMatchObject({ status: 'cancelled' })
+      } finally {
+        release()
+        await executor.shutdown()
+      }
+    },
+    15_000
+  )
+
+  it.each(['win32', 'linux'] as const)(
+    'rejects cancellation when the process tree cannot be reaped on %s',
+    async (platform) => {
+      cwdDir = await makeDefaultEnvCwd('os-kernel-cancel-unreaped-', platform)
+      const unreapedChildren = new Set<ChildProcess>()
+      const executor = new NotebookKernelExecutor({
+        pythonLoopPath: FIXTURE,
+        platform,
+        cancellationGraceMs: 1,
+        terminateTree: async (child) => {
+          unreapedChildren.add(child)
+          return { reaped: false }
+        }
+      })
+      try {
+        await executor.execute({ ...baseRequest(cwdDir), code: 'warm' })
+        const cancellation = new AbortController()
+        const run = executor.execute({
+          ...baseRequest(cwdDir),
+          code: '__IGNORE_SIGINT__',
+          signal: cancellation.signal
+        })
+        await vi.waitFor(() => expect(procFor(executor, 'python')?.pending).toBeDefined())
+        cancellation.abort()
+        await expect(run).rejects.toThrow('process tree could not be stopped')
+        expect([...unreapedChildren][0]?.exitCode).toBeNull()
+        await expect(executor.execute({ ...baseRequest(cwdDir), code: 'again' })).rejects.toThrow(
+          'process tree could not be stopped'
+        )
+        await expect(executor.terminate('python', DEFAULT_PY_ENV)).rejects.toThrow(
+          'runtime switch refused'
+        )
+        await expect(executor.shutdown()).resolves.toEqual({ reaped: false })
+      } finally {
+        await executor.shutdown()
+        for (const child of unreapedChildren) await terminateProcessTree(child)
+      }
+    },
+    15_000
+  )
+
+  it.runIf(process.platform !== 'win32')(
+    'retains an unreaped barrier when a cancelled kernel exits before the grace timer',
+    async () => {
+      cwdDir = await makeDefaultEnvCwd('os-kernel-cancel-early-exit-', 'linux')
+      const children = new Set<ChildProcess>()
+      const executor = new NotebookKernelExecutor({
+        pythonLoopPath: FIXTURE,
+        platform: 'linux',
+        cancellationGraceMs: 10_000,
+        terminateTree: async (child) => {
+          children.add(child)
+          return { reaped: false }
+        }
+      })
+      try {
+        await executor.execute({ ...baseRequest(cwdDir), code: 'warm' })
+        const child = procFor(executor, 'python')?.child
+        if (!child) throw new Error('Expected a running kernel')
+        const cancellation = new AbortController()
+        const run = executor.execute({
+          ...baseRequest(cwdDir),
+          code: '__IGNORE_SIGINT__',
+          signal: cancellation.signal
+        })
+        await vi.waitFor(() => expect(procFor(executor, 'python')?.pending).toBeDefined())
+        cancellation.abort()
+        // An actual child exit wins before the grace timer; the OS reaping boundary reports that
+        // surviving descendants could not be confirmed stopped.
+        child.kill('SIGKILL')
+        await expect.soft(run).rejects.toThrow('process tree could not be stopped')
+        await expect.soft(executor.shutdown()).resolves.toEqual({ reaped: false })
+        await expect(executor.execute({ ...baseRequest(cwdDir), code: 'again' })).rejects.toThrow(
+          'process tree could not be stopped'
+        )
+      } finally {
+        await executor.shutdown()
+        for (const child of children) await terminateProcessTree(child)
+      }
+    },
+    15_000
+  )
+
+  it.each(['win32', 'linux'] as const)(
+    'reports rejected cancellation cleanup as unreaped on %s',
+    async (platform) => {
+      cwdDir = await makeDefaultEnvCwd('os-kernel-cancel-cleanup-reject-', platform)
+      const terminated = vi.fn()
+      const cleanup = vi.fn(async () => {
+        throw new Error('sandbox cleanup rejected')
+      })
+      const executor = new NotebookKernelExecutor({
+        pythonLoopPath: FIXTURE,
+        platform,
+        cancellationGraceMs: 1,
+        onTerminated: terminated,
+        processSandbox: {
+          wrap: async (invocation) => ({
+            ...invocation,
+            annotateStderr: (stderr: string) => stderr,
+            cleanup
+          })
+        }
+      })
+      try {
+        expect(
+          await executor.execute({
+            ...baseRequest(cwdDir),
+            sessionId: 'session-1',
+            projectId: 'project-1',
+            code: 'warm'
+          })
+        ).toMatchObject({ status: 'completed', stderr: '' })
+        const cancellation = new AbortController()
+        const run = executor.execute({
+          ...baseRequest(cwdDir),
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          code: '__IGNORE_SIGINT__',
+          signal: cancellation.signal
+        })
+        await vi.waitFor(() => expect(procFor(executor, 'python')?.pending).toBeDefined())
+        cancellation.abort()
+        await expect(run).rejects.toThrow('process tree could not be stopped')
+        expect.soft(terminated).toHaveBeenCalledWith('python', DEFAULT_PY_ENV)
+        await expect.soft(executor.shutdown()).resolves.toEqual({ reaped: false })
+        await expect(
+          executor.execute({
+            ...baseRequest(cwdDir),
+            sessionId: 'session-1',
+            projectId: 'project-1',
+            code: 'again'
+          })
+        ).rejects.toThrow('process tree could not be stopped')
+      } finally {
+        await executor.shutdown().catch(() => undefined)
+      }
+    },
+    15_000
+  )
 
   it('drops and respawns the kernel when Windows cancellation cannot preserve it', async () => {
     cwdDir = await makeDefaultEnvCwd('os-kernel-windows-cancel-', 'win32')
@@ -3519,13 +3819,13 @@ type BuildEnvFn = (
 
 describe('NotebookKernelExecutor spawn env', () => {
   it('grants the complete macOS app bundle to the Electron-backed repl kernel', () => {
-    const executable = '/Applications/Open Science.app/Contents/MacOS/Open Science'
+    const executable = '/Applications/Open-Science.app/Contents/MacOS/Open-Science'
 
     expect(kernelExecutableReadRoot(executable, 'repl', 'darwin')).toBe(
-      '/Applications/Open Science.app'
+      '/Applications/Open-Science.app'
     )
     expect(kernelExecutableReadRoot(executable, 'python', 'darwin')).toBe(
-      '/Applications/Open Science.app/Contents/MacOS'
+      '/Applications/Open-Science.app/Contents/MacOS'
     )
   })
 
@@ -3705,14 +4005,20 @@ describe('NotebookKernelExecutor spawn env', () => {
 // -- shutdown() reaped guarantee vs. in-flight teardowns (the Windows update-install gate). ----------
 
 type PendingTeardownsInternals = {
-  pendingTeardowns: Map<string, Promise<{ reaped: boolean }>>
+  pendingTeardowns: Map<
+    string,
+    { completion: Promise<{ reaped: boolean }>; retry: () => Promise<{ reaped: boolean }> }
+  >
 }
 
 describe('NotebookKernelExecutor shutdown reaping', () => {
   it('refuses to restart while an earlier persistent process tree remains unreaped', async () => {
     const executor = new NotebookKernelExecutor({ pythonLoopPath: FIXTURE })
     const internals = executor as unknown as PendingTeardownsInternals
-    internals.pendingTeardowns.set('python:default-python', Promise.resolve({ reaped: false }))
+    internals.pendingTeardowns.set('python:default-python', {
+      completion: Promise.resolve({ reaped: false }),
+      retry: async () => ({ reaped: false })
+    })
 
     await expect(executor.restart()).rejects.toThrow('persistent process tree was not reaped')
   })
@@ -3728,7 +4034,10 @@ describe('NotebookKernelExecutor shutdown reaping', () => {
     const teardown = new Promise<{ reaped: boolean }>((resolve) => {
       settle = resolve
     })
-    internals.pendingTeardowns.set('python:default-python', teardown)
+    internals.pendingTeardowns.set('python:default-python', {
+      completion: teardown,
+      retry: () => teardown
+    })
 
     // shutdown() must not resolve while the old tree is still being reaped.
     let resolved = false
@@ -3749,7 +4058,10 @@ describe('NotebookKernelExecutor shutdown reaping', () => {
   it('reports reaped:true only once every pending teardown reaped its whole tree', async () => {
     const executor = new NotebookKernelExecutor({ pythonLoopPath: FIXTURE })
     const internals = executor as unknown as PendingTeardownsInternals
-    internals.pendingTeardowns.set('python:default-python', Promise.resolve({ reaped: true }))
+    internals.pendingTeardowns.set('python:default-python', {
+      completion: Promise.resolve({ reaped: true }),
+      retry: async () => ({ reaped: true })
+    })
 
     const result = await executor.shutdown()
     expect(result.reaped).toBe(true)
@@ -3795,6 +4107,187 @@ const delayedSandboxCleanup = (
 }
 
 describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
+  it('reports diagnostics when the REPL exits before replying', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-repl-exit-diagnostic-'))
+    const terminations: unknown[][] = []
+    const executor = new NotebookKernelExecutor({
+      replLoopPath: REPL_LOOP,
+      onTerminated: (...args) => terminations.push(args),
+      terminateTree: async () => ({ reaped: true })
+    })
+
+    try {
+      const result = await executor.execute({
+        ...baseRequest(cwdDir),
+        kind: 'repl',
+        code: "process.stderr.write('api_key=secret\\n'); process.exit(23)"
+      })
+
+      expect(result.status).toBe('failed')
+      expect(result.stderr).toContain('Notebook kernel process exited with exit code 23.')
+      expect(terminations).toHaveLength(1)
+      expect(terminations[0]).toEqual([
+        'repl',
+        '',
+        { reason: 'exit', exitCode: 23, signal: null, stderr: 'api_key=[redacted]\n' }
+      ])
+    } finally {
+      await executor.shutdown()
+    }
+  })
+
+  it.each(['execute', 'restart', 'shutdown'] as const)(
+    'retries receipt completion through %s without terminating the same process tree twice',
+    async (recovery) => {
+      cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-receipt-retry-'))
+      const owner = new KernelProcessLifecycleOwner({ storageRoot: cwdDir })
+      await owner.ensureReady()
+      const complete = owner.complete.bind(owner)
+      let receiptWritable = false
+      vi.spyOn(owner, 'complete').mockImplementation((receipt, reaped) => {
+        if (reaped && !receiptWritable) throw new Error('Receipt temporarily locked')
+        complete(receipt, reaped)
+      })
+      const terminateTree = vi.fn(terminateProcessTree)
+      const executor = new NotebookKernelExecutor({
+        replLoopPath: REPL_LOOP,
+        processLifecycle: owner,
+        laneKey: '["project-1","session-1","root",null,null]',
+        terminateTree
+      })
+      const request = {
+        ...baseRequest(cwdDir),
+        kind: 'repl' as const,
+        code: "console.log('blocked')"
+      }
+      const ledger = join(cwdDir, 'runtime', 'kernel-processes')
+      try {
+        await executor.execute({ ...request, code: "console.log('warm')" })
+        const [oldReceipt] = await readdir(ledger)
+        await expect(executor.restart()).rejects.toThrow('persistent process tree was not reaped')
+        await expect(executor.execute(request)).rejects.toThrow('process tree could not be stopped')
+        expect(await readdir(ledger)).toEqual([oldReceipt])
+        expect(terminateTree).toHaveBeenCalledOnce()
+
+        receiptWritable = true
+        if (recovery === 'restart') await expect(executor.restart()).resolves.toBeUndefined()
+        if (recovery === 'shutdown')
+          await expect(executor.shutdown()).resolves.toEqual({ reaped: true })
+        await expect(
+          executor.execute({ ...request, code: "console.log('recovered')" })
+        ).resolves.toMatchObject({
+          status: 'completed',
+          stdout: expect.stringContaining('recovered')
+        })
+        expect(terminateTree).toHaveBeenCalledOnce()
+        expect(await readdir(ledger)).not.toContain(oldReceipt)
+      } finally {
+        receiptWritable = true
+        await executor.shutdown()
+      }
+    }
+  )
+
+  it('reaps the Windows tree before reporting an outer REPL timeout', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-windows-timeout-'))
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let stopping = false
+    const executor = new NotebookKernelExecutor({
+      replLoopPath: REPL_LOOP,
+      platform: 'win32',
+      terminateTree: async (child) => {
+        stopping = true
+        await gate
+        return terminateProcessTree(child)
+      }
+    })
+    const request = {
+      ...baseRequest(cwdDir),
+      kind: 'repl' as const,
+      code: "console.log('blocked')"
+    }
+    try {
+      await executor.execute({ ...request, code: "console.log('warm')" })
+      const child = procFor(executor, 'repl')!.child
+      const kill = vi.spyOn(child, 'kill')
+      let settled = false
+      const execution = executor
+        .execute({ ...request, code: 'await new Promise(() => {})', timeoutMs: 20 })
+        .finally(() => {
+          settled = true
+        })
+      await vi.waitFor(() => expect(stopping).toBe(true))
+      expect.soft(settled).toBe(false)
+      expect.soft(kill).not.toHaveBeenCalledWith('SIGINT')
+      release()
+      await expect(execution).resolves.toMatchObject({ status: 'timeout' })
+    } finally {
+      release()
+      await executor.shutdown()
+    }
+  })
+
+  it.each(['valid', 'missing', 'error'] as const)(
+    'reconciles an exited tree only with its retained native proof (%s)',
+    async (proof) => {
+      cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-native-proof-'))
+      let proofAvailable = false
+      const confirm = vi.fn(async () => {
+        if (proof === 'error') throw new Error('Proof unavailable')
+        return proof === 'valid' && proofAvailable
+      })
+      const wrap = vi.fn<NotebookProcessSandbox['wrap']>(async (invocation) => ({
+        ...invocation,
+        confirmProcessTreeTermination: confirm,
+        annotateStderr: (stderr) => stderr,
+        cleanup: async (_reason, outcome) => ({
+          processesTerminated:
+            outcome.processesTerminated ||
+            Boolean(await outcome.confirmTermination?.().catch(() => false)),
+          networkClosed: true,
+          temporaryResourcesRemoved: true
+        })
+      }))
+      const executor = new NotebookKernelExecutor({
+        replLoopPath: REPL_LOOP,
+        processSandbox: { wrap },
+        // Model Windows taskkill losing an already-exited leader. The real child exits itself.
+        terminateTree: async (child) =>
+          child.exitCode === 7 ? { reaped: false } : terminateProcessTree(child)
+      })
+      const request = {
+        ...baseRequest(cwdDir),
+        kind: 'repl' as const,
+        sessionId: 'session-1',
+        projectId: 'project-1'
+      }
+      try {
+        await expect(executor.execute({ ...request, code: 'process.exit(7)' })).rejects.toThrow(
+          'process tree could not be stopped'
+        )
+        await expect(executor.shutdown()).resolves.toEqual({ reaped: false })
+        proofAvailable = true
+        const retry = executor.execute({ ...request, code: "console.log('recovered')" })
+        if (proof === 'valid') {
+          await expect(retry).resolves.toMatchObject({
+            status: 'completed',
+            stdout: expect.stringContaining('recovered')
+          })
+          expect(wrap).toHaveBeenCalledTimes(2)
+        } else {
+          await expect(retry).rejects.toThrow('process tree could not be stopped')
+          expect(wrap).toHaveBeenCalledOnce()
+          await expect(executor.shutdown()).resolves.toEqual({ reaped: false })
+        }
+      } finally {
+        await executor.shutdown()
+      }
+    }
+  )
+
   it('registers POSIX kernel ownership before reporting an incomplete post-exit reap', async () => {
     cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-repl-owned-cleanup-'))
     let releaseReaping: (() => void) | undefined
@@ -3825,9 +4318,8 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
           sessionId: 'session-1',
           projectId: 'project-1'
         })
-        .then((result) => {
+        .finally(() => {
           completed = true
-          return result
         })
 
       await vi.waitFor(() => expect(registerOwnedProcessGroup).toHaveBeenCalledOnce())
@@ -3839,7 +4331,8 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
       )
       expect(completed).toBe(false)
       sandbox.release()
-      await expect(execution).resolves.toMatchObject({ status: 'failed' })
+      await expect(execution).rejects.toThrow('process tree could not be stopped')
+      await expect(executor.shutdown()).resolves.toEqual({ reaped: false })
     } finally {
       releaseReaping?.()
       sandbox.release()
@@ -3906,9 +4399,8 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
           sessionId: 'session-1',
           projectId: 'project-1'
         })
-        .then((result) => {
+        .finally(() => {
           completed = true
-          return result
         })
 
       await vi.waitFor(() =>
@@ -3918,7 +4410,11 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
       )
       expect(completed).toBe(false)
       sandbox.release()
-      await expect(execution).resolves.toMatchObject({ status: 'failed' })
+      if (process.platform === 'win32') {
+        await expect(execution).rejects.toThrow('process tree could not be stopped')
+      } else {
+        await expect(execution).resolves.toMatchObject({ status: 'failed' })
+      }
       expect(sandbox.cleanup).toHaveBeenCalledOnce()
     } finally {
       sandbox.release()

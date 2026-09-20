@@ -176,8 +176,10 @@ export const ACP_RESTORED_PERMISSION_REARM_FAILED_EVENT_TITLE =
 
 // Marks a prompt failure the app can auto-recover from without user action. 'context-overflow' means
 // the conversation outgrew the provider's request-size limit; the renderer tries framework-native
-// compaction first, then falls back to a fresh context plus text replay. Absent on ordinary events.
-export type AcpRecoverableFailure = 'context-overflow'
+// compaction first, then falls back to a fresh context plus text replay. 'session-lost' means the
+// provider session disappeared; the renderer creates a fresh provider session and replays the text.
+// Absent on ordinary events.
+export type AcpRecoverableFailure = 'context-overflow' | 'session-lost'
 
 export type AcpContextUsageCategoryKey =
   'system' | 'tools' | 'messages' | 'mcp' | 'skills' | 'other'
@@ -537,6 +539,8 @@ type AcpRuntimeEventBase = {
   // from the ACP layer itself (our runtime) and stays reportable unless it is one of our own crafted,
   // actionable reminder messages.
   providerError?: boolean
+  // Main has durably committed this event's Message/Artifact projection before publication.
+  publicationOwner?: 'main'
   sessionId?: string
   messageId?: string
   role?: 'assistant' | 'user'
@@ -725,7 +729,7 @@ export type AcpPermissionRequest = {
   }>
 }
 
-// An Open Science-owned tool grant. `categoryKey` is the broker's opaque matcher key;
+// An Open-Science-owned tool grant. `categoryKey` is the broker's opaque matcher key;
 // `label`/`kind` are the display projection and `scope` reserves future project/global ownership.
 export type AcpPermissionGrant = {
   categoryKey: string
@@ -760,7 +764,7 @@ export type AcpRuntimeState = {
   // Optional for rolling renderer/main reload compatibility; current runtimes always publish it.
   pendingElicitations?: PendingElicitationRequest[]
   permissionProfiles: Record<string, SessionPermissionProfileState>
-  // Open Science-owned grants by app conversation, so the UI can show and revoke them.
+  // Open-Science-owned grants by app conversation, so the UI can show and revoke them.
   permissionGrants: Record<string, AcpPermissionGrant[]>
   // Latest context-window usage for each logical app session's current agent-context generation.
   // Missing means unknown or invalidated; framework switches and reconnects clear the old generation.

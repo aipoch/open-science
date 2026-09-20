@@ -82,10 +82,11 @@ it.each([0, 7])('preserves layout exit %i after a successful sample', async (cod
   expect(execFile).toHaveBeenCalledOnce()
   expect(execFile).toHaveBeenCalledWith(
     'powershell.exe',
-    expect.any(Array),
+    expect.arrayContaining(['-Command', expect.stringContaining('IPGlobalProperties')]),
     expect.objectContaining({ timeout: 4000, maxBuffer: 1024 * 1024 }),
     expect.any(Function)
   )
+  expect(vi.mocked(execFile).mock.calls[0]?.[1].join(' ')).not.toContain('Get-NetTCPConnection')
   expect(spawn).toHaveBeenCalledWith(
     'pwsh',
     expect.arrayContaining([
@@ -238,6 +239,49 @@ it('keeps a diagnostic write failure from masking the test failure', async () =>
   expect(warn).toHaveBeenCalledWith('Windows browser diagnostics: could not write sample.')
 })
 
+it('restarts once when a fresh NetLog proves Windows ran out of socket buffer space', async () => {
+  let attempts = 0
+  vi.mocked(spawn).mockImplementation(() => {
+    attempts += 1
+    if (attempts === 1) {
+      writeFileSync(
+        join(root, 'netlog-first.json'),
+        JSON.stringify({ events: [{ params: { os_error: 10055, net_error: -176 } }] })
+      )
+    }
+    testChild = actual.spawn(process.execPath, ['-e', `process.exit(${attempts === 1 ? 7 : 0})`])
+    return testChild
+  })
+  vi.mocked(execFile).mockImplementation(() => {
+    throw new Error('diagnostics unavailable')
+  })
+
+  expect(await runWindowsBrowserDiagnostics('layout.tmp', output)).toBe(0)
+  expect(spawn).toHaveBeenCalledTimes(2)
+  expect(records()).toContainEqual(
+    expect.objectContaining({
+      status: 'retry',
+      reason: 'windows-no-buffer-space',
+      attempt: 1
+    })
+  )
+})
+
+it('does not restart for stale NetLog evidence', async () => {
+  writeFileSync(
+    join(root, 'netlog-previous.json'),
+    JSON.stringify({ events: [{ params: { os_error: 10055, net_error: -176 } }] })
+  )
+  layout(7, true)
+  vi.mocked(execFile).mockImplementation(() => {
+    throw new Error('diagnostics unavailable')
+  })
+
+  expect(await runWindowsBrowserDiagnostics('layout.tmp', output)).toBe(7)
+  expect(spawn).toHaveBeenCalledOnce()
+  expect(records()).not.toContainEqual(expect.objectContaining({ status: 'retry' }))
+})
+
 it('wraps only the Windows layout shell and preserves its original command', () => {
   const workflow = load(readFileSync('.github/workflows/pr-gate.yml', 'utf8')) as {
     jobs: Record<string, { steps?: Array<{ id?: string; shell?: string; run?: string }> }>
@@ -252,7 +296,7 @@ it('wraps only the Windows layout shell and preserves its original command', () 
       job: 'windows_e2e',
       id: 'renderer_layout',
       shell: 'node scripts/ci/run-windows-browser-diagnostics.mjs {0}',
-      run: 'npm run test:e2e:browser -- --fail-on-flaky-tests --global-timeout=180000'
+      run: 'npm run test:e2e:browser -- --workers=1 --global-timeout=420000 --shard=${{ matrix.shard }}/3'
     })
   ])
   expect(

@@ -12,7 +12,7 @@ import anthropicLogo from '@/assets/provider-icons/anthropic.svg'
 import apodexLogo from '@/assets/provider-icons/apodex.svg'
 import claudeLogo from '@/assets/provider-icons/claude.svg'
 // CodeBuddy is a third-party product mark used only to identify its compatible ACP runtime.
-// Keep it separate from Open Science branding and avoid implying affiliation or endorsement.
+// Keep it separate from Open-Science branding and avoid implying affiliation or endorsement.
 import codebuddyLogo from '@/assets/provider-icons/codebuddy.svg'
 import grokLogo from '@/assets/provider-icons/grok.svg'
 import bailianLogo from '@/assets/provider-icons/bailian.svg'
@@ -25,6 +25,7 @@ import kimiLogo from '@/assets/provider-icons/kimi.svg'
 import openrouterLogo from '@/assets/provider-icons/openrouter.svg'
 import xiaomimimoLogo from '@/assets/provider-icons/xiaomimimo.svg'
 import sensenovaLogo from '@/assets/provider-icons/sensenova.svg'
+import typesafeLogo from '@/assets/provider-icons/typesafe.svg'
 import volcengineLogo from '@/assets/provider-icons/volcengine.svg'
 import type { OfficialVendorId } from '../../../../shared/provider-registry'
 import type { AgentFrameworkId } from '../../../../shared/settings'
@@ -48,6 +49,10 @@ export const AgentFrameworkIcon = ({
   }
   return <Codex size={size} className={cn('text-foreground', className)} />
 }
+
+export const TypeSafeIcon = ({ className }: { className?: string }): React.JSX.Element => (
+  <img src={typesafeLogo} alt="" className={cn('size-3 shrink-0 object-contain', className)} />
+)
 
 // Official vendor brand marks, bundled as assets. Providers from the same vendor share one mark:
 // Bailian and Bailian for Plan, Kimi and Kimi For Coding, Zhipu and GLM Coding Plan, and StepFun and

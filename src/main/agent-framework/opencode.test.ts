@@ -152,8 +152,15 @@ describe('opencodeFramework.prepareModelConfig', () => {
     for (const tool of ['edit', 'webfetch', 'websearch']) {
       expect(rules[tool]).toBe('ask')
     }
-    for (const tool of ['bash', 'glob', 'grep', 'list', 'external_directory'])
-      expect(rules[tool]).toBe('deny')
+    for (const tool of ['bash', 'glob', 'grep', 'list']) expect(rules[tool]).toBe('deny')
+    expect(Object.entries(rules.external_directory)).toEqual([
+      ['*', 'deny'],
+      [join('/data', 'opencode', 'config', 'opencode', 'skills', '*'), 'allow']
+    ])
+    const writtenConfig = JSON.parse(
+      config.configFiles?.find((file) => file.path.endsWith('opencode.json'))?.content ?? '{}'
+    )
+    expect(writtenConfig.permission).toEqual(rules)
     expect(rules.task).toBe('deny')
     expect(JSON.parse(config.env?.OPENCODE_CONFIG_CONTENT ?? '{}').agent).toEqual({
       general: { disable: true },
@@ -970,4 +977,33 @@ describe('buildOpencodeConfig', () => {
     expect(config.provider.anthropic.models).toBeUndefined()
     expect(config.provider.anthropic.options).toEqual({})
   })
+})
+
+it('prevents physical launch when delegated ownership admission fails', () => {
+  const ordinarySpawn = vi.fn(() => ({}) as ChildProcessWithoutNullStreams)
+  const ownedSpawn = vi.fn(() => {
+    throw new Error('ownership receipt write failed')
+  })
+  const framework = createOpencodeFramework({
+    platform: 'win32',
+    sourceEnv: { PATH: 'C:\\bin' },
+    spawnProcess: ordinarySpawn
+  })
+  const input = {
+    executablePath: 'C:\\runtime\\opencode.exe',
+    args: ['--trace'],
+    env: { OWNED: 'yes' },
+    spawnProcess: ownedSpawn
+  }
+  expect(() => framework.spawn(input)).toThrow('ownership receipt write failed')
+  expect(ordinarySpawn).not.toHaveBeenCalled()
+  expect(ownedSpawn).toHaveBeenCalledWith(
+    input.executablePath,
+    ['acp', '--trace'],
+    expect.objectContaining({
+      env: expect.objectContaining({ OWNED: 'yes' }),
+      stdio: 'pipe',
+      windowsHide: true
+    })
+  )
 })

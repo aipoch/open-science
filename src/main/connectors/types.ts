@@ -12,7 +12,12 @@ export type ToolContext = {
   fetchText(url: string, accept?: string): Promise<string>
   // GET JSON plus the response headers — for APIs that report totals/pagination in headers rather than
   // the body (e.g. PRIDE Archive's `total_records`), which fetchJson alone would drop.
-  fetchJsonWithHeaders(url: string): Promise<{ body: unknown; headers: Headers }>
+  // Opt into reading selected HTTP error bodies and inspect status before treating them as success.
+  // Unlisted statuses still throw; response size limits, deadlines, and cancellation still apply.
+  fetchJsonWithHeaders(
+    url: string,
+    options?: { allowHttpStatuses?: readonly number[] }
+  ): Promise<{ body: unknown; headers: Headers; status: number }>
   // POST a JSON body and parse the JSON response — for GraphQL / POST-only APIs (e.g. gnomAD).
   postJson(url: string, body: unknown): Promise<unknown>
   // Submit multipart data once and parse JSON; never retry a potentially created job.

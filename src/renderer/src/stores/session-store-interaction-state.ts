@@ -44,7 +44,6 @@ export type SessionActionabilityProjection = Readonly<{
     startTurn: SessionActionAvailability
     revise: SessionActionAvailability
     branchFromMessage: SessionActionAvailability
-    startSideChat: SessionActionAvailability
     changeAgentControls: SessionActionAvailability
     changeAutoReview: SessionActionAvailability
     changeSpecialist: SessionActionAvailability
@@ -214,7 +213,6 @@ export const projectSessionActionability = (
             ? 'session-running'
             : attentionDisabledReason
       ),
-      startSideChat: executionAvailability(replayOrPendingReason ?? attentionDisabledReason),
       changeAgentControls: executionAvailability(
         replayOrPendingReason ??
           (running ? 'session-running' : (attentionDisabledReason ?? interactionDisabledReason))

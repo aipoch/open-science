@@ -26,6 +26,11 @@ import {
 } from './provenance-test-fixtures'
 import { createRootNotebookLane } from '../notebook/lane-identity'
 import { migrateApplicationDatabase } from '../projects/prisma-client'
+import { ImmutableInputAuthority } from '../immutable-input-authority'
+import { ManagedFileVersionService } from '../managed-file-versions/service'
+import { NotebookInputRegistry } from '../notebook/input-registry'
+import { ManagedFileIndexRepository } from '../project-files/repository'
+import { UploadRepository } from '../uploads/repository'
 
 type Fixture = Awaited<ReturnType<typeof createProvenanceTestFixture>>
 
@@ -119,6 +124,116 @@ const withoutTerminalMessage = (input: PersistedChatSession): PersistedChatSessi
 }
 
 describe('artifact provenance durable lifecycle contract', () => {
+  it('admits the same published Version before and after its producing turn finalizes', async () => {
+    const value = await fixture()
+    await value.client.project.create({ data: { id: 'project-1', name: 'Replay admission' } })
+    const session = durableSession(value.storageRoot)
+    let authority = withoutTerminalMessage(session)
+    const repository = new ArtifactProvenanceRepository({
+      ...value.repositoryOptions,
+      loadSession: async () => authority
+    })
+    const managedFileVersions = new ManagedFileVersionService({
+      storageRoot: value.storageRoot,
+      getClient: () => Promise.resolve(value.client)
+    })
+    const catalog = new ManagedFileIndexRepository(
+      () => Promise.resolve(value.client),
+      value.storageRoot,
+      managedFileVersions,
+      new UploadRepository(value.storageRoot, { getClient: () => Promise.resolve(value.client) })
+    )
+    const registry = new NotebookInputRegistry({
+      storageRoot: value.storageRoot,
+      inputAuthority: new ImmutableInputAuthority({
+        storageRoot: value.storageRoot,
+        managedFileVersions
+      }),
+      // Match the application composition: real catalog and content authority, no fake resolver.
+      resolveArtifactVersionIdentity: async (projectId, versionId) => {
+        const [artifact] = await catalog.readHostArtifactCatalog({
+          projectId,
+          versionId,
+          finalizedArtifactsOnly: true
+        })
+        return artifact?.source === 'artifact' ? { sourceFileId: artifact.sourceFileId } : undefined
+      }
+    })
+    await value.stagePng('immutable producer bytes')
+    const version = await repository.createVersion(versionRequest(session))
+    let active = true
+    const request = {
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      promptMessageId: 'prompt-1',
+      artifactVersionInputs: [version.versionId],
+      producerScope: {
+        appSessionId: 'session-1',
+        artifactRunId: 'artifact-run-1',
+        rootFrameId: session.conversationGraph!.rootFrameId,
+        agentFrameId: session.conversationGraph!.activeFrameId,
+        messageBranchId: session.conversationGraph!.branches[0].id,
+        runtimeSegmentId: session.conversationGraph!.runtimeSegments[0].id,
+        promptMessageId: 'prompt-1',
+        assertActive: () => {
+          if (!active) throw new Error('producer turn ended')
+        }
+      }
+    }
+    // Soft assertion lets the after-finalization control run even on the unfixed baseline.
+    const sameTurn = await registry.openRun(request).then(
+      async (lease) => ({ inputs: await lease.close() }),
+      (error: Error) => ({ error: error.message })
+    )
+    expect.soft(sameTurn, JSON.stringify(sameTurn)).toEqual({
+      inputs: [expect.objectContaining({ inputFileVersionId: version.versionId })]
+    })
+    // A bare ID or another owner never acquires producer authority.
+    await expect(registry.openRun({ ...request, producerScope: undefined })).rejects.toThrow(
+      'unavailable'
+    )
+    await expect(registry.openRun({ ...request, projectId: 'another-project' })).rejects.toThrow(
+      'unavailable'
+    )
+    for (const key of [
+      'appSessionId',
+      'artifactRunId',
+      'rootFrameId',
+      'agentFrameId',
+      'messageBranchId',
+      'runtimeSegmentId',
+      'promptMessageId'
+    ] as const) {
+      await expect(
+        registry.openRun({
+          ...request,
+          producerScope: { ...request.producerScope, [key]: 'another-owner' }
+        })
+      ).rejects.toThrow('unavailable')
+    }
+    const lease = await registry.openRun(request)
+    const path = await lease.resolve({
+      sourceKind: 'artifact-version',
+      inputFileVersionId: version.versionId
+    })
+    expect(sha256(await readFile(path))).toBe(lease.getRunInputFiles()[0].checksum)
+    active = false
+    await expect(
+      lease.resolve({ sourceKind: 'artifact-version', inputFileVersionId: version.versionId })
+    ).rejects.toThrow('producer turn ended')
+    active = true
+    await lease.close()
+    await expect(
+      lease.resolve({ sourceKind: 'artifact-version', inputFileVersionId: version.versionId })
+    ).rejects.toThrow('closed')
+    authority = session
+    await repository.finalizeRun(finalizationRequest(version.versionId, session))
+    await repository.activateFinalizedRun(finalizationRequest(version.versionId, session))
+    await expect(registry.openRun(request).then((lease) => lease.close())).resolves.toEqual([
+      expect.objectContaining({ inputFileVersionId: version.versionId })
+    ])
+  })
+
   it('reopens the database after finalizing both same-turn artifact revisions (issue 2544)', async () => {
     const value = await fixture()
     const session = durableSession(value.storageRoot)

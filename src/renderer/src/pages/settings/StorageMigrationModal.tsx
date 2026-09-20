@@ -1,3 +1,4 @@
+import { storageErrorMessage } from '@/lib/storage-error'
 import { ErrorNotice } from '@/components/error-notice'
 import * as Dialog from '@/components/ui/dialog'
 import { Check, RefreshCw, TriangleAlert } from 'lucide-react'
@@ -5,12 +6,21 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
-import { dialogCancelButtonClassName } from '@/components/ui/dialog-chrome'
+import {
+  dialogCancelButtonClassName,
+  dialogOverlayClassName,
+  dialogPanelClassName,
+  dialogTitleClassName,
+  dialogDescriptionClassName,
+  dialogFooterClassName
+} from '@/components/ui/dialog-chrome'
+import { cn } from '@/lib/utils'
 import { resolveActiveSessionDisplay, truncateLabel } from '@/lib/active-session-display'
 import {
   hasDelegatedActiveSession,
   type ActiveSessionInfo,
   type DataRootRecoveryStatus,
+  type DataRootSelection,
   type MigrationOutcome,
   type MigrationPhase,
   type MigrationProgress
@@ -21,6 +31,7 @@ type Stage = 'detecting' | 'confirm' | 'migrating' | 'done' | 'committing' | 'er
 type StorageMigrationModalProps = {
   active?: boolean
   targetPath: string
+  selection?: DataRootSelection
   recoveryStatus?: DataRootRecoveryStatus
   targetAvailableBytes?: number
   onClose: () => void
@@ -74,6 +85,7 @@ const formatBytes = (bytes: number): string => {
 const StorageMigrationModal = ({
   active: isPresentationActive = true,
   targetPath,
+  selection,
   recoveryStatus,
   targetAvailableBytes,
   onClose
@@ -157,7 +169,7 @@ const StorageMigrationModal = ({
     })
 
     void window.api.storage
-      .migrate(targetPath)
+      .migrate(targetPath, selection)
       .then((result) => {
         if (!mountedRef.current) return
         setOutcome(result)
@@ -182,7 +194,7 @@ const StorageMigrationModal = ({
       })
 
     return unsubscribe
-  }, [stage, targetPath])
+  }, [stage, targetPath, selection])
 
   // Tick a 1s clock while migrating (cleared on leave/unmount). `startedAt` is stamped by the
   // transition into this stage, not here, so this effect calls no setState synchronously.
@@ -281,19 +293,19 @@ const StorageMigrationModal = ({
       }}
     >
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[60] bg-black/50" />
+        <Dialog.Overlay className={`${dialogOverlayClassName} z-[60]`} />
         <Dialog.Content
           onInteractOutside={(event) => {
             if (!dismissable) event.preventDefault()
           }}
-          className="fixed left-1/2 top-1/2 z-[60] w-[min(460px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-card p-5 text-foreground shadow-dialog"
+          className={dialogPanelClassName('z-[60] w-[min(460px,calc(100vw-2rem))]')}
         >
           {stage === 'detecting' ? (
             <>
-              <Dialog.Title className="text-sm font-semibold">
+              <Dialog.Title className={dialogTitleClassName}>
                 {t('Checking for running sessions…')}
               </Dialog.Title>
-              <Dialog.Description className="mt-1 text-xs text-muted-foreground">
+              <Dialog.Description className={dialogDescriptionClassName}>
                 {t('One moment.')}
               </Dialog.Description>
             </>
@@ -301,8 +313,8 @@ const StorageMigrationModal = ({
 
           {stage === 'confirm' ? (
             <>
-              <Dialog.Title className="text-sm font-semibold">{t('Move app data?')}</Dialog.Title>
-              <Dialog.Description className="mt-1 text-xs text-muted-foreground">
+              <Dialog.Title className={dialogTitleClassName}>{t('Move app data?')}</Dialog.Title>
+              <Dialog.Description className={dialogDescriptionClassName}>
                 {hasDelegatedWork
                   ? t(
                       'Subagents are still running. Return to each task below, stop its subagents, then try moving app data again.'
@@ -322,7 +334,7 @@ const StorageMigrationModal = ({
                   </li>
                 ))}
               </ul>
-              <div className="mt-4 flex justify-end gap-2">
+              <div className={cn(dialogFooterClassName, 'mt-5 border-0 p-0')}>
                 <Button
                   type="button"
                   variant={hasDelegatedWork ? 'outline' : 'ghost'}
@@ -344,8 +356,8 @@ const StorageMigrationModal = ({
 
           {stage === 'migrating' ? (
             <>
-              <Dialog.Title className="text-sm font-semibold">{t('Moving app data…')}</Dialog.Title>
-              <Dialog.Description className="mt-1 text-xs text-muted-foreground">
+              <Dialog.Title className={dialogTitleClassName}>{t('Moving app data…')}</Dialog.Title>
+              <Dialog.Description className={dialogDescriptionClassName}>
                 {progress ? t(PHASE_LABEL_KEYS[progress.phase]) : t('Preparing…')}
               </Dialog.Description>
               <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-bg-300">
@@ -391,14 +403,15 @@ const StorageMigrationModal = ({
                 {t('Elapsed {{time}}', { time: formatElapsed(elapsedMs) })}
               </p>
               <ErrorNotice
+                inline
                 role="alert"
                 tone="amber"
                 className="mt-3"
                 description={t(
-                  "Don't quit Open Science or turn off your computer until this finishes."
+                  "Don't quit Open-Science or turn off your computer until this finishes."
                 )}
               />
-              <div className="mt-4 flex justify-end">
+              <div className={cn(dialogFooterClassName, 'mt-5 border-0 p-0')}>
                 <Button
                   type="button"
                   variant="ghost"
@@ -415,23 +428,23 @@ const StorageMigrationModal = ({
             <>
               <div className="flex items-start gap-3">
                 <span
-                  className="flex size-9 shrink-0 items-center justify-center rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                  className="flex size-9 shrink-0 items-center justify-center rounded-full bg-status-warning-surface text-status-warning-foreground dark:bg-status-warning-dark-surface dark:text-status-warning-dark-foreground"
                   aria-hidden="true"
                 >
                   <TriangleAlert className="size-[18px]" />
                 </span>
                 <div className="min-w-0 flex-1">
-                  <Dialog.Title className="text-sm font-semibold text-foreground">
+                  <Dialog.Title className={dialogTitleClassName}>
                     {t('Current location kept')}
                   </Dialog.Title>
-                  <Dialog.Description className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                  <Dialog.Description className={dialogDescriptionClassName}>
                     {t(
-                      "Open Science couldn't remove the unused copy. Normal work has resumed. You can delete the copy later."
+                      "Open-Science couldn't remove the unused copy. Normal work has resumed. You can delete the copy later."
                     )}
                   </Dialog.Description>
                 </div>
               </div>
-              <div className="mt-5 flex justify-end">
+              <div className={cn(dialogFooterClassName, 'mt-5 border-0 p-0')}>
                 <Button type="button" variant="outline" onClick={onClose}>
                   {tCommon('Close')}
                 </Button>
@@ -443,31 +456,32 @@ const StorageMigrationModal = ({
             <>
               <div className="flex items-start gap-3">
                 <span
-                  className="flex size-9 shrink-0 items-center justify-center rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                  className="flex size-9 shrink-0 items-center justify-center rounded-full bg-status-warning-surface text-status-warning-foreground dark:bg-status-warning-dark-surface dark:text-status-warning-dark-foreground"
                   aria-hidden="true"
                 >
                   <TriangleAlert className="size-[18px]" />
                 </span>
                 <div className="min-w-0 flex-1">
-                  <Dialog.Title className="text-sm font-semibold text-foreground">
+                  <Dialog.Title className={dialogTitleClassName}>
                     {t('Incomplete data copy found')}
                   </Dialog.Title>
-                  <Dialog.Description className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                  <Dialog.Description className={dialogDescriptionClassName}>
                     {t(
-                      'Open Science exited before this copy finished. Your current data is untouched. Discard the incomplete copy to use this location again.'
+                      'Open-Science exited before this copy finished. Your current data is untouched. Discard the incomplete copy to use this location again.'
                     )}
                   </Dialog.Description>
                 </div>
               </div>
               {discardError ? (
                 <ErrorNotice
+                  inline
                   role="alert"
                   tone="amber"
                   className="mt-3"
                   description={discardError}
                 />
               ) : null}
-              <div className="mt-5 flex justify-end">
+              <div className={cn(dialogFooterClassName, 'mt-5 border-0 p-0')}>
                 <Button
                   type="button"
                   variant="outline"
@@ -490,12 +504,12 @@ const StorageMigrationModal = ({
                   <Check className="size-[18px]" />
                 </span>
                 <div className="min-w-0 flex-1">
-                  <Dialog.Title className="text-sm font-semibold text-foreground">
+                  <Dialog.Title className={dialogTitleClassName}>
                     {recoveryStatus === 'verified'
                       ? t('Verified data copy found')
                       : t('Data copied')}
                   </Dialog.Title>
-                  <Dialog.Description className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                  <Dialog.Description className={dialogDescriptionClassName}>
                     {recoveryStatus === 'verified'
                       ? t(
                           'A completed copy from an interrupted move is ready. Finish the move to switch locations and restart, or discard the copy to stay where you are.'
@@ -508,6 +522,7 @@ const StorageMigrationModal = ({
               </div>
               {discardError ? (
                 <ErrorNotice
+                  inline
                   role="alert"
                   tone="amber"
                   className="mt-3"
@@ -515,7 +530,7 @@ const StorageMigrationModal = ({
                 />
               ) : null}
               {discardError ? (
-                <div className="mt-5 flex justify-end">
+                <div className={cn(dialogFooterClassName, 'mt-5 border-0 p-0')}>
                   <Button
                     type="button"
                     variant="outline"
@@ -526,7 +541,7 @@ const StorageMigrationModal = ({
                   </Button>
                 </div>
               ) : (
-                <div className="mt-5 flex justify-end gap-2">
+                <div className={cn(dialogFooterClassName, 'mt-5 border-0 p-0')}>
                   <Button
                     type="button"
                     variant="outline"
@@ -550,8 +565,8 @@ const StorageMigrationModal = ({
 
           {stage === 'committing' ? (
             <>
-              <Dialog.Title className="text-sm font-semibold">{t('Switching over…')}</Dialog.Title>
-              <Dialog.Description className="mt-1 text-xs text-muted-foreground">
+              <Dialog.Title className={dialogTitleClassName}>{t('Switching over…')}</Dialog.Title>
+              <Dialog.Description className={dialogDescriptionClassName}>
                 {t("Finishing up and restarting. This can take a moment — please don't quit.")}
               </Dialog.Description>
               <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-bg-300">
@@ -564,36 +579,33 @@ const StorageMigrationModal = ({
             <>
               <div className="flex items-start gap-3">
                 <span
-                  className="flex size-9 shrink-0 items-center justify-center rounded-full bg-destructive/10 text-destructive"
+                  className="flex size-9 shrink-0 items-center justify-center rounded-full bg-status-failure-surface text-status-failure-foreground dark:bg-status-failure-dark-surface dark:text-status-failure-dark-foreground"
                   aria-hidden="true"
                 >
                   <TriangleAlert className="size-[18px]" />
                 </span>
                 <div className="min-w-0 flex-1">
-                  <Dialog.Title className="text-sm font-semibold text-foreground">
+                  <Dialog.Title className={dialogTitleClassName}>
                     {isSwitchover ? t('Location switch failed') : t('Move failed')}
                   </Dialog.Title>
-                  <Dialog.Description
-                    className="mt-1 text-xs leading-relaxed text-muted-foreground"
-                    role="alert"
-                  >
+                  <Dialog.Description className={dialogDescriptionClassName} role="alert">
                     {/* outcome.error is backend-supplied and passes through verbatim. */}
                     {ipcError
                       ? t('Something went wrong. Please close and try again.')
                       : outcome && !outcome.ok
-                        ? outcome.error
+                        ? storageErrorMessage(outcome.error, t)
                         : null}
                   </Dialog.Description>
                   {isSwitchover ? (
                     <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
                       {t(
-                        'Open Science is still using the original location. Close this dialog and try moving your data again.'
+                        'Open-Science is still using the original location. Close this dialog and try moving your data again.'
                       )}
                     </p>
                   ) : null}
                 </div>
               </div>
-              <div className="mt-5 flex justify-end">
+              <div className={cn(dialogFooterClassName, 'mt-5 border-0 p-0')}>
                 <Button type="button" variant="outline" onClick={onClose}>
                   {tCommon('Close')}
                 </Button>

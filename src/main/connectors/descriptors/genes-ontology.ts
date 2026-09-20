@@ -162,11 +162,13 @@ function searchTermRow(d: OlsSearchDoc): Record<string, unknown> {
 // ---- OLS pagination -------------------------------------------------------------------------
 
 // Walks an OLS HAL collection from firstUrl, following `_links.next.href`, collecting the given
-// embedded key. Returns the rows plus the API's own totalElements for count-verification.
+// embedded key. Relation callers require a complete set; catalogue callers retain their
+// existing partial-result contract and expose completeness in the returned record.
 async function olsPageAll<T>(
   ctx: ToolContext,
   firstUrl: string,
-  embeddedKey: string
+  embeddedKey: string,
+  { requireComplete = false }: { requireComplete?: boolean } = {}
 ): Promise<{ rows: T[]; totalElements: number }> {
   const rows: T[] = []
   let url: string | null = firstUrl
@@ -175,6 +177,19 @@ async function olsPageAll<T>(
   // Guard against a pathological next-link loop; OLS collections here are at most a few hundred pages.
   for (let guard = 0; url && guard < 10_000; guard++) {
     const resp = (await ctx.fetchJson(url)) as OlsListResponse<T>
+    if (requireComplete) {
+      const reportedTotal = resp.page?.totalElements
+      if (
+        typeof reportedTotal !== 'number' ||
+        !Number.isSafeInteger(reportedTotal) ||
+        reportedTotal < 0
+      ) {
+        throw new Error('OLS pagination cannot be verified: missing or invalid totalElements')
+      }
+      if (!first && reportedTotal !== totalElements) {
+        throw new Error('OLS totalElements changed during pagination; retry the query')
+      }
+    }
     if (first) {
       totalElements = resp.page?.totalElements ?? 0
       first = false
@@ -182,7 +197,15 @@ async function olsPageAll<T>(
     const page = resp._embedded?.[embeddedKey] ?? []
     rows.push(...page)
     const next = resp._links?.next?.href
+    if (requireComplete && next === url) {
+      throw new Error('OLS pagination did not advance; cannot verify the complete result set')
+    }
     url = next && next !== url ? next : null
+  }
+  if (requireComplete && (url || rows.length !== totalElements)) {
+    throw new Error(
+      `OLS pagination incomplete: retrieved ${rows.length} of ${totalElements} records`
+    )
   }
   return { rows, totalElements }
 }
@@ -259,8 +282,9 @@ export const GENES_ONTOLOGY_TOOLS: ToolDescriptor[] = [
               `${OLS_BASE}/ontologies/${encodeURIComponent(id)}`
             )) as OlsOntology
             records.push(leanOntology(o))
-          } catch {
+          } catch (err) {
             // OLS returns 404 for an unknown ontology id — record it rather than failing the call.
+            if (!(err instanceof Error && /^HTTP 404 for /.test(err.message))) throw err
             notFound.push(id)
           }
         }
@@ -366,7 +390,9 @@ export const GENES_ONTOLOGY_TOOLS: ToolDescriptor[] = [
           throw new Error(`Unknown relation '${relationArg}'. Valid: ${OLS_RELATIONS.join(', ')}`)
         }
         const url = `${OLS_BASE}/ontologies/${encodeURIComponent(ontology)}/terms/${doubleEncodeIri(term.iri)}/${relationArg}?size=${OLS_PAGE_SIZE}`
-        const { rows, totalElements } = await olsPageAll<OlsTerm>(ctx, url, 'terms')
+        const { rows, totalElements } = await olsPageAll<OlsTerm>(ctx, url, 'terms', {
+          requireComplete: true
+        })
         return {
           root: term.obo_id ?? termId,
           relation: relationArg,
@@ -390,7 +416,7 @@ export const GENES_ONTOLOGY_TOOLS: ToolDescriptor[] = [
       }
       if (includeParents) {
         const url = `${OLS_BASE}/ontologies/${encodeURIComponent(ontology)}/terms/${doubleEncodeIri(term.iri)}/parents?size=${OLS_PAGE_SIZE}`
-        const { rows } = await olsPageAll<OlsTerm>(ctx, url, 'terms')
+        const { rows } = await olsPageAll<OlsTerm>(ctx, url, 'terms', { requireComplete: true })
         record.parents = rows.map(compactTerm)
       }
       return record

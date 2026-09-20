@@ -3,7 +3,7 @@
 // StreamingBlock relies on (per-block `isIncomplete`, merged default `components.code`).
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { code } from '@streamdown/code'
 import { Streamdown } from 'streamdown'
 
@@ -76,5 +76,32 @@ describe('StreamingBlock with real Streamdown', () => {
     const bodies = container.querySelectorAll('[data-streamdown="code-block-body"]')
     expect(bodies).toHaveLength(2)
     expect(bodies[1].textContent).toContain('print("partial")')
+  })
+  it('does not re-highlight completed code while the trailing open fence grows', async () => {
+    await renderStreamdown(STREAMING_CONTENT, true)
+    const first = container.querySelector('[data-streamdown="code-block"]')
+    const highlight = vi.spyOn(code, 'highlight')
+    try {
+      for (let index = 1; index <= 20; index++) {
+        await renderStreamdown(STREAMING_CONTENT + 'x'.repeat(index), true)
+      }
+      expect(container.querySelector('[data-streamdown="code-block"]')).toBe(first)
+      expect(container.querySelector('pre.font-mono')?.textContent).toContain(
+        'partial' + 'x'.repeat(20)
+      )
+      expect(highlight).not.toHaveBeenCalled()
+    } finally {
+      highlight.mockRestore()
+    }
+  })
+
+  it('updates completed code after a same-length replacement', async () => {
+    await renderStreamdown(STREAMING_CONTENT, true)
+    await renderStreamdown(STREAMING_CONTENT.replace('done = 1', 'done = 2'), true)
+    await vi.waitFor(() =>
+      expect(container.querySelector('[data-streamdown="code-block-body"]')?.textContent).toContain(
+        'done = 2'
+      )
+    )
   })
 })

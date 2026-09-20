@@ -190,6 +190,28 @@ const readAppContainerStatus = async (
   return parsed as AppContainerStatus
 }
 
+// A partial or unreadable receipt is not permission to launch outside AppContainer.
+const isWindowsProtectionConfigured = async (
+  hostPath: string,
+  installationId: string,
+  ownershipRoot: string
+): Promise<boolean> => {
+  const status = await readAppContainerStatus(hostPath, installationId, ownershipRoot)
+  if (status.ownershipState !== 'unowned') return true
+  if (
+    status.owned ||
+    status.profileExists ||
+    status.loopbackAllowed ||
+    status.networkFenceReady ||
+    status.gatewayPort !== null
+  ) {
+    throw new Error(
+      'Windows protection ownership is inconsistent. Repair protected mode before running R.'
+    )
+  }
+  return false
+}
+
 const connectionProbeSpecification = (port: number): string => {
   const command = [
     '$client = [Net.Sockets.TcpClient]::new()',
@@ -264,7 +286,7 @@ const checkWindowsAppContainer = async (
     if (!status.networkFenceReady)
       errors.push('Notebook AppContainer loopback network fence is not installed')
     if (!status.owned || status.ownershipState !== 'owned')
-      errors.push('Notebook AppContainer resources have no valid Open Science ownership receipt')
+      errors.push('Notebook AppContainer resources have no valid Open-Science ownership receipt')
     if (status.gatewayPort === null) {
       errors.push('Notebook AppContainer gateway port is not configured')
     } else if (!sharedGatewayPortActive(status.gatewayPort)) {
@@ -737,6 +759,7 @@ const windowsSupervisedLaunch = (
 
 export {
   checkWindowsAppContainer,
+  isWindowsProtectionConfigured,
   connectionProbeSpecification,
   installWindowsAppContainer,
   setWindowsRuntimeAccess,

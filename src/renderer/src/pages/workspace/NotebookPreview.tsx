@@ -1,3 +1,4 @@
+import { InlineNotice } from '@/components/ui/inline-notice'
 import {
   useCallback,
   useEffect,
@@ -191,7 +192,9 @@ const DependencyStatusBadge = ({
             type="button"
             className={cn(
               'inline-flex cursor-help items-center gap-1 rounded px-1.5 py-0.5',
-              isStale ? 'bg-warning-100 text-warning-900' : 'bg-bg-300 text-text-200'
+              isStale
+                ? 'bg-status-warning-surface dark:bg-status-warning-dark-surface text-status-warning-foreground dark:text-status-warning-dark-foreground'
+                : 'bg-bg-300 text-text-200'
             )}
             data-testid={isStale ? 'notebook-cell-stale' : 'notebook-cell-dependency-unknown'}
           >
@@ -1194,9 +1197,9 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
         </div>
       ) : null}
       {activeNamespaceStatus === 'error' ? (
-        <div className="shrink-0 border-b border-border-100 bg-danger-900 px-3 py-1.5 text-[11px] text-danger-000">
+        <InlineNotice tone="red" role="alert" className="m-2 shrink-0">
           {namespaceError ?? t('Could not inspect variables.')}
-        </div>
+        </InlineNotice>
       ) : null}
       {activeNamespaceSnapshot?.variablesTruncated ? (
         <div className="shrink-0 border-b border-border-100 bg-bg-200 px-3 py-1.5 text-[11px] text-text-200">
@@ -1297,9 +1300,9 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
         >
           <div className="flex h-full min-h-0 flex-col bg-bg-000" data-testid="kernel-terminal">
             {actionError ? (
-              <div className="border-b border-border-100/60 px-3 py-2 font-mono text-xs text-danger-000">
+              <InlineNotice tone="red" role="alert" className="m-2 font-mono text-xs">
                 {actionError}
-              </div>
+              </InlineNotice>
             ) : null}
             <TerminalScrollback
               runs={visibleRuns}

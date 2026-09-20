@@ -1533,14 +1533,14 @@ describe('App startup routing', () => {
   it('warns that in-memory conversation changes are not durable and retries them', async () => {
     mocks.settings.isLoaded = true
     mocks.sessionPersistence.writeError =
-      'Open Science could not save the latest conversation changes. Retry before closing the app.'
+      'Open-Science could not save the latest conversation changes. Retry before closing the app.'
 
     await render()
 
     const alert = container.querySelector('[data-testid="session-persistence-alert"]')
     expect(alert?.textContent).toContain('Conversation storage needs attention')
     expect(alert?.textContent).toContain(
-      'Open Science could not save the latest conversation changes. Retry before closing the app.'
+      'Open-Science could not save the latest conversation changes. Retry before closing the app.'
     )
     expect(alert?.textContent).not.toContain('could not confirm')
     expect(alert?.querySelector('[data-testid="session-persistence-dismiss"]')).not.toBeNull()
@@ -1601,7 +1601,7 @@ describe('App startup routing', () => {
     mocks.sessionPersistence.hasCompleteSessionCatalog = false
     mocks.sessionPersistence.catalogRecovery = { kind: 'repairable', reason: 'session-scan' }
     mocks.sessionPersistence.writeError =
-      'Open Science could not save the latest conversation changes. Retry before closing the app.'
+      'Open-Science could not save the latest conversation changes. Retry before closing the app.'
 
     await render()
 
@@ -1609,8 +1609,14 @@ describe('App startup routing', () => {
       container.querySelectorAll('[data-testid="session-persistence-alert"]')
     )
     expect(alerts).toHaveLength(2)
-    expect(alerts[0]?.textContent).toContain('Project index needs repair')
-    expect(alerts[1]?.textContent).toContain('Conversation storage needs attention')
+    const catalogAlert = alerts.find((alert) =>
+      alert.textContent?.includes('Project index needs repair')
+    )
+    const writeAlert = alerts.find((alert) =>
+      alert.textContent?.includes('Conversation storage needs attention')
+    )
+    expect(catalogAlert?.closest('[data-bottom-notice-stack]')).toBeTruthy()
+    expect(writeAlert?.closest('[data-action-toast-stack]')).toBeTruthy()
 
     const retries = Array.from(
       container.querySelectorAll<HTMLButtonElement>('[data-testid="session-persistence-retry"]')
@@ -2010,6 +2016,7 @@ describe('App startup routing', () => {
       container.querySelectorAll('[data-testid="session-persistence-alert"]')
     ).find((candidate) => candidate.textContent?.includes('Quit was canceled'))
     expect(alert?.textContent).toContain('Quit was canceled')
+    expect(alert?.closest('[data-bottom-notice-stack]')).toBeNull()
     expect(alert?.closest('[inert]')).toBeNull()
     expect(alert?.closest('[aria-hidden="true"]')).toBeNull()
     expect(alert?.classList.contains('z-[70]!')).toBe(true)

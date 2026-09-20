@@ -57,6 +57,41 @@ export const buildProviderValidationPatch = (
     target === undefined ||
     providerValidationTargetMatches(provider.lastValidatedTarget, target)
 
+  const priorFailure = provider.lastValidationFailure
+  const previousMissingTargets =
+    priorFailure?.category === 'model-not-found' && priorFailure.target
+      ? (priorFailure.targets ?? [priorFailure.target])
+      : []
+  const missingTargets =
+    !result.ok && result.category === 'model-not-found' && target
+      ? [target, ...previousMissingTargets].filter(
+          (candidate, index, all) =>
+            all.findIndex((other) => providerValidationTargetMatches(candidate, other)) === index
+        )
+      : []
+
+  if (result.ok && priorFailure?.category === 'model-not-found' && priorFailure.target) {
+    const remaining = target
+      ? previousMissingTargets.filter((failed) => !providerValidationTargetMatches(failed, target))
+      : []
+    const retainedFailure =
+      remaining.length > 0 ? { ...priorFailure, target: remaining[0] } : undefined
+    if (retainedFailure) {
+      delete retainedFailure.targets
+      if (!providerValidationTargetMatches(priorFailure.target, retainedFailure.target)) {
+        // Only the primary target owns the stored HTTP details; don't reuse them for another model.
+        delete retainedFailure.status
+        delete retainedFailure.message
+      }
+      if (remaining.length > 1) retainedFailure.targets = remaining
+    }
+    return {
+      lastValidatedAt: at,
+      lastValidatedTarget: target,
+      lastValidationFailure: retainedFailure
+    }
+  }
+
   return result.ok
     ? {
         lastValidatedAt: at,
@@ -72,7 +107,8 @@ export const buildProviderValidationPatch = (
           category: result.category,
           status: result.status,
           message: result.message,
-          target
+          target,
+          ...(missingTargets.length > 1 ? { targets: missingTargets } : {})
         }
       }
 }

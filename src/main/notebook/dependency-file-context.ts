@@ -19,7 +19,7 @@ const MAX_PYTHON_IDENTITIES = 512
 // The owner checks history/epoch/cache validity. This projection owns only binding lifetimes;
 // an unavailable entry discards prior knowledge, and later completed runs can establish it again.
 const projectNotebookFileContext = (
-  language: 'python' | 'r',
+  language: 'python' | 'r' | 'repl',
   entries: Iterable<FileContextEntry | undefined>
 ): NotebookSourceFileAccessContext | undefined => {
   const staticStrings = new Map<string, string>()
@@ -32,6 +32,8 @@ const projectNotebookFileContext = (
     NotebookSourceFileAccessContext['localFileWrappers'][number]
   >()
   const resolvedKernelNames = new Set<string>()
+  const replContainerNames = new Set<string>()
+  let replNamespaceUncertain = false
   const rAtomicValueNames = new Set<string>()
   const rCopyOnModifyNames = new Set<string>()
   const pythonTaintedNamespaces = new Set<string>()
@@ -61,6 +63,43 @@ const projectNotebookFileContext = (
   }
   let available = true
   for (const entry of entries) {
+    if (
+      language === 'repl' &&
+      (!entry ||
+        (entry.facts.state === 'unknown' &&
+          entry.facts.reasons.some(
+            (reason) =>
+              ![
+                'external-state',
+                'control-flow',
+                'function-scope',
+                'execution-incomplete'
+              ].includes(reason)
+          )))
+    )
+      replNamespaceUncertain = true
+    if (
+      language === 'repl' &&
+      entry?.facts.state === 'unknown' &&
+      entry.facts.reasons.includes('execution-incomplete') &&
+      !replNamespaceUncertain
+    ) {
+      // A failed IIFE can partially publish its globals, but cannot erase unrelated
+      // bindings. Keep only identities that this source could not have touched.
+      const affected = new Set([
+        ...(entry.facts.definedNames ?? []),
+        ...(entry.facts.conditionallyDefinedNames ?? []),
+        ...(entry.facts.mutatedNames ?? []),
+        ...(entry.facts.possiblyMutatedNames ?? [])
+      ])
+      for (const name of affected) for (const alias of aliases.get(name) ?? []) affected.add(alias)
+      for (const name of affected) {
+        staticStrings.delete(name)
+        replContainerNames.delete(name)
+        resolvedKernelNames.delete(name)
+      }
+      continue
+    }
     for (const namespace of entry?.fileContext.pythonTaintedNamespaces ?? [])
       pythonTaintedNamespaces.add(namespace)
     if (
@@ -80,6 +119,7 @@ const projectNotebookFileContext = (
       staticCollections.clear()
       localFileWrappers.clear()
       resolvedKernelNames.clear()
+      replContainerNames.clear()
       rAtomicValueNames.clear()
       rCopyOnModifyNames.clear()
       rFunctions.clear()
@@ -111,7 +151,7 @@ const projectNotebookFileContext = (
     // so they cannot prove which side of a reassignment an in-place mutation occurred on.
     for (const name of mutatedNames) {
       for (const alias of aliases.get(name) ?? []) mutatedNames.add(alias)
-      if (language === 'python') {
+      if (language === 'python' || language === 'repl') {
         for (const { target, source } of facts.aliases ?? []) {
           if (target === name) mutatedNames.add(source)
           if (source === name) mutatedNames.add(target)
@@ -119,6 +159,10 @@ const projectNotebookFileContext = (
       }
     }
     const invalidatedNames = new Set([...definedNames, ...mutatedNames])
+    for (const name of invalidatedNames) replContainerNames.delete(name)
+    for (const name of facts.builtinContainerNames ?? []) {
+      if (!conditionalNames.has(name)) replContainerNames.add(name)
+    }
     const priorCopyOnModifyNames = new Set(rCopyOnModifyNames)
     for (const [name, wrapper] of localFileWrappers) {
       if (wrapper.dependencyNames.some((dependency) => invalidatedNames.has(dependency))) {
@@ -204,7 +248,7 @@ const projectNotebookFileContext = (
       group?.delete(name)
       aliases.delete(name)
     }
-    if (language === 'python') {
+    if (language === 'python' || language === 'repl') {
       for (const { target, source } of facts.aliases ?? []) {
         const group = new Set([
           target,
@@ -249,7 +293,7 @@ const projectNotebookFileContext = (
     }
     boundPythonState()
   }
-  if (!available && !pythonTaintedNamespaces.size) return undefined
+  if (!available && !pythonTaintedNamespaces.size && !replNamespaceUncertain) return undefined
   const specializedNames = new Set([
     ...staticStrings.keys(),
     ...staticCollections.keys(),
@@ -278,6 +322,9 @@ const projectNotebookFileContext = (
     localFileWrappers: [...localFileWrappers.values()].sort((left, right) =>
       left.name.localeCompare(right.name)
     ),
+    ...(language === 'repl'
+      ? { replContainerNames: [...replContainerNames], replNamespaceUncertain }
+      : {}),
     ...(rAtomicValueNames.size ? { rAtomicValueNames: [...rAtomicValueNames].sort() } : {}),
     ...(rCopyOnModifyNames.size ? { rCopyOnModifyNames: [...rCopyOnModifyNames].sort() } : {}),
     ...(remainingKernelNames.length ? { resolvedKernelNames: remainingKernelNames } : {}),

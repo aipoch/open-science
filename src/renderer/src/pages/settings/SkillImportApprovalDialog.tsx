@@ -1,3 +1,4 @@
+import { InlineNotice } from '@/components/ui/inline-notice'
 import { useState } from 'react'
 import { PackagePlus } from 'lucide-react'
 import * as Dialog from '@/components/ui/dialog'
@@ -111,7 +112,7 @@ const SkillImportApprovalRequestDialog = ({
                 <Dialog.Description className={cn(dialogDescriptionClassName, 'text-xs')}>
                   {/* The source label is user data: interpolated, never translated. */}
                   <Trans
-                    i18nKey="The agent requested an import from <name>{{source}}</name>. Review and choose exactly what Open Science may install."
+                    i18nKey="The agent requested an import from <name>{{source}}</name>. Review and choose exactly what Open-Science may install."
                     values={{ source: request.source.label }}
                     components={{
                       name: <span className="break-all font-medium text-foreground" />
@@ -178,7 +179,7 @@ const SkillImportApprovalRequestDialog = ({
                         {request.source.kind === 'github' ? t('Imported') : t('Already imported')}
                       </span>
                     ) : candidate.replaceableId ? (
-                      <span className="shrink-0 rounded-full bg-amber-500/10 px-2 py-0.5 text-xs text-amber-600">
+                      <span className="shrink-0 rounded-full bg-status-warning-surface/10 dark:bg-status-warning-dark-surface/10 px-2 py-0.5 text-xs text-status-warning-foreground dark:text-status-warning-dark-foreground">
                         {t('Updates existing')}
                       </span>
                     ) : null}
@@ -213,7 +214,7 @@ const SkillImportApprovalRequestDialog = ({
               </ul>
 
               {request.skipped.length > 0 ? (
-                <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-muted-foreground">
+                <InlineNotice className="mt-3">
                   <div className="font-medium text-foreground">{t('Not importable')}</div>
                   {/* item.source and item.reason are backend-supplied and pass through verbatim. */}
                   <ul className="mt-1 list-disc space-y-1 pl-4">
@@ -223,7 +224,7 @@ const SkillImportApprovalRequestDialog = ({
                       </li>
                     ))}
                   </ul>
-                </div>
+                </InlineNotice>
               ) : null}
             </div>
 

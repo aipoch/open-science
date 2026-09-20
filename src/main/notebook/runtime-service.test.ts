@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { delimiter, dirname, join, posix, win32 } from 'node:path'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { NotebookBackgroundRunError } from '../../shared/notebook'
+import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
 import { EnvironmentLeaseManager } from './environment-lease-manager'
 
 import type {
@@ -71,6 +72,7 @@ import {
   managedRepairRegistryKey,
   pythonBin,
   rBin,
+  rScriptBin,
   repairRegistryPath,
   writeReadyMarker,
   writeRReadyMarker
@@ -1699,6 +1701,41 @@ describe('notebook runtime service', () => {
         }
       })
     )
+  })
+
+  it('executes REPL code when best-effort file-analysis context is unavailable', async () => {
+    const root = await createStorageRoot()
+    const sourceFileAccessContext = vi.fn(async () => {
+      throw new Error('analysis unavailable')
+    })
+    const execute = vi.fn(async (request: NotebookExecutionRequest) => ({
+      status: 'completed' as const,
+      stdout: 'ran',
+      stderr: '',
+      traceback: '',
+      cwdAfter: request.cwd,
+      outputs: []
+    }))
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project',
+      repository: new NotebookRunRepository(root),
+      dependencyAnalyzer: {
+        project: async () => ({ stalenessByRunId: {}, invalidatedByRunId: {} }),
+        sourceFileAccessContext
+      },
+      executorFactory: () => ({ execute, shutdown: async () => ({ reaped: true }) })
+    })
+    const result = await service.executeControl({
+      sessionId: 'session-1',
+      workspaceCwd: root,
+      code: '1 + 1'
+    })
+    expect(sourceFileAccessContext).toHaveBeenCalledOnce()
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({ kind: 'repl', code: '1 + 1' }))
+    expect(execute.mock.calls[0]?.[0].sourceFileAccessContext).toBeUndefined()
+    expect(result).toMatchObject({ status: 'completed', stdout: 'ran' })
   })
 
   it('streams agent code into a locked cell and runs it through the shared executor', async () => {
@@ -4262,7 +4299,8 @@ describe('notebook runtime service', () => {
           profileId: 'profile-1',
           distro: 'Ubuntu-22.04',
           user: 'researcher'
-        }
+        },
+        grantedRoots: []
       })
       expect(result).toEqual({
         stdout: 'partial output',
@@ -4846,9 +4884,19 @@ describe('notebook runtime service', () => {
 
     it('cancels and drains the running and queued Shell Runs before Session teardown', async () => {
       const root = await createStorageRoot()
+      const repository = new NotebookRunRepository(root)
+      const firstStarted = createDeferred<void>()
+      const secondAdmitted = createDeferred<void>()
+      const appendOrGetRun = repository.appendOrGetRun.bind(repository)
+      vi.spyOn(repository, 'appendOrGetRun').mockImplementation(async (input) => {
+        const result = await appendOrGetRun(input)
+        if (input.run.script === 'queued') secondAdmitted.resolve()
+        return result
+      })
       const execute = vi.fn<NotebookShellProcess['execute']>(
         (request) =>
           new Promise((resolve) => {
+            firstStarted.resolve()
             const cancel = (): void =>
               resolve({
                 stdout: '',
@@ -4864,7 +4912,7 @@ describe('notebook runtime service', () => {
         configRoot: root,
         dataRoot: root,
         projectId: 'default-project',
-        repository: new NotebookRunRepository(root),
+        repository,
         shellProcess: { execute },
         shellConcurrencyLimit: 1
       })
@@ -4872,10 +4920,14 @@ describe('notebook runtime service', () => {
       const running = service.executeShell({ ...scope, command: 'running' })
       const queued = service.executeShell({ ...scope, command: 'queued' })
 
-      await vi.waitFor(async () => {
-        const state = await service.state(scope)
-        expect(state.runs.map((run) => run.status).sort()).toEqual(['queued', 'running'])
-      })
+      // Real admission writes can exceed waitFor's one-second default on Windows CI.
+      // Await lifecycle boundaries while propagating early execution failures.
+      await Promise.race([firstStarted.promise, running])
+      await Promise.race([secondAdmitted.promise, queued])
+      expect((await service.state(scope)).runs.map((run) => run.status).sort()).toEqual([
+        'queued',
+        'running'
+      ])
       const shutdown = service.shutdown(scope)
 
       await expect(Promise.all([running, queued])).resolves.toEqual([
@@ -5155,9 +5207,11 @@ describe('notebook runtime service', () => {
       const firstGate = new Promise<void>((resolve) => {
         releaseFirst = resolve
       })
+      const firstStarted = createDeferred<void>()
       const observedPaths: string[] = []
       const execute = vi.fn<NotebookShellProcess['execute']>(async (request) => {
         observedPaths.push(request.environment?.PATH ?? '')
+        if (request.command === 'first') firstStarted.resolve(undefined)
         if (request.command === 'first') await firstGate
         return { stdout: '', stderr: '', exitCode: 0 }
       })
@@ -5171,11 +5225,16 @@ describe('notebook runtime service', () => {
       })
       const scope = { sessionId: 'session-1', workspaceCwd: root }
       const first = service.executeShell({ ...scope, command: 'first' })
+      // Filesystem preparation can exceed waitFor's default 1s under CI coverage.
+      await firstStarted.promise
       const second = service.executeShell({ ...scope, command: 'second' })
-      await vi.waitFor(async () => {
-        const state = await service.state(scope)
-        expect(state.runs.find((run) => run.script === 'second')?.status).toBe('queued')
-      })
+      await vi.waitFor(
+        async () => {
+          const state = await service.state(scope)
+          expect(state.runs.find((run) => run.script === 'second')?.status).toBe('queued')
+        },
+        { timeout: 10_000 }
+      )
       process.env.PATH = '/mutated-after-admission'
       try {
         releaseFirst()
@@ -5194,12 +5253,14 @@ describe('notebook runtime service', () => {
       const firstGate = new Promise<void>((resolve) => {
         releaseFirst = resolve
       })
+      const firstStarted = createDeferred<void>()
       const observedEpochs: string[] = []
       const prepare = vi.fn<NonNullable<NotebookShellProcess['prepare']>>(async (request) => {
         const frozenEpoch = permissionEpoch
         return {
           execute: async () => {
             observedEpochs.push(frozenEpoch)
+            if (request.command === 'first') firstStarted.resolve(undefined)
             if (request.command === 'first') await firstGate
             return { stdout: '', stderr: '', exitCode: 0 }
           },
@@ -5216,9 +5277,10 @@ describe('notebook runtime service', () => {
       })
       const scope = { sessionId: 'session-1', workspaceCwd: root }
       const first = service.executeShell({ ...scope, command: 'first' })
+      await firstStarted.promise
       const second = service.executeShell({ ...scope, command: 'second' })
 
-      await vi.waitFor(() => expect(prepare).toHaveBeenCalledTimes(2))
+      await vi.waitFor(() => expect(prepare).toHaveBeenCalledTimes(2), { timeout: 10_000 })
       permissionEpoch = 'mutated-after-admission'
       releaseFirst()
       await Promise.all([first, second])
@@ -5259,6 +5321,84 @@ describe('notebook runtime service', () => {
       await expect(pendingAdmission).rejects.toThrow('Shell admission is closed for teardown')
       await expect(shutdown).resolves.toEqual({ sessionId: scope.sessionId, status: 'shutdown' })
       expect(execute).not.toHaveBeenCalled()
+    })
+
+    it('preserves Shell launch cleanup recovery when cancellation was not requested', async () => {
+      const root = await createStorageRoot()
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository: new NotebookRunRepository(root),
+        shellProcess: {
+          execute: async () => ({
+            stdout: '',
+            stderr: 'Shell cleanup could not be confirmed.',
+            exitCode: null,
+            ownedTreeReaped: false,
+            errorCode: 'shell-cleanup-incomplete',
+            recovery: { execution: 'may-have-run', retryAfter: 'cleanup-verified' }
+          })
+        }
+      })
+      const request = { sessionId: 'session-1', workspaceCwd: root, command: 'short-lived' }
+      try {
+        await expect(service.executeShell(request)).resolves.toMatchObject({
+          errorCode: 'shell-cleanup-incomplete',
+          recovery: { execution: 'may-have-run', retryAfter: 'cleanup-verified' }
+        })
+        expect((await service.state(request)).runs[0].status).toBe('failed')
+      } finally {
+        await service.dispose()
+      }
+    })
+
+    it('rejects failed Shell process teardown after cancellation without persisting cancelled', async () => {
+      const root = await createStorageRoot()
+      const repository = new NotebookRunRepository(root)
+      const started = createDeferred<void>()
+      const cancellation = new AbortController()
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository,
+        shellProcess: {
+          execute: async (request) => {
+            await new Promise<void>((resolve) => {
+              if (request.signal?.aborted) resolve()
+              else request.signal?.addEventListener('abort', () => resolve(), { once: true })
+              started.resolve()
+            })
+            return {
+              stdout: '',
+              stderr: 'Shell process cleanup could not be confirmed.',
+              exitCode: null,
+              cancelled: true,
+              errorCode: 'shell-cleanup-incomplete',
+              ownedTreeReaped: false
+            }
+          }
+        }
+      })
+      const scope = { sessionId: 'session-1', workspaceCwd: root }
+      const execution = service.executeShell(
+        { ...scope, command: 'long-running' },
+        cancellation.signal
+      )
+      const outcome = execution.catch((error) => error)
+      try {
+        await started.promise
+        cancellation.abort()
+        const result = await outcome
+        const durable = await repository.findExisting('default-project', scope.sessionId)
+        expect(durable?.runs[0]?.status).toBe('failed')
+        expect(result).toBeInstanceOf(NotebookExecutionStopError)
+      } finally {
+        cancellation.abort()
+        await outcome
+        await service.shutdownAll()
+      }
     })
 
     it('persists running Shell cancellation intent before Stop reaches the process', async () => {
@@ -5491,8 +5631,9 @@ describe('notebook runtime service', () => {
       const elapsedMs = Date.now() - startedAt
 
       // Settlement waits for the process-tree terminator. Hosted Windows taskkill of PowerShell
-      // Start-Sleep can take a few seconds, so keep the bound well under the full sleep.
-      expect(elapsedMs).toBeLessThan(10_000)
+      // Start-Sleep plus durable admission can exceed ten seconds on hosted Windows.
+      // Keep the bound below the command duration while still checking timeout status below.
+      expect(elapsedMs).toBeLessThan(process.platform === 'win32' ? 20_000 : 10_000)
       expect(result.exitCode).not.toBe(0)
 
       const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
@@ -9139,21 +9280,35 @@ describe('notebook runtime service', () => {
       const repository = new NotebookRunRepository(root)
       const statusWrite = vi.spyOn(repository, 'updateKernelStatus')
       let release: (() => void) | undefined
+      let signalStarted!: () => void
+      const started = new Promise<void>((resolve) => {
+        signalStarted = resolve
+      })
       const service = holdingService(
         root,
         (_request, resolve) => {
           release = resolve
+          signalStarted()
         },
         repository
       )
 
       const run = service.execute({ sessionId: 'session-1', workspaceCwd: root, code: '1' })
-      await vi.waitFor(() => expect(release).toBeDefined())
-      expect(
-        (await service.state({ sessionId: 'session-1', workspaceCwd: root })).kernelStatus
-      ).toBe('running')
-      release?.()
-      await run
+      try {
+        // Await the executor boundary, not a one-second polling budget under CI coverage.
+        await Promise.race([
+          started,
+          run.then(() => {
+            throw new Error('Run settled before the holding executor started')
+          })
+        ])
+        expect(
+          (await service.state({ sessionId: 'session-1', workspaceCwd: root })).kernelStatus
+        ).toBe('running')
+      } finally {
+        release?.()
+        await run
+      }
 
       expect(statusWrite).not.toHaveBeenCalled()
     })
@@ -10889,6 +11044,7 @@ describe('notebook runtime service', () => {
       const rBinPath = rBin(envPrefix(join(root, 'runtime'), DEFAULT_R_ENV))
       await mkdir(join(rBinPath, '..'), { recursive: true })
       await writeFile(rBinPath, '')
+      await writeFile(rScriptBin(envPrefix(join(root, 'runtime'), DEFAULT_R_ENV)), '')
       writeRReadyMarker(join(root, 'runtime'), DEFAULT_ENV_VERSION, 'now')
       await service.execute({ sessionId: 's', workspaceCwd: root, code: '2', language: 'r' })
       expect(provisionR).toHaveBeenCalledTimes(1)

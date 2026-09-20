@@ -140,7 +140,7 @@ const managedSaveErrorMessage = (code: ManagedFileVersionErrorCode, t: TFunction
     case 'STORAGE_UNAVAILABLE':
       return t('File storage is unavailable. Check the storage location and try again.')
     case 'PERMISSION_DENIED':
-      return t('Open Science does not have permission to save this file.')
+      return t('Open-Science does not have permission to save this file.')
     case 'OUT_OF_SPACE':
       return t('There is not enough storage space to save this file.')
     // The file operator and service use different integrity codes for the same recovery action.
@@ -424,7 +424,7 @@ const PreviewFileHeader = ({
               {item.originSession?.state === 'deleted' ? (
                 <span
                   data-testid="deleted-origin-session"
-                  className="shrink-0 rounded bg-warning-100 px-1.5 py-0.5 text-[10px] text-warning-900"
+                  className="shrink-0 rounded bg-status-warning-surface dark:bg-status-warning-dark-surface px-1.5 py-0.5 text-[10px] text-status-warning-foreground dark:text-status-warning-dark-foreground"
                 >
                   {t('Source session deleted')}
                 </span>
@@ -1738,7 +1738,9 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                             size="sm"
                             onClick={() => void copyEditDraft()}
                           >
-                            {copied ? t('Copied!') : t('Copy draft')}
+                            <span key={String(copied)} className="button-feedback">
+                              {copied ? t('Copied!') : t('Copy draft')}
+                            </span>
                           </Button>
                           {conflictHead ? (
                             <Button

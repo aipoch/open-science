@@ -292,8 +292,10 @@ describe('ACP Task Agent port', () => {
       async (
         _request,
         onAccepted?: () => void,
-        onAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>
+        onAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>,
+        reviewOwner?: 'task' | 'renderer'
       ) => {
+        expect(reviewOwner).toBe('task')
         await onAdmitted?.()
         onAccepted?.()
       }

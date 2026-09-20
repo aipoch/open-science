@@ -213,6 +213,7 @@ describe('notebook shell process behavior', () => {
         cwd: 'C:\\workspace',
         handoffDir: 'C:\\handoff',
         runtimeRoot: portableRuntimeRoot,
+        inputRoot: 'C:\\inputs',
         sessionId: 'session-1',
         projectId: 'project-1',
         platform: 'win32',
@@ -245,8 +246,12 @@ describe('notebook shell process behavior', () => {
           executable: '/bin/bash',
           pathEnvironment: {
             OPEN_SCIENCE_HANDOFF_DIR: 'C:\\handoff',
-            ...notebookWorkloadCacheEnv(portableRuntimeRoot)
-          }
+            ...notebookWorkloadCacheEnv(portableRuntimeRoot),
+            OPEN_SCIENCE_INPUT_DIR: 'C:\\inputs'
+          },
+          filesystem: expect.objectContaining({
+            readOnlyRoots: expect.arrayContaining(['C:\\inputs'])
+          })
         })
       )
     })
@@ -645,6 +650,8 @@ describe('notebook shell process behavior', () => {
     expect(result).toMatchObject({ exitCode: null })
     expect(result.stderr).toContain('null bytes')
     expect(result.errorCode).toBeUndefined()
+    const [sandboxInvocation] = vi.mocked(processSandbox.wrap).mock.calls[0]
+    expect(sandboxInvocation.filesystem.deniedWriteRoots).toEqual([])
     expect(cleanup).toHaveBeenCalledOnce()
     expect(endExecution).toHaveBeenCalledOnce()
     await rm(runtimeRoot, { recursive: true, force: true })
@@ -920,6 +927,44 @@ describe('notebook shell process behavior', () => {
         signal
       })
 
+    it('exposes the authoritative native input root over an inherited override', async () => {
+      const inputRoot = join(process.cwd(), '.open-science-test-inputs')
+      const result = await runShellCommand({
+        command: 'printf "$OPEN_SCIENCE_INPUT_DIR"',
+        cwd: process.cwd(),
+        handoffDir: process.cwd(),
+        runtimeRoot,
+        inputRoot,
+        environment: {
+          ...process.env,
+          OPEN_SCIENCE_INPUT_DIR: '/untrusted/inherited-inputs'
+        },
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        platform: 'linux'
+      })
+
+      expect(result).toMatchObject({ stdout: inputRoot, exitCode: 0 })
+    })
+
+    it('does not retain an inherited input directory when no input root is available', async () => {
+      const result = await runShellCommand({
+        command: 'printf "${OPEN_SCIENCE_INPUT_DIR-unset}"',
+        cwd: process.cwd(),
+        handoffDir: process.cwd(),
+        runtimeRoot,
+        environment: {
+          ...process.env,
+          OPEN_SCIENCE_INPUT_DIR: '/stale/inherited-inputs'
+        },
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        platform: 'linux'
+      })
+
+      expect(result).toMatchObject({ stdout: 'unset', exitCode: 0 })
+    })
+
     it('preserves stdout, stderr, and a non-zero exit code as one ordinary result', async () => {
       await expect(execute("printf 'visible'; printf 'warning' >&2; exit 7")).resolves.toEqual({
         stdout: 'visible',
@@ -996,11 +1041,14 @@ describe('notebook shell process behavior', () => {
 
       expect(processSandbox.wrap).toHaveBeenCalledOnce()
       const [sandboxInvocation] = vi.mocked(processSandbox.wrap).mock.calls[0]
+      expect(sandboxInvocation.env.OPEN_SCIENCE_INPUT_DIR).toBe(inputRoot)
+      expect(sandboxInvocation.pathEnvironment?.OPEN_SCIENCE_INPUT_DIR).toBe(inputRoot)
       expect(sandboxInvocation.filesystem.readOnlyRoots).toContain(runtimeRoot)
       expect(sandboxInvocation.filesystem.readOnlyRoots).toContain(inputRoot)
       expect(sandboxInvocation.filesystem.readWriteRoots).toContain(
         join(runtimeRoot, 'cache', 'notebook')
       )
+      expect(sandboxInvocation.filesystem.deniedWriteRoots).toContain(inputRoot)
       expect(sandboxInvocation.filesystem.deniedWriteRoots).not.toContain(runtimeRoot)
       expect(beginExecution).toHaveBeenCalledOnce()
       expect(endExecution).toHaveBeenCalledOnce()

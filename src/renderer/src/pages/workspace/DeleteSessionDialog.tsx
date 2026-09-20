@@ -85,7 +85,7 @@ const DeleteSessionDialog = ({
                 ) : null}
                 {dialogSession?.packageOrigin || dialogSession?.id.startsWith('import-')
                   ? t(
-                      'This will permanently delete "{{title}}". Imported files will be checked for cleanup the next time Open Science starts. The entire package is kept if other research references it or references cannot be verified. Exported .science files are not deleted. This action cannot be undone.',
+                      'This will permanently delete "{{title}}". Imported files will be checked for cleanup the next time Open-Science starts. The entire package is kept if other research references it or references cannot be verified. Exported .science files are not deleted. This action cannot be undone.',
                       { title: dialogSession?.title ?? '' }
                     )
                   : t(
@@ -112,10 +112,10 @@ const DeleteSessionDialog = ({
                   ? t('Could not confirm the deletion result. Please try again.')
                   : error === 'persistence'
                     ? t(
-                        "The agent was stopped, but Open Science couldn't delete the saved Session. The Session, draft, and attachments were kept. Please try again."
+                        "The agent was stopped, but Open-Science couldn't delete the saved Session. The Session, draft, and attachments were kept. Please try again."
                       )
                     : t(
-                        "Open Science couldn't stop the agent for this Session. The Session was not deleted. Please try again."
+                        "Open-Science couldn't stop the agent for this Session. The Session was not deleted. Please try again."
                       )}
               </p>
             ) : null}

@@ -24,7 +24,14 @@ import {
 export const assertPortablePackageStorageKey = (key: string): void => {
   const segments = key.split('/')
   if (
-    !['artifacts', 'uploads', 'notebooks', 'execution-file-evidence'].includes(segments[0]) ||
+    ![
+      'artifacts',
+      'uploads',
+      'notebooks',
+      'execution-file-evidence',
+      'notebook-file-evidence',
+      'file-evidence'
+    ].includes(segments[0]) ||
     segments.length < 4 ||
     segments.some(
       (segment) =>

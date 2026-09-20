@@ -62,8 +62,16 @@ vi.mock('./previews/PreviewFileContent', () => ({
 }))
 
 vi.mock('./previews/PreviewToolContent', () => ({
-  PreviewToolContent: ({ item }: { item: PreviewToolItem }): React.JSX.Element => (
-    <div data-testid="tool-content">tool:{item.toolKind ?? 'unknown'}</div>
+  PreviewToolContent: ({
+    item,
+    isActive
+  }: {
+    item: PreviewToolItem
+    isActive?: boolean
+  }): React.JSX.Element => (
+    <div data-testid="tool-content" data-active={isActive}>
+      tool:{item.toolKind ?? 'unknown'}
+    </div>
   )
 }))
 
@@ -1294,6 +1302,7 @@ describe('PreviewPanel', () => {
     // as the local file browser's current directory.
     const toolContent = container.querySelector('[data-testid="tool-content"]')
     expect(toolContent).not.toBeNull()
+    expect(toolContent?.getAttribute('data-active')).toBe('true')
     const toolPanel = container.querySelector(`#${panelId('tool-1')}`)
     expect(toolPanel?.hasAttribute('hidden')).toBe(false)
 
@@ -1303,6 +1312,7 @@ describe('PreviewPanel', () => {
 
     expect(container.querySelector('[data-testid="file-content"]')).not.toBeNull()
     expect(container.querySelector(`#${panelId('tool-1')}`)?.hasAttribute('hidden')).toBe(true)
+    expect(toolContent?.getAttribute('data-active')).toBe('false')
     expect(container.querySelector('[data-testid="tool-content"]')).toBe(toolContent)
 
     await act(async () => {
@@ -1310,7 +1320,10 @@ describe('PreviewPanel', () => {
     })
 
     expect(container.querySelector(`#${panelId('tool-1')}`)?.hasAttribute('hidden')).toBe(false)
+    expect(toolContent?.getAttribute('data-active')).toBe('true')
     expect(container.querySelector('[data-testid="tool-content"]')).toBe(toolContent)
+    await act(async () => usePreviewWorkbenchStore.getState().collapsePanel())
+    expect(toolContent?.getAttribute('data-active')).toBe('false')
   })
 
   it('activates a different tab on click and swaps the rendered content', async () => {
@@ -1584,14 +1597,42 @@ describe('PreviewPanel', () => {
   })
 
   it('renders a live Side chat and its independent composer inside the right panel', async () => {
+    useProjectStore.setState({
+      projects: [
+        {
+          id: 'default',
+          name: 'Default',
+          description: '',
+          isExample: false,
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      isLoaded: true
+    })
     useSessionStore.setState({
       sessions: [
         {
           id: 'right-parent',
           projectId: 'default',
           title: 'Main analysis',
-          description: 'Compare the two cohorts'
-        } as ChatSession
+          description: 'Compare the two cohorts',
+          cwd: '/workspace',
+          status: 'idle',
+          createdAt: 1,
+          updatedAt: 1,
+          messages: [
+            {
+              id: 'right-user',
+              eventIds: [],
+              role: 'user',
+              content: 'Compare the two cohorts',
+              status: 'complete',
+              createdAt: 1,
+              updatedAt: 1
+            }
+          ]
+        } satisfies ChatSession
       ]
     })
     const openSession = vi.spyOn(useNavigationStore.getState(), 'openSession').mockReturnValue(true)

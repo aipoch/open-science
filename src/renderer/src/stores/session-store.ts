@@ -29,6 +29,7 @@ import {
 export {
   createInitialSessionState,
   getExternallyHydratedSessionAuthority,
+  hydrateSession,
   isExternallyHydratedSession,
   toPersistedSession,
   type ElicitationEditDraft,

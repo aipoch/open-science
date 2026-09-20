@@ -84,8 +84,26 @@ contacts = out["contacts"][0]         # (L, L)
 
 ## Output format
 
-`out["representations"][layer]` is `(B, L+2, D)`; slice `[ :, 1:-1, : ]` to
-drop BOS/EOS. `out["contacts"]` (when `return_contacts=True`) is `(B, L, L)`.
+`out["representations"][layer]` is `(B, L_max+2, D)`, where `L_max` is the
+longest tokenized residue sequence in the batch. ESM-2 adds BOS/EOS and pads
+shorter sequences after EOS. The single-sequence `1:-1` slice above is valid
+without padding; in a mixed-length batch it includes EOS and may include padding
+for shorter sequences.
+
+For a batch, count non-padding tokens separately for each sequence, then remove
+BOS/EOS before pooling. Here `toks` and `out` must come from the same batch:
+
+```python
+token_lengths = (toks != alphabet.padding_idx).sum(1).tolist()  # includes BOS/EOS
+emb = out["representations"][33]
+residue_embs = [emb[i, 1 : token_length - 1] for i, token_length in enumerate(token_lengths)]
+seq_embs = torch.stack([residues.mean(0) for residues in residue_embs])  # (B, D)
+```
+
+Use nonempty protein sequences. Keep the batch order when associating embeddings
+with sequence IDs. `out["contacts"]` (when `return_contacts=True`) has shape
+`(B, L_max, L_max)`; for sequence `i`, retain only
+`out["contacts"][i, : token_lengths[i] - 2, : token_lengths[i] - 2]`.
 
 ## Remote compute
 

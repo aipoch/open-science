@@ -1,4 +1,4 @@
-/* Hallmark · component: import dialog · genre: modern-minimal · theme: Open Science
+/* Hallmark · component: import dialog · genre: modern-minimal · theme: Open-Science
  * states: default · hover · focus · active · disabled · loading · error · success
  * pre-emit critique: P5 H4 E4 S5 R5 V4
  */
@@ -94,16 +94,19 @@ export const LiteratureRecordImportDialog = ({
                   recordImport.preview.items.length === 0
                 }
                 onClick={() => onImport()}
+                aria-busy={Boolean(isImportingRecords)}
               >
-                {isImportingRecords ? (
-                  <LoaderCircle
-                    className="size-4 animate-spin motion-reduce:animate-none"
-                    aria-hidden="true"
-                  />
-                ) : (
-                  <Upload className="size-4" aria-hidden="true" />
-                )}
-                {isImportingRecords ? t('Importing…') : t('Import references')}
+                <span key={String(isImportingRecords)} className="button-feedback">
+                  {isImportingRecords ? (
+                    <LoaderCircle
+                      className="size-4 animate-spin motion-reduce:animate-none"
+                      aria-hidden="true"
+                    />
+                  ) : (
+                    <Upload className="size-4" aria-hidden="true" />
+                  )}
+                  {isImportingRecords ? t('Importing…') : t('Import references')}
+                </span>
               </Button>
             </>
           )}

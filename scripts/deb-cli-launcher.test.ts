@@ -15,7 +15,7 @@ describe.skipIf(process.platform === 'win32')('Debian CLI launcher', () => {
   it('runs the bundled CLI through Electron Node mode and preserves arguments and exit status', async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'deb-cli-')))
     roots.push(root)
-    const app = join(root, "Open Science ' 数据")
+    const app = join(root, "Open-Science ' 数据")
     const resources = join(app, 'resources')
     const bin = join(root, 'bin')
     await mkdir(resources, { recursive: true })
@@ -49,6 +49,82 @@ describe.skipIf(process.platform === 'win32')('Debian CLI launcher', () => {
     ])
   })
 })
+
+// Run the real rendered post-install script with OS commands captured at the boundary.
+// This is portable and never changes the host's alternatives, MIME database or sandbox mode.
+it.skipIf(process.platform === 'win32')(
+  'registers its CLI without cleaning old-brand alternatives',
+  async () => {
+    const { readFile } = await import('node:fs/promises')
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'deb-coexist-')))
+    roots.push(root)
+    const bin = join(root, 'bin')
+    await mkdir(bin)
+    const calls = join(root, 'calls')
+    const command = join(root, 'usr/bin/open-science')
+    const current = join(root, 'opt/Open-Science')
+    const oldTargets = ['Open Science', 'OpenScience'].flatMap((name) => [
+      `${root}/opt/${name}/open-science`,
+      `${root}/opt/${name}/resources/open-science-cli`
+    ])
+    const state = join(root, 'state')
+    await writeFile(
+      state,
+      [
+        `Link: ${command}`,
+        ...[`${current}/open-science`, ...oldTargets].map((target) => `Alternative: ${target}`)
+      ].join('\n') + '\n'
+    )
+    await writeFile(
+      join(bin, 'update-alternatives'),
+      `#!/bin/sh
+if [ "$1" = '--query' ]; then cat "$FIXTURE_STATE"; else printf '%s\\n' "$@" >> "$FIXTURE_CALLS"; fi
+`,
+      { mode: 0o755 }
+    )
+    for (const name of [
+      'chmod',
+      'unshare',
+      'update-mime-database',
+      'update-desktop-database',
+      'apparmor_status'
+    ]) {
+      await writeFile(join(bin, name), `#!/bin/sh\nexit ${name === 'apparmor_status' ? 1 : 0}\n`, {
+        mode: 0o755
+      })
+    }
+    const hook = join(root, 'install')
+    await writeFile(
+      hook,
+      (await readFile('build/deb-after-install.tpl', 'utf8'))
+        .replaceAll('${executable}', 'open-science')
+        .replaceAll('${sanitizedProductName}', 'Open-Science')
+        .replaceAll('/usr/bin/', `${root}/usr/bin/`)
+        .replaceAll('/etc/alternatives/', `${root}/etc/alternatives/`)
+        .replaceAll('/opt/', `${root}/opt/`)
+    )
+    const result = spawnSync('/bin/bash', [hook, 'configure'], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PATH: `${bin}:/usr/bin:/bin`,
+        FIXTURE_STATE: state,
+        FIXTURE_CALLS: calls
+      }
+    })
+    expect(result.status, result.stderr).toBe(0)
+    expect((await readFile(calls, 'utf8')).trim().split('\n')).toEqual([
+      '--install',
+      command,
+      'open-science',
+      `${current}/resources/open-science-cli`,
+      '100',
+      '--remove',
+      'open-science',
+      `${current}/open-science`
+    ])
+  }
+)
 
 // Preserve electron-builder's platform setup while replacing only command registration.
 describe('Debian packaging contract', () => {
@@ -98,16 +174,16 @@ describe.skipIf(process.platform !== 'linux')('Debian alternatives lifecycle', (
     const bin = join(root, 'bin')
     const alternatives = join(root, 'etc/alternatives')
     const admin = join(root, 'var/lib/dpkg/alternatives')
-    const resources = join(root, 'opt/Open Science/resources')
+    const resources = join(root, 'opt/Open-Science/resources')
     for (const dir of [bin, alternatives, admin, resources, join(root, 'usr/bin')]) {
       await mkdir(dir, { recursive: true })
     }
-    const legacy = join(root, 'opt/Open Science/open-science')
+    const legacy = join(root, 'opt/Open-Science/open-science')
     const target = join(resources, 'open-science-cli')
     const command = join(root, 'usr/bin/open-science')
     await writeFile(legacy, 'legacy')
     await writeFile(target, 'cli')
-    await writeFile(join(root, 'opt/Open Science/chrome-sandbox'), '')
+    await writeFile(join(root, 'opt/Open-Science/chrome-sandbox'), '')
     await writeFile(
       join(bin, 'update-alternatives'),
       `#!/bin/sh\nexec /usr/bin/update-alternatives --altdir '${alternatives}' --admindir '${admin}' "$@"\n`,
@@ -128,7 +204,7 @@ describe.skipIf(process.platform !== 'linux')('Debian alternatives lifecycle', (
     for (const kind of ['install', 'remove']) {
       const text = (await readFile(`build/deb-after-${kind}.tpl`, 'utf8'))
         .replaceAll('${executable}', 'open-science')
-        .replaceAll('${sanitizedProductName}', 'Open Science')
+        .replaceAll('${sanitizedProductName}', 'Open-Science')
         .replaceAll('/usr/bin/', `${root}/usr/bin/`)
         .replaceAll('/etc/alternatives/', `${alternatives}/`)
         .replaceAll('/opt/', `${root}/opt/`)

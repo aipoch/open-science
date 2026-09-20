@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { ParserEngine } from '../engine'
+import { validateToolArguments } from '../registry'
 import { GENOMES_UCSC_TOOLS } from './genomes-ucsc'
 
 const jsonRes = (body: unknown): Response =>
@@ -17,6 +18,50 @@ const run = (
   fetchImpl: ReturnType<typeof vi.fn>
 ): Promise<unknown> =>
   new ParserEngine({ fetchImpl: fetchImpl as unknown as typeof fetch }).call(tool(id), args, {})
+
+describe.each(['ucsc_track_data', 'ucsc_conservation', 'ucsc_tfbs_clusters'])(
+  '%s coordinate contract',
+  (id) => {
+    const base = { chrom: 'chr7', ...(id === 'ucsc_track_data' ? { track: 'knownGene' } : {}) }
+
+    it.each(['start', 'end'])('rejects malformed %s without fetching', async (field) => {
+      for (const value of [
+        '',
+        '0',
+        '100',
+        false,
+        true,
+        -1,
+        1.5,
+        NaN,
+        Infinity,
+        -Infinity,
+        Number.MAX_SAFE_INTEGER + 1
+      ]) {
+        const args = { ...base, start: 0, end: 100, [field]: value }
+        expect(() => validateToolArguments(tool(id), args)).toThrow()
+        const fetchImpl = vi.fn()
+        await expect(run(id, args, fetchImpl)).rejects.toThrow(
+          new RegExp(`${field} must be a non-negative safe integer`)
+        )
+        expect(fetchImpl).not.toHaveBeenCalled()
+      }
+    })
+
+    it.each([
+      [0, 1],
+      [100, 101]
+    ])('preserves the valid single-base interval [%i,%i)', async (start, end) => {
+      const args = { ...base, start, end }
+      expect(() => validateToolArguments(tool(id), args)).not.toThrow()
+      const fetchImpl = vi.fn().mockResolvedValue(jsonRes({}))
+      const out = await run(id, args, fetchImpl)
+      expect(out).toMatchObject({ start, end })
+      expect(String(fetchImpl.mock.calls[0][0])).toContain(`start=${start};end=${end};`)
+      if (id === 'ucsc_conservation') expect(out).toMatchObject({ span_bp: 1 })
+    })
+  }
+)
 
 // A nested /list/tracks response: one composite (with child leaves) + two plain leaves. The genome
 // key is unique per test so the module-level cache never crosses test boundaries.
@@ -117,6 +162,19 @@ describe('ucsc_list_tracks', () => {
 })
 
 describe('ucsc_track_data', () => {
+  it.each([
+    [{ start: -1, end: 100 }, /start must be a non-negative safe integer/],
+    [{ start: 1.5, end: 100 }, /start must be a non-negative safe integer/],
+    [{ start: 100, end: 100 }, /end must be greater than start/],
+    [{ start: 101, end: 100 }, /end must be greater than start/]
+  ])('rejects invalid region bounds before fetching', async (bounds, error) => {
+    const fetchImpl = vi.fn()
+    await expect(
+      run('ucsc_track_data', { track: 'knownGene', chrom: 'chr7', ...bounds }, fetchImpl)
+    ).rejects.toThrow(error)
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
   it('passes rows through under the track key and assembles the getData URL', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       jsonRes({
@@ -181,6 +239,18 @@ describe('ucsc_track_data', () => {
 })
 
 describe('ucsc_conservation', () => {
+  it.each([
+    [{ start: -1, end: 100 }, /start must be a non-negative safe integer/],
+    [{ start: 100, end: 100 }, /end must be greater than start/],
+    [{ start: 101, end: 100 }, /end must be greater than start/]
+  ])('rejects invalid region bounds before fetching', async (bounds, error) => {
+    const fetchImpl = vi.fn()
+    await expect(run('ucsc_conservation', { chrom: 'chr7', ...bounds }, fetchImpl)).rejects.toThrow(
+      error
+    )
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
   it('computes base-span-weighted stats clipped to the window with coverage fraction', async () => {
     // Window [100,110): row A covers [100,102) val 4, row B [105,107) val 2, row C [108,112) val 6
     // (clipped to [108,110) = 2 bp). Covered = 2+2+2 = 6 bp of 10; mean = (4*2+2*2+6*2)/6 = 4.
@@ -256,9 +326,41 @@ describe('ucsc_conservation', () => {
       run('ucsc_conservation', { chrom: 'chr7', start: 100, end: 200 }, fetchImpl)
     ).rejects.toThrow(/upstream truncated/)
   })
+
+  it('uses the hg19 conservation track that actually exists', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonRes({ phyloP100wayAll: [] }))
+    await run(
+      'ucsc_conservation',
+      { genome: 'hg19', chrom: 'chr7', start: 100, end: 200 },
+      fetchImpl
+    )
+    expect(String(fetchImpl.mock.calls[0][0])).toContain('track=phyloP100wayAll')
+  })
+
+  it('preserves the phyloP100way fallback for other genomes', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonRes({ phyloP100way: [] }))
+    await run(
+      'ucsc_conservation',
+      { genome: 'mm10', chrom: 'chr7', start: 100, end: 200 },
+      fetchImpl
+    )
+    expect(String(fetchImpl.mock.calls[0][0])).toContain('track=phyloP100way')
+  })
 })
 
 describe('ucsc_tfbs_clusters', () => {
+  it.each([
+    [{ start: -1, end: 100 }, /start must be a non-negative safe integer/],
+    [{ start: 100, end: 100 }, /end must be greater than start/],
+    [{ start: 101, end: 100 }, /end must be greater than start/]
+  ])('rejects invalid region bounds before fetching', async (bounds, error) => {
+    const fetchImpl = vi.fn()
+    await expect(
+      run('ucsc_tfbs_clusters', { chrom: 'chr7', ...bounds }, fetchImpl)
+    ).rejects.toThrow(error)
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
   it('selects the hg38 track, sorts clusters, and dedups factors', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       jsonRes({

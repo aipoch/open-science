@@ -42,22 +42,38 @@ def generated_scripts(dist, site, payload):
     from pip._internal.operations.install.wheel import PipScriptMaker
     from pip._vendor.distlib.util import get_export_entry
     generated = {}
+    scripts = prefix / ("Scripts" if os.name == "nt" else "bin")
     class EvidenceScriptMaker(PipScriptMaker):
         def _write_script(self, names, shebang, script_bytes, filenames, ext):
             for name in names:
+                expected = shebang + script_bytes
+                if os.name == "nt":
+                    # distlib appends a one-file ZIP to its native launcher. Rebuild it
+                    # with the installed timestamp; every executable byte must still match.
+                    stem, suffix = os.path.splitext(name)
+                    name = (stem if suffix.startswith('.py') else name) + '.exe'
+                    target = scripts / name
+                    if not target.resolve().is_relative_to(prefix) or not target.is_file() or target.stat().st_size > 1024 * 1024:
+                        raise ValueError("unsupported generated launcher")
+                    with zipfile.ZipFile(io.BytesIO(target.read_bytes())) as installed:
+                        entries = installed.infolist()
+                        if len(entries) != 1 or entries[0].filename != '__main__.py':
+                            raise ValueError("unsupported launcher archive")
+                        timestamp = entries[0].date_time
+                    stream = io.BytesIO()
+                    with zipfile.ZipFile(stream, 'w') as archive:
+                        archive.writestr(zipfile.ZipInfo('__main__.py', timestamp), script_bytes)
+                    expected = self._get_launcher('t' if ext == 'py' else 'w') + shebang + stream.getvalue()
                 if name in generated:
                     raise ValueError("conflicting generated entry point")
-                generated[name] = shebang + script_bytes
+                generated[name] = expected
     config = configparser.ConfigParser(interpolation=None)
     config.optionxform = str
     config.read_string((dist / "entry_points.txt").read_text())
-    maker = EvidenceScriptMaker(None, str(prefix / "bin"))
+    maker = EvidenceScriptMaker(None, str(scripts))
     maker.variants = {""}
     for group in ("console_scripts", "gui_scripts"):
         for name, value in (config.items(group) if config.has_section(group) else []):
-            # Windows launchers embed a timestamped ZIP and need separate verification.
-            if os.name == "nt":
-                raise ValueError("unsupported generated launcher")
             if not name or name in (".", "..") or "/" in name or "\\" in name or len(generated) >= 128:
                 raise ValueError("unsupported entry point name")
             specification = name + " = " + value
@@ -67,7 +83,7 @@ def generated_scripts(dist, site, payload):
             maker.make(specification, {"gui": group == "gui_scripts"})
     paths = set()
     for name, expected in generated.items():
-        target = prefix / "bin" / name
+        target = scripts / name
         if not target.resolve().is_relative_to(prefix) or not target.is_file() or target.stat().st_size != len(expected) or target.read_bytes() != expected:
             raise ValueError("generated entry point differs")
         paths.add(pathlib.PurePath(os.path.relpath(target, site)).as_posix())

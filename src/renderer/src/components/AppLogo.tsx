@@ -6,7 +6,7 @@ import { useThemeStore } from '@/stores/theme-store'
 
 type AppLogoProps = Omit<ComponentPropsWithoutRef<'img'>, 'src'>
 
-// The single renderer-facing Open Science logo. Consumers only describe presentation (size, class,
+// The single renderer-facing Open-Science logo. Consumers only describe presentation (size, class,
 // accessible name); the effective General > Theme decides the asset here. Reading resolvedTheme is
 // important: it covers both an explicit Light/Dark choice and live OS changes while following System.
 const AppLogo = ({ alt = '', ...props }: AppLogoProps): React.JSX.Element => {

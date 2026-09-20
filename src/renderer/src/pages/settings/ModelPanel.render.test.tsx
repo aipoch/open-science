@@ -129,7 +129,7 @@ describe('model settings A tabs', () => {
     await click('Remove')
     expect(api.remove).toHaveBeenCalledOnce()
   })
-  it('preserves Agent models as the default without requesting local models', async () => {
+  it('preserves Conversation models as the default without requesting local models', async () => {
     await act(async () => root.render(<Harness initialLocal={false} />))
     expect(container.querySelector('[data-testid="providers"]')).not.toBeNull()
     expect(api.getSnapshot).not.toHaveBeenCalled()

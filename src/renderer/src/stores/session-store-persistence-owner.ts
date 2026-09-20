@@ -8,6 +8,7 @@ import type { StoreApi } from 'zustand'
 
 import type { ElicitationProjection, ElicitationValue } from '../../../shared/acp'
 import type { ActivePlanProjection } from '../../../shared/session-plan/contract'
+import { applySessionConversationCommands } from '../../../shared/session-conversation-command'
 import { DEFAULT_PERMISSION_PROFILE } from '../../../shared/permission-profiles'
 import type { PermissionProfileId } from '../../../shared/permission-profiles'
 import {
@@ -44,6 +45,11 @@ import {
   retainRuntimePlanProjection
 } from './session-store-persistence-merge'
 import * as sessionDetails from './session-store-session-details'
+import {
+  acknowledgeSessionConversationCommands,
+  pendingSessionConversationCommands,
+  recordSessionConversationAuthority
+} from './session-conversation-intents'
 
 export type SessionStatus = PersistedSessionStatus
 export type ChatMessageRole = PersistedMessageRole
@@ -163,6 +169,7 @@ export type ApplyDurableSessionProjectionInput = {
     | 'compute-host-access-authority'
     | 'delegated-authority'
     | 'session-details-authority'
+    | 'runtime-transcript-authority'
     | 'archive-authority'
 }
 
@@ -190,6 +197,7 @@ const markExternallyHydratedSession = (
   authority: PersistedChatSession
 ): void => {
   externallyHydratedSessionAuthorities.set(session, structuredClone(authority))
+  recordSessionConversationAuthority(session, authority)
 }
 
 export const createInitialSessionState = (): SessionStoreData => ({
@@ -696,6 +704,7 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
   },
 
   upsertPersistedSession: (session) => {
+    acknowledgeSessionConversationCommands(session)
     set((state) => {
       const existing = state.sessions.find((candidate) => candidate.id === session.id)
       if (existing?.contentLoaded === false) {
@@ -864,6 +873,44 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
     set((state) => {
       const current = state.sessions.find((candidate) => candidate.id === session.id)
       if (!current) return state
+      if (mode === 'runtime-transcript-authority') {
+        // Main lifecycle delivery can trail a direct command/save receipt. Once the live store has
+        // observed a newer durable revision, an older transcript projection cannot replace it.
+        if (sessionRevision(session) < sessionRevision(current)) return state
+        acknowledgeSessionConversationCommands(session)
+        const pending = pendingSessionConversationCommands(session.id)
+        let authority = session
+        if (pending.length > 0) {
+          try {
+            authority = applySessionConversationCommands(session, pending)
+          } catch {
+            // An out-of-order lifecycle receipt can predate a command already acknowledged by a
+            // newer response. Keep the live projection until a receipt containing its prerequisite
+            // graph arrives; replaying a snapshot merge would discard the pending user intent.
+            return state
+          }
+        }
+        // Main owns the transcript contents, while Branch selection remains window-local until
+        // this client explicitly navigates. Merge every durable identity without replacing the
+        // root Branch currently holding an editor or composer draft.
+        const projected = withTransientSessionState(
+          mergeNewerPersistedSessionByIdentity(current, authority),
+          current
+        )
+        markExternallyHydratedSession(projected, session)
+        return {
+          sessions: state.sessions.map((candidate) =>
+            candidate.id === session.id ? projected : candidate
+          ),
+          streamingMessages: pruneStreamingMessageContent(
+            state.streamingMessages,
+            session.id,
+            new Set(projected.messages.map(({ id }) => id))
+          )
+        } as Partial<State>
+      }
+
+      acknowledgeSessionConversationCommands(session)
       let archive = projectSessionMetadataAuthority(current, session)
       if (
         (mode === 'merge-upload-identities' || mode === 'replace-persisted-if-current') &&
@@ -959,7 +1006,10 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
           status,
           interactionState,
           runtimeContext: session.runtimeContext,
-          activePlanProjection: retainRuntimePlanProjection(current, session),
+          // Permission snapshots do not own the Session Plan. They commonly arrive while
+          // step progress is being written and omit runtimeContext.plan; deriving the Plan
+          // from that partial snapshot would briefly clear the Composer progress chip.
+          activePlanProjection: current.activePlanProjection,
           updatedAt: Math.max(current.updatedAt, session.updatedAt)
         }
         markExternallyHydratedSession(projected, session)
@@ -1043,6 +1093,27 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
       let projected: ChatSession
       if (current === source && mode === 'replace-persisted-if-current') {
         projected = withTransientSessionState(session, current)
+      } else if (
+        current !== source &&
+        externallyHydratedSessionAuthorities.has(current) &&
+        sessionRevision(session) >= sessionRevision(current)
+      ) {
+        // A Task snapshot can arrive while a renderer save is queued. Its newer
+        // receipt must reconcile the conversation too, not just its revision.
+        const merged = withTransientSessionState(
+          mergeNewerPersistedSessionByIdentity(current, session),
+          current
+        )
+        projected = projectDurablePlanAuthority(
+          {
+            ...current,
+            messages: merged.messages,
+            activities: merged.activities,
+            activityGroups: merged.activityGroups,
+            conversationGraph: merged.conversationGraph
+          },
+          session
+        )
       } else if (current === source && !preserveLocalBranch) {
         const flat = mergeDurableUploadProjection(
           source.messages,

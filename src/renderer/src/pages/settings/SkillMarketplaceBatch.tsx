@@ -389,16 +389,23 @@ export function SkillMarketplaceBatchControls({
                     >
                       {t('Cancel', { ns: 'common' })}
                     </Button>
-                    <Button size="sm" disabled={pending || disabled} onClick={() => void start()}>
-                      {pending ? (
-                        <LoaderCircle
-                          aria-hidden="true"
-                          className="size-4 animate-spin motion-reduce:animate-none"
-                        />
-                      ) : null}
-                      {draft.items.some(({ expectedVersion }) => expectedVersion !== null)
-                        ? t('Update selected')
-                        : t('Install selected')}
+                    <Button
+                      size="sm"
+                      disabled={pending || disabled}
+                      onClick={() => void start()}
+                      aria-busy={Boolean(pending)}
+                    >
+                      <span key={String(pending)} className="button-feedback">
+                        {pending ? (
+                          <LoaderCircle
+                            aria-hidden="true"
+                            className="size-4 animate-spin motion-reduce:animate-none"
+                          />
+                        ) : null}
+                        {draft.items.some(({ expectedVersion }) => expectedVersion !== null)
+                          ? t('Update selected')
+                          : t('Install selected')}
+                      </span>
                     </Button>
                   </div>
                 </div>

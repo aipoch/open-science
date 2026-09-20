@@ -33,6 +33,8 @@ import {
 } from './permission-broker'
 import type { PermissionPolicyContext } from './permission-policy'
 import {
+  isNativeWebFetchCandidate,
+  isNativeWebSearchCandidate,
   isMcpToolName,
   trustedMcpToolIdentity,
   withTrustedMcpToolIdentity,
@@ -360,6 +362,7 @@ const countNested = <T>(contexts: Map<string, Map<string, T>>, sessionId: string
 // human authority; only the explicit response origin can release a human-owned decision.
 class AcpPermissionContext {
   private readonly broker: AcpPermissionBroker
+  private readonly unsubscribePermissionGrants?: () => void
   private readonly humanOnlyRequestIds = new Set<string>()
   private readonly permissionPromptMessageIds = new Map<string, Map<string, string>>()
   private readonly codexMcpToolIdentities = new Map<string, Map<string, CodexMcpToolIdentity>>()
@@ -368,6 +371,11 @@ class AcpPermissionContext {
   private readonly notebookExecutionInputs = new Map<string, Map<string, Record<string, unknown>>>()
   private readonly nativeNotebookExecutionAuthorizations = new Map<string, Set<string>>()
   private readonly opencodeNativeSkillToolCalls = new Map<string, Map<string, true>>()
+  private readonly seenNativeWebSearchCalls = new Map<string, Set<string>>()
+  private readonly nativeWebToolCalls = new Map<
+    string,
+    Map<string, { framework: string; tool: 'WebFetch' | 'WebSearch' }>
+  >()
   private readonly opencodeMcpToolInputWaiters = new Map<
     string,
     Map<string, Set<OpenCodePermissionContextWaiter>>
@@ -396,6 +404,7 @@ class AcpPermissionContext {
       options.conversationGrants,
       options.permissionGrantRegistry,
       (requestId, state, request) => {
+        this.humanOnlyRequestIds.delete(requestId)
         options.onPermissionSettled?.(requestId, state)
         const promptMessageId = this.permissionPromptMessageIds
           .get(request.sessionId)
@@ -408,6 +417,9 @@ class AcpPermissionContext {
       },
       options.permissionWaitHooks
     )
+    this.unsubscribePermissionGrants = options.permissionGrantRegistry?.subscribe(() => {
+      void this.broker.releaseGrantedWebSearchRequests()
+    })
     this.setTimer = options.setTimer ?? setTimeout
     this.clearTimer = options.clearTimer ?? clearTimeout
   }
@@ -772,6 +784,36 @@ class AcpPermissionContext {
     }
 
     if (notification.update.sessionUpdate === 'tool_call') {
+      const calls = this.nativeWebToolCalls.get(sessionId) ?? new Map()
+      calls.delete(event.toolCallId)
+      const params = { sessionId, toolCall: notification.update, options: [] }
+      const policy: PermissionPolicyContext = {
+        profile: 'ask',
+        frameworkId: framework,
+        mcpServerNames
+      }
+      let tool = isNativeWebSearchCandidate(params, policy)
+        ? 'WebSearch'
+        : isNativeWebFetchCandidate(params, policy)
+          ? 'WebFetch'
+          : undefined
+      const seenSearches = this.seenNativeWebSearchCalls.get(sessionId)
+      if (seenSearches?.has(event.toolCallId)) tool = undefined
+      if (tool === 'WebSearch') {
+        const seen = seenSearches ?? new Set<string>()
+        this.addBounded(seen, event.toolCallId, MAX_OPENCODE_MCP_TOOL_INPUTS_PER_SESSION)
+        this.seenNativeWebSearchCalls.set(sessionId, seen)
+      }
+      if (tool) {
+        this.setBounded(
+          calls,
+          event.toolCallId,
+          { framework, tool },
+          MAX_OPENCODE_MCP_TOOL_INPUTS_PER_SESSION
+        )
+      }
+      if (calls.size) this.nativeWebToolCalls.set(sessionId, calls)
+      else this.nativeWebToolCalls.delete(sessionId)
       this.matchRestoredNotebookPresentationUpdate(
         routed,
         event as AcpRuntimeEvent & Readonly<{ kind: 'tool'; toolCallId: string }>,
@@ -912,6 +954,37 @@ class AcpPermissionContext {
     context: PermissionRestoreContext
   ): Promise<RequestPermissionRequest | undefined> {
     const { sessionId, framework, mcpServerNames } = context
+    const webCalls = this.nativeWebToolCalls.get(sessionId)
+    const webCall = webCalls?.get(params.toolCall.toolCallId)
+    webCalls?.delete(params.toolCall.toolCallId)
+    if (webCalls?.size === 0) this.nativeWebToolCalls.delete(sessionId)
+    if (webCall && webCall.framework === framework) {
+      // Claude's root request can omit the tool name; restore it only from the matching call.
+      const restored =
+        framework === 'claude-code' && !extractProviderToolName(params.toolCall)
+          ? {
+              ...params,
+              toolCall: {
+                ...params.toolCall,
+                _meta: { ...params.toolCall._meta, toolName: webCall.tool }
+              }
+            }
+          : params
+      if (
+        (webCall.tool === 'WebSearch' ? isNativeWebSearchCandidate : isNativeWebFetchCandidate)(
+          restored,
+          {
+            profile: 'ask',
+            frameworkId: framework as AgentFrameworkId,
+            mcpServerNames
+          }
+        )
+      )
+        return withTrustedNativeToolIdentity(
+          restored,
+          `${framework}/${webCall.tool === 'WebSearch' ? 'websearch' : 'webfetch'}`
+        )
+    }
     if (framework === 'claude-code') {
       return this.restoreClaudeCodeMcpToolInput(params, sessionId, mcpServerNames)
     }
@@ -1024,6 +1097,8 @@ class AcpPermissionContext {
   }
 
   clearCorrelationsForSession(sessionId: string): void {
+    this.nativeWebToolCalls.delete(sessionId)
+    this.seenNativeWebSearchCalls.delete(sessionId)
     this.codexMcpToolIdentities.delete(sessionId)
     this.claudeCodeMcpToolInputs.delete(sessionId)
     this.opencodeMcpToolInputs.delete(sessionId)
@@ -1043,9 +1118,12 @@ class AcpPermissionContext {
   }
 
   dispose(): void {
+    this.unsubscribePermissionGrants?.()
     this.broker.abandonAllPending()
     this.humanOnlyRequestIds.clear()
     const sessionIds = new Set([
+      ...this.nativeWebToolCalls.keys(),
+      ...this.seenNativeWebSearchCalls.keys(),
       ...this.codexMcpToolIdentities.keys(),
       ...this.claudeCodeMcpToolInputs.keys(),
       ...this.opencodeMcpToolInputs.keys(),
@@ -1489,6 +1567,9 @@ class AcpPermissionContext {
       this.nativeNotebookExecutionAuthorizations.delete(sessionId)
     }
     const opencodeNativeSkills = this.opencodeNativeSkillToolCalls.get(sessionId)
+    const nativeWebCalls = this.nativeWebToolCalls.get(sessionId)
+    nativeWebCalls?.delete(toolCallId)
+    if (nativeWebCalls?.size === 0) this.nativeWebToolCalls.delete(sessionId)
     opencodeNativeSkills?.delete(toolCallId)
     if (opencodeNativeSkills?.size === 0) this.opencodeNativeSkillToolCalls.delete(sessionId)
     if (framework === 'opencode') {
@@ -1504,6 +1585,7 @@ class AcpPermissionContext {
       this.codexMcpToolIdentities,
       this.claudeCodeMcpToolInputs,
       this.opencodeMcpToolInputs,
+      this.nativeWebToolCalls,
       this.opencodeNativeSkillToolCalls
     ] as const
     for (const sessions of contexts) {

@@ -444,7 +444,7 @@ const buildEnvironmentLockReadme = (
       '```',
       '',
       'Pass Rscript for R or python for Python. Use a new destination whose parent exists. The script checks runtime/platform/architecture and package-manager versions before installation, and leaves any failed destination for inspection.',
-      'The destination belongs to you. Open Science does not register, adopt, or delete it; inspect and remove failed destinations yourself. Activate the supplied interpreter in your shell first if it requires Conda or other native library paths.',
+      'The destination belongs to you. Open-Science does not register, adopt, or delete it; inspect and remove failed destinations yourself. Activate the supplied interpreter in your shell first if it requires Conda or other native library paths.',
       '',
       'For R execution, explicitly put the new library first in .libPaths(). For Python, use the new environment interpreter. Re-execute the original code with the original inputs and compare outputs; successful package restoration alone is not a successful reproducibility check.',
       ''
@@ -508,7 +508,7 @@ const buildEnvironmentLockReadme = (
         ]
       : []
   return [
-    '# Open Science environment lock',
+    '# Open-Science environment lock',
     '',
     `- Environment: ${info.environmentName}`,
     `- Runtime: ${info.kernelKind}`,
@@ -520,7 +520,7 @@ const buildEnvironmentLockReadme = (
     '',
     ...(info.lockState === 'partial'
       ? [
-          '> This bundle is for inspection only. Its captured evidence is incomplete, so Open Science will not import it as a runnable environment.',
+          '> This bundle is for inspection only. Its captured evidence is incomplete, so Open-Science will not import it as a runnable environment.',
           ''
         ]
       : []),

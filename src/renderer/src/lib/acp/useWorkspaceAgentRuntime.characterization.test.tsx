@@ -792,6 +792,50 @@ describe('workspace Agent Runtime hook contract', () => {
     await vi.waitFor(() => expect(runtime.resetSessionContext).toHaveBeenCalledOnce())
   })
 
+  it('recovers an attached OpenCode session after its session service disappears', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Continue in the original project',
+      cwd: workspacePath,
+      projectId: 'project-1',
+      agentFrameworkId: 'opencode'
+    })
+    let liveListener:
+      ((events: readonly AcpRuntimeEvent[], snapshot?: AcpStateSnapshot) => void) | undefined
+    const runtime = createRuntime(
+      createSnapshot({
+        sessionIds: ['session-1'],
+        nativeContextCompactionSessionIds: ['session-1']
+      })
+    )
+    runtime.subscribeRuntimeEvents = vi.fn((listener) => {
+      liveListener = listener
+      return vi.fn()
+    })
+    runtime.currentRuntimeEvents = () => []
+    runtimeMock.current = runtime
+    await render()
+
+    liveListener?.(
+      [
+        {
+          id: 'runtime-1:session-lost-1',
+          timestamp: 1,
+          kind: 'error',
+          level: 'error',
+          sessionId: 'session-1',
+          // This is the main-process marker for OpenCode's `{ service: "session" }` failure.
+          recoverable: 'session-lost',
+          text: 'Internal error: OpenCode service failure'
+        } as AcpRuntimeEvent
+      ],
+      createSnapshot({ sessionIds: ['session-1'] })
+    )
+
+    await vi.waitFor(() => expect(runtime.resetSessionContext).toHaveBeenCalledOnce())
+    expect(runtime.compactSession).not.toHaveBeenCalled()
+  })
+
   it('owns one child runtime transport subscription and exposes its selector', async () => {
     let publish!: (update: AcpAgentRuntimeUpdate) => void
     const onAgentRuntimeUpdate = vi.fn((listener: typeof publish) => {
@@ -1008,6 +1052,142 @@ describe('workspace Agent Runtime hook contract', () => {
     expect(useSessionStore.getState().sessions[0]?.permissionProfile).toBe('auto')
   })
 
+  it.each(['committed', 'failed', 'missing-profile'] as const)(
+    'keeps replay history and parent permissions intact when an online change is %s',
+    async (outcome) => {
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'source',
+        content: 'Earlier research',
+        cwd: workspacePath,
+        projectId: 'project-1',
+        permissionProfile: 'ask'
+      })
+      useSessionStore.getState().finishRun('source')
+      const source = useSessionStore.getState().sessions[0]
+      useSessionStore.setState({
+        sessions: [
+          source,
+          {
+            ...source,
+            id: 'child',
+            pendingHistoryReplay: { kind: 'all' }
+          }
+        ]
+      })
+      const runtime = createRuntime(createSnapshot({ sessionIds: ['child'] }))
+      const change = createDeferred<AcpStateSnapshot | undefined>()
+      runtime.setPermissionProfile.mockReturnValue(change.promise)
+      runtimeMock.current = runtime
+      await render()
+
+      let changing!: Promise<boolean>
+      act(() => {
+        changing = latest.setPermissionProfile('child', 'full')
+      })
+      expect(useSessionStore.getState().sessions[1].permissionProfile).toBe('ask')
+      change.resolve(
+        outcome === 'failed'
+          ? undefined
+          : createSnapshot({
+              permissionProfiles:
+                outcome === 'committed'
+                  ? {
+                      child: {
+                        selectedProfile: 'full',
+                        effectiveProfile: 'full',
+                        availableModeIds: [],
+                        fullAccessAvailable: true
+                      }
+                    }
+                  : {}
+            })
+      )
+      await act(async () => {
+        expect(await changing).toBe(outcome === 'committed')
+      })
+
+      expect(runtime.setPermissionProfile).toHaveBeenCalledWith('child', 'full')
+      const [parent, child] = useSessionStore.getState().sessions
+      expect(parent).toEqual(source)
+      expect(child.permissionProfile).toBe(outcome === 'committed' ? 'full' : 'ask')
+      expect(child.pendingHistoryReplay).toEqual({ kind: 'all' })
+      expect(child.messages).toEqual(source.messages)
+      expect(toPersistedSession(child).permissionProfile).toBe(child.permissionProfile)
+    }
+  )
+
+  it('applies an offline replay Session permission choice on first resume and retains history until acceptance', async () => {
+    useSettingsStore.setState({
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: [
+        {
+          id: 'claude-code',
+          displayName: 'Claude Code',
+          supportsSkills: true,
+          supportedApiTypes: ['anthropic']
+        }
+      ],
+      providers: [
+        {
+          id: 'session-provider',
+          type: 'custom',
+          name: 'Session',
+          apiEndpoints: ['anthropic'],
+          baseUrl: 'https://example.test/v1',
+          model: 'session-model',
+          models: ['session-model'],
+          supportsImageInput: false,
+          hasKey: true,
+          needsKey: false
+        }
+      ]
+    })
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Earlier research',
+      cwd: workspacePath,
+      projectId: 'project-1',
+      permissionProfile: 'full',
+      agentFrameworkId: 'claude-code'
+    })
+    useSessionStore.getState().finishRun('session-1')
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        agentConfiguration: {
+          providerId: 'session-provider',
+          model: 'session-model',
+          reasoningEffort: 'high' as const
+        },
+        pendingHistoryReplay: { kind: 'all' as const }
+      }))
+    }))
+    const runtime = createRuntime(createSnapshot())
+    runtime.resumeSession.mockResolvedValue({ sessionId: 'session-1', cwd: workspacePath })
+    const accepted = createDeferred<AcpStateSnapshot>()
+    runtime.sendPrompt.mockReturnValue(accepted.promise)
+    runtimeMock.current = runtime
+    await render()
+
+    await act(async () => {
+      expect(await latest.setPermissionProfile('session-1', 'ask')).toBe(true)
+    })
+    expect(runtime.setPermissionProfile).not.toHaveBeenCalled()
+    expect(toPersistedSession(useSessionStore.getState().sessions[0]).permissionProfile).toBe('ask')
+    await act(async () => {
+      await latest.sendMessage({ sessionId: 'session-1', text: 'Continue' })
+    })
+
+    expect(runtime.resumeSession.mock.calls[0]?.[3]).toBe('ask')
+    expect(runtime.sendPrompt.mock.calls[0]?.[5]).toContain('Earlier research')
+    expect(useSessionStore.getState().sessions[0].pendingHistoryReplay).toEqual({ kind: 'all' })
+    await act(async () => {
+      accepted.resolve(createSnapshot({ sessionIds: ['session-1'] }))
+    })
+    expect(useSessionStore.getState().sessions[0].pendingHistoryReplay).toBeUndefined()
+    expect(useSessionStore.getState().sessions[0].permissionProfile).toBe('ask')
+  })
+
   it('hides a live permission immediately while its response is pending', async () => {
     const request = {
       requestId: 'permission-live',
@@ -1041,6 +1221,34 @@ describe('workspace Agent Runtime hook contract', () => {
     deferred.resolve(createSnapshot({ sessionIds: ['session-1'] }))
     await act(async () => response)
     expect(latest.pendingPermissions).toEqual([])
+  })
+
+  it('keeps an approved permission hidden until durable history catches up', async () => {
+    const { request, runtime } = arrangeRestoredPermission()
+    runtime.state = createSnapshot({ sessionIds: ['session-1'], pendingPermissions: [request] })
+    await render()
+    expect(latest.pendingPermissions).toEqual([request])
+
+    await act(async () => latest.respondToPermission(request.requestId, 'allow-once'))
+    runtime.state = createSnapshot({ sessionIds: ['session-1'] })
+    await render()
+    // The live response has arrived, but the observer still holds the old durable snapshot.
+    expect(useSessionStore.getState().sessions[0].runtimeContext?.permission?.state).toBe('pending')
+    expect(latest.pendingPermissions).toEqual([])
+    await act(async () => latest.respondToPermission(request.requestId, 'allow-once'))
+    expect(runtime.respondToPermission).toHaveBeenCalledOnce()
+
+    await act(async () => {
+      useSessionStore.getState().clearPermissionPending(request.sessionId!, {
+        authority: 'continuing',
+        requestId: request.requestId
+      })
+    })
+    expect(latest.pendingPermissions).toEqual([])
+    const nextRequest = { ...request, requestId: 'permission-next' }
+    runtime.state = createSnapshot({ sessionIds: ['session-1'], pendingPermissions: [nextRequest] })
+    await render()
+    expect(latest.pendingPermissions).toEqual([nextRequest])
   })
 
   it('reports a permission response size limit for the affected Session', async () => {

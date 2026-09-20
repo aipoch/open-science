@@ -58,6 +58,7 @@ const openProjectActions = async (page: Page, name: string): Promise<void> => {
 test('creates a project through the desktop stack and reloads it after relaunch', async ({
   app
 }) => {
+  await app.page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
   await expect(
     app.page.getByRole('heading', { name: 'Set up your research workspace.' })
   ).toBeVisible()

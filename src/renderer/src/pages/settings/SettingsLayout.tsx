@@ -1,6 +1,6 @@
 import { ErrorNotice } from '@/components/error-notice'
 import type { ComponentProps, ReactNode } from 'react'
-import { LoaderCircle, type LucideIcon } from 'lucide-react'
+import { LoaderCircle, Plus, type LucideIcon } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -8,8 +8,8 @@ import { Switch } from '@/components/ui/switch'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 
-type SettingsSectionProps = ComponentProps<'section'> & {
-  title: string
+type SettingsSectionProps = Omit<ComponentProps<'section'>, 'title'> & {
+  title: ReactNode
   titleId?: string
   headingAs?: 'h2' | 'h3'
   // Optional decorative glyph rendered just before the title (e.g. a language logo).
@@ -49,7 +49,7 @@ const SettingsSection = ({
       <div className="min-w-0 flex-1">
         <Heading
           id={titleId}
-          className="flex min-w-0 items-center gap-2 break-words text-base font-semibold text-foreground"
+          className="flex min-w-0 items-center gap-2 break-words text-[17px] leading-6 font-medium text-foreground"
         >
           {icon ? (
             <span
@@ -71,6 +71,35 @@ const SettingsSection = ({
     </div>
     <div className={cn('mt-3 min-w-0', contentClassName)}>{children}</div>
   </section>
+)
+
+// Shared provider-list affordance; keeps the add action next to the resources it creates.
+const SettingsListAddAction = ({
+  children,
+  className,
+  ...props
+}: ComponentProps<'button'>): React.JSX.Element => (
+  <button
+    type="button"
+    className={cn(
+      'mt-2 flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-dashed border-border text-sm text-muted-foreground transition-colors duration-150 motion-reduce:transition-none hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50',
+      className
+    )}
+    {...props}
+  >
+    <Plus className="size-4" aria-hidden="true" />
+    {children}
+  </button>
+)
+
+const SettingsFormFooter = ({
+  children,
+  className,
+  ...props
+}: ComponentProps<'div'>): React.JSX.Element => (
+  <div className={cn('shrink-0 border-t border-border bg-card', className)} {...props}>
+    <div className="mx-auto max-w-[880px] space-y-3 px-5 py-4">{children}</div>
+  </div>
 )
 
 type SettingsRowProps = ComponentProps<'div'> & {
@@ -108,7 +137,7 @@ const SettingsRow = ({
             <div className="mt-0.5 text-[13px] leading-5 text-muted-foreground">{description}</div>
           ) : null}
         </div>
-        <div className={cn('min-w-0 justify-self-stretch', controlClassName)}>{children}</div>
+        <div className={cn('flex min-w-0 justify-end', controlClassName)}>{children}</div>
       </>
     ) : (
       children
@@ -139,19 +168,15 @@ type SettingsToggleProps = Omit<ComponentProps<typeof Switch>, 'checked' | 'onCh
   onToggle: () => void
 }
 
-// Reserves the Switch hit-area expansion so it cannot overlap adjacent row actions or the scroller.
+// The Switch's own ::after hit-area expansion is absorbed by the row and panel padding, so the
+// toggle's visible edge stays flush with the other controls in the row's control column.
 const SettingsToggle = ({
   enabled,
   onToggle,
   className,
   ...props
 }: SettingsToggleProps): React.JSX.Element => (
-  <Switch
-    checked={enabled}
-    onCheckedChange={onToggle}
-    className={cn('ml-1 mr-3', className)}
-    {...props}
-  />
+  <Switch checked={enabled} onCheckedChange={onToggle} className={className} {...props} />
 )
 
 type SettingsLoadNoticeProps = {
@@ -242,6 +267,8 @@ const SettingsIconAction = ({
 
 export {
   SettingsField,
+  SettingsFormFooter,
+  SettingsListAddAction,
   SettingsIconAction,
   SettingsLoadNotice,
   SettingsRow,

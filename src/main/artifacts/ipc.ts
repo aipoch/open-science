@@ -10,7 +10,10 @@ import type { ArtifactLiteratureManifest } from '../../shared/artifact-literatur
 
 import {
   ARTIFACT_FINALIZATION_INVALID_PROOF,
+  ARTIFACT_FINALIZATION_OPERATIONAL_FAILURE,
   ARTIFACT_OWNERSHIP_PERSISTENCE_RACE,
+  type ArtifactFinalizationErrorCode,
+  type ArtifactFinalizationExecutionState,
   type ArtifactFile,
   type ArtifactPreviewResult,
   type FinalizeRunArtifactsResult,
@@ -58,6 +61,32 @@ import {
 } from './provenance-repository'
 
 const log = createLogger('artifacts:finalization')
+
+class ArtifactFinalizationExecutionError extends Error {
+  constructor(
+    readonly execution: ArtifactFinalizationExecutionState,
+    readonly code: ArtifactFinalizationErrorCode,
+    cause: unknown
+  ) {
+    const completed = [
+      execution.durableFinalizationCompleted ? 'durable-finalization' : undefined,
+      execution.compatibilityPublicationCompleted ? 'compatibility-publication' : undefined,
+      execution.activationCompleted ? 'activation' : undefined
+    ].filter(Boolean)
+    super(
+      `Artifact finalization failed at ${execution.stage} for Project ${execution.projectId}, Session ${execution.sessionId}, run ${execution.runId}, Message ${execution.messageId}, Versions [${execution.artifactVersionIds.join(', ')}]. Completed stages: ${completed.length > 0 ? completed.join(', ') : 'none'}.`,
+      { cause }
+    )
+    this.name = 'ArtifactFinalizationExecutionError'
+  }
+}
+
+const artifactFinalizationFailureResult = (
+  error: unknown
+): Extract<FinalizeRunArtifactsResult, { ok: false }> | undefined =>
+  error instanceof ArtifactFinalizationExecutionError
+    ? { ok: false, code: error.code, message: error.message, execution: error.execution }
+    : undefined
 
 type ArtifactHandlers = {
   finalizeRunArtifacts: (request: FinalizeRunArtifactsRequest) => Promise<ArtifactFile[]>
@@ -412,7 +441,8 @@ const finalizeRunArtifacts = async (
 
   let durableFinalizationCompleted = false
   let compatibilityPublicationCompleted = false
-  let stage: 'durable-finalization' | 'compatibility-publication' = 'durable-finalization'
+  let activationCompleted = false
+  let stage: ArtifactFinalizationExecutionState['stage'] = 'durable-finalization'
 
   try {
     let provenanceArtifacts: ArtifactFile[] | undefined
@@ -483,7 +513,9 @@ const finalizeRunArtifacts = async (
     compatibilityPublicationCompleted = true
 
     if (provenance && provenanceRequest) {
+      stage = 'activation'
       provenanceArtifacts = await provenance.activateFinalizedRun(provenanceRequest)
+      activationCompleted = true
     }
 
     runRegistry.markFinalized(request.claimId, request.messageId)
@@ -515,7 +547,32 @@ const finalizeRunArtifacts = async (
       ...(claim.runtimeSegmentId ? { runtimeSegmentId: claim.runtimeSegmentId } : {}),
       ...(claim.promptMessageId ? { promptMessageId: claim.promptMessageId } : {})
     })
-    throw error
+    if (
+      error instanceof ArtifactFinalizationProofError &&
+      !durableFinalizationCompleted &&
+      !compatibilityPublicationCompleted
+    ) {
+      throw error
+    }
+    throw new ArtifactFinalizationExecutionError(
+      {
+        stage,
+        projectId: claim.projectId,
+        sessionId: claim.sessionId,
+        runId: claim.runId,
+        messageId: request.messageId,
+        artifactVersionIds: [...(claim.artifactVersionIds ?? [])],
+        durableFinalizationCompleted,
+        compatibilityPublicationCompleted,
+        activationCompleted
+      },
+      error instanceof ArtifactOwnershipPersistenceRaceError
+        ? ARTIFACT_OWNERSHIP_PERSISTENCE_RACE
+        : error instanceof ArtifactFinalizationProofError
+          ? ARTIFACT_FINALIZATION_INVALID_PROOF
+          : ARTIFACT_FINALIZATION_OPERATIONAL_FAILURE,
+      error
+    )
   }
 }
 
@@ -553,6 +610,8 @@ const registerArtifactIpcHandlers = (
       try {
         return { ok: true, artifacts: await handlers.finalizeRunArtifacts(request) }
       } catch (error) {
+        const operationalFailure = artifactFinalizationFailureResult(error)
+        if (operationalFailure) return operationalFailure
         if (
           !(error instanceof ArtifactOwnershipPersistenceRaceError) &&
           !(error instanceof ArtifactFinalizationProofError)
@@ -642,5 +701,11 @@ const registerArtifactIpcHandlers = (
   )
 }
 
-export { createArtifactHandlers, createDefaultArtifactRepository, registerArtifactIpcHandlers }
+export {
+  ArtifactFinalizationExecutionError,
+  artifactFinalizationFailureResult,
+  createArtifactHandlers,
+  createDefaultArtifactRepository,
+  registerArtifactIpcHandlers
+}
 export type { ArtifactHandlers }

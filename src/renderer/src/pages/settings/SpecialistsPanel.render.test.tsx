@@ -217,7 +217,7 @@ describe('SpecialistsPanel', () => {
     })
 
     expect(document.body.textContent).toContain(
-      'Open Science could not load Specialists. Retry to continue.'
+      'Open-Science could not load Specialists. Retry to continue.'
     )
     expect(document.body.textContent).not.toContain('Loading…')
 
@@ -865,7 +865,7 @@ describe('SpecialistsPanel', () => {
     await act(async () => finishSave?.({ saved: true }))
     expect(document.body.textContent).toContain('Template saved')
     expect(document.body.textContent).toContain(
-      'openscience-specialist-template.zip is ready for contributor editing.'
+      'open-science-specialist-template.zip is ready for contributor editing.'
     )
   })
 
@@ -1011,6 +1011,7 @@ describe('SpecialistsPanel', () => {
 
     // After the install, the Skill catalog must be refreshed so a Skill bundled by the package is
     // recognized as available in the editor instead of showing "Missing · unavailable".
+    useSettingsStore.setState({ skillsLoaded: true, skills: [] })
     window.api.settings.listSkills = vi.fn().mockResolvedValue([
       {
         id: 'analysis-tools',
@@ -1018,12 +1019,12 @@ describe('SpecialistsPanel', () => {
         description: 'Runs analyses.',
         source: 'personal',
         updatedAt: '2026-08-04T00:00:00.000Z',
-        enabled: true
+        enabled: false
       }
     ])
     await act(async () => {
       Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
-        .find((button) => button.textContent === 'Next')
+        .find((button) => button.textContent === 'Import and configure')
         ?.click()
     })
     expect(installPackage).toHaveBeenCalledOnce()
@@ -1035,7 +1036,7 @@ describe('SpecialistsPanel', () => {
         description: 'Runs analyses.',
         source: 'personal',
         updatedAt: '2026-08-04T00:00:00.000Z',
-        enabled: true
+        enabled: false
       }
     ])
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'edit', id: 'research-synth' })
@@ -1054,7 +1055,7 @@ describe('SpecialistsPanel', () => {
     },
     {
       code: 'recovery-failed' as const,
-      copy: 'Open Science could not recover an earlier package operation. Restart the app before trying again.',
+      copy: 'Open-Science could not recover an earlier package operation. Restart the app before trying again.',
       action: 'Open data folder'
     },
     {
@@ -1099,7 +1100,7 @@ describe('SpecialistsPanel', () => {
       })
       await act(async () => {
         Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
-          .find((button) => button.textContent === 'Next')
+          .find((button) => button.textContent === 'Import and configure')
           ?.click()
       })
 
@@ -1288,7 +1289,7 @@ describe('SpecialistsPanel', () => {
       modifiedSinceImport: false,
       marketplaceProvenance: {
         sourceId: 'official',
-        publisher: 'Open Science',
+        publisher: 'Open-Science',
         version: '1.0.1'
       },
       importBaseline: {
@@ -1323,7 +1324,7 @@ describe('SpecialistsPanel', () => {
     )
     expect(marketplaceGroup?.textContent).toContain('RNA Reviewer')
     expect(document.body.textContent).toContain('Marketplace')
-    expect(document.body.textContent).toContain('Publisher: Open Science')
+    expect(document.body.textContent).toContain('Publisher: Open-Science')
     expect(document.body.textContent).toContain('Version 1.0.1')
     expect(document.body.textContent).not.toContain('Unchanged locally')
     expect(document.body.textContent).not.toContain('Imported ZIP')
@@ -1344,7 +1345,7 @@ describe('SpecialistsPanel', () => {
       modifiedSinceImport: false,
       marketplaceProvenance: {
         sourceId: 'official',
-        publisher: 'Open Science',
+        publisher: 'Open-Science',
         version: '1.0.0'
       }
     }
@@ -2096,7 +2097,7 @@ describe('SpecialistsPanel', () => {
       packageVersion: '1.0.0',
       marketplaceProvenance: {
         sourceId: 'official',
-        publisher: 'Open Science',
+        publisher: 'Open-Science',
         version: '1.0.0'
       }
     }
@@ -2122,12 +2123,12 @@ describe('SpecialistsPanel', () => {
         specialists: [
           {
             sourceId: 'official',
-            sourceName: 'Open Science Marketplace',
+            sourceName: 'Open-Science Marketplace',
             sourceTrust: 'official',
             id: managed.id,
             displayName: managed.name,
             summary: managed.description,
-            publisher: { id: 'open-science', name: 'Open Science' },
+            publisher: { id: 'open-science', name: 'Open-Science' },
             version: '1.1.0',
             installedVersion: '1.0.0',
             updateAvailable: true
@@ -2470,7 +2471,7 @@ describe('S04 explicit Specialist refresh controls', () => {
       useSpecialistStore.setState(
         scenario === 'read failure'
           ? {
-              loadError: 'Open Science could not load Specialists. Retry to continue.'
+              loadError: 'Open-Science could not load Specialists. Retry to continue.'
             }
           : {
               integrity: {

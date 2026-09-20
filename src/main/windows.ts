@@ -279,7 +279,7 @@ const createMainWindow = (
     height: 960,
     minWidth: 1100,
     minHeight: 720,
-    title: 'Open Science'
+    title: 'Open-Science'
   })
   if (opts) configureMainWindow(window, opts)
 
@@ -384,7 +384,7 @@ const createMainWindow = (
         buttons: [translate('Reload', { context: 'window' }), translate('Close window')],
         defaultId: 0,
         cancelId: 1,
-        title: 'Open Science',
+        title: 'Open-Science',
         message: translate('The app window stopped responding repeatedly.'),
         detail: translate(
           'Automatic recovery has been paused. Reloading returns this window to the home screen; background work may still be running.'

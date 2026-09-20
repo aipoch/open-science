@@ -1,3 +1,5 @@
+import { InlineNotice } from '@/components/ui/inline-notice'
+import { inlineNoticeClassName } from '@/components/ui/notice-chrome'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { RefreshCw, TriangleAlert } from 'lucide-react'
 import { Trans, useTranslation } from 'react-i18next'
@@ -695,18 +697,18 @@ const AgentPanel = ({
       >
         <div className="space-y-5">
           {frameworkDetectionError || installActionError || environmentCheckError ? (
-            <p className="text-sm text-destructive" role="alert">
+            <InlineNotice level="error" role="alert">
               {installActionError || environmentCheckError || frameworkDetectionError}
-            </p>
+            </InlineNotice>
           ) : null}
           {!isOnboarding && agentCheckFailures.length > 0 ? (
             <div
               aria-label={t('Agent runtime repair issues')}
-              className="space-y-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3"
+              className={`${inlineNoticeClassName} block`}
             >
               <div className="flex items-start gap-2">
                 <TriangleAlert
-                  className="mt-0.5 size-4 shrink-0 text-amber-600"
+                  className="mt-0.5 size-4 shrink-0 text-status-warning-foreground dark:text-status-warning-dark-foreground"
                   aria-hidden="true"
                 />
                 <div className="min-w-0">
@@ -722,7 +724,7 @@ const AgentPanel = ({
               </div>
               {/* Component summaries keep the diagnosis useful without repeating automatic-install
                   guidance from the environment-check detail in this explicit Recovery surface. */}
-              <div className="space-y-1 border-l border-amber-500/30 pl-6">
+              <div className="space-y-1 border-l border-status-warning-foreground/30 dark:border-status-warning-dark-foreground/30 pl-6">
                 {agentCheckFailures.map((failure, index) => (
                   <div key={`${failure.label}-${index}`}>
                     <p className="text-xs font-medium text-foreground">{failure.label}</p>
@@ -735,12 +737,12 @@ const AgentPanel = ({
           {installBlockers.length > 0 ? (
             <div
               aria-label={t('Agent installation blockers')}
-              className="space-y-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3"
+              className={`${inlineNoticeClassName} block`}
             >
               {installBlockers.map((blocker) => (
                 <div key={blocker.id} className="flex items-start gap-2">
                   <TriangleAlert
-                    className="mt-0.5 size-4 shrink-0 text-amber-600"
+                    className="mt-0.5 size-4 shrink-0 text-status-warning-foreground dark:text-status-warning-dark-foreground"
                     aria-hidden="true"
                   />
                   <div className="min-w-0">

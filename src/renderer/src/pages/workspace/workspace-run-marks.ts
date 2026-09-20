@@ -73,31 +73,37 @@ const findMessageTarget = (viewport: HTMLDivElement, messageId: string): HTMLEle
     (element) => element.dataset.messageId === messageId
   )
 
-const resolveCurrentRunMarkPosition = (
-  viewport: HTMLDivElement,
-  marks: readonly RunMark[]
+const resolveRunMarkPosition = (
+  targetTopByIndex: ReadonlyMap<number, number>,
+  boundary: number
 ): number => {
-  const boundary = viewport.getBoundingClientRect().top + RUN_MARK_READING_BOUNDARY_PX
-  const targetTopByMessageId = new Map(
-    Array.from(viewport.querySelectorAll<HTMLElement>('[data-message-id]')).flatMap((element) => {
-      const messageId = element.dataset.messageId
-      return messageId ? [[messageId, element.getBoundingClientRect().top] as const] : []
-    })
-  )
   let currentIndex = 0
-
-  marks.forEach((mark, index) => {
-    const targetTop = targetTopByMessageId.get(mark.id)
-    if (targetTop !== undefined && targetTop <= boundary) currentIndex = index
-  })
-
-  const currentTop = targetTopByMessageId.get(marks[currentIndex]?.id)
-  const nextTop = targetTopByMessageId.get(marks[currentIndex + 1]?.id)
+  for (const [index, top] of targetTopByIndex) {
+    if (top <= boundary) currentIndex = Math.max(currentIndex, index)
+  }
+  const currentTop = targetTopByIndex.get(currentIndex)
+  const nextTop = targetTopByIndex.get(currentIndex + 1)
   const progress =
     currentTop !== undefined && nextTop !== undefined && nextTop > currentTop
       ? Math.max(0, Math.min(1, (boundary - currentTop) / (nextTop - currentTop)))
       : 0
   return currentIndex + progress
+}
+
+const resolveCurrentRunMarkPosition = (
+  viewport: HTMLDivElement,
+  marks: readonly RunMark[]
+): number => {
+  const indexById = new Map(marks.map((mark, index) => [mark.id, index]))
+  const tops = new Map<number, number>()
+  for (const element of viewport.querySelectorAll<HTMLElement>('[data-message-id]')) {
+    const index = indexById.get(element.dataset.messageId ?? '')
+    if (index !== undefined) tops.set(index, element.getBoundingClientRect().top)
+  }
+  return resolveRunMarkPosition(
+    tops,
+    viewport.getBoundingClientRect().top + RUN_MARK_READING_BOUNDARY_PX
+  )
 }
 
 const resolveCurrentRunMarkIndex = (viewport: HTMLDivElement, marks: readonly RunMark[]): number =>
@@ -111,7 +117,7 @@ const runMarkIndicatorClassName = (
   const distance = highlightedIndex === null ? undefined : Math.abs(highlightedIndex - markIndex)
 
   return cn(
-    'block h-0.5 w-5 origin-left rounded-full transition-transform duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] group-active/run-mark:translate-x-px motion-reduce:transition-none rtl:origin-right',
+    'block h-px w-5 origin-left rounded-full transition-transform duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] group-active/run-mark:translate-x-px motion-reduce:transition-none rtl:origin-right',
     distance === 0
       ? 'scale-x-100 bg-text-000'
       : distance === 1
@@ -130,6 +136,8 @@ export {
   createRunMarkItemIndex,
   findMessageTarget,
   normalizePreviewText,
+  RUN_MARK_READING_BOUNDARY_PX,
+  resolveRunMarkPosition,
   resolveCurrentRunMarkIndex,
   resolveCurrentRunMarkPosition,
   runMarkIndicatorClassName

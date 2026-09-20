@@ -85,7 +85,7 @@ const sourcesMatch = (left: TextAnnotationSource, right: SessionTextAnnotationSo
 
 const TextAnnotationSurface = ({
   children,
-  source,
+  source: sourceInput,
   activeAnnotations,
   onAdd,
   onUpdateNote,
@@ -104,6 +104,25 @@ const TextAnnotationSurface = ({
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const bookmarkPort = useBookmarks()
+  // Parent projections may allocate an equivalent source on each streaming update. Keep
+  // source-owned subscriptions and observer callbacks stable until its actual identity changes.
+  const { kind, sessionId } = sourceInput
+  const sourceItemId = kind === 'agent-message' ? sourceInput.messageId : sourceInput.itemId
+  const itemType = kind === 'session-item' ? sourceInput.itemType : undefined
+  const sectionId = kind === 'session-item' ? sourceInput.sectionId : undefined
+  const source = useMemo<SessionTextAnnotationSource>(
+    () =>
+      kind === 'agent-message'
+        ? { kind, sessionId, messageId: sourceItemId }
+        : {
+            kind,
+            sessionId,
+            itemId: sourceItemId,
+            itemType: itemType!,
+            ...(sectionId === undefined ? {} : { sectionId })
+          },
+    [kind, sessionId, sourceItemId, itemType, sectionId]
+  )
   const surfaceRef = useRef<HTMLDivElement | null>(null)
   const contentRef = useRef<HTMLDivElement | null>(null)
   const ownedHighlightIds = useRef(new Set<string>())
@@ -139,6 +158,13 @@ const TextAnnotationSurface = ({
   )
 
   const measureAnnotationControls = useCallback((): void => {
+    // Reading an offscreen message's geometry defeats content-visibility containment.
+    // Most messages have no markers, including when other messages are annotated.
+    if (matchingAnnotations.length === 0 && matchingBookmarks.length === 0) {
+      setAnnotationControls((current) => (current.length === 0 ? current : []))
+      setBookmarkMarkers((current) => (current.length === 0 ? current : []))
+      return
+    }
     const surfaceRect = surfaceRef.current?.getBoundingClientRect()
     if (!surfaceRect) return
     setAnnotationControls(

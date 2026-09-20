@@ -1,8 +1,28 @@
-import { access, mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { setImmediate as flushImmediate } from 'node:timers/promises'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
+
+const profileRemoval = vi.hoisted(() => ({
+  failPath: '',
+  path: '',
+  wait: undefined as (() => Promise<void>) | undefined
+}))
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs/promises')>()
+  return {
+    ...fs,
+    rm: async (...args: Parameters<typeof fs.rm>): Promise<void> => {
+      if (args[0] === profileRemoval.failPath) {
+        throw new Error('simulated profile removal failure')
+      }
+      if (args[0] === profileRemoval.path) await profileRemoval.wait?.()
+      return fs.rm(...args)
+    }
+  }
+})
 
 import type { PersistedSideChat } from '../../shared/session-persistence'
 import { BackendShutdownCoordinator } from '../lifecycle-shutdown'
@@ -10,7 +30,7 @@ import { SIDE_CHAT_MESSAGE_LIMIT, type SideChatModelSelection } from '../../shar
 import type { AcpCreateSessionResponse } from '../../shared/acp'
 import type { AcpRuntimeOptions } from '../acp/runtime'
 import { SideChatRelayOwner } from '../acp/side-chat-relay-owner'
-import type { ResolvedAgentBackend } from '../agent-framework'
+import type { AgentModelConfig, ResolvedAgentBackend } from '../agent-framework'
 import { claudeCodeFramework } from '../agent-framework/claude-code'
 import { codexFramework } from '../agent-framework/codex'
 import { opencodeFramework } from '../agent-framework/opencode'
@@ -61,6 +81,9 @@ const deferred = <Value>(): {
 let temporaryRoot: string | undefined
 
 afterEach(async () => {
+  profileRemoval.failPath = ''
+  profileRemoval.wait = undefined
+  profileRemoval.path = ''
   if (temporaryRoot) await rm(temporaryRoot, { recursive: true, force: true })
   temporaryRoot = undefined
 })
@@ -102,6 +125,155 @@ describe('Side chat relay instructions', () => {
       'Send only the advisory content; do not prepend a Side chat source or relay label.'
     )
   })
+})
+
+describe('Side chat OpenCode instruction isolation', () => {
+  it.each([
+    { operation: 'start', mainFirst: true },
+    { operation: 'resume', mainFirst: true },
+    { operation: 'start', mainFirst: false },
+    { operation: 'resume', mainFirst: false }
+  ] as const)(
+    'isolates Side chat $operation with mainFirst=$mainFirst through repeated reconnects',
+    async ({ operation, mainFirst }) => {
+      temporaryRoot = await mkdtemp(join(tmpdir(), 'side-chat-main-instructions-'))
+      const provider = {
+        type: 'custom' as const,
+        baseUrl: 'https://example.test/v1',
+        model: 'm',
+        key: 'test-key'
+      }
+      const materialize = async (appends: string[]): Promise<AgentModelConfig> => {
+        const config = opencodeFramework.prepareModelConfig(provider, {
+          storageRoot: temporaryRoot!,
+          executablePath: '/managed/opencode',
+          systemPromptAppends: appends
+        })
+        for (const file of config.configFiles ?? []) {
+          await mkdir(join(file.path, '..'), { recursive: true })
+          await writeFile(file.path, file.content)
+        }
+        return config
+      }
+      const mainPrompt = 'You are the Main Agent. Execute the user request.'
+      let main = mainFirst ? await materialize([mainPrompt]) : undefined
+      const resolvedBackends: ResolvedAgentBackend[] = []
+      const resolveTarget = vi.fn(async (_target, context) => {
+        const config = await materialize(context.systemPromptAppends)
+        return {
+          ...backend(opencodeFramework, config.env),
+          persistentSystemPrompt: config.persistentSystemPrompt
+        }
+      })
+      let runtimeOptions: AcpRuntimeOptions | undefined
+      const owner = new SideChatRuntimeOwner({
+        appVersion: 'test',
+        configRoot: temporaryRoot,
+        captureTarget: async () => ({ ...target, frameworkId: 'opencode' }),
+        resolveTarget,
+        relay: createRelayOwner(),
+        persistence: createPersistence(),
+        onEvent: vi.fn(),
+        createRuntime: (options) => {
+          runtimeOptions = options
+          const connect = async (): Promise<AcpCreateSessionResponse> => {
+            // Consume the initial backend exactly as ACP does. Later calls must re-resolve,
+            // rather than accidentally testing the cached initial backend as a reconnect.
+            resolvedBackends.push(
+              await options.resolveBackend!({ forcedSkillIds: [], systemPromptAppends: [] })
+            )
+            return { sessionId: 'side-chat-test', frameworkId: 'opencode' }
+          }
+          return {
+            createSession: connect,
+            resumeSession: connect,
+            sendPrompt: async () => {
+              options.callbacks?.onProviderPromptAccepted?.('side-chat-test')
+              return { stopReason: 'end_turn' }
+            },
+            shutdownForQuit: async () => undefined,
+            deleteSession: async () => ({ sessionIds: [] })
+          } as never
+        }
+      })
+      if (operation === 'resume') {
+        owner.hydrate([
+          {
+            projectId: 'project',
+            parentSessionId: 'main',
+            sideChat: {
+              version: 1,
+              id: 'side-chat-test',
+              lifecycle: 'open',
+              frameworkId: 'opencode',
+              providerId: 'provider-a',
+              providerSessionId: 'provider-side',
+              historyPreamble: 'Main conversation snapshot.',
+              entries: [],
+              createdAt: 1,
+              updatedAt: 1
+            }
+          }
+        ])
+        await owner.send({ sideSessionId: 'side-chat-test', text: 'Continue' })
+      } else {
+        await owner.start({
+          sideSessionId: 'side-chat-test',
+          parentSessionId: 'main',
+          projectId: 'project',
+          text: 'Hello'
+        })
+      }
+      const assertMainInstructions = async (): Promise<void> => {
+        const configFile = main!.configFiles!.find((file) => file.path.endsWith('opencode.json'))!
+        const paths = JSON.parse(configFile.content).instructions as string[]
+        expect(paths).toHaveLength(1)
+        const delivered = (await Promise.all(paths.map((path) => readFile(path, 'utf8')))).join(
+          '\n\n'
+        )
+        expect(delivered).toBe(mainPrompt)
+      }
+      const assertSideInstructions = async (resolved: ResolvedAgentBackend): Promise<void> => {
+        const setup = resolved.framework.buildSessionSetup({
+          systemPromptAppends: resolved.systemPromptAppends ?? []
+        })
+        expect(setup.promptPrefix).toContain('You are in a Side chat')
+        expect(setup.promptPrefix).toContain('open_science_host_message_send_message')
+        expect(setup.promptPrefix).not.toContain(mainPrompt)
+        expect(resolved.persistentSystemPrompt).toBeUndefined()
+        expect(resolved.env.XDG_CONFIG_HOME).toContain(join('side-chat-test', 'profile'))
+        const diskConfig = JSON.parse(
+          await readFile(join(resolved.env.XDG_CONFIG_HOME!, 'opencode/opencode.json'), 'utf8')
+        )
+        expect(diskConfig).toEqual(JSON.parse(resolved.env.OPENCODE_CONFIG_CONTENT!))
+        expect(diskConfig).toMatchObject({
+          default_agent: 'open-science-side-chat',
+          permission: { '*': 'deny', open_science_host_message_send_message: 'allow' }
+        })
+        expect(diskConfig.instructions ?? []).toEqual([])
+      }
+      try {
+        expect(resolveTarget).toHaveBeenCalledTimes(1)
+        expect(resolvedBackends).toHaveLength(1)
+        await assertSideInstructions(resolvedBackends[0])
+        if (!main) main = await materialize([mainPrompt])
+        await assertMainInstructions()
+        for (let reconnect = 0; reconnect < 2; reconnect++) {
+          // A fresh Main backend can be prepared between Side chat connections.
+          main = await materialize([mainPrompt])
+          const resolved = await runtimeOptions!.resolveBackend!({
+            forcedSkillIds: [],
+            systemPromptAppends: []
+          })
+          expect(resolveTarget).toHaveBeenCalledTimes(reconnect + 2)
+          await assertSideInstructions(resolved)
+          await assertMainInstructions()
+        }
+      } finally {
+        await owner.shutdown()
+      }
+    }
+  )
 })
 
 describe('Side chat restricted backend profile', () => {
@@ -2203,7 +2375,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
     persistence.save.mockRejectedValueOnce(new Error('Session file is busy'))
 
     await expect(owner.shutdown()).rejects.toThrow(
-      'Side chat shutdown did not persist every conversation.'
+      'Side chat shutdown did not finish cleaning up every runtime.'
     )
     expect(shutdownForQuit).toHaveBeenCalledOnce()
     expect(owner.list().chats).toContainEqual(
@@ -3129,5 +3301,202 @@ describe('Side chat conversation model selection', () => {
     await idle()
     expect(runtimes).toHaveLength(1)
     await owner.shutdown()
+  })
+})
+
+describe('Side chat without durable recovery', () => {
+  it('keeps streaming and same-run reconnect history, but a fresh owner starts empty', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'side-chat-ephemeral-runtime-'))
+    const onEvent = vi.fn()
+    const runtimes: Array<{ shutdown: ReturnType<typeof vi.fn>; send: ReturnType<typeof vi.fn> }> =
+      []
+    const options = {
+      appVersion: '0.30.2',
+      configRoot: temporaryRoot,
+      captureTarget: async () => target,
+      resolveTarget: async () => backend(claudeCodeFramework),
+      relay: new SideChatRelayOwner({ targetState: () => 'idle' }),
+      onEvent,
+      createRuntime: (runtimeOptions: AcpRuntimeOptions) => {
+        const identity = async (): Promise<AcpCreateSessionResponse> => ({
+          sessionId: 'provider-ephemeral',
+          frameworkId: 'claude-code' as const
+        })
+        const shutdown = vi.fn(async () => ({ reaped: true }))
+        const send = vi.fn(async (request: { sessionId: string }) => {
+          runtimeOptions.callbacks?.onProviderPromptAccepted?.(request.sessionId)
+          for (let index = 0; index < 20; index++) {
+            runtimeOptions.callbacks?.onEvent?.({
+              id: `chunk-${index}`,
+              messageId: `answer-${runtimes.length}`,
+              kind: 'message',
+              role: 'assistant',
+              text: 'chunk ',
+              sessionId: request.sessionId,
+              timestamp: index
+            } as never)
+            await Promise.resolve()
+          }
+          return { stopReason: 'end_turn' as const }
+        })
+        runtimes.push({ shutdown, send })
+        return {
+          createSession: identity,
+          resumeSession: identity,
+          sendPrompt: send,
+          cancelPrompt: async () => ({ stopReason: 'cancelled' }),
+          deleteSession: async () => ({ sessionIds: [] }),
+          respondToPermission: async () => undefined,
+          shutdownForQuit: shutdown
+        } as never
+      }
+    }
+    const owner = new SideChatRuntimeOwner(options)
+    const started = await owner.start({
+      parentSessionId: 'main',
+      projectId: 'project',
+      text: 'First question'
+    })
+    await vi.waitFor(() => expect(owner.list().chats[0].running).toBe(false))
+    expect(owner.list().chats[0].entries).toContainEqual(
+      expect.objectContaining({ text: 'chunk '.repeat(20) })
+    )
+    // Background cleanup must preserve the live provider profile.
+    const profile = join(temporaryRoot, 'runtime-support', 'side-chat', started.sideSessionId)
+    await writeFile(join(profile, 'sentinel'), 'active')
+    await owner.sweepStaleProfiles()
+    expect(await readFile(join(profile, 'sentinel'), 'utf8')).toBe('active')
+    await owner.suspendAll()
+    expect(runtimes[0].shutdown).toHaveBeenCalledOnce()
+    await owner.sweepStaleProfiles()
+    expect(await readFile(join(profile, 'sentinel'), 'utf8')).toBe('active')
+    await owner.send({ sideSessionId: started.sideSessionId, text: 'Follow up' })
+    await vi.waitFor(() => expect(owner.list().chats[0].running).toBe(false))
+    expect(owner.list().chats[0].entries).toContainEqual(
+      expect.objectContaining({ text: 'First question' })
+    )
+    expect(owner.list().chats[0].entries).toContainEqual(
+      expect.objectContaining({ text: 'Follow up' })
+    )
+    expect(onEvent.mock.calls.some(([event]) => event.event.kind === 'persistence')).toBe(false)
+    await owner.shutdown()
+    const restarted = new SideChatRuntimeOwner({
+      ...options,
+      relay: new SideChatRelayOwner({ targetState: () => 'idle' })
+    })
+    expect(restarted.list().chats).toEqual([])
+    await restarted.sweepStaleProfiles()
+    await expect(access(profile)).rejects.toThrow()
+  })
+})
+
+describe('Side chat profile cleanup barriers', () => {
+  it('waits for an in-flight deletion before reusing a profile identity and shutting down', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'side-chat-profile-race-'))
+    const profile = join(temporaryRoot, 'runtime-support', 'side-chat', 'side-chat-reused')
+    await mkdir(profile, { recursive: true })
+    await writeFile(join(profile, 'old'), 'old process')
+    let release!: () => void
+    let deleting!: () => void
+    const deletionStarted = new Promise<void>((resolve) => {
+      deleting = resolve
+    })
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    profileRemoval.path = profile
+    profileRemoval.wait = async () => {
+      deleting()
+      await gate
+    }
+    const captureTarget = vi.fn(async () => {
+      throw new Error('test stops before provider launch')
+    })
+    const owner = new SideChatRuntimeOwner({
+      appVersion: 'test',
+      configRoot: temporaryRoot,
+      relay: new SideChatRelayOwner({ targetState: () => 'idle' }),
+      captureTarget,
+      resolveTarget: vi.fn(),
+      onEvent: vi.fn()
+    })
+    const sweep = owner.sweepStaleProfiles()
+    await deletionStarted
+    const start = owner.start({
+      sideSessionId: 'side-chat-reused',
+      parentSessionId: 'main',
+      projectId: 'project',
+      text: 'New run'
+    })
+    const rejectedStart = expect(start).rejects.toThrow('test stops before provider launch')
+    let stopped = false
+    const shutdown = owner.shutdown().then(() => {
+      stopped = true
+    })
+    await Promise.resolve()
+    expect(captureTarget).not.toHaveBeenCalled()
+    expect(stopped).toBe(false)
+    release()
+    await sweep
+    await rejectedStart
+    await shutdown
+    expect(captureTarget).toHaveBeenCalledOnce()
+    await expect(access(join(profile, 'old'))).rejects.toThrow()
+  })
+
+  it('drains every in-flight profile deletion before reporting a sweep failure', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'side-chat-profile-failure-'))
+    const failedProfile = join(temporaryRoot, 'runtime-support', 'side-chat', 'side-chat-failed')
+    const blockedProfile = join(temporaryRoot, 'runtime-support', 'side-chat', 'side-chat-blocked')
+    await Promise.all([
+      mkdir(failedProfile, { recursive: true }),
+      mkdir(blockedProfile, { recursive: true })
+    ])
+    let release!: () => void
+    let blockedDeletionStarted!: () => void
+    const blockedDeletion = new Promise<void>((resolve) => {
+      blockedDeletionStarted = resolve
+    })
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    profileRemoval.failPath = failedProfile
+    profileRemoval.path = blockedProfile
+    profileRemoval.wait = async () => {
+      blockedDeletionStarted()
+      await gate
+    }
+    const owner = new SideChatRuntimeOwner({
+      appVersion: 'test',
+      configRoot: temporaryRoot,
+      relay: new SideChatRelayOwner({ targetState: () => 'idle' }),
+      captureTarget: vi.fn(),
+      resolveTarget: vi.fn(),
+      onEvent: vi.fn()
+    })
+    const sweep = owner.sweepStaleProfiles()
+    let sweepSettled = false
+    void sweep
+      .finally(() => {
+        sweepSettled = true
+      })
+      .catch(() => undefined)
+    const rejectedSweep = expect(sweep).rejects.toThrow('Side chat profile cleanup failed.')
+    await blockedDeletion
+    let shutdownSettled = false
+    const shutdown = owner.shutdown().then(() => {
+      shutdownSettled = true
+    })
+    try {
+      await flushImmediate()
+      expect(sweepSettled).toBe(false)
+      expect(shutdownSettled).toBe(false)
+    } finally {
+      release()
+    }
+    await rejectedSweep
+    await shutdown
+    expect(shutdownSettled).toBe(true)
+    await expect(access(blockedProfile)).rejects.toThrow()
   })
 })

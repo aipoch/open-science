@@ -100,4 +100,35 @@ describe('ActionToast', () => {
     )
     expect(container.querySelectorAll('button')).toHaveLength(1)
   })
+  it('resumes only remaining time after overlapping pointer and keyboard pauses', async () => {
+    const onDismiss = vi.fn()
+    await act(async () =>
+      root.render(
+        <ActionToast
+          title="Saved"
+          dismissLabel="Close"
+          onDismiss={onDismiss}
+          autoDismissMs={6000}
+        />
+      )
+    )
+    const toast = container.querySelector('[role="status"]')!
+    const close = container.querySelector('button')!
+    await act(async () => vi.advanceTimersByTime(2000))
+    act(() => toast.dispatchEvent(new MouseEvent('pointerover', { bubbles: true })))
+    await act(async () => vi.advanceTimersByTime(10000))
+    act(() => {
+      close.focus()
+      toast.dispatchEvent(
+        new MouseEvent('pointerout', { bubbles: true, relatedTarget: document.body })
+      )
+    })
+    await act(async () => vi.advanceTimersByTime(10000))
+    expect(onDismiss).not.toHaveBeenCalled()
+    act(() => close.blur())
+    await act(async () => vi.advanceTimersByTime(3999))
+    expect(onDismiss).not.toHaveBeenCalled()
+    await act(async () => vi.advanceTimersByTime(1))
+    expect(onDismiss).toHaveBeenCalledOnce()
+  })
 })

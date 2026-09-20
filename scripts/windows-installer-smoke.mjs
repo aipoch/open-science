@@ -42,7 +42,7 @@ const TERMINATION_TIMEOUT_MS = 10_000
 const MCP_REQUEST_TIMEOUT_MS = 30_000
 const SMOKE_ROOT_PREFIX = 'open-science-installer-smoke-'
 const APP_GUID = 'a65c5229-0b29-5716-a0fe-d8755e62f3ca'
-const APP_DISPLAY_NAME = 'Open Science'
+const APP_DISPLAY_NAME = 'Open-Science'
 const RPC_SMOKE_ROOT_PREFIX = 'open-science-rpc-smoke-'
 const UPGRADE_SENTINEL_PREFIX = 'installer-smoke-upgrade-sentinel-'
 const UPGRADE_SENTINEL_CONTENT = 'previous-version-profile-preserved\n'
@@ -146,7 +146,7 @@ const requestPackagedAppShutdown = async (endpoint, auth, fetchImpl = fetchWithT
 
 const parsePackagedAppEndpoint = (output) => {
   const match = output.match(
-    /Open Science Web:\s+(http:\/\/127\.0\.0\.1:\d+\/(?:\?token=[A-Za-z0-9_-]+)?)/
+    /Open-Science Web:\s+(http:\/\/127\.0\.0\.1:\d+\/(?:\?token=[A-Za-z0-9_-]+)?)/
   )
   if (!match) return undefined
 
@@ -164,7 +164,7 @@ const readPackagedAppConfigRoot = async (
   { auth, legacyConfigRoots = [], readToken = readFile } = {}
 ) => {
   if (
-    bootstrap.appName !== 'Open Science' ||
+    bootstrap.appName !== 'Open-Science' ||
     bootstrap.appVersion !== expectedVersion ||
     bootstrap.platform !== 'win32'
   ) {
@@ -274,6 +274,7 @@ const runProcess = (executable, args, options = {}, terminate = terminateProcess
     child.stderr?.setEncoding('utf8')
     child.stdout?.on('data', (chunk) => {
       stdout += chunk
+      options.onStdout?.(stdout)
     })
     child.stderr?.on('data', (chunk) => {
       stderr += chunk
@@ -989,7 +990,7 @@ const assertDatabaseDowngradeBlocked = ({ becameHealthy, output }) => {
   if (becameHealthy) {
     throw new Error(`Ledger-aware downgrade unexpectedly became healthy.\n${output}`)
   }
-  if (!/database_newer_than_app|newer version of Open Science/i.test(output)) {
+  if (!/database_newer_than_app|newer version of Open-Science/i.test(output)) {
     throw new Error(
       `Ledger-aware downgrade did not report the expected compatibility error.\n${output}`
     )
@@ -1512,6 +1513,15 @@ const readRegistryKey = async (key, run) => {
   return result.code === 0 ? result.stdout : undefined
 }
 
+const deleteOwnedRegistryKey = async (key, run) => {
+  // An uninstaller running concurrently can remove the key between the ownership check and this
+  // delete; "key not found" already is the cleanup goal, so only other failures propagate.
+  const result = await run('reg.exe', ['delete', key, '/f'], { allowNonZero: true })
+  if (result.code !== 0 && !/unable to find the specified registry key/iu.test(result.stderr)) {
+    throw new Error(`reg.exe delete exited with ${result.code}.\n${result.stderr}`)
+  }
+}
+
 const cleanupOwnedSmokeRegistrations = async (root, expectedVersion, { run = runProcess } = {}) => {
   if (!win32.basename(root).startsWith(SMOKE_ROOT_PREFIX)) {
     throw new Error(`Refusing to clean registrations for unexpected smoke root: ${root}`)
@@ -1532,7 +1542,7 @@ const cleanupOwnedSmokeRegistrations = async (root, expectedVersion, { run = run
       (!installLocation || isOwnedSmokePath(root, installLocation)) &&
       isOwnedSmokePath(root, uninstallTarget) &&
       isOwnedSmokePath(root, quietUninstallTarget)
-    if (ownedStaleRegistration) await run('reg.exe', ['delete', uninstallKey, '/f'])
+    if (ownedStaleRegistration) await deleteOwnedRegistryKey(uninstallKey, run)
   }
 
   const installKey = `HKCU\\Software\\${APP_GUID}`
@@ -1541,7 +1551,7 @@ const cleanupOwnedSmokeRegistrations = async (root, expectedVersion, { run = run
     ? registryValue(installOutput, 'InstallLocation')
     : undefined
   if (isOwnedSmokePath(root, installLocation)) {
-    await run('reg.exe', ['delete', installKey, '/f'])
+    await deleteOwnedRegistryKey(installKey, run)
   }
 }
 

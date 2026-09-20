@@ -617,7 +617,9 @@ it.skipIf(process.platform !== 'darwin' || !existsSync(micromamba))(
         'matplotlib-base',
         'nomkl',
         'r-base',
-        'r-jsonlite'
+        'r-jsonlite',
+        'r-biocmanager',
+        'r-ggplot2'
       ])
       writeFileSync(
         profile,

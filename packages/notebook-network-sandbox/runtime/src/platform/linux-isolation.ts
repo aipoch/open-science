@@ -38,7 +38,7 @@ const checkLinuxTools = (): DependencyCheck => {
   const errors: string[] = []
   if (!findExecutable('bwrap')) {
     errors.push(
-      'Notebook isolation requires bubblewrap (bwrap). Install the bubblewrap package with your Linux distribution package manager, then restart Open Science.'
+      'Notebook isolation requires bubblewrap (bwrap). Install the bubblewrap package with your Linux distribution package manager, then restart Open-Science.'
     )
   }
   return { warnings: [], errors }
@@ -161,6 +161,7 @@ const linuxLaunch = async (request: LinuxLaunchRequest): Promise<LinuxLaunch> =>
   const guestRuntime = join(guestRuntimeRoot, basename(process.execPath))
   const runtimeSource = dirname(process.execPath)
   const guestPort = 3128
+  const hiddenTemporaryRoots = ['/tmp', ...(existsSync('/var/tmp') ? ['/var/tmp'] : [])]
   const argumentsList = [
     '--die-with-parent',
     '--new-session',
@@ -185,14 +186,20 @@ const linuxLaunch = async (request: LinuxLaunchRequest): Promise<LinuxLaunch> =>
     '--ro-bind',
     runtimeSource,
     guestRuntimeRoot,
-    '--tmpfs',
-    '/tmp',
-    ...(existsSync('/var/tmp') ? ['--tmpfs', '/var/tmp'] : []),
+    ...hiddenTemporaryRoots.flatMap((root) => ['--tmpfs', root]),
     '--dev',
     '/dev',
     '--proc',
     '/proc'
   ]
+
+  // Temporary mounts hide AppImage resources too. Restore only explicit read grants before
+  // applying private-root masks and deny overrides; unrelated host temporary files stay hidden.
+  for (const root of layout.readOnlyRoots) {
+    if (contains('/tmp', root) || contains('/var/tmp', root)) {
+      argumentsList.push('--ro-bind', root, root)
+    }
+  }
 
   const sensitiveReadRoots = [
     '/home',
@@ -214,6 +221,16 @@ const linuxLaunch = async (request: LinuxLaunchRequest): Promise<LinuxLaunch> =>
     }
     argumentsList.push('--remount-ro', sensitiveRoot)
   }
+  // Restore explicit read grants hidden by the anonymous host-temporary mounts. Grants beneath a
+  // sensitive root were already restored before that root was sealed read-only.
+  for (const root of layout.readOnlyRoots) {
+    if (
+      hiddenTemporaryRoots.some((temporaryRoot) => contains(temporaryRoot, root)) &&
+      sensitiveReadRoots.every((sensitiveRoot) => !contains(sensitiveRoot, root))
+    ) {
+      argumentsList.push('--ro-bind', root, root)
+    }
+  }
   for (const root of layout.readWriteRoots) argumentsList.push('--bind', root, root)
   // Only explicit grants may receive a read-only override. Binding an otherwise hidden deny-write path
   // would expose host data and can require creating a target beneath a sealed private root.
@@ -228,14 +245,21 @@ const linuxLaunch = async (request: LinuxLaunchRequest): Promise<LinuxLaunch> =>
     }
   }
   for (const root of layout.deniedReadRoots) {
+    // Sealed sensitive roots already hide ungranted paths. Creating another mask there can
+    // require a mount target beneath a read-only parent, even when the host path exists.
+    const alreadyHidden =
+      sensitiveReadRoots.some((sensitiveRoot) => contains(sensitiveRoot, root)) &&
+      [...layout.readOnlyRoots, ...layout.readWriteRoots].every(
+        (grantedRoot) => !contains(grantedRoot, root) && !contains(root, grantedRoot)
+      )
+    if (alreadyHidden) continue
     if (pathIsDirectory(root)) argumentsList.push('--tmpfs', root)
     else argumentsList.push('--ro-bind', '/dev/null', root)
   }
   // Bind explicitly writable children before sealing the anonymous temp mounts. bubblewrap applies
   // operations in order, so remounting /tmp first would make a workspace created under /tmp
   // impossible to bind on Linux CI and on distributions whose project roots live there.
-  argumentsList.push('--remount-ro', '/tmp')
-  if (existsSync('/var/tmp')) argumentsList.push('--remount-ro', '/var/tmp')
+  for (const root of hiddenTemporaryRoots) argumentsList.push('--remount-ro', root)
 
   argumentsList.push(
     '--chdir',

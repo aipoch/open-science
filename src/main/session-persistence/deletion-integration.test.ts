@@ -1,3 +1,4 @@
+import { initDataRoot } from '../storage-root'
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -56,6 +57,7 @@ describe('managed-file deletion integration', () => {
 
   beforeEach(async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-file-deletion-'))
+    initDataRoot(storageRoot)
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     sessions = new SessionRepository(storageRoot)

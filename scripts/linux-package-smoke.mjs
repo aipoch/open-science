@@ -40,7 +40,7 @@ const appImageVersion = (path) => {
 
 const parsePackagedAppEndpoint = (output) => {
   const match = output.match(
-    /Open Science Web:\s+(http:\/\/127\.0\.0\.1:\d+\/(?:\?token=[A-Za-z0-9_-]+)?)/
+    /Open-Science Web:\s+(http:\/\/127\.0\.0\.1:\d+\/(?:\?token=[A-Za-z0-9_-]+)?)/
   )
   if (!match) return undefined
   const url = new URL(match[1])
@@ -104,7 +104,7 @@ const findResourceRoot = async (executable, resolvedExecutable = executable) => 
     join(dirname(resolvedExecutable), 'resources'),
     join(bundleRoot, 'resources'),
     join(bundleRoot, 'usr', 'lib', 'open-science', 'resources'),
-    join(bundleRoot, 'usr', 'lib', 'Open Science', 'resources')
+    join(bundleRoot, 'usr', 'lib', 'Open-Science', 'resources')
   ]
   for (const candidate of [...new Set(candidates)]) {
     if (await pathExists(join(candidate, 'app.asar'))) return candidate
@@ -133,10 +133,16 @@ const assertPackagedResources = async (
 }
 
 const launchAndProbe = async ({ executable, expectedVersion, env }) => {
-  const child = spawn(executable, ['--open-science-headless', '--serve=0', '--no-sandbox'], {
-    env,
-    stdio: ['ignore', 'pipe', 'pipe']
-  })
+  // Headless packaged launches have no Secret Service desktop, so OS credential mode fails closed;
+  // the file backend is the supported headless mode on Linux (matching the CLI smoke launch).
+  const child = spawn(
+    executable,
+    ['--open-science-headless', '--serve=0', '--no-sandbox', '--credential-store=file'],
+    {
+      env,
+      stdio: ['ignore', 'pipe', 'pipe']
+    }
+  )
   let output = ''
   child.stdout?.setEncoding('utf8')
   child.stderr?.setEncoding('utf8')
@@ -162,7 +168,7 @@ const launchAndProbe = async ({ executable, expectedVersion, env }) => {
     if (!response.ok) throw new Error(`Packaged Linux bootstrap returned HTTP ${response.status}.`)
     const bootstrap = await response.json()
     if (
-      bootstrap.appName !== 'Open Science' ||
+      bootstrap.appName !== 'Open-Science' ||
       bootstrap.appVersion !== expectedVersion ||
       bootstrap.platform !== 'linux'
     ) {

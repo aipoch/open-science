@@ -1,5 +1,5 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R5 V3
- * component: batch management · genre: modern-minimal · theme: Open Science
+ * component: batch management · genre: modern-minimal · theme: Open-Science
  * States use existing semantic tokens, native controls, and owner-provided feedback.
  */
 import { useLayoutEffect, useRef, type ReactNode } from 'react'

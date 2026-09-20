@@ -1,9 +1,10 @@
+import { useSessionStore } from '@/stores/session-store'
 import { useAnnotationDrop } from './use-annotation-drop'
 import { AnnotationDragSource } from './AnnotationDragSource'
 // @vitest-environment jsdom
 import { act, useLayoutEffect, useState } from 'react'
 import { render, fireEvent, cleanup } from '@testing-library/react'
-import { afterEach, expect, it, vi } from 'vitest'
+import { beforeEach, afterEach, expect, it, vi } from 'vitest'
 import { ANNOTATION_LIMITS, type Annotation } from '../../../../../shared/annotations'
 import {
   SideChatProvider,
@@ -21,6 +22,33 @@ import {
 } from '@/stores/preview-workbench-store'
 
 const originalApi = window.api
+beforeEach(() =>
+  useSessionStore.setState({
+    sessions: [
+      {
+        id: 'main',
+        projectId: 'project',
+        title: 'Main',
+        cwd: '/workspace',
+        status: 'idle',
+        createdAt: 1,
+        updatedAt: 1,
+        messages: [
+          {
+            id: 'user',
+            role: 'user',
+            content: 'Main question',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ]
+      }
+    ]
+  })
+)
+
 const annotation: Annotation = {
   id: 'quote',
   kind: 'text',

@@ -333,7 +333,7 @@ describe('LiteratureFullTextLookup', () => {
     fullText.mockRejectedValue(new Error("No handler registered for 'literature:full-text'"))
     render(<LiteratureFullTextLookup {...props} />)
     expect(
-      await screen.findByText('Restart Open Science to enable full-text search.')
+      await screen.findByText('Restart Open-Science to enable full-text search.')
     ).not.toBeNull()
     expect(screen.queryByText('Full-text search failed. Try again.')).toBeNull()
     fireEvent.click(screen.getByText('Search sources'))
@@ -369,6 +369,15 @@ describe('LiteratureFullTextLookup', () => {
     fireEvent.paste(screen.getByLabelText('OpenAlex API key'), {
       clipboardData: { getData: () => 'test-key' }
     })
+    const keyLink = screen.getByRole('link', { name: 'Get an API key' })
+    expect(keyLink.getAttribute('href')).toBe('https://openalex.org/settings/api')
+    expect(keyLink.getAttribute('target')).toBe('_blank')
+    expect(keyLink.getAttribute('rel')).toBe('noreferrer')
+    keyLink.addEventListener('click', (event) => event.preventDefault())
+    fireEvent.click(keyLink)
+    expect(save).not.toHaveBeenCalled()
+    expect(fullText).toHaveBeenCalledTimes(1)
+
     fireEvent.click(screen.getByRole('button', { name: 'Save key' }))
     expect(await screen.findByText('Configured')).not.toBeNull()
     expect(validate).toHaveBeenCalledWith({ apiKey: 'test-key' })

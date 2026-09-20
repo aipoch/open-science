@@ -1,0 +1,50 @@
+{
+  "ownerPaths": [
+    "src/renderer/src/pages/onboarding/AgentStep.render.test.tsx",
+    "src/renderer/src/pages/onboarding/AgentStep.tsx",
+    "src/renderer/src/pages/onboarding/EnvironmentSetupCard.tsx",
+    "src/renderer/src/pages/onboarding/EnvironmentStep.render.test.tsx",
+    "src/renderer/src/pages/onboarding/EnvironmentStep.tsx",
+    "src/renderer/src/pages/onboarding/LocationStep.render.test.tsx",
+    "src/renderer/src/pages/onboarding/LocationStep.tsx",
+    "src/renderer/src/pages/onboarding/NotebookStep.render.test.tsx",
+    "src/renderer/src/pages/onboarding/NotebookStep.tsx",
+    "src/renderer/src/pages/onboarding/OnboardingWizard.regressions.test.tsx",
+    "src/renderer/src/pages/onboarding/OnboardingWizard.render.test.tsx",
+    "src/renderer/src/pages/onboarding/OnboardingWizard.tsx",
+    "src/renderer/src/pages/onboarding/ProviderStep.render.test.tsx",
+    "src/renderer/src/pages/onboarding/ProviderStep.tsx",
+    "src/renderer/src/pages/onboarding/environment-check-presentation.ts",
+    "src/renderer/src/pages/onboarding/onboarding-error.ts",
+    "src/renderer/src/pages/onboarding/onboarding-test-utils.ts",
+    "src/renderer/src/pages/onboarding/startup-gate.test.ts",
+    "src/renderer/src/pages/onboarding/startup-gate.ts"
+  ],
+  "interfacePaths": [
+    "src/renderer/src/pages/onboarding/EnvironmentSetupCard.tsx",
+    "src/renderer/src/pages/onboarding/OnboardingWizard.tsx",
+    "src/renderer/src/pages/onboarding/startup-gate.ts"
+  ],
+  "consumerModules": [],
+  "testFiles": {
+    "owner": [
+      "src/renderer/src/pages/onboarding/AgentStep.render.test.tsx",
+      "src/renderer/src/pages/onboarding/EnvironmentStep.render.test.tsx",
+      "src/renderer/src/pages/onboarding/LocationStep.render.test.tsx",
+      "src/renderer/src/pages/onboarding/NotebookStep.render.test.tsx",
+      "src/renderer/src/pages/onboarding/OnboardingWizard.regressions.test.tsx",
+      "src/renderer/src/pages/onboarding/OnboardingWizard.render.test.tsx",
+      "src/renderer/src/pages/onboarding/ProviderStep.render.test.tsx",
+      "src/renderer/src/pages/onboarding/startup-gate.test.ts"
+    ],
+    "contract": [],
+    "consumer": [
+      "src/renderer/src/App.test.tsx",
+      "src/renderer/src/main.render.test.tsx",
+      "src/renderer/web/bootstrap.test.ts",
+      "src/renderer/web/renderer-argument-shape-characterization.test.ts"
+    ]
+  },
+  "capabilityOverlays": [],
+  "fallbackCapability": "renderer_view"
+}

@@ -640,6 +640,69 @@
     }
   }
 
+  /* Key only the content to its owner's phase: focus and the button hit target survive swaps. */
+  .button-feedback {
+    display: inline-flex;
+    min-width: 0;
+    max-width: 100%;
+    align-items: center;
+    justify-content: inherit;
+    gap: inherit;
+    animation: button-feedback-enter 180ms ease-out;
+  }
+
+  @keyframes button-feedback-enter {
+    from {
+      opacity: 0;
+      transform: translateY(3px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  /* A label reveal is presentation, not a second activation or a disclosure. */
+  .update-action-label {
+    display: grid;
+    grid-template-columns: 0fr;
+    opacity: 0;
+    transition:
+      grid-template-columns 200ms ease-out,
+      opacity 150ms ease-out;
+  }
+
+  .update-action-label > span {
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .update-reminder:is(:hover, :focus-visible, [data-state='downloading'], [data-state='error'])
+    .update-action-label {
+    grid-template-columns: 1fr;
+    opacity: 1;
+  }
+
+  @media (hover: none), (pointer: coarse) {
+    .update-action-label {
+      grid-template-columns: 1fr;
+      opacity: 1;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .button-feedback {
+      animation: none;
+    }
+    .button-feedback .animate-spin {
+      /* Older controls lack motion-reduce utilities; override the higher utilities layer. */
+      animation: none !important;
+    }
+    .update-action-label {
+      transition: none;
+    }
+  }
+
   @keyframes update-reminder-sheen-pass {
     0%,
     8% {

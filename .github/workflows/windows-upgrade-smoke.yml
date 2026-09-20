@@ -14,7 +14,7 @@ on:
         required: true
 
       dry_run:
-        description: Run isolated baseline-selection tests without downloading or installing releases
+        description: Test baseline selection and the installer observer without downloading or installing releases
         type: boolean
         default: false
 
@@ -70,6 +70,8 @@ jobs:
               exit 1
             }
           }
+          # Contract-boundary commits for the Artifact RPC methods (artifactSaveVersion / artifactReserveWrite,
+          # src/main/notebook/local-rpc-server.ts); scripts/windows-installer-smoke.mjs replays the matching contract.
           $artifactSaveCommit = '1a6faf134836d417b8bb1cdf89571f5d9dee2a0b'
           $artifactReservationCommit = 'f12fd1f871022c7a9b771d193202d9ecf98aca96'
           $artifactSaveBase = git merge-base $artifactSaveCommit $releasedSha
@@ -238,5 +240,7 @@ jobs:
           node-version: 22
       - name: Install test dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
-      - name: Test actual Windows baseline selection
-        run: npx vitest run scripts/windows-upgrade-baseline.test.ts
+      - name: Generate test database client
+        run: npx prisma generate
+      - name: Test actual Windows baseline selection and installer observation
+        run: npx vitest run scripts/windows-upgrade-baseline.test.ts scripts/windows-updater-certification.test.ts

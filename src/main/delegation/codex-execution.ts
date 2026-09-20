@@ -31,6 +31,7 @@ type PreparedCodexDelegateExecution = Readonly<{
   runtimeHome: string
   capability: DelegateExecutionCapability
   spawn: AgentSpawnInput
+  releaseResources?(): Promise<void> | void
   disposeResources?(): Promise<void> | void
 }>
 

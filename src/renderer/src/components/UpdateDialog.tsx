@@ -194,7 +194,7 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
                       description={
                         isInstallationRequired
                           ? t(
-                              'Open Science is running on a read-only disk. Drag it to Applications, quit this copy, and reopen it from Applications before updating.'
+                              'Open-Science is running on a read-only disk. Drag it to Applications, quit this copy, and reopen it from Applications before updating.'
                             )
                           : legacyRecovery
                             ? t('Old Shell launch records are blocking this update.')
@@ -237,7 +237,7 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
                       ) : isBackgroundProcessError ? (
                         <p className="mt-2 text-xs text-muted-foreground">
                           <Trans
-                            i18nKey="Cancel this update, then use Reveal in Settings → General → Diagnostics to locate the log file. Quit and reopen Open Science, then try the update again. If the problem returns, review the log for local file paths and give it to a developer or <issueLink>open a GitHub issue</issueLink>."
+                            i18nKey="Cancel this update, then use Reveal in Settings → General → Diagnostics to locate the log file. Quit and reopen Open-Science, then try the update again. If the problem returns, review the log for local file paths and give it to a developer or <issueLink>open a GitHub issue</issueLink>."
                             components={{
                               issueLink: (
                                 <ExternalTextLink href={APP.links.githubIssues}>
@@ -296,7 +296,7 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
                     {dialogStatus.applyKind === 'installer'
                       ? t('Verifying installer…')
                       : t(
-                          "Open Science is stopping background tasks and will close to finish installing. The update may take a moment; please don't reopen the app during this step. The updated app will reopen automatically."
+                          "Open-Science is stopping background tasks and will close to finish installing. The update may take a moment; please don't reopen the app during this step. The updated app will reopen automatically."
                         )}
                   </div>
                 ) : null}
@@ -405,7 +405,7 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
         open={recoveryConfirmationOpen}
         title={t('Back up records and retry')}
         description={t(
-          'Open Science cannot verify whether commands from an earlier session are still running. If they are, their results may be lost during the update. Back up the old launch records and retry?'
+          'Open-Science cannot verify whether commands from an earlier session are still running. If they are, their results may be lost during the update. Back up the old launch records and retry?'
         )}
         cancelLabel={t('Cancel')}
         confirmLabel={t('Back up records and retry')}

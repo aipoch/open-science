@@ -1,18 +1,11 @@
+import { SideChatProvider } from './pages/workspace/use-side-chat-controller'
 import { WorkspaceComposerDraftsProvider } from './pages/workspace/workspace-composer-drafts'
-import {
-  lazy,
-  memo,
-  Suspense,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type ReactNode
-} from 'react'
+import { lazy, memo, Suspense, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { DeferredPresentationOwner } from '@/components/DeferredPresentationOwner'
 import { CloseConfirmModal } from '@/components/CloseConfirmModal'
-import { ActionToast, ActionToastStack } from '@/components/ActionToast'
+import { ActionToast, ActionToastStack, BottomNoticeStack } from '@/components/ActionToast'
 import { ConnectorAuthToast } from '@/components/ConnectorAuthToast'
 import { DataRootMissingDialog } from '@/components/DataRootMissingDialog'
 import { ErrorNotice } from '@/components/error-notice'
@@ -21,6 +14,7 @@ import { LifecycleToast } from '@/components/LifecycleToast'
 import { LanguageSaveToast } from '@/components/LanguageControls'
 import { NotificationLiveToast } from '@/components/NotificationLiveToast'
 import { OpenScienceLogoLoader } from '@/components/OpenScienceLogoLoader'
+import { useSettingsUndoPortal } from '@/components/use-settings-undo-portal'
 import { PermissionUndoSnackbar } from '@/components/PermissionUndoSnackbar'
 import { SessionCatalogRecoveryAlert } from '@/components/SessionCatalogRecoveryAlert'
 import { SessionPersistenceAlert } from '@/components/SessionPersistenceAlert'
@@ -88,35 +82,28 @@ const UpdateDialog = lazy(() =>
   import('@/components/UpdateDialog').then(({ UpdateDialog }) => ({ default: UpdateDialog }))
 )
 
-// Keep stateful presentation owners mounted after their first activation so nested confirmation and
-// close lifecycles stay unchanged. Before then, avoid loading Markdown used only by those surfaces.
-const DeferredPresentationOwner = ({
-  active,
-  children
-}: {
-  active: boolean
-  children: (active: boolean) => ReactNode
-}): React.JSX.Element | null => {
-  const [hasActivated, setHasActivated] = useState(active)
-  useEffect(() => {
-    if (!active) return
-    let cancelled = false
-    queueMicrotask(() => {
-      if (!cancelled) setHasActivated(true)
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [active])
-
-  return hasActivated ? <Suspense fallback={null}>{children(active)}</Suspense> : null
+const ApplicationPresentationHost = (): React.JSX.Element => {
+  const startup = useApplicationStartup()
+  return (
+    <SideChatProvider
+      persistence={{
+        ready: startup.sessions.isReady,
+        blockedSessionIds: startup.sessions.persistenceBlockedSessionIds
+      }}
+    >
+      <ApplicationPresentationContent startup={startup} />
+    </SideChatProvider>
+  )
 }
 
-const ApplicationPresentationHost = (): React.JSX.Element => {
+const ApplicationPresentationContent = ({
+  startup
+}: {
+  startup: ReturnType<typeof useApplicationStartup>
+}): React.JSX.Element => {
   const { t } = useTranslation()
   const settingsPageRef = useRef<SettingsPageHandle>(null)
   const closeActiveSettingsPane = useCallback(() => settingsPageRef.current?.closeActivePane(), [])
-  const startup = useApplicationStartup()
   const events = useApplicationEventBindings({
     startupView: startup.settings.startupView,
     sessionPersistence: startup.sessions,
@@ -126,6 +113,9 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
   })
   const { sessions } = startup
   const { presentation } = events
+  const undoPortal = useSettingsUndoPortal(
+    <PermissionUndoSnackbar allowsArchiveShortcut={events.allowsArchiveUndoShortcut} />
+  )
 
   if (
     !startup.settings.isLoaded ||
@@ -267,20 +257,14 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
 
   return (
     <>
-      <div
-        className="contents"
-        inert={!isBasePresentationActive}
-        aria-hidden={isBasePresentationActive ? undefined : true}
-      >
-        <EnvStatusBanner
-          ui={startup.environment.ui}
-          onRetry={() => void startup.environment.retry()}
-          onOpenRuntimes={events.settings.openRuntimes}
-        />
-        <WorkspaceAgentRuntimeProvider onSessionSizeLimit={sessions.reportSessionSizeLimit}>
-          <WorkspaceComposerDraftsProvider>
-            <WorkspaceMessageQueueProvider>
-              <WorkspaceComputeRecoveryBridge enabled={sessions.isReady} />
+      <WorkspaceAgentRuntimeProvider onSessionSizeLimit={sessions.reportSessionSizeLimit}>
+        <WorkspaceComposerDraftsProvider>
+          <WorkspaceMessageQueueProvider>
+            <div
+              className="contents"
+              inert={!isBasePresentationActive}
+              aria-hidden={isBasePresentationActive ? undefined : true}
+            >
               <WorkspaceMessageQueueRuntimeBridge
                 persistenceBlockedSessionIds={sessions.persistenceBlockedSessionIds}
               />
@@ -305,59 +289,73 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
                   />
                 )}
               </Suspense>
-            </WorkspaceMessageQueueProvider>
-          </WorkspaceComposerDraftsProvider>
-        </WorkspaceAgentRuntimeProvider>
-        {sessions.catalogRecovery.kind !== 'ready' ? (
-          <SessionCatalogRecoveryAlert
-            recovery={sessions.catalogRecovery}
-            onRetry={sessions.retryLoad}
-            onOpenRecoveryFolder={window.api.sessions.openRecoveryFolder}
-          />
-        ) : null}
-        <ActionToastStack>
-          {sessions.catalogRecovery.kind !== 'ready' ? null : sessions.loadError ? (
-            <SessionPersistenceAlert
-              title={t('Saved conversations could not be loaded')}
-              message={sessions.loadError}
-              onRetry={sessions.retryLoad}
-            />
-          ) : startup.quitPersistence.notice ? null : writeErrorAlert ? (
-            writeErrorAlert
-          ) : sessions.loadWarning ? (
-            <SessionPersistenceAlert
-              title={t('Saved conversation data was damaged')}
-              message={sessions.loadWarning}
-              variant="warning"
-              onDismiss={sessions.dismissLoadWarning}
-            />
-          ) : null}
-          {sessions.catalogRecovery.kind !== 'ready' && !startup.quitPersistence.notice
-            ? writeErrorAlert
-            : null}
-          <LifecycleToast
-            notice={events.lifecycle.notice}
-            onDismiss={events.lifecycle.dismissNotice}
-            onView={events.lifecycle.viewNotice}
-          />
-          <ConnectorAuthToast />
-          <StorageCleanupToast />
-          {events.notification.unavailableToken !== undefined ? (
-            <ActionToast
-              key={events.notification.unavailableToken}
-              title={t('This session was deleted or is unavailable.')}
-              dismissLabel={t('Close')}
-              onDismiss={events.notification.dismissUnavailable}
-              autoDismissMs={6000}
-              testId="notification-target-unavailable-toast"
-            />
-          ) : null}
-          {isBasePresentationActive ? <LanguageSaveToast /> : null}
-          <PermissionUndoSnackbar allowsArchiveShortcut={events.allowsArchiveUndoShortcut} />
-        </ActionToastStack>
-        <NotificationLiveToast />
-      </div>
-      {quitPersistenceAlert}
+              <ActionToastStack>
+                {sessions.catalogRecovery.kind !== 'ready' ? null : sessions.loadError ? (
+                  <SessionPersistenceAlert
+                    title={t('Saved conversations could not be loaded')}
+                    message={sessions.loadError}
+                    onRetry={sessions.retryLoad}
+                  />
+                ) : startup.quitPersistence.notice ? null : writeErrorAlert ? (
+                  writeErrorAlert
+                ) : sessions.loadWarning ? (
+                  <SessionPersistenceAlert
+                    title={t('Saved conversation data was damaged')}
+                    message={sessions.loadWarning}
+                    variant="warning"
+                    onDismiss={sessions.dismissLoadWarning}
+                  />
+                ) : null}
+                {sessions.catalogRecovery.kind !== 'ready' && !startup.quitPersistence.notice
+                  ? writeErrorAlert
+                  : null}
+                <LifecycleToast
+                  notice={events.lifecycle.notice}
+                  onDismiss={events.lifecycle.dismissNotice}
+                  onView={events.lifecycle.viewNotice}
+                />
+                <ConnectorAuthToast />
+                <StorageCleanupToast />
+                {events.notification.unavailableToken !== undefined ? (
+                  <ActionToast
+                    key={events.notification.unavailableToken}
+                    title={t('This session was deleted or is unavailable.')}
+                    dismissLabel={t('Close')}
+                    onDismiss={events.notification.dismissUnavailable}
+                    autoDismissMs={6000}
+                    testId="notification-target-unavailable-toast"
+                  />
+                ) : null}
+                {isBasePresentationActive ? <LanguageSaveToast /> : null}
+                {undoPortal.background}
+              </ActionToastStack>
+            </div>
+            <BottomNoticeStack>
+              <div
+                className="contents"
+                inert={!isBasePresentationActive}
+                aria-hidden={isBasePresentationActive ? undefined : true}
+              >
+                <EnvStatusBanner
+                  ui={startup.environment.ui}
+                  onRetry={() => void startup.environment.retry()}
+                  onOpenRuntimes={events.settings.openRuntimes}
+                />
+                {sessions.catalogRecovery.kind !== 'ready' ? (
+                  <SessionCatalogRecoveryAlert
+                    recovery={sessions.catalogRecovery}
+                    onRetry={sessions.retryLoad}
+                    onOpenRecoveryFolder={window.api.sessions.openRecoveryFolder}
+                  />
+                ) : null}
+                <WorkspaceComputeRecoveryBridge enabled={sessions.isReady} />
+                <NotificationLiveToast />
+              </div>
+            </BottomNoticeStack>
+            {quitPersistenceAlert}
+          </WorkspaceMessageQueueProvider>
+        </WorkspaceComposerDraftsProvider>
+      </WorkspaceAgentRuntimeProvider>
       <WebEventRecoveryDialog
         active={activePresentation === 'webEventRecovery'}
         phase={events.webEventConnectionPhase}
@@ -365,6 +363,7 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
       <Suspense fallback={null}>
         <SettingsPage
           ref={settingsPageRef}
+          undoHostRef={undoPortal.settingsHostRef}
           open={activePresentation === 'settings'}
           onClose={events.settings.close}
           onOpenSession={events.settings.openSession}
@@ -418,7 +417,7 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
         <LegacyDataMoveDialog
           active={activePresentation === 'legacyDataMove'}
           currentDataRoot={startup.storageRecovery.legacyMove.currentDataRoot}
-          defaultParent={startup.storageRecovery.legacyMove.defaultParent}
+          defaultDataRoot={startup.storageRecovery.legacyMove.defaultDataRoot}
           onDismiss={startup.storageRecovery.dismissLegacyMove}
         />
       ) : null}

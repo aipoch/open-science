@@ -28,7 +28,7 @@ test('recovers historical records only after confirmation in the update dialog',
   await recover.click()
   await confirmation.getByRole('button', { name: 'Back up records and retry', exact: true }).click()
   await expect(
-    dialog.getByText('Open Science is stopping background tasks', { exact: false })
+    dialog.getByText('Open-Science is stopping background tasks', { exact: false })
   ).toBeVisible()
   await expect(recover).toBeHidden()
 })

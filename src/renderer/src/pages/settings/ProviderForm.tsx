@@ -1,3 +1,4 @@
+import { fieldErrorClassName } from '@/components/ui/notice-chrome'
 import { useFileCredentialNotice } from './use-file-credential-notice'
 import type { TFunction } from 'i18next'
 import { ChevronDown, Eye, EyeOff } from 'lucide-react'
@@ -83,7 +84,6 @@ type ProviderFormProps = {
 }
 
 const fieldLabelClassName = 'text-xs font-medium text-muted-foreground'
-const fieldErrorClassName = 'text-xs text-destructive'
 const CUSTOM_PROVIDER_CONTEXT_WINDOW_PRESETS = [
   32_000, 64_000, 128_000, 200_000, 256_000, 1_000_000
 ] as const
@@ -473,7 +473,7 @@ const ProviderForm = ({
           <p className="text-sm font-medium text-foreground">{t('One xAI login, every agent')}</p>
           <p className="text-xs text-muted-foreground">
             {t(
-              'Save this provider, then sign in from its card with a device code. Open Science securely refreshes the login and exposes Messages, Chat Completions, and Responses locally.'
+              'Save this provider, then sign in from its card with a device code. Open-Science securely refreshes the login and exposes Messages, Chat Completions, and Responses locally.'
             )}
           </p>
           <code className="font-mono text-xs text-muted-foreground">{t('grok-4.6 · 500K')}</code>
@@ -494,22 +494,22 @@ const ProviderForm = ({
                   <span>
                     {value.type === 'codex-shared'
                       ? t('Import existing Codex sign-in')
-                      : t('Sign in with Open Science')}
+                      : t('Sign in with Open-Science')}
                   </span>
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="codex-shared">{t('Import existing Codex sign-in')}</SelectItem>
-                  <SelectItem value="codex-isolated">{t('Sign in with Open Science')}</SelectItem>
+                  <SelectItem value="codex-isolated">{t('Sign in with Open-Science')}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <p className="text-xs text-muted-foreground">
               {value.type === 'codex-shared'
                 ? t(
-                    "Copies Codex authentication and, when compatible, the active provider's non-secret loopback route into Open Science app data. Other global config, Skills and sessions are not imported."
+                    "Copies Codex authentication and, when compatible, the active provider's non-secret loopback route into Open-Science app data. Other global config, Skills and sessions are not imported."
                   )
                 : t(
-                    'Stores a separate Codex login in Open Science app data without changing your Codex CLI profile.'
+                    'Stores a separate Codex login in Open-Science app data without changing your Codex CLI profile.'
                   )}
             </p>
           </div>
@@ -589,7 +589,7 @@ const ProviderForm = ({
                     'Recommended. Uses your existing Claude login from ~/.claude. Sign in once via browser OAuth and use across all Claude tools.'
                   )
                 : t(
-                    'Advanced. Signs in through the browser and stores a separate Claude login in Open Science, completely isolated from your personal Claude profile.'
+                    'Advanced. Signs in through the browser and stores a separate Claude login in Open-Science, completely isolated from your personal Claude profile.'
                   )}
             </p>
             <div className="space-y-1.5 border-t border-border-200 pt-3">
@@ -844,7 +844,7 @@ const ProviderForm = ({
                           <>
                             <span className="block">
                               {t(
-                                'Open Science maps five relative strengths onto the exact levels accepted by this model.'
+                                'Open-Science maps five relative strengths onto the exact levels accepted by this model.'
                               )}
                             </span>
                             <span className="mt-1 block">
@@ -997,6 +997,24 @@ const ProviderForm = ({
           ) : null}
 
           {keyField}
+
+          {value.vendorId === 'deepseek' ? (
+            <div className="space-y-1.5 rounded-lg border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
+              <p>
+                {t(
+                  'DeepSeek routes deepseek-v4-flash and deepseek-v4-flash-vision-exp to DeepSeek V4.1 Flash (deepseek-flash), with Flash pricing.'
+                )}
+              </p>
+              <p>
+                {t(
+                  'Open Science keeps legacy model names after refresh so existing sessions can continue using their original model IDs.'
+                )}
+              </p>
+              <ExternalTextLink href="https://api-docs.deepseek.com/quick_start/pricing/">
+                {t('DeepSeek API model and routing details')}
+              </ExternalTextLink>
+            </div>
+          ) : null}
 
           {(() => {
             const models = value.vendorId

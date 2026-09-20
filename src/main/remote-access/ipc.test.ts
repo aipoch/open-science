@@ -68,7 +68,7 @@ describe('remote access IPC authorization', () => {
     expect(isDesktopCaller(context)).toBe(false)
     expect(canManagePairing(context)).toBe(false)
     expect(() => requireDesktopCaller(context)).toThrow(
-      'must be approved from the Open Science desktop app'
+      'must be approved from the Open-Science desktop app'
     )
     expect(() => requirePairingManager(context)).toThrow('approved browser')
   })
@@ -93,6 +93,7 @@ describe('remote access IPC authorization', () => {
       snapshot: vi.fn(),
       reject: vi.fn(),
       revoke: vi.fn(),
+      revokeBrowsers: vi.fn(),
       setMode: vi.fn()
     }
     registerRemoteAccessIpcHandlers(service as unknown as RemoteAccessService)
@@ -105,6 +106,9 @@ describe('remote access IPC authorization', () => {
       ['remote-access:approve', undefined],
       ['remote-access:reject', undefined],
       ['remote-access:revoke-browser', undefined],
+      ['remote-access:revoke-browsers', undefined],
+      ['remote-access:revoke-browsers', { browserIds: [] }],
+      ['remote-access:revoke-browsers', { browserIds: [''] }],
       ['remote-access:set-mode', { mode: 'invalid' }]
     ]
 
@@ -121,6 +125,7 @@ describe('remote access IPC authorization', () => {
     expect(service.snapshot).not.toHaveBeenCalled()
     expect(service.reject).not.toHaveBeenCalled()
     expect(service.revoke).not.toHaveBeenCalled()
+    expect(service.revokeBrowsers).not.toHaveBeenCalled()
     expect(service.setMode).not.toHaveBeenCalled()
   })
 })

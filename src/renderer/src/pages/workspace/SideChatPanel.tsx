@@ -13,7 +13,7 @@ import { useSmoothStreamingContent } from '@/components/streamdown/use-smooth-st
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { ArrowUp, Plus, Square, X } from 'lucide-react'
+import { ArrowUp, Square, X } from 'lucide-react'
 import {
   useCallback,
   useEffect,
@@ -47,6 +47,8 @@ type SideChatPanelProps = Readonly<{
   onClose: () => void
   controls?: ReactNode
   headerAction?: ReactNode
+  sendDisabledReason?: string
+  onRetryRestore?: () => void
 }>
 
 type SideChatMessageEntry = Extract<SideChatEntry, { kind: 'message' }>
@@ -162,7 +164,9 @@ const SideChatPanel = ({
   onCancel,
   onClose,
   controls,
-  headerAction
+  headerAction,
+  sendDisabledReason,
+  onRetryRestore
 }: SideChatPanelProps): React.JSX.Element => {
   const { t } = useTranslation()
   const [annotationError, setAnnotationError] = useState<string>()
@@ -222,6 +226,7 @@ const SideChatPanel = ({
   }, [view.sideSessionId])
 
   const submit = (): void => {
+    if (sendDisabledReason) return
     const text = view.draft.trim()
     if ((!text && annotations.length === 0) || view.running || !view.sideSessionId) return
     const validation = validateAnnotations(annotations, text)
@@ -354,6 +359,16 @@ const SideChatPanel = ({
               {view.running && presentationBarrierIndex < 0 ? (
                 <div className="py-2 text-text-300">{t('Thinking…')}</div>
               ) : null}
+              {sendDisabledReason && !view.running ? (
+                <div role="status" className="py-2 text-[12px] text-text-300">
+                  {sendDisabledReason}
+                  {onRetryRestore ? (
+                    <button type="button" className="ml-2 underline" onClick={onRetryRestore}>
+                      {t('Retry Side chat restore')}
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
               {view.persistenceError ? (
                 <div role="alert" className="py-2 text-[12px] text-danger-000">
                   {t('Could not save Side chat: {{error}}', { error: view.persistenceError })}
@@ -431,25 +446,6 @@ const SideChatPanel = ({
             />
           </SideChatAnnotationDrop>
           <div className="flex items-center gap-1">
-            <TooltipProvider delayDuration={200}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    aria-disabled="true"
-                    aria-label={t('Add to Side chat')}
-                    data-testid="side-chat-plus-button"
-                    className="grid size-8 shrink-0 cursor-not-allowed place-items-center rounded-md text-text-300 opacity-50 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
-                    onClick={(event) => event.preventDefault()}
-                  >
-                    <Plus className="size-4" aria-hidden="true" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="top">
-                  {t('Attachments are unavailable in Side chat')}
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
             <div className="flex-1" />
             {controls}
             <TooltipProvider delayDuration={200}>
@@ -461,7 +457,9 @@ const SideChatPanel = ({
                     disabled={
                       view.running
                         ? !view.sideSessionId
-                        : (!view.draft.trim() && annotations.length === 0) || !view.sideSessionId
+                        : Boolean(sendDisabledReason) ||
+                          (!view.draft.trim() && annotations.length === 0) ||
+                          !view.sideSessionId
                     }
                     aria-label={
                       view.running ? t('Cancel Side chat response') : t('Send Side chat follow up')

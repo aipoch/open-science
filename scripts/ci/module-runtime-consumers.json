@@ -1,0 +1,21 @@
+{
+  "src/main/session-package/inspection-worker-entry.ts": ["src/main/ipc.ts"],
+  "packages/process-tree-native/src/process_tree_native.cc": [
+    "packages/process-tree-native/index.cjs"
+  ],
+  "packages/process-tree-native/index.cjs": [
+    "src/main/process-tree.ts",
+    "src/main/process-tree-native-loading.macos.integration.test.ts"
+  ],
+  "packages/safe-file-publisher-native/src/safe_file_publisher_native.cc": [
+    "packages/safe-file-publisher-native/index.cjs"
+  ],
+  "packages/safe-file-publisher-native/index.cjs": [
+    "src/main/uploads/atomic-no-replace-publisher.ts",
+    "src/main/storage/remote-data-root.ts",
+    "src/main/uploads/atomic-no-replace-publisher.test.ts"
+  ],
+  "src/renderer/src/components/streamdown/markdown-parser.worker.ts": [
+    "src/renderer/src/components/streamdown/markdown-parser.ts"
+  ]
+}

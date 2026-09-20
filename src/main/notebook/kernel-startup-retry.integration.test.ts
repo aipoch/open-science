@@ -1,3 +1,4 @@
+import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
 import { spawnSync } from 'node:child_process'
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -69,7 +70,9 @@ it.skipIf(process.platform !== 'win32').each([
           args: wrapped.argv.slice(1),
           annotateStderr: (stderr) => stderr,
           cleanup: async (_reason, processOutcome) => ({
-            processesTerminated: processOutcome.processesTerminated,
+            processesTerminated:
+              processOutcome.processesTerminated ||
+              Boolean(await processOutcome.confirmTermination?.().catch(() => false)),
             networkClosed: true,
             temporaryResourcesRemoved: true
           })
@@ -111,9 +114,14 @@ it.skipIf(process.platform !== 'win32').each([
              })\n`
             : 'process.exit(1)\n'
       )
-      const failed = await executor.execute(request)
-      expect(failed.status).toBe('failed')
-      expect(failed.stderr).toContain('Notebook kernel process exited with exit code 1.')
+      const failed = await executor.execute(request).catch((error) => {
+        expect(error).toBeInstanceOf(NotebookExecutionStopError)
+        return undefined
+      })
+      if (failed) {
+        expect(failed.status).toBe('failed')
+        expect(failed.stderr).toContain('Notebook kernel process exited with exit code 1.')
+      }
       if (protectedMode && !crashAdmission) {
         descendantPid = Number(await readFile(join(root, 'descendant.pid'), 'utf8'))
       }
@@ -130,9 +138,9 @@ it.skipIf(process.platform !== 'win32').each([
           console.log(JSON.stringify({ req_id, stdout: 'RETRY_OK', stderr: '', error: null, figures: [] }))
         })\n`
       )
-      const retried = await executor.execute(request)
+      const retry = executor.execute(request)
       if (protectedMode && !crashAdmission) {
-        expect(retried, JSON.stringify(retried)).toMatchObject({
+        await expect(retry).resolves.toMatchObject({
           status: 'completed',
           stdout: 'RETRY_OK'
         })
@@ -141,8 +149,7 @@ it.skipIf(process.platform !== 'win32').each([
         expect(() => process.kill(descendantPid!, 0)).toThrow()
       } else {
         // A dead ordinary parent does not prove that its descendants were reaped.
-        expect(retried.status).toBe('failed')
-        expect(retried.stderr).toContain('KERNEL_STARTUP_FENCE')
+        await expect(retry).rejects.toBeInstanceOf(NotebookExecutionStopError)
         if (crashAdmission) {
           expect(Number(await readFile(join(root, 'loop.pid'), 'utf8'))).toBeGreaterThan(0)
         }

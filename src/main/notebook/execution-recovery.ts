@@ -13,7 +13,7 @@ export const executionRecoveryContext = (
     return undefined
   const prerequisite =
     retryAfter === 'cleanup-verified'
-      ? 'Open Science must verify cleanup before the affected runtime can be used again. Restarting alone does not prove cleanup.'
+      ? 'Open-Science must verify cleanup before the affected runtime can be used again. Restarting alone does not prove cleanup.'
       : 'The affected runtime must be available before retrying. This result does not establish its current availability.'
   const effects =
     execution === 'not-started'

@@ -1,7 +1,7 @@
 ## ✨ Highlights
 
 - **Move between projects in seconds.** The workspace project menu now lists your other active projects with title and description previews, so you can switch projects without leaving the session you are in. (#1957)
-- **Notebook code stays inside your network boundaries.** Notebook and compute runtimes can only reach Open Science defaults and the domains you approve, and when code tries a new destination, you approve or deny it right in the conversation. On Windows, protection applies once the sandbox's one-time administrator setup is complete. (#1911)
+- **Notebook code stays inside your network boundaries.** Notebook and compute runtimes can only reach Open-Science defaults and the domains you approve, and when code tries a new destination, you approve or deny it right in the conversation. On Windows, protection applies once the sandbox's one-time administrator setup is complete. (#1911)
 - **Enter credentials once, reuse them everywhere.** API keys, access tokens, and OAuth sign-ins can be stored device-wide and bound to any custom connector's environment variables, headers, or sign-in. (#1948, #1963)
 - **A German interface.** German joins Spanish, French, Chinese (Simplified and Traditional), Japanese, Korean, and Russian, with README translations to match. (#1761)
 

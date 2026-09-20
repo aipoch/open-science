@@ -58,6 +58,7 @@ vi.mock('electron', () => ({
   net: { fetch: vi.fn((...args: Parameters<typeof fetch>) => globalThis.fetch(...args)) }
 }))
 
+const { initDataRoot } = await import('../storage-root')
 const { SettingsService } = await import('./service')
 const { ResponsesBridge: ResponsesBridgeClass } = await import('./responses-bridge')
 const { SettingsRepository } = await import('./repository')
@@ -959,17 +960,17 @@ describe('SettingsService: providers', () => {
     expect(await readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')).toBe(
       [
         'cli_auth_credentials_store = "file"',
-        '# Open Science: begin imported Codex route selection',
+        '# Open-Science: begin imported Codex route selection',
         'model_provider = "subscription-route"',
-        '# Open Science: end imported Codex route selection',
-        '# Open Science: begin imported Codex provider',
+        '# Open-Science: end imported Codex route selection',
+        '# Open-Science: begin imported Codex provider',
         '[model_providers."subscription-route"]',
         'name = "OpenAI"',
         'base_url = "http://127.0.0.1:1087/v1"',
         'wire_api = "responses"',
         'requires_openai_auth = true',
         'supports_websockets = false',
-        '# Open Science: end imported Codex provider',
+        '# Open-Science: end imported Codex provider',
         ''
       ].join('\n')
     )
@@ -1117,7 +1118,7 @@ describe('SettingsService: providers', () => {
     ).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(
       readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')
-    ).resolves.not.toContain('Open Science:')
+    ).resolves.not.toContain('Open-Science:')
     await expect(readFile(join(userCodexDir, 'auth.json'), 'utf8')).resolves.toContain('global')
   })
 
@@ -1412,7 +1413,7 @@ describe('SettingsService: providers', () => {
       ok: false,
       category: 'auth',
       message:
-        'No existing Codex login was found. Run `codex login` or use the isolated Open Science login.'
+        'No existing Codex login was found. Run `codex login` or use the isolated Open-Science login.'
     })
     expect(codexAuth.getStatus).toHaveBeenCalledWith('shared')
   })
@@ -1665,7 +1666,7 @@ describe('SettingsService: providers', () => {
     expect(result).toEqual({
       ok: false,
       category: 'unknown',
-      message: 'No isolated Open Science Codex login is configured.'
+      message: 'No isolated Open-Science Codex login is configured.'
     })
     expect(codexAuth.cancelLogin).not.toHaveBeenCalled()
     expect(codexAuth.logoutIsolated).not.toHaveBeenCalled()
@@ -1864,15 +1865,15 @@ describe('SettingsService: providers', () => {
     })
 
     const backend = await resolveActiveBackend(service, {
-      systemPromptAppends: ['Stable Open Science app guidance.']
+      systemPromptAppends: ['Stable Open-Science app guidance.']
     })
 
-    expect(backend.persistentSystemPrompt).toContain('Stable Open Science app guidance.')
+    expect(backend.persistentSystemPrompt).toContain('Stable Open-Science app guidance.')
     const appInstructions = await readFile(
       join(storageRoot, 'opencode', 'config', 'opencode', 'instructions', 'open-science.md'),
       'utf8'
     )
-    expect(appInstructions).toContain('Stable Open Science app guidance.')
+    expect(appInstructions).toContain('Stable Open-Science app guidance.')
     expect(appInstructions).toContain(join(storageRoot, 'skills', 'personal'))
     expect(appInstructions).toContain(join(storageRoot, 'skills', 'imported'))
 
@@ -2438,30 +2439,38 @@ describe('SettingsService: preflight & spawn config', () => {
     })
   })
 
-  it('closes the provider gate when the configured model leaves the catalog', async () => {
-    const service = createService()
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
-    const created = (
-      await service.upsertProvider({
-        type: 'official',
-        name: 'DeepSeek',
-        vendorId: 'deepseek',
-        key: 'k'
+  it.each([
+    { vendorId: 'anthropic', model: 'claude-opus-5', ready: false },
+    { vendorId: 'deepseek', model: 'deepseek-v4-flash', ready: true }
+  ] as const)(
+    'checks the provider gate after discovery changes for $vendorId',
+    async ({ vendorId, model, ready }) => {
+      const service = createService()
+      await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+      const created = (
+        await service.upsertProvider({
+          type: 'official',
+          name: vendorId,
+          vendorId,
+          key: 'k'
+        })
+      ).providers[0]
+      await service.setActiveProvider(created.id, model)
+      const stored = (await repository.getSettings()).providers[0]
+      await repository.upsertProvider({
+        ...stored,
+        fetchedModels: ['replacement-model'],
+        lastValidatedAt: 1
       })
-    ).providers[0]
-    await service.setActiveProvider(created.id, 'deepseek-v4-pro')
-    const stored = (await repository.getSettings()).providers[0]
-    await repository.upsertProvider({
-      ...stored,
-      fetchedModels: ['replacement-model'],
-      lastValidatedAt: 1
-    })
 
-    await expect(service.getPreflight()).resolves.toMatchObject({
-      activeProviderReady: false,
-      providerReadiness: { status: 'not_ready', reason: 'model-not-found' }
-    })
-  })
+      await expect(service.getPreflight()).resolves.toMatchObject({
+        activeProviderReady: ready,
+        providerReadiness: ready
+          ? { status: 'ready' }
+          : { status: 'not_ready', reason: 'model-not-found' }
+      })
+    }
+  )
 
   it('closes the provider gate when the active shared Claude session is signed out', async () => {
     const claudeSharedAuth: ClaudeSharedAuthControllerPort = {
@@ -2949,7 +2958,7 @@ describe('SettingsService: preflight & spawn config', () => {
     vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'codex')
 
     const backend = await resolveActiveBackend(service, {
-      systemPromptAppends: ['Stable Open Science developer guidance.']
+      systemPromptAppends: ['Stable Open-Science developer guidance.']
     })
     const selection = await service.captureActiveAgentBackendSelection()
 
@@ -2965,7 +2974,7 @@ describe('SettingsService: preflight & spawn config', () => {
     expect(backend.env.CODEX_API_KEY).toBeUndefined()
     const developerInstructions = JSON.parse(backend.env.CODEX_CONFIG ?? '{}')
       .developer_instructions as string
-    expect(developerInstructions).toContain('Stable Open Science developer guidance.')
+    expect(developerInstructions).toContain('Stable Open-Science developer guidance.')
     expect(developerInstructions).toContain(
       'Load the matching `mcp-*` skill before the first `host.mcp` call'
     )
@@ -3190,7 +3199,7 @@ describe('SettingsService: preflight & spawn config', () => {
     await service.setActiveProvider(provider.id)
 
     await expect(resolveActiveBackend(service)).rejects.toThrow(
-      'Open Science Codex ACP adapter not found. Install Codex in settings.'
+      'Open-Science Codex ACP adapter not found. Install Codex in settings.'
     )
   })
 
@@ -4062,12 +4071,14 @@ describe('SettingsService: official vendors', () => {
           'deepseek-v4-flash',
           'deepseek-v4-pro',
           'deepseek-v4-pro[1m]',
+          'deepseek-flash',
           'deepseek-v4-flash-vision-exp'
         ],
         modelOverrides: {
           'deepseek-v4-flash': 'deepseek-v4-flash',
           'deepseek-v4-pro': 'deepseek-v4-pro',
           'deepseek-v4-pro[1m]': 'deepseek-v4-pro[1m]',
+          'deepseek-flash': 'deepseek-flash',
           'deepseek-v4-flash-vision-exp': 'deepseek-v4-flash-vision-exp'
         }
       }
@@ -4080,12 +4091,14 @@ describe('SettingsService: official vendors', () => {
         'deepseek-v4-flash',
         'deepseek-v4-pro',
         'deepseek-v4-pro[1m]',
+        'deepseek-flash',
         'deepseek-v4-flash-vision-exp'
       ],
       modelOverrides: {
         'deepseek-v4-flash': 'deepseek-v4-flash',
         'deepseek-v4-pro': 'deepseek-v4-pro',
         'deepseek-v4-pro[1m]': 'deepseek-v4-pro[1m]',
+        'deepseek-flash': 'deepseek-flash',
         'deepseek-v4-flash-vision-exp': 'deepseek-v4-flash-vision-exp'
       }
     })
@@ -4111,7 +4124,7 @@ describe('SettingsService: official vendors', () => {
     expect(backend.contextUsageModel).toBe('deepseek-v4-flash')
   })
 
-  it('refreshes models from the vendor and persists them over the bundled catalog', async () => {
+  it('refreshes DeepSeek models while retaining bundled compatibility names', async () => {
     const service = createService()
     mockedNet.fetch.mockClear()
     vi.stubGlobal(
@@ -4142,9 +4155,52 @@ describe('SettingsService: official vendors', () => {
       expect.objectContaining({ method: 'GET', signal: expect.any(AbortSignal) })
     )
 
-    // The fetched list now backs the provider view (and persists).
+    // Preserve the raw discovery result, but expose compatibility names in the effective catalog.
+    expect((await repository.getSettings()).providers[0].fetchedModels).toEqual([
+      'deepseek-v5',
+      'deepseek-v4-pro'
+    ])
     const view = (await service.getSettingsView()).providers[0]
-    expect(view.models).toEqual(['deepseek-v5', 'deepseek-v4-pro'])
+    expect(view.models).toEqual([
+      'deepseek-v5',
+      'deepseek-v4-pro',
+      'deepseek-v4-pro[1m]',
+      'deepseek-flash',
+      'deepseek-v4-flash',
+      'deepseek-v4-flash-vision-exp'
+    ])
+  })
+
+  it('keeps a captured DeepSeek session model usable and passes its original id after refresh', async () => {
+    const service = createService()
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    const created = (
+      await service.upsertProvider({
+        type: 'official',
+        name: 'DeepSeek',
+        vendorId: 'deepseek',
+        key: 'k'
+      })
+    ).providers[0]
+    await service.setActiveProvider(created.id, 'deepseek-v4-flash')
+    const selection = await service.captureActiveAgentBackendSelection()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            data: [{ id: 'deepseek-flash' }, { id: 'deepseek-v4-pro' }]
+          })
+        )
+      )
+    )
+    expect(await service.refreshProviderModels({ providerId: created.id })).toMatchObject({
+      ok: true
+    })
+    expect((await service.getSettingsView()).activeModel).toBe('deepseek-v4-flash')
+    const backend = await service.resolveAgentBackend(selection)
+    expect(backend.env.ANTHROPIC_MODEL).toBe('deepseek-v4-flash')
+    expect(backend.contextUsageModel).toBe('deepseek-v4-flash')
   })
 
   it('reports a refresh failure without changing the bundled catalog', async () => {
@@ -4180,6 +4236,60 @@ describe('SettingsService: official vendors', () => {
     expect(result.ok).toBe(false)
     expect(result.message).toMatch(/no model-list endpoint/i)
   })
+
+  it.each(['opencode', 'claude-code'] as const)(
+    'validates draft and saved OpenCode Go accounts under %s without losing routing headers',
+    async (framework) => {
+      const service = createService()
+      const sessions: string[] = []
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (_input, init) => {
+          const headers = new Headers(init?.headers)
+          const session = headers.get('x-opencode-session')
+          if (!session) {
+            return new Response(
+              JSON.stringify({
+                error: {
+                  message: 'Request is missing x-opencode-session and cannot be routed efficiently.'
+                }
+              }),
+              { status: 400 }
+            )
+          }
+          sessions.push(session)
+          expect(headers.get('user-agent')).toBe('open-science/provider-validation')
+          expect(headers.get('authorization')).toBe('Bearer synthetic-go-key')
+          return new Response('{}')
+        })
+      )
+      await service.setAgentFramework(framework)
+      const draft = {
+        type: 'official' as const,
+        vendorId: 'opencode-go' as const,
+        key: 'synthetic-go-key'
+      }
+      const draftResult = await service.validateProvider({ draft, model: 'kimi-k2.7-code' })
+      expect(draftResult).toMatchObject({ ok: true, category: 'ok' })
+      expect(Boolean(draftResult.frameworkIncompatible)).toBe(framework === 'claude-code')
+
+      const provider = (await service.upsertProvider(draft)).providers.find(
+        (entry) => entry.vendorId === 'opencode-go'
+      )!
+      const result = await service.validateProvider({
+        providerId: provider.id,
+        model: 'kimi-k2.7-code'
+      })
+      expect(result).toMatchObject({ ok: true, category: 'ok', applied: true })
+      const stored = (await repository.getSettings()).providers.find(
+        (entry) => entry.id === provider.id
+      )!
+      expect(stored.lastValidatedAt).toBeGreaterThan(0)
+      expect(stored.lastValidationFailure).toBeUndefined()
+      expect(sessions.length).toBeGreaterThanOrEqual(2)
+      expect(new Set(sessions).size).toBe(sessions.length)
+    }
+  )
 
   it('uses a basic Chat Completions probe outside Codex', async () => {
     const service = createService()
@@ -4348,12 +4458,14 @@ describe('SettingsService: image-input capability', () => {
       })
     ).providers[0]
 
-    let view = (
-      await service.setActiveProvider(created.id, 'deepseek-v4-flash-vision-exp')
-    ).providers.find((provider) => provider.id === created.id)
-    expect(view?.supportsImageInput).toBe(true)
+    for (const model of ['deepseek-flash', 'deepseek-v4-flash', 'deepseek-v4-flash-vision-exp']) {
+      const snapshot = await service.setActiveProvider(created.id, model)
+      expect(snapshot.activeModel).toBe(model)
+      const view = snapshot.providers.find((provider) => provider.id === created.id)
+      expect(view?.supportsImageInput).toBe(true)
+    }
 
-    view = (await service.setActiveProvider(created.id, 'deepseek-v4-flash')).providers.find(
+    const view = (await service.setActiveProvider(created.id, 'deepseek-v4-pro')).providers.find(
       (provider) => provider.id === created.id
     )
     expect(view?.supportsImageInput).toBe(false)
@@ -4438,7 +4550,9 @@ describe('SettingsService: onboarding', () => {
   it('marks onboarding complete and surfaces it in the snapshot', async () => {
     const service = createService()
 
+    initDataRoot(storageRoot)
     const snapshot = await service.markOnboardingComplete()
+    expect((await service.getStoredSettings()).dataRoot).toBe(storageRoot)
     expect(snapshot.onboardingCompletedAt).toBeTypeOf('number')
 
     // The persisted value is visible on a fresh read too.
@@ -4458,9 +4572,7 @@ describe('SettingsService: onboarding', () => {
   it('persists a new dataRoot with onboarding completion across a fresh read', async () => {
     const service = createService()
 
-    // The repository canonicalizes dataRoot to the host separator on read (for samePath comparisons),
-    // so build the fixture the same way — a bare POSIX literal comes back with backslashes on Windows
-    // and would fail the round-trip.
+    // Use a host-native absolute fixture; the repository preserves its saved spelling.
     const dataRoot = normalize('/mnt/new-data')
     await service.setDataRoot(dataRoot, { completeOnboarding: true })
 
@@ -4499,6 +4611,43 @@ describe('SettingsService: skills', () => {
       configRoot: storageRoot,
       skillRegistry: new SkillRegistry(await seedBundle())
     })
+
+  it('prepares complete disabled bound Skill packages for an Attempt without changing Main settings', async () => {
+    const bundle = await seedBundle()
+    await mkdir(join(bundle, 'demo', 'references'), { recursive: true })
+    await writeFile(join(bundle, 'demo', 'references', 'workflow.md'), 'reference body')
+    const service = new SettingsService({
+      repository,
+      configRoot: storageRoot,
+      skillRegistry: new SkillRegistry(bundle)
+    })
+    await service.setSkillEnabled({ id: 'demo', enabled: false })
+    await service.createSkill({ name: 'unbound', description: 'Unbound skill.', body: '# Unbound' })
+    const unbound = (await service.listSkills()).find((entry) => entry.name === 'unbound')!
+    await service.setSkillEnabled({ id: unbound.id, enabled: false })
+    const configRoot = join(storageRoot, 'delegated-attempt', '.claude')
+    const prepared = await service.prepareDelegatedSkills(configRoot, ['demo'])
+    try {
+      expect(prepared.skillIds).toEqual(['demo'])
+      expect(prepared.catalog).toContainEqual({
+        name: 'demo',
+        description: 'A demo skill.',
+        path: join(configRoot, 'skills', 'demo', 'SKILL.md')
+      })
+      await expect(
+        readFile(join(configRoot, 'skills', 'demo', 'references', 'workflow.md'), 'utf8')
+      ).resolves.toBe('reference body')
+      expect(await readdir(join(configRoot, 'skills'))).not.toContain('unbound')
+      expect(await service.skillsNeedingForceLoad(['demo'])).toEqual(['demo'])
+    } finally {
+      await prepared.dispose()
+    }
+    expect(await readdir(join(configRoot, 'skills'))).toEqual([])
+    await expect(service.prepareDelegatedSkills(configRoot, ['missing-skill'])).rejects.toThrow(
+      'could not be prepared'
+    )
+    expect(await readdir(join(configRoot, 'skills'))).toEqual([])
+  })
 
   it('lists skills with enabled reflecting disabledSkillIds and returns detail body', async () => {
     const service = await createSkillService()
@@ -8605,9 +8754,9 @@ describe('SettingsService: claude-shared login orchestration', () => {
     ).resolves.toMatchObject({
       ok: false,
       category: 'auth',
-      message: expect.stringContaining('disconnected from Open Science')
+      message: expect.stringContaining('disconnected from Open-Science')
     })
-    await expect(resolveActiveBackend(service)).rejects.toThrow(/disconnected from Open Science/)
+    await expect(resolveActiveBackend(service)).rejects.toThrow(/disconnected from Open-Science/)
 
     await expect(service.loginClaudeShared()).resolves.toMatchObject({ ok: true, applied: true })
     await expect(resolveActiveBackend(service)).resolves.toMatchObject({

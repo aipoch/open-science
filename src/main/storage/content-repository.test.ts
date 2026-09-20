@@ -13,7 +13,7 @@ import {
   lstat
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 
 import type { PrismaClient } from '@prisma/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -102,6 +102,272 @@ describe('content repository', () => {
       await markContentBlobAvailable(transaction, input, createdAt)
     })
   }
+
+  it('retains orphan authority when its content parent is replaced by a symlink', async () => {
+    const repository = await createRepository()
+    const sourcePath = join(storageRoot!, 'source.txt')
+    await writeFile(sourcePath, 'original content')
+    const content = await repository.publish({ sourcePath })
+    const parent = dirname(content.path)
+    const outside = await mkdtemp(join(tmpdir(), 'open-science-outside-content-'))
+    const sentinel = join(outside, content.checksum)
+    try {
+      await writeFile(sentinel, 'outside sentinel')
+      await rename(parent, `${parent}-original`)
+      await symlink(outside, parent, process.platform === 'win32' ? 'junction' : 'dir')
+      const result = await repository.sweep({ createdBefore: new Date(Date.now() + 1_000) })
+      const survivingBytes = await readFile(sentinel, 'utf8').catch(() => null)
+      expect({ result, survivingBytes }).toEqual({
+        result: { removedIds: [], retainedIds: [], failedIds: [content.id] },
+        survivingBytes: 'outside sentinel'
+      })
+      await expect(
+        client!.contentBlob.findUnique({ where: { id: content.id } })
+      ).resolves.not.toBeNull()
+    } finally {
+      await rm(outside, { recursive: true, force: true })
+    }
+  })
+
+  it.each(['leaf', 'parent'] as const)(
+    'finishes cleanup when the content %s is already absent',
+    async (missing) => {
+      const repository = await createRepository()
+      const storageKey = 'uploads/legacy/absent.pdf'
+      await publishFixture('absent', storageKey, Buffer.from('already removed'))
+      const path = join(storageRoot!, storageKey)
+      await rm(missing === 'leaf' ? path : dirname(path), { recursive: true })
+      await expect(
+        repository.sweep({ contentIds: ['absent'], createdBefore: new Date() })
+      ).resolves.toEqual({
+        removedIds: ['absent'],
+        retainedIds: [],
+        failedIds: []
+      })
+    }
+  )
+
+  it('does not discard content authority when the configured storage root is unavailable', async () => {
+    await createRepository()
+    await publishFixture('retained', 'content/retained', Buffer.from('keep'))
+    const unavailable = new ContentRepository({
+      storageRoot: join(storageRoot!, 'unavailable'),
+      getClient: async () => client!
+    })
+    await expect(
+      unavailable.sweep({ contentIds: ['retained'], createdBefore: new Date() })
+    ).resolves.toEqual({
+      removedIds: [],
+      retainedIds: [],
+      failedIds: ['retained']
+    })
+    expect(await readFile(join(storageRoot!, 'content/retained'), 'utf8')).toBe('keep')
+    await expect(
+      client!.contentBlob.findUnique({ where: { id: 'retained' } })
+    ).resolves.not.toBeNull()
+  })
+
+  const interruptContentRemoval = async (
+    content: { id: string; path: string; storageKey: string },
+    boundary: 'before receipt' | 'before move' | 'after move' | 'after unlink'
+  ): Promise<string> => {
+    const directory = dirname(content.path)
+    const parent = await lstat(directory, { bigint: true })
+    const file = await lstat(content.path, { bigint: true })
+    const name = `.content-recovery-${sha256(Buffer.from(JSON.stringify([content.id, content.storageKey])))}`
+    const quarantine = join(directory, name)
+    await mkdir(quarantine, { mode: 0o700 })
+    if (boundary !== 'before receipt') {
+      await writeFile(
+        join(quarantine, 'receipt'),
+        [
+          'content-removal-v1',
+          name,
+          basename(content.path),
+          parent.dev,
+          parent.ino,
+          file.dev,
+          file.ino,
+          file.size,
+          file.mtimeNs,
+          ''
+        ].join('\n')
+      )
+    }
+    if (boundary === 'after move' || boundary === 'after unlink') {
+      await rename(content.path, join(quarantine, 'payload'))
+    }
+    if (boundary === 'after unlink') await rm(join(quarantine, 'payload'))
+    await client!.contentBlob.update({ where: { id: content.id }, data: { state: 'quarantined' } })
+    return quarantine
+  }
+
+  it
+    .skipIf(process.platform === 'win32')
+    .each(['before receipt', 'before move', 'after move', 'after unlink'] as const)(
+    'recovers content removal %s through targeted sweep',
+    async (boundary) => {
+      const repository = await createRepository()
+      const sourcePath = join(storageRoot!, 'source.txt')
+      await writeFile(sourcePath, 'interrupted content')
+      const content = await repository.publish({ sourcePath })
+      const quarantine = await interruptContentRemoval(content, boundary)
+      const request = { contentIds: [content.id], createdBefore: new Date(Date.now() + 1_000) }
+      await expect(repository.sweep(request)).resolves.toEqual({
+        removedIds: [content.id],
+        retainedIds: [],
+        failedIds: []
+      })
+      await expect(lstat(quarantine)).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(lstat(content.path)).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(
+        client!.contentBlob.findUnique({ where: { id: content.id } })
+      ).resolves.toBeNull()
+      await expect(repository.sweep(request)).resolves.toEqual({
+        removedIds: [],
+        retainedIds: [],
+        failedIds: []
+      })
+    }
+  )
+
+  it.skipIf(process.platform === 'win32')(
+    'recovers a removal before republishing the same content',
+    async () => {
+      const repository = await createRepository()
+      const sourcePath = join(storageRoot!, 'source.txt')
+      await writeFile(sourcePath, 'publish again')
+      const content = await repository.publish({ sourcePath })
+      const quarantine = await interruptContentRemoval(content, 'after move')
+      await expect(repository.publish({ sourcePath })).resolves.toMatchObject({ id: content.id })
+      expect(await readFile(content.path, 'utf8')).toBe('publish again')
+      await expect(lstat(quarantine)).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(repository.verify(content.id)).resolves.toMatchObject({ state: 'available' })
+    }
+  )
+
+  it('preserves a referenced content receipt during full sweep and publication', async () => {
+    const repository = await createRepository()
+    const sourcePath = join(storageRoot!, 'source.txt')
+    await writeFile(sourcePath, 'referenced content')
+    const content = await repository.publish({ sourcePath })
+    const quarantine = await interruptContentRemoval(content, 'before move')
+    await client!.literatureItem.create({
+      data: {
+        itemType: 'journalArticle',
+        title: 'Retained reference',
+        attachments: {
+          create: {
+            kind: 'fullText',
+            versions: {
+              create: {
+                contentBlobId: content.id,
+                versionNumber: 1,
+                filename: 'source.txt',
+                contentType: 'text/plain',
+                sizeBytes: content.sizeBytes,
+                checksum: content.checksum
+              }
+            }
+          }
+        }
+      }
+    })
+    await expect(
+      repository.sweep({ createdBefore: new Date(Date.now() + 1_000) })
+    ).resolves.toEqual({
+      removedIds: [],
+      retainedIds: [content.id],
+      failedIds: []
+    })
+    await expect(repository.publish({ sourcePath })).rejects.toThrow('unresolved removal receipt')
+    expect(await readFile(content.path, 'utf8')).toBe('referenced content')
+    expect(await readFile(join(quarantine, 'receipt'), 'utf8')).toContain('content-removal-v1')
+  })
+
+  it.each(['replacement', 'malformed', 'wrong authority', 'wrong filename'])(
+    'retains content removal evidence on %s across retries',
+    async (conflict) => {
+      const repository = await createRepository()
+      const sourcePath = join(storageRoot!, 'source.txt')
+      await writeFile(sourcePath, 'original')
+      const content = await repository.publish({ sourcePath })
+      const quarantine = await interruptContentRemoval(content, 'after move')
+      if (conflict === 'replacement') await writeFile(content.path, 'replacement')
+      else {
+        const receipt = join(quarantine, 'receipt')
+        const lines = (await readFile(receipt, 'utf8')).split('\n')
+        if (conflict === 'malformed') lines[0] = 'unknown-version'
+        if (conflict === 'wrong authority') lines[1] = `.content-recovery-${'0'.repeat(64)}`
+        if (conflict === 'wrong filename') lines[2] = 'another-file'
+        await writeFile(receipt, lines.join('\n'))
+      }
+      for (let attempt = 0; attempt < 2; attempt++) {
+        await expect(
+          repository.sweep({ createdBefore: new Date(Date.now() + 1_000) })
+        ).resolves.toEqual({
+          removedIds: [],
+          retainedIds: [],
+          failedIds: [content.id]
+        })
+        expect(await readFile(join(quarantine, 'payload'), 'utf8')).toBe('original')
+        await expect(
+          client!.contentBlob.findUnique({ where: { id: content.id } })
+        ).resolves.toMatchObject({ state: 'quarantined' })
+      }
+      if (conflict === 'replacement')
+        expect(await readFile(content.path, 'utf8')).toBe('replacement')
+    }
+  )
+
+  it.each(['parent', 'leaf'])(
+    'refuses a content %s replacement at the native deletion boundary',
+    async (level) => {
+      const repository = await createRepository()
+      const sourcePath = join(storageRoot!, 'source.txt')
+      await writeFile(sourcePath, 'owned')
+      const content = await repository.publish({ sourcePath })
+      const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+      let replaced = false
+      vi.mocked(lstat).mockImplementation((...args) => {
+        if (String(args[0]) !== content.path || replaced) return fs.lstat(...args)
+        replaced = true
+        return (async () => {
+          const observed = await fs.lstat(...args)
+          const target = level === 'parent' ? dirname(content.path) : content.path
+          await rename(target, `${target}-held`)
+          if (level === 'parent') await mkdir(target)
+          await writeFile(content.path, 'replacement')
+          return observed
+        })() as ReturnType<typeof lstat>
+      })
+      await expect(
+        repository.sweep({ contentIds: [content.id], createdBefore: new Date(Date.now() + 1_000) })
+      ).resolves.toMatchObject({
+        removedIds: [],
+        failedIds: [content.id]
+      })
+      expect(await readFile(content.path, 'utf8')).toBe('replacement')
+      await expect(
+        client!.contentBlob.findUnique({ where: { id: content.id } })
+      ).resolves.toMatchObject({ state: 'quarantined' })
+    }
+  )
+
+  it.each(['uploads', 'artifacts'])(
+    'safely removes unreferenced legacy %s content without migration',
+    async (directory) => {
+      const repository = await createRepository()
+      const storageKey = `${directory}/legacy/paper.pdf`
+      await publishFixture('legacy', storageKey, Buffer.from('legacy bytes'))
+      await expect(repository.sweep({ createdBefore: new Date() })).resolves.toEqual({
+        removedIds: ['legacy'],
+        retainedIds: [],
+        failedIds: []
+      })
+      await expect(lstat(join(storageRoot!, storageKey))).rejects.toMatchObject({ code: 'ENOENT' })
+    }
+  )
 
   it.each([false, true])(
     'retains overlapping publications across repositories and releases them on failure=%s',
@@ -443,12 +709,13 @@ describe('content repository', () => {
       markClaimed = resolve
     })
     const actualFs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
-    vi.mocked(rm).mockImplementation(async (path, options) => {
-      if (path === original.path) {
+    vi.mocked(lstat).mockImplementation((...args) => {
+      if (String(args[0]) !== original.path) return actualFs.lstat(...args)
+      return (async () => {
         markClaimed()
         await unlinkAllowed
-      }
-      return actualFs.rm(path, options)
+        return actualFs.lstat(...args)
+      })() as ReturnType<typeof lstat>
     })
     const sweeping = sweeper.sweep({
       createdBefore: new Date(Date.now() + 1_000),

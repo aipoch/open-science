@@ -11,9 +11,31 @@ export const useFollowScrollBottom = (enabled: boolean): RefObject<HTMLDivElemen
   const enabledRef = useRef(enabled)
   const autoscrollFrameRef = useRef<number | undefined>(undefined)
 
+  const bindingRef = useRef<
+    | {
+        viewport: HTMLDivElement
+        content: Element | null
+        scrollToEnd: () => void
+        cleanup: () => void
+      }
+    | undefined
+  >(undefined)
+
   useLayoutEffect(() => {
+    const wasEnabled = enabledRef.current
+    const hasResizeObserver = typeof ResizeObserver !== 'undefined'
     enabledRef.current = enabled
     const viewport = viewportRef.current
+    const content = viewport?.firstElementChild ?? null
+    const previous = bindingRef.current
+    if (previous && previous.viewport === viewport && previous.content === content) {
+      if (enabled && followingRef.current && (!wasEnabled || !hasResizeObserver)) {
+        previous.scrollToEnd()
+      }
+      return
+    }
+    previous?.cleanup()
+    bindingRef.current = undefined
     if (!viewport) return
 
     const clearAutoscroll = (): void => {
@@ -39,6 +61,9 @@ export const useFollowScrollBottom = (enabled: boolean): RefObject<HTMLDivElemen
       const atBottom = isAtFollowScrollBottom(viewport)
       // Programmatic follow lands on the bottom; a user move away from it always pauses.
       if (autoscrollingRef.current && atBottom) return
+      // A user move ends the pending programmatic-scroll guard immediately.
+      clearAutoscroll()
+      autoscrollingRef.current = false
       followingRef.current = atBottom
     }
 
@@ -52,16 +77,24 @@ export const useFollowScrollBottom = (enabled: boolean): RefObject<HTMLDivElemen
     const observer =
       typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(handleContentResize)
     observer?.observe(viewport)
-    const content = viewport.firstElementChild
     if (content) observer?.observe(content)
 
-    return () => {
+    const cleanup = (): void => {
       viewport.removeEventListener('scroll', handleScroll)
       observer?.disconnect()
       clearAutoscroll()
       autoscrollingRef.current = false
     }
+    bindingRef.current = { viewport, content, scrollToEnd, cleanup }
   })
+
+  useLayoutEffect(
+    () => () => {
+      bindingRef.current?.cleanup()
+      bindingRef.current = undefined
+    },
+    []
+  )
 
   return viewportRef
 }

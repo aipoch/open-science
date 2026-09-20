@@ -80,7 +80,6 @@ type MarketplaceServiceOptions = {
   officialSource?: OfficialMarketplaceSourceConfig
   now?: () => Date
   token?: () => string
-  getDisabledSkillIds: () => Promise<readonly string[]>
   getInstalledSpecialists: () => Promise<
     readonly {
       id: string
@@ -142,7 +141,6 @@ type InstallCandidateState = {
   ownerId?: number
   sourceId: string
   packageCandidateToken: string
-  newSkillIds: readonly string[]
   provenance: MarketplaceInstallProvenance
 }
 
@@ -621,7 +619,6 @@ export class MarketplaceService {
         ...(ownerId === undefined ? {} : { ownerId }),
         sourceId: loaded.source.id,
         packageCandidateToken: preview.candidateToken,
-        newSkillIds,
         provenance: {
           sourceId: loaded.source.id,
           specialistId: loaded.release.specialist_id,
@@ -664,17 +661,14 @@ export class MarketplaceService {
       return { status: 'failed', code: 'candidate-expired' }
     }
     await this.recoverUnlocked()
-    const disabledBefore = new Set(await this.options.getDisabledSkillIds())
-    const newlyDisabled = candidate.newSkillIds.filter((id) => !disabledBefore.has(id))
     await this.options.repository.beginInstallation({
       provenance: candidate.provenance,
-      newlyDisabledSkillIds: newlyDisabled
+      // New installs are disabled by the shared package transaction. Keep the receipt shape
+      // and legacy recovery above for Marketplace transactions written by older versions.
+      newlyDisabledSkillIds: []
     })
     let result: MarketplaceInstallResult
     try {
-      if (candidate.newSkillIds.length > 0) {
-        await this.options.setSkillsMainEnabled(candidate.newSkillIds, false)
-      }
       result = await this.options.packages.install(request, ownerId, {
         activateAfterInstall: true,
         origin: 'marketplace'
@@ -689,7 +683,11 @@ export class MarketplaceService {
       if (result.code === 'recovery-failed' || result.code === 'rollback-failed') {
         this.packageRecovery = undefined
         await this.recoverUnlocked().catch(() => undefined)
-      } else await this.rollbackPendingInstallation(candidate.provenance, newlyDisabled)
+      } else
+        await this.options.repository.clearPendingInstallation(
+          candidate.provenance.sourceId,
+          candidate.provenance.specialistId
+        )
       return result
     }
     this.installCandidates.delete(request.candidateToken)
@@ -704,19 +702,6 @@ export class MarketplaceService {
         return { ...result, provenanceLinked: false }
       }
     }
-  }
-
-  private async rollbackPendingInstallation(
-    provenance: MarketplaceInstallProvenance,
-    newlyDisabledSkillIds: readonly string[]
-  ): Promise<void> {
-    if (newlyDisabledSkillIds.length > 0) {
-      await this.options.setSkillsMainEnabled(newlyDisabledSkillIds, true)
-    }
-    await this.options.repository.clearPendingInstallation(
-      provenance.sourceId,
-      provenance.specialistId
-    )
   }
 
   private runExclusive<T>(operation: () => Promise<T>): Promise<T> {

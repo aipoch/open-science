@@ -1,3 +1,4 @@
+import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { ErrorNotice } from '@/components/error-notice'
 import { AlertDialog } from 'radix-ui'
 import {
@@ -103,7 +104,7 @@ const translateMemoryError = (t: Translate, error: unknown): string => {
 }
 
 const MemoryErrorBanner = ({ message }: { message: string }): React.JSX.Element => (
-  <ErrorNotice role="alert" tone="amber" description={message} />
+  <ErrorNotice inline role="alert" tone="amber" description={message} />
 )
 
 const confirmButtonClassName =
@@ -449,7 +450,9 @@ const EntryRow = ({
                 aria-label={t('Copy note')}
                 onClick={() => void copyNote()}
               >
-                {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+                <span key={String(copied)} className="button-feedback">
+                  {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+                </span>
               </Button>
             </TooltipTrigger>
             <TooltipContent>{copied ? t('Copied') : t('Copy note')}</TooltipContent>
@@ -539,6 +542,7 @@ const MemoryList = ({
   const [addingTarget, setAddingTarget] = useState<string>()
   const [confirmClear, setConfirmClear] = useState(false)
   const [pendingDeleteCategory, setPendingDeleteCategory] = useState<CustomMemoryCategoryView>()
+  const dialogDeleteCategory = useRetainedDialogValue(pendingDeleteCategory)
   const [pendingDeleteEntry, setPendingDeleteEntry] = useState<MemoryEntryView>()
   const hasEntries =
     categories.some((category) => category.entries.length > 0) ||
@@ -845,7 +849,7 @@ const MemoryList = ({
           description={t(
             'This category and all {{count}} notes in it will be deleted from current app data. Restoring a database backup may restore older memory.',
             {
-              count: pendingDeleteCategory?.entries.length ?? 0
+              count: dialogDeleteCategory?.entries.length ?? 0
             }
           )}
           confirmLabel={t('Delete category')}

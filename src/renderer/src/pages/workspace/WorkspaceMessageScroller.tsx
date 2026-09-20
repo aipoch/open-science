@@ -56,6 +56,10 @@ import {
 import { createPreviewRequestScope } from './previews/preview-file-reader'
 import { resolveLocalPath } from '../../../../shared/local-fs'
 import { resolveProjectId } from '../../../../shared/project-scope'
+import {
+  resolveActiveConversationActivities,
+  resolveActiveConversationMessages
+} from '../../../../shared/conversation-graph'
 import { useGrantedFoldersStore } from '@/stores/granted-folders-store'
 import type { JobSummary } from '../../../../shared/compute'
 import { CompletedJobCard } from '@/components/CompletedJobCard'
@@ -82,7 +86,10 @@ import {
   hidesBehindPresentationBarrier
 } from './workspace-conversation-items'
 import type { ActivityExpansionOverrides } from './workspace-tool-activity-groups'
-import { createWorkspaceConversationTimeline } from './workspace-conversation-timeline'
+import {
+  createWorkspaceConversationTimeline,
+  resolveForkBoundaryItemId
+} from './workspace-conversation-timeline'
 import { useSessionJobStore } from '@/stores/session-job-store'
 import { useSessionJobHydration } from '@/lib/compute/useSessionJobHydration'
 import type { GoToTranscriptIntent, ReviewWithChecks } from '../../../../shared/reviewer'
@@ -171,6 +178,7 @@ type WorkspaceMessageScrollerProps = {
   onAnnotationError?: (error: AnnotationValidationError) => void
   canBranchInNewSession?: boolean
   onBranchInNewSession?: (messageId: string) => void
+  forkSourceContent?: ReactNode
   trailingContent?: ReactNode
   pendingElicitations?: PendingElicitationRequest[]
   // Events are read-only projections; retry sends an intent that main validates against its state.
@@ -215,6 +223,8 @@ type SessionScopedNearViewportNotebookRunState = {
 
 const EMPTY_ACTIVITY_EXPANSION_OVERRIDES: ActivityExpansionOverrides = {}
 const EMPTY_NOTEBOOK_RUN_IDS: ReadonlySet<string> = new Set()
+const EMPTY_ANNOTATIONS: readonly Annotation[] = []
+const EMPTY_TEXT_ANNOTATIONS: readonly TextAnnotation[] = []
 
 // Extra hold after the paced reveal drains, so a queued message dispatches into a settled
 // transcript instead of the same moment as the final reveal frame.
@@ -321,16 +331,59 @@ const findDurablePlanOwnerActivityId = (
   const planActivities = conversationItems.flatMap((item) =>
     item.type === 'plan-activity' ? [item.activity] : []
   )
+  const graph = session.conversationGraph
+  if (session.runtimeTranscriptOwner === 'main' && !graph) return undefined
+  const visibleActivityIds = graph
+    ? new Set(resolveActiveConversationActivities(graph).activities.map(({ id }) => id))
+    : undefined
+  const activePrompt = graph
+    ? resolveActiveConversationMessages(graph).find(
+        (message) => message.id === originatingPromptMessageId && message.role === 'user'
+      )
+    : undefined
   const candidates = planActivities.filter((activity) => {
-    if (
-      activity.promptMessageId !== originatingPromptMessageId ||
-      (materializedAt !== undefined && activity.createdAt > materializedAt)
-    ) {
-      return false
-    }
     const document = parseGeneratePlanDocument(activity.rawInput)
+    let promptMessageId = activity.promptMessageId
+    if (graph) {
+      // Main's flat presentation intentionally omits graph identities. Recover ownership only
+      // from the exact visible graph activity, never from the nearest prompt or Plan alone.
+      const matches = graph.activities.filter((candidate) => candidate.id === activity.id)
+      const canonical = matches.length === 1 ? matches[0] : undefined
+      const canonicalDocument = canonical && parseGeneratePlanDocument(canonical.rawInput)
+      if (
+        !canonical ||
+        !activePrompt ||
+        !visibleActivityIds?.has(activity.id) ||
+        planActivities.filter((candidate) => candidate.id === activity.id).length !== 1 ||
+        canonical.agentFrameId !== activePrompt.agentFrameId ||
+        !graph.branches.some(
+          (branch) =>
+            branch.id === canonical.messageBranchId &&
+            branch.agentFrameId === canonical.agentFrameId
+        ) ||
+        !graph.runtimeSegments.some(
+          (segment) =>
+            segment.id === canonical.runtimeSegmentId &&
+            segment.agentFrameId === canonical.agentFrameId
+        ) ||
+        (promptMessageId !== undefined && promptMessageId !== canonical.promptMessageId) ||
+        activity.providerToolName !== canonical.providerToolName ||
+        activity.title !== canonical.title ||
+        activity.createdAt !== canonical.createdAt ||
+        activity.sortIndex !== canonical.sortIndex ||
+        !document ||
+        !canonicalDocument ||
+        !structurallyMatches(document, canonicalDocument)
+      ) {
+        return false
+      }
+      promptMessageId = canonical.promptMessageId
+    }
     return Boolean(
-      document && (!projectedDocument || structurallyMatches(document, projectedDocument))
+      promptMessageId === originatingPromptMessageId &&
+      (materializedAt === undefined || activity.createdAt <= materializedAt) &&
+      document &&
+      (!projectedDocument || structurallyMatches(document, projectedDocument))
     )
   })
 
@@ -502,7 +555,7 @@ const WorkspaceMessageScrollerImpl = ({
   isResumingSession = false,
   notebookReference,
   onSendEditedMessage,
-  annotations = [],
+  annotations = EMPTY_ANNOTATIONS,
   onAddAnnotation,
   onUpdateAnnotationNote,
   onRemoveAnnotation,
@@ -510,6 +563,7 @@ const WorkspaceMessageScrollerImpl = ({
   optimisticMessage,
   canBranchInNewSession = false,
   onBranchInNewSession,
+  forkSourceContent,
   trailingContent,
   pendingElicitations = [],
   handoffLifecycleSource,
@@ -535,9 +589,22 @@ const WorkspaceMessageScrollerImpl = ({
     [onAddAnnotation]
   )
   const currentSessionId = activeSession?.id
-  const activeTextAnnotations = annotations.filter(
-    (annotation): annotation is TextAnnotation => annotation.kind === 'text'
+  const activeTextAnnotations = useMemo(
+    () =>
+      annotations.filter((annotation): annotation is TextAnnotation => annotation.kind === 'text'),
+    [annotations]
   )
+  const annotationsByMessageId = useMemo(() => {
+    const groups = new Map<string, TextAnnotation[]>()
+    for (const annotation of activeTextAnnotations) {
+      if (annotation.source.kind !== 'agent-message') continue
+      const messageId = annotation.source.messageId
+      const group = groups.get(messageId)
+      if (group) group.push(annotation)
+      else groups.set(messageId, [annotation])
+    }
+    return groups
+  }, [activeTextAnnotations])
   const annotationPortFor = (
     activeAnnotations: readonly TextAnnotation[]
   ): AnnotationPort | undefined =>
@@ -652,7 +719,7 @@ const WorkspaceMessageScrollerImpl = ({
       sessionId: undefined,
       groupIds: new Set()
     }))
-  // Individual detail rows default collapsed; overrides remember only explicit user toggles.
+  // Detail rows choose their defaults; overrides remember only explicit user toggles.
   const [activityExpansionOverrideState, setActivityExpansionOverrideState] =
     useState<SessionScopedActivityExpansionState>(() => ({
       sessionId: undefined,
@@ -1456,6 +1523,14 @@ const WorkspaceMessageScrollerImpl = ({
     }
   }
 
+  const forkBoundaryItemId = resolveForkBoundaryItemId(activeSession, conversationItems)
+  const forkDivider = (itemId: string): ReactNode =>
+    forkSourceContent && itemId === forkBoundaryItemId ? (
+      <MessageScrollerItem messageId={`fork-source-${currentSessionId}`} className="min-w-0">
+        <div className="mx-auto w-full max-w-4xl px-4 py-3 md:px-6">{forkSourceContent}</div>
+      </MessageScrollerItem>
+    ) : null
+
   return (
     <TooltipProvider
       key={activeSession?.id ?? 'empty-conversation'}
@@ -1491,6 +1566,7 @@ const WorkspaceMessageScrollerImpl = ({
             onRevealed={handleMessageScrollerScroll}
           />
           <WorkspaceRunMarks
+            key={currentPresentationScopeId}
             items={presentedConversationItems}
             viewport={messageScrollerViewport}
             onRevealMessage={
@@ -1505,17 +1581,36 @@ const WorkspaceMessageScrollerImpl = ({
           <MessageScrollerViewport
             ref={handleMessageScrollerViewportRef}
             aria-label={t('Conversation')}
-            onScroll={handleMessageScrollerScroll}
-            onWheel={transcriptWindow.recordUserScroll}
-            onTouchMove={transcriptWindow.recordUserScroll}
-            onPointerDown={(event) => {
-              if (event.target === event.currentTarget) transcriptWindow.recordUserScroll()
+            onScroll={(event) => {
+              if (event.target === event.currentTarget) handleMessageScrollerScroll()
             }}
+            onWheel={(event) => {
+              if (!event.defaultPrevented && !event.ctrlKey && event.deltaY < 0) {
+                transcriptWindow.recordUserScroll()
+              }
+            }}
+            onTouchMove={(event) => {
+              if (!event.defaultPrevented) transcriptWindow.recordUserScroll()
+            }}
+            onPointerDown={(event) => {
+              if (!event.defaultPrevented && event.target === event.currentTarget) {
+                transcriptWindow.recordUserScroll(true)
+              }
+            }}
+            onPointerUp={transcriptWindow.finishUserScroll}
+            onPointerCancel={transcriptWindow.finishUserScroll}
             onKeyDown={(event) => {
               if (
-                ['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(
-                  event.key
-                )
+                event.defaultPrevented ||
+                (event.target instanceof HTMLElement &&
+                  event.target.closest(
+                    'input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"]'
+                  ))
+              )
+                return
+              if (
+                ['ArrowUp', 'PageUp', 'Home'].includes(event.key) ||
+                (event.key === ' ' && event.shiftKey)
               ) {
                 transcriptWindow.recordUserScroll()
               }
@@ -1631,11 +1726,7 @@ const WorkspaceMessageScrollerImpl = ({
                       ? handleEditAnnotationTargetChange
                       : undefined,
                     annotationPort: annotationPortFor(
-                      activeTextAnnotations.filter(
-                        (annotation) =>
-                          annotation.source.kind === 'agent-message' &&
-                          annotation.source.messageId === item.message.id
-                      )
+                      annotationsByMessageId.get(item.message.id) ?? EMPTY_TEXT_ANNOTATIONS
                     ),
                     canBranchInNewSession,
                     onBranchInNewSession,
@@ -1732,6 +1823,7 @@ const WorkspaceMessageScrollerImpl = ({
                           onRerun={handleRerunReview}
                         />
                       ) : null}
+                      {forkDivider(item.id)}
                     </Fragment>
                   )
                 }
@@ -1783,6 +1875,7 @@ const WorkspaceMessageScrollerImpl = ({
                           onRerun={handleRerunReview}
                         />
                       ) : null}
+                      {forkDivider(item.id)}
                     </Fragment>
                   )
                 }
@@ -1982,13 +2075,17 @@ const WorkspaceMessageScrollerImpl = ({
 
               {presentationBarrierIndex < 0 ? trailingContent : null}
 
-              {isResumingSession && activeSession ? (
+              {transcriptWindow.end === conversationItems.length &&
+              isResumingSession &&
+              activeSession ? (
                 <WorkspaceAgentLoadingRow
                   sessionId={activeSession.id}
                   phase="resuming"
                   visiblePermissionPending={visiblePermissionPending}
                 />
-              ) : agentLoadingPhase !== 'hidden' && activeSession ? (
+              ) : transcriptWindow.end === conversationItems.length &&
+                agentLoadingPhase !== 'hidden' &&
+                activeSession ? (
                 <WorkspaceAgentLoadingRow
                   sessionId={activeSession.id}
                   phase={agentLoadingPhase}
@@ -2133,6 +2230,7 @@ const areWorkspaceMessageScrollerPropsEqual = (
   (previous.canBranchInNewSession ?? false) === (next.canBranchInNewSession ?? false) &&
   (previous.reportPresentationRevealing ?? false) === (next.reportPresentationRevealing ?? false) &&
   previous.onBranchInNewSession === next.onBranchInNewSession &&
+  previous.forkSourceContent === next.forkSourceContent &&
   previous.trailingContent === next.trailingContent &&
   previous.isResumingSession === next.isResumingSession &&
   previous.onAddAnnotation === next.onAddAnnotation &&

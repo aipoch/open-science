@@ -60,7 +60,9 @@ const pinConversationToEnd = async (page: Page): Promise<void> => {
         (element) => element.scrollHeight - element.clientHeight - element.scrollTop
       )
     })
-    .toBeLessThanOrEqual(1)
+    // Chromium can leave a 1.5 CSS-pixel remainder at this device scale factor even after
+    // scrollTo(scrollHeight). Allow only that subpixel rounding, not a visibly unpinned viewport.
+    .toBeLessThanOrEqual(1.5)
 }
 
 const expectStableScreenshot = async (
@@ -90,7 +92,8 @@ const expectStableScreenshot = async (
   await page.evaluate(() => {
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
   })
-  await expect(page).toHaveScreenshot(name, {
+  // Collect every visual mismatch in the journey while keeping the test failure blocking.
+  await expect.soft(page).toHaveScreenshot(name, {
     animations: 'disabled',
     caret: 'hide',
     maxDiffPixelRatio: process.platform === 'darwin' ? maxDiffPixelRatio : 0.035
@@ -214,7 +217,10 @@ test('keeps core desktop surfaces visually stable', async ({ app }) => {
   await appVersion.getByRole('button').evaluateAll((elements) => {
     for (const element of elements) element.style.visibility = 'hidden'
   })
-  await appVersion.locator(':scope > p').evaluateAll((elements) => {
+  await appVersion.getByText(/^v\d+\.\d+\.\d+/).evaluate((element) => {
+    element.textContent = 'v0.0.0'
+  })
+  await appVersion.getByRole('status').evaluateAll((elements) => {
     for (const element of elements) element.style.visibility = 'hidden'
   })
   // The text-dense settings surface has slightly different font antialiasing on macos-14 runners.

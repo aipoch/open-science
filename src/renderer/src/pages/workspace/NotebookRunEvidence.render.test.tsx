@@ -42,6 +42,13 @@ it('shows the frozen interpreter and saved helper digest without inventing legac
   expect(screen.getByTestId('notebook-run-evidence').textContent).toContain(
     'Environment evidence is incomplete or unavailable.'
   )
+  rerender(<NotebookRunEvidence run={run} showEnvironmentCaptureWarning={false} />)
+  expect(screen.getByTestId('notebook-run-evidence').textContent).toContain('old-run')
+  expect(screen.getByTestId('notebook-run-evidence').textContent).toContain('/old/bin/python')
+  expect(screen.getByTestId('notebook-run-evidence').textContent).toContain('old-digest')
+  expect(screen.getByTestId('notebook-run-evidence').textContent).not.toContain(
+    'Environment evidence is incomplete or unavailable.'
+  )
   rerender(
     <NotebookRunEvidence
       run={{ ...run, frozenRuntimeTarget: undefined, helperModules: undefined }}

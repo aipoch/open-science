@@ -1,7 +1,7 @@
 <h1 align="center">AIPOCH Open-Science</h1>
 
 <p align="center">
-  Open-source, local-first, model-agnostic AI research workbench for reproducible science.
+  AI research workbench for reproducible science — open-source, local-first, and model-agnostic.
 </p>
 
 <p align="center">
@@ -43,11 +43,11 @@
   <a href="./docs/es/README.md"><img alt="Español README" src="https://img.shields.io/badge/Español-d9d9d9"></a>
 </p>
 
-AIPOCH Open-Science is an open-source, local-first, model-agnostic AI research workbench developed by [AIPOCH](https://aipoch.com/open-science) for scientists and researchers. It enables reproducible, inspectable research with scientific AI agents, Python and R execution, scientific data connectors, and cross-platform support for macOS, Windows, and Linux. Create a project, describe your research goal in plain language, and let the agents read files, search the web, run code, query scientific data sources, and produce reports, tables, and figures with traceable provenance—all in one workspace.
+AIPOCH Open-Science is an AI research workbench for scientists and researchers, developed by [AIPOCH](https://aipoch.com/open-science) with an open-source, local-first, model-agnostic approach. It enables reproducible, inspectable research with scientific AI agents, Python and R execution, scientific data connectors, and cross-platform support for macOS, Windows, and Linux. Create a project, describe your research goal in plain language, and let the agents read files, search the web, run code, query scientific data sources, and produce reports, tables, and figures with traceable provenance—all in one workspace.
 
 AIPOCH Open-Science supports computational and data-intensive research across disciplines, including machine learning, statistics, life sciences, chemistry, materials science, physics and environmental science. It supports the research process from literature review and hypothesis development to code execution, data analysis, simulation, visualization, and the production of traceable research outputs.
 
-> 💡 **[AIPOCH Open-Science v0.30.0 released](https://github.com/aipoch/open-science/releases/latest)** _(last updated September 2026)_. AIPOCH Open-Science v0.30.0 makes the workspace your own: private bookmarks with notes on conversation text, previews, and PDF passages; side chats that open as independent preview tabs while the main conversation stays active; a redesigned settings center with grouped navigation and settings-wide search; advanced filters for global search; and agents that can now read the figures, tables, and algorithms already extracted from linked PDFs. Idle background work is reduced, PDF layout recovery and text selection improve, and connector correctness is tightened across dbSNP, VEP, and BioMart. See the [latest release notes](https://github.com/aipoch/open-science/releases/latest) for full details.
+> 💡 **[AIPOCH Open-Science v0.31.1 released](https://github.com/aipoch/open-science/releases/latest)** _(last updated September 2026)_. AIPOCH Open-Science v0.31.1 broadens the scientific data you can reach from a session: ENA tools resolve a public ENA/INSDC accession to its sequencing runs with archive-generated FASTQ files, the Genes connector gains g:Profiler-powered GO and pathway enrichment with a custom statistical background, and new NCBI tools resolve taxon names, inspect versioned genome assemblies, and look up sequence aliases. Settings can optionally connect a dedicated classification model service, and remote-access pairing moves to the top of the security panel with safe revocation of trusted browsers. Stability is tighter throughout — Windows R notebooks supervise persistent kernels and guide network recovery, lost OpenCode sessions recover on startup, and approval cards, pending message previews, and the recent-session list behave more reliably. See the [latest release notes](https://github.com/aipoch/open-science/releases/latest) for full details.
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science banner: Science, Open to All — an open-source, model-agnostic, self-hosted scientific AI research workbench" src="docs/images/readme/open-science-banner.png" />
@@ -58,11 +58,9 @@ AIPOCH Open-Science supports computational and data-intensive research across di
 - [Quick Start](#-quick-start)
 - [Product Tour](#product-tour)
 - [Benchmark Performance](#benchmark-performance)
-- [Why AIPOCH Open-Science](#why-aipoch-open-science)
 - [Core Capabilities](#core-capabilities)
 - [Model Providers](#model-providers)
 - [Data, Permissions, and Trust](#data-permissions-and-trust)
-- [Project Status](#project-status)
 - [Development & Packaging](#development--packaging)
 - [Frequently Asked Questions](#frequently-asked-questions)
 - [Get Involved](#get-involved)
@@ -71,22 +69,18 @@ AIPOCH Open-Science supports computational and data-intensive research across di
 
 ## 🚀 Quick Start
 
-Get AIPOCH Open-Science running in three steps: download the installer for your platform, complete the guided first-run setup, and create a research project.
-
 ### 1. Download the app
 
 Open the [latest release](https://github.com/aipoch/open-science/releases/latest), expand **Assets**, and choose the installer for your computer:
 
-| Your computer                       | Choose                                   |
-| ----------------------------------- | ---------------------------------------- |
-| macOS — Apple Silicon (M1 or newer) | The macOS DMG for Apple Silicon / ARM64  |
-| macOS — Intel                       | The macOS DMG for Intel / x64            |
-| Windows x64                         | The Windows x64 installer                |
-| Linux x64                           | The Linux x64 AppImage or Debian package |
+| Your computer                           | Choose                                   |
+| --------------------------------------- | ---------------------------------------- |
+| macOS 12+ — Apple Silicon (M1 or newer) | The macOS DMG for Apple Silicon / ARM64  |
+| macOS 12+ — Intel                       | The macOS DMG for Intel / x64            |
+| Windows x64                             | The Windows x64 installer                |
+| Linux x64                               | The Linux x64 AppImage or Debian package |
 
-Review the assets and verification information published on the release page. See [Verifying your download](SECURITY.md#verifying-your-download) before installation if you need to validate a package.
-
-> If macOS or Windows shows an unidentified-developer or unknown-publisher warning, verify that the package came from the official Releases page before continuing.
+Download from the official release page; see [download verification](SECURITY.md#verifying-your-download) if needed.
 
 On macOS, you can also install with [Homebrew](https://brew.sh):
 
@@ -94,17 +88,13 @@ On macOS, you can also install with [Homebrew](https://brew.sh):
 brew install --cask open-science
 ```
 
-Homebrew selects the Apple Silicon or Intel package automatically.
+Windows reinstalls preserve research data. For a full cleanup, see the [data reset tool](scripts/windows-reset/README.md), which permanently deletes local data after confirmation.
 
 ### 2. Complete first-time setup
 
-The first launch has five guided steps:
+Follow the setup wizard: **Environment → Data location → Agent runtime → Model provider → Notebook runtime**.
 
-1. **Environment** checks compatibility, app storage, secure credential storage, and network access.
-2. **Data location** chooses where large artifacts, notebooks, uploads, and environments are stored.
-3. **Agent runtime** selects and prepares Claude Code, OpenCode, Codex, or CodeBuddy. App-managed runtimes can be installed without requiring Node.js, npm, or an administrator password.
-4. **Model provider** connects and tests the model you want to use. Choose a built-in provider, a custom gateway, or an existing Claude or Codex subscription login.
-5. **Notebook runtime** optionally prepares app-managed Python and R environments or enables detected and manually registered interpreters for either language.
+Complete the required environment and agent-runtime checks and test your model connection. Python/R Notebook setup is optional; Notebook and data-location settings can be changed later.
 
 <table>
   <tr>
@@ -117,17 +107,11 @@ The first launch has five guided steps:
   </tr>
 </table>
 
-Notebook execution is optional. Every required environment and agent-runtime check must pass before `Continue` becomes available, and the model connection must pass before setup finishes. Notebook and data-location settings can keep their defaults and be changed later in Settings. While a kernel is running, a Variables view can inspect the live Python or R namespace — names, types, shapes, and previews — read-only, refreshed after each execution.
-
 ### 3. Start a research project
 
-1. Click **New project** and give the project a stable research name and optional description.
-2. Open a session and describe the goal, input data, constraints, desired outputs, and how the result should be checked.
-3. Attach source files, select a verified model, and choose an approval mode.
-4. Send the task. Inspect the agent's tool activity, approve sensitive actions, and open generated artifacts in the preview panel.
-5. To explore a different direction, edit an earlier user message and resend it on a new branch; use the message revision controls to return to either path.
-6. Open an artifact's **Provenance** view to inspect its versions and the available evidence behind the selected result.
-7. Continue the work in later sessions. Use `@` to reference an existing project file and `/` to explicitly select an enabled skill.
+1. Click **New project**, open a session, and describe your research goal, inputs, and expected outputs.
+2. Attach files, select a model and approval mode, then send the task. Use `@` to reference project files or `/` to choose a skill.
+3. Review tool activity and any approval requests, preview the results, and check their available evidence in **Provenance**.
 
 > Screenshots in this README illustrate the workflow. Labels, catalogs, and other interface details may differ from the version you install.
 
@@ -179,51 +163,35 @@ AIPOCH Open-Science achieved the highest ranking score in the compiled BiomniBen
   <img src="docs/images/readme/biomnibench-public50-leaderboard.png" alt="BiomniBench-DA Public 50 comparison showing AIPOCH Open-Science ranked first with a score of 79.05" width="1200" />
 </p>
 
-## Why AIPOCH Open-Science
-
-AIPOCH Open-Science turns fragmented chats, notebooks, scripts, scientific databases, files, and reporting tools into one persistent, local-first AI research workbench where execution and evidence stay together.
-
-- **Persistent execution.** Projects, sessions, files, previews, and run history survive restarts, while approved agents can run commands, Python, and R and generate artifacts.
-- **Traceable results.** Immutable artifact versions preserve verifiable production evidence and clearly mark what is unavailable.
-- **Model-agnostic choice.** Connect built-in cloud providers, compatible custom gateways, or Claude and Codex subscriptions, then choose the model and reasoning effort for each session.
-- **Local-first control.** Application and project state stay on your computer; external calls use only services you configure or approve.
-- **Open and extensible.** The independent Apache-2.0 codebase, skills, connectors, tool activity, and generated files are inspectable, and you can add skills and MCP connectors.
-
 ## Core Capabilities
 
 AIPOCH Open-Science combines project management, multi-model agent execution, Python and R notebooks, scientific data connectors, immutable artifact versions with provenance, and permissioned human-in-the-loop control in one local workspace. The installed app and [latest release notes](https://github.com/aipoch/open-science/releases/latest) are the source of truth for changing catalogs, packaging details, and newly added options.
 
-| Area                                                   | Core capability                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Projects and sessions**                              | Create and organize projects with pinned sessions, persistent message branches and side conversations, and editable session details. Edit completed prompts into persistent, selectable message branches without deleting the original downstream path, and recover recent work, drafts, conversation history, and preview state. Side chats open as independent preview tabs — run several alongside the still-interactive main conversation and move annotations between them. Export a session as a self-contained `.science` research package and import it into another project or machine — with conversation branches, file versions, Notebook records, and verification evidence along for the ride.                                                                                                                                                                                                                                                                  |
-| **Agent workflow**                                     | Natural-language sessions with streamed responses, purpose-grouped tool activity, approval and stop controls, queued follow-ups, context compaction, and restart recovery. Branch completed work into new sessions; use structured clarifications, text, image, and PDF annotations, linked-PDF reading context, project memory, session references, and review-gated plans, and private bookmarks with notes on conversation text, previews, and PDF passages that persist across restarts. A categorized global search reaches projects, sessions, message bodies, uploaded and generated files, and the literature library, with standard and advanced filters and contextual detail previews that jump to the matching message. Notifications, live status, timing and token details, the command palette, source previews, and project switching keep long-running research visible and manageable.                                                                      |
-| **Models and agent backends**                          | Use built-in cloud providers including Apodex, NVIDIA Build with a curated agent-capable catalog, and the latest OpenAI and Anthropic model catalogs (GPT-6 Astra and Claude Fable 5.1), custom compatible gateways, or Claude and Codex subscription logins. Select Claude Code, OpenCode, Codex, or the login-free CodeBuddy runtime as the agent backend, with validated model and API compatibility, multimodal image input, reasoning controls, and dedicated subagent, reviewer, and Vision policies. App-managed runtimes update in place — the managed Codex CLI offers tested upgrades from Settings, with CLI and adapter versions shown separately.                                                                                                                                                                                                                                                                                                                |
-| **Specialists and delegation**                         | Create personal specialist agents with scoped capabilities, conversational customization, package import/export, and immediate handoff from the main agent. The signed-package marketplace supports official and user-approved GitHub sources, conflict-aware imports, and 64 built-in capability icons; production delegation adds durable messaging, recovery, and a per-session delegation switch.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| **Python, R, notebooks, and HPC**                      | Run persistent Python, R, and REPL kernels alongside recorded shell commands, using managed offline environments or your own interpreters. Work locally or connect to remote hosts over SSH and submit Notebook runs through Slurm on HPC clusters; protected network access, encrypted credentials, package and variable inspection, a shared terminal, and progressive history keep compute controlled and observable. Long Notebook, REPL, and shell work can run in the background — releasing the agent turn while keeping exact run identity, cancellation, and provenance, and delivering results automatically across local runs and remote compute jobs. On Windows x64, an opt-in WSL2 Bash preview routes shell commands through a readiness-checked WSL2 environment. Bring-your-own R runtimes can install missing packages into a consent-approved personal library, and captured dependency locks export a restore script for conditional package restoration. |
-| **Literature review and reference management**         | Import references by DOI, PubMed ID, arXiv ID, or file — a single PDF through the metadata editor, or many at once with per-file progress, duplicate handling, and retry — and see the active library's reference total at a glance; organize collections, link references to projects, and recover downloaded PDFs from Trash. Search Europe PMC, PMC, OpenAlex, arXiv, and Unpaywall in parallel for open-access full text, look up publisher metadata and dataset links by DOI, merge duplicate records without losing attachments or links, and format citations from stored metadata with artifact provenance. Locally extract figures and tables from PDFs — reconstructed crops, captions, and merged headers — and copy or export research tables as HTML, TSV, or Markdown, or let the agent list and read the extracted figures, tables, and algorithms of linked PDFs directly.                                                                                    |
-| **Scientific files and previews**                      | Attach files up to 10 GB with streaming upload; organize and search a project library; reference uploads, outputs, and local folders with `@` and `@path`; and export files, conversations, or `.ipynb` sessions. Preview scientific data, searchable PDFs, Office files, TIFF and other images, source code, molecular structures and reactions, and Notebook history inline or full-screen, with provenance and return-to-source navigation.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| **Artifacts and provenance**                           | Keep immutable, session-scoped artifact versions with checksummed content, producer code, execution history, exact inputs, environment inventory, message-branch context, lineage, and reviewer evidence. Verify any captured version by replaying its sealed recipe in an isolated environment and comparing the reproduced files with the original — byte-exact checks, bounded image and table comparisons, optional scientific rules, and exportable verification records. Editable Markdown, text, scripts, and source code publish a new provenance-preserving version on every save, with predecessor comparison.                                                                                                                                                                                                                                                                                                                                                      |
-| **Scientific skills and data connectors**              | Extend research workflows with **22 featured** built-in skills and **24 built-in** research connectors. Create skills conversationally or from completed work, import packages and GitHub sources, and add custom local or remote MCP connectors with tool-level permissions and configuration import/export. Browse the verified skills marketplace through signed catalogs — discover skills by category and author with one-click install, version updates, and batch installation with filtered selection and retryable progress — and manage connectors in bulk from Settings. Core application skills stay always enabled so built-in entry points keep working, and the headless CLI and Task SDK can list, inspect, and enable or disable connectors. Cross-resource tags, a protected Favorites tag, and searchable filters organize skills, connectors, and specialists.                                                                                            |
-| **Local data, privacy, permissions, and verification** | Keep project data, application state, and Notebook caches local in configurable, migratable storage; use system, manual, or direct proxy modes and a token dashboard with a 30-day activity heatmap and per-run attribution. Control actions with `Ask for approval`, `Auto-approve edits`, or `Full access`, scoped grants, centralized credentials (with an explicit file-storage mode for headless Linux deployments), user-approved compute domains, and per-connector and per-tool policies. Remote media in model output loads only after explicit activation, images sent to models are normalized, and remote model endpoints must use HTTPS. An opt-in reviewer audits transcripts, execution logs, and artifacts, reports pass/warn/fail findings, and can run a bounded fix loop with durable evidence.                                                                                                                                                            |
+| Area                                          | Core capability                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Scientific skills**                         | Extend research workflows with **23 built-in skills** and **525 skills** available from the [Skills Marketplace](https://github.com/aipoch/openscience-skill-marketplace), with one-click installation and updates. Create skills through conversation or completed work, and import packages or GitHub sources. Marketplace contributions are published after review; local imports do not publish skills.                                                      |
+| **Connectors**                                | Access scientific resources through **24 built-in connectors**, or add custom local and remote MCP connectors. Manage tool-level permissions and import or export connector configurations.                                                                                                                                                                                                                                                                      |
+| **Specialists and delegation**                | Install **10 Specialists** from the [Specialist Marketplace](https://github.com/aipoch/openscience-specialist-marketplace), or create and customize personal specialists for delegation from the main agent. Specialist packages support import and export; marketplace contributions are reviewed before publication, and local imports do not publish them.                                                                                                    |
+| **Models and agent backends**                 | Use cloud models, compatible custom gateways, or Claude and Codex subscription logins. Choose Claude Code, OpenCode, Codex, or CodeBuddy as the agent backend, with model connection checks, image input, and reasoning controls.                                                                                                                                                                                                                                |
+| **Projects, sessions, and research packages** | Organize projects with pinned sessions, message branches, side chats, and recoverable history. Export a **portable `.science` research package** and import it into another project or computer with conversation branches, selected file versions, Notebook records, and verification evidence. Imports are read-only and do not execute code or restore credentials; side chats and bookmarks are excluded, and included files depend on the export selection. |
+| **Reviewer**                                  | Enable optional auto-review to check a completed agent turn's responses, execution logs, and related file evidence in a separate context. Get evidence-backed pass, warning, or failure checks, with a bounded cycle of main-agent corrections and re-review when issues are found. Review logs and issue-resolution states remain available; the review is limited to records available for that turn.                                                          |
+| **Python, R, notebooks, and HPC**             | Run Python, R, Notebook, and shell workloads locally using managed environments or your own interpreters, with background execution and recorded history. Connect to remote hosts through SSH or submit work through Slurm; remote workloads require the host, software, resources, and permissions described in the remote-compute FAQ.                                                                                                                         |
+| **Literature Library**                        | Import and manage references and PDFs with collections, tags, project links, notes, and duplicate merging. Find open-access full text, read PDFs and extract figures and tables, and use library sources in conversations for AI-assisted analysis. Generate bibliographies in your chosen citation style and export references as BibTeX or RIS.                                                                                                                |
+| **Scientific files and previews**             | Upload individual files up to **10 GiB**, organize project files, and preview scientific data, PDFs, Office documents, images, code, and molecular structures. This upload limit does not guarantee that a model can read an entire file: model context, attachment parsing, and previews have separate limits. Large files usually need chunked reading or analysis with code.                                                                                  |
+| **Artifacts and provenance**                  | Keep immutable artifact versions with available producer code, inputs, execution history, environment information, and review evidence. In the desktop app, replay eligible versions with a complete recipe, required inputs, and a usable runtime, then compare outputs and export verification records. Missing evidence may prevent verification, and replay checks do not establish scientific validity.                                                     |
 
 ## Model Providers
 
 AIPOCH Open-Science is model-agnostic at the product level: connect it to major cloud LLM providers, a custom gateway, or reuse an existing Claude or Codex subscription. Provider availability currently depends on the selected agent backend and the API protocols it supports. There are four ways to connect a model:
 
-| Provider mode                | How it works                                                                                                                                                                                                                                                                                                                     |
-| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Built-in cloud providers** | Choose from the provider list shown by the installed app and authenticate with the requested key.                                                                                                                                                                                                                                |
-| **Custom Gateway**           | Supply a compatible Base URL, API Key, and exact model ID. The default API format (Messages, Chat Completions, or Responses) is derived from the active agent framework, so a new custom gateway is compatible out of the box.                                                                                                   |
-| **Codex Subscription**       | Select the Codex agent framework, then choose Codex Subscription as the provider type.                                                                                                                                                                                                                                           |
-| **Claude Subscription**      | Sign in with a Claude subscription in two modes: **shared** (a browser login that stores credentials in your default `~/.claude` profile) or **isolated** (an app-managed `claude setup-token` run under an app-owned `CLAUDE_CONFIG_DIR`, fully isolated from `~/.claude/`, with a browser flow plus a paste-a-token fallback). |
+| Provider mode                | How it works                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Built-in cloud providers** | Choose from the provider list shown by the installed app and authenticate with the requested key.                                                                                                                                                                                                                                                                                                                                                    |
+| **Custom Gateway**           | Supply a Base URL and exact model ID with an API protocol supported by the selected agent backend (Messages, Chat Completions, or Responses), then run the connection test. Remote gateways require HTTPS and an API Key. Loopback endpoints such as `localhost`, `127.0.0.1`, or `[::1]` may use HTTP without a key; presets include Ollama, LM Studio, llama.cpp, and vLLM. A default API format does not guarantee server or model compatibility. |
+| **Codex Subscription**       | Select the Codex agent framework, then choose Codex Subscription as the provider type.                                                                                                                                                                                                                                                                                                                                                               |
+| **Claude Subscription**      | Sign in with a Claude subscription in two modes: **shared** (a browser login that stores credentials in your default `~/.claude` profile) or **isolated** (an app-managed `claude setup-token` run under an app-owned `CLAUDE_CONFIG_DIR`, fully isolated from `~/.claude/`, with a browser flow plus a paste-a-token fallback).                                                                                                                     |
 
-The legacy **Local Claude** provider has been removed. Previously stored Local Claude entries are
-dropped during upgrade; add **Claude Subscription** and authenticate with shared browser login or
-the isolated `claude setup-token` flow instead.
-
-Built-in cloud vendors currently include OpenAI, Anthropic, Grok (xAI), DeepSeek, Zhipu AI (GLM) with a dedicated GLM Coding Plan endpoint, Kimi (Moonshot), MiniMax, StepFun with a dedicated Step Plan subscription endpoint, Xiaomi MIMO, SenseNova, Volcengine Ark, Bailian (Alibaba Cloud) with a dedicated Bailian for Plan subscription endpoint, Tencent TokenHub plus dedicated Tencent Coding Plan and Token Plan subscription endpoints, OpenCode Go and OpenCode Zen, and the OpenRouter aggregation gateway, among others; some are region-specific.
-
-Provider vendors, available models, and regional endpoints can evolve independently of this README. Treat the provider picker and connection test in the installed app as the source of truth.
+Built-in providers include OpenAI, Anthropic, DeepSeek, NVIDIA Build, and others; available models and regional endpoints depend on the installed version and selected agent backend. Check the provider selector and connection test in the app.
 
 ## Data, Permissions, and Trust
 
@@ -234,25 +202,20 @@ External data flow is still possible and should be reviewed:
 - Model requests send the prompt and necessary context to the selected model provider.
 - Web searches and remote connectors send their displayed parameters to external services.
 - Local connectors may execute trusted commands on the computer.
+- The application can also contact update servers, marketplace catalogs, and runtime or model download services.
 - Attachments, `@` references, logs, and generated reports may contain sensitive research data.
 
 Choose the narrowest permission profile that fits the task:
 
-| Mode                 | Behavior                                                                         | Recommended use                                           |
-| -------------------- | -------------------------------------------------------------------------------- | --------------------------------------------------------- |
-| `Ask for approval`   | Asks before edits, commands, network, and connector calls                        | New workflows, sensitive data, unfamiliar scripts         |
-| `Auto-approve edits` | Automatically allows workspace edits; asks for commands, network, and connectors | Trusted file-editing work with controlled external access |
-| `Full access`        | Automatically allows edits, commands, network, and connectors                    | Clearly scoped, fully trusted, unattended work            |
+| Mode                 | Behavior                                                                                                                   | Recommended use                                           |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| `Ask for approval`   | Requests approval for actions not already covered by scoped grants or trusted application tool policies                    | New workflows, sensitive data, unfamiliar scripts         |
+| `Auto-approve edits` | Uses the backend's native auto review when available; otherwise automatically allows clearly low-risk workspace operations | Trusted file-editing work with controlled external access |
+| `Full access`        | Automatically allows edits, commands, network, and connectors                                                              | Clearly scoped, fully trusted, unattended work            |
+
+The effective profile depends on the selected backend and existing grants. Connector, tool, and compute-network policies also apply; check the effective mode shown by the app.
 
 Review connector parameters and tool activity before approving them. Never include API Keys, access tokens, patient identifiers, unpublished data, or sensitive local paths in screenshots or public issue logs.
-
-## Project Status
-
-AIPOCH Open-Science is an actively developed desktop application available for macOS, Windows, and Linux. Development focuses on reliable local-first research workflows, extensible scientific capabilities, traceable research artifacts, and user-controlled execution.
-
-See the [latest release](https://github.com/aipoch/open-science/releases/latest) for current downloads and version-specific changes. For shipped, partial, and planned capabilities, see the [Capability Map](ROADMAP.md#capability-map).
-
-AIPOCH Open-Science assists research execution and record-keeping; researchers remain responsible for methods, interpretation, privacy, and scientific validity.
 
 ## Development & Packaging
 
@@ -262,7 +225,7 @@ Prerequisites for source development:
 
 - Node.js 22 (see [`.nvmrc`](.nvmrc)) with npm
 - Git
-- Python 3 only if you want Notebook execution
+- Notebook execution optionally uses app-managed Python/R environments or a compatible interpreter you configure.
 
 ```bash
 git clone https://github.com/aipoch/open-science.git
@@ -271,25 +234,7 @@ npm install
 npm run dev
 ```
 
-`npm install` automatically generates the Prisma client and installs Electron native dependencies. `npm run dev` builds the Electron main/preload bundles, starts the renderer, and opens the desktop app. Development data is isolated under `~/.open-science-project`.
-
-Useful commands:
-
-| Command                | Purpose                                  |
-| ---------------------- | ---------------------------------------- |
-| `npm run dev`          | Start the development application        |
-| `npm run dev:web`      | Dev app + localhost web UI (127.0.0.1)   |
-| `npm run dev:headless` | Dev backend + web UI, no Electron window |
-| `npm run lint`         | Run ESLint                               |
-| `npm run typecheck`    | Type-check main and renderer code        |
-| `npm test`             | Run the Vitest suite                     |
-| `npm run build`        | Type-check and build the application     |
-| `npm run build:web`    | Build the optional localhost web UI      |
-| `npm run build:mac`    | Package macOS builds                     |
-| `npm run build:win`    | Package Windows builds                   |
-| `npm run build:linux`  | Package Linux builds                     |
-
-Packaged output is written under `dist/`.
+See the [development command and packaging reference](docs/development-quick-reference.md) and [contribution guide](CONTRIBUTING.md) for build commands and the development workflow.
 
 ### Localhost web and headless modes
 
@@ -325,26 +270,6 @@ publishable package so there is one command reference to maintain:
 
 ## Frequently Asked Questions
 
-### What is AIPOCH Open-Science, and who builds it?
-
-A: AIPOCH Open-Science is an independent, open-source (Apache-2.0) research workbench built by the AIPOCH team. **AIPOCH Open-Science** is the full product name, while **Open-Science** is its short name. Both names refer to the same AIPOCH product.
-
-### What should I do the first time I open AIPOCH Open-Science?
-
-A: Complete the five setup steps: **Environment**, **Data location**, **Agent runtime**, **Model provider**, and **Notebook runtime**. Fix required rows marked `Action needed`, install or repair the selected agent if offered, and test the model connection. Notebook setup and a custom data location are optional.
-
-### What is an API Key, and where do I get one?
-
-A: An API Key is a secret credential issued by a model provider. Create or copy one from that provider's developer/API console. The provider may bill requests made with the key. Treat it like a password: never share it or commit it to a repository.
-
-### Do I need an API Key?
-
-A: Not if you reuse an existing subscription login — a Claude subscription through shared browser login or an isolated app-managed `claude setup-token` flow, or a ChatGPT/Codex subscription login on the Codex backend. Built-in cloud providers and custom gateways require their own keys.
-
-### Which model providers can I use?
-
-A: Open the provider picker during setup or under `Settings → Model` for the choices supported by your installed app and selected agent backend. You can use a built-in cloud provider, a compatible Custom Gateway, a Claude subscription through shared or isolated login, or a Codex subscription on the Codex backend.
-
 ### Why does the model connection test fail?
 
 A: Check the API Key for missing characters or spaces, verify the Base URL and region, use the provider's exact model ID, and confirm network access and account balance. For a Claude subscription, retry the shared browser login or refresh the isolated `claude setup-token` credential, depending on the selected mode.
@@ -353,13 +278,9 @@ A: Check the API Key for missing characters or spaces, verify the Base URL and r
 
 A: The current step has not met its required condition. Fix any environment row marked `Action needed`, install or repair the selected agent runtime, or validate the model provider, depending on the active step. Notebook setup is optional and only affects Notebook execution.
 
-### Setup is complete. How do I start a research task?
-
-A: Create or open a project, start a session, attach any source files, and describe the goal, constraints, expected output, and validation criteria. Use `@` to reference a project file and `/` to select an enabled skill.
-
 ### How do I run jobs on a remote HPC cluster?
 
-A: Enable the **Remote Compute (SSH)** skill under **Settings → Skills**, register your cluster under **Settings → Compute**, then start a session and select the skill with `/remote-compute-ssh`. The skill handles host registration, short commands via SSH, and fully async job submission — the app automatically starts an analysis turn when the job finishes, so you never write a polling loop.
+A: **Remote Compute (SSH)** is always enabled and does not need to be enabled in Settings. Register an SSH compute host under **Settings → Compute**, make it available to the current session, and then use natural language or `/remote-compute-ssh`. You need a reachable SSH host, valid authentication, permission for the required directories, and the software, dependencies, and compute resources required by the workload. Direct SSH does not require a scheduler; Slurm mode requires a working Slurm environment and permission to submit jobs. “Always enabled” refers to the skill, not to the availability of every registered host.
 
 ### Is there a command-line interface?
 
@@ -393,10 +314,6 @@ A: Open the generated artifact and choose **Provenance**. Select a version to in
 
 A: Yes. Edit a completed user message and resend it to create a new branch from that point. The original later turns remain available, and the revision arrows beside the message switch between the alternative paths.
 
-### Does my research data stay on my computer?
-
-A: Projects, sessions, files, settings, and configured credentials are stored locally by default. Content needed for model requests, web searches, or connector calls may still be sent to the external service you selected, so review sensitive inputs and provider policies before running a task.
-
 ## Get Involved
 
 AIPOCH Open-Science welcomes bug reports, feature proposals, design discussions, community questions, and contributions through GitHub, Discord, X, and the AIPOCH website. Choose the channel that best matches your goal, then follow the linked contribution guidance and public-posting safety reminder before sharing project details.
@@ -412,6 +329,8 @@ AIPOCH Open-Science welcomes bug reports, feature proposals, design discussions,
 Before opening a public issue, remove API Keys, tokens, private file paths, unpublished data, patient identifiers, and other sensitive material from logs and screenshots. See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow.
 
 > ⭐ **Star the repo:** If this project has been helpful, we'd greatly appreciate a star on GitHub. Starring the repository encourages continued development. It only takes a second, but it has a meaningful impact on the project.
+
+For shipped, partial, and planned capabilities, see the [Capability Map](ROADMAP.md#capability-map).
 
 ## License
 

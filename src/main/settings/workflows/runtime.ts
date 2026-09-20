@@ -13,6 +13,9 @@ import {
 } from '../../../shared/settings'
 import type { AgentFrameworkId } from '../../agent-framework'
 import type { SettingsService } from '../service'
+import { createLogger, diagnosticErrorFields } from '../../logger'
+
+const log = createLogger('settings')
 
 type RuntimeSettingsWorkflowStore = Pick<
   SettingsService,
@@ -23,6 +26,7 @@ type RuntimeSettingsWorkflowStore = Pick<
   | 'uninstallCodeBuddy'
   | 'uninstallCodex'
   | 'upsertProvider'
+  | 'saveValidatedProvider'
   | 'deleteProvider'
   | 'setActiveProvider'
   | 'setAgentFramework'
@@ -95,6 +99,29 @@ class RuntimeSettingsWorkflows {
     }
 
     return snapshot
+  }
+
+  async saveValidatedProvider(
+    request: UpsertProviderRequest
+  ): Promise<Awaited<ReturnType<RuntimeSettingsWorkflowStore['saveValidatedProvider']>>> {
+    const before = await this.settings.getSettingsView()
+    const result = await this.settings.saveValidatedProvider(request)
+    if (result.providerId && request.id) {
+      try {
+        this.effects.requestProviderReconnect(
+          affectedProviderIds(result.providerId),
+          result.providerId === before.activeProviderId ||
+            result.providerId === result.snapshot?.activeProviderId
+        )
+      } catch (error) {
+        log.warn(
+          'Provider saved, but runtime reconnect could not be requested.',
+          diagnosticErrorFields(error)
+        )
+        return { ...result, runtimeReconnectFailed: true }
+      }
+    }
+    return result
   }
 
   async refreshProviderModels(

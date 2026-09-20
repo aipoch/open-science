@@ -1,3 +1,4 @@
+import { InlineNotice } from '@/components/ui/inline-notice'
 import { useEffect, useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
@@ -73,9 +74,9 @@ export const UnpaywallCredentialForm = ({
         )}
       </p>
       {error ? (
-        <p role="alert" className="text-xs text-danger-000">
+        <InlineNotice level="error" role="alert">
           {t('Could not save the contact email. Try again.')}
-        </p>
+        </InlineNotice>
       ) : null}
       <div className="flex flex-wrap justify-end gap-2">
         <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={onCancel}>

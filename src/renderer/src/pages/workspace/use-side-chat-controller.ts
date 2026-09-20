@@ -1,3 +1,6 @@
+import { sideChatParentBranch } from '../../../../shared/side-chat'
+import { useProjectStore } from '@/stores/project-store'
+import { sideChatBlock, sideChatBlockMessage, type SideChatAction } from './side-chat-availability'
 import { validateAnnotations, type Annotation } from '../../../../shared/annotations'
 import { previewCloseGuards } from '@/stores/preview-close-guard'
 import {
@@ -7,6 +10,7 @@ import {
 } from '@/stores/preview-workbench-store'
 import { SideChatCloseConfirmation } from './SideChatCloseConfirmation'
 import {
+  Fragment,
   createContext,
   createElement,
   useCallback,
@@ -58,6 +62,7 @@ type SideChatController = Readonly<{
   createDraft?: () => string | undefined
   view: SideChatView | undefined
   unavailableReason?: string
+  openDisabledReason?: string
   start: (text: string) => Promise<boolean>
   send: (text: string) => Promise<boolean>
   retryHydration?: () => void
@@ -69,6 +74,7 @@ type SideChatController = Readonly<{
 }>
 
 type SideChatRuntimeController = Readonly<{
+  persistence: SideChatPersistence
   getView: (id: string) => SideChatView | undefined
   views: ReadonlyMap<string, SideChatView>
   closingChatIds: ReadonlySet<string>
@@ -76,7 +82,12 @@ type SideChatRuntimeController = Readonly<{
   hydrationError?: string
   retryHydration: () => void
   refreshTargets: () => Promise<void> | undefined
-  createDraft: (parent: Readonly<{ sessionId: string; projectId: string }>) => string
+  blockReason: (
+    parent: Readonly<{ sessionId: string; projectId: string }>,
+    action: SideChatAction,
+    chatId?: string
+  ) => string | undefined
+  createDraft: (parent: Readonly<{ sessionId: string; projectId: string }>) => string | undefined
   start: (
     parent: Readonly<{ sessionId: string; projectId: string }>,
     text: string,
@@ -134,8 +145,12 @@ const inheritedModelSelection = (parentSessionId: string): SideChatModelSelectio
     : undefined
 }
 
-const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
+type SideChatPersistence = Readonly<{ ready: boolean; blockedSessionIds: readonly string[] }>
+const readyPersistence: SideChatPersistence = { ready: true, blockedSessionIds: [] }
+const useOwnedSideChatRuntime = (persistence: SideChatPersistence): SideChatRuntimeController => {
   const { t } = useTranslation()
+  const persistenceRef = useRef(persistence)
+  persistenceRef.current = persistence
   const [views, setViews] = useState<ReadonlyMap<string, SideChatView>>(() => new Map())
   const [hydrated, setHydrated] = useState(() => !window.api?.sideChat?.list)
   const [hydrationError, setHydrationError] = useState<string>()
@@ -402,8 +417,44 @@ const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
 
   const retryHydration = useCallback((): void => hydrate(false), [hydrate])
 
+  const blockReason = useCallback(
+    (
+      parent: { sessionId: string; projectId: string },
+      action: SideChatAction,
+      chatId?: string
+    ): string | undefined => {
+      const session = useSessionStore
+        .getState()
+        .sessions.find((item) => item.id === parent.sessionId)
+      const project = useProjectStore
+        .getState()
+        .projects.find((item) => item.id === parent.projectId)
+      const view = chatId ? viewsRef.current.get(chatId) : undefined
+      return sideChatBlockMessage(
+        sideChatBlock({
+          action,
+          parent: session,
+          projectId: parent.projectId,
+          projectArchived:
+            project?.archivedAt !== undefined || (useProjectStore.getState().isLoaded && !project),
+          persistenceReady:
+            persistenceRef.current.ready &&
+            !persistenceRef.current.blockedSessionIds.includes(parent.sessionId),
+          hydrated,
+          hydrationError,
+          closing: chatId ? closingChatIdsRef.current.has(chatId) : false,
+          running: view?.running
+        }),
+        t,
+        hydrationError
+      )
+    },
+    [hydrated, hydrationError, t]
+  )
+
   const createDraft = useCallback(
-    (parent: Readonly<{ sessionId: string; projectId: string }>): string => {
+    (parent: Readonly<{ sessionId: string; projectId: string }>): string | undefined => {
+      if (blockReason(parent, 'open')) return undefined
       const id = `side-chat-${crypto.randomUUID()}`
       update(id, {
         id,
@@ -428,7 +479,7 @@ const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
       })
       return id
     },
-    [update]
+    [blockReason, update]
   )
 
   const start = useCallback(
@@ -438,8 +489,14 @@ const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
       existingId?: string
     ): Promise<boolean> => {
       const text = rawText.trim()
-      if (!text || !hydrated || !window.api?.sideChat) return false
+      if (!text || !window.api?.sideChat) return false
+      const blocked = blockReason(parent, 'send', existingId)
+      if (blocked) {
+        if (existingId) update(existingId, (view) => (view ? { ...view, error: blocked } : view))
+        throw new Error(blocked)
+      }
       const id = existingId ?? createDraft(parent)
+      if (!id) return false
       const current = viewsRef.current.get(id)
       if (!current?.draftOnly || current.running) return false
       const userEntryId = `side-user-${++sequenceRef.current}`
@@ -455,6 +512,10 @@ const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
           sideSessionId: id,
           parentSessionId: parent.sessionId,
           projectId: parent.projectId,
+          expectedParentBranch: sideChatParentBranch(
+            useSessionStore.getState().sessions.find((session) => session.id === parent.sessionId)
+              ?.conversationGraph
+          ),
           ...(current.modelSelection ? { modelSelection: current.modelSelection } : {}),
           text
         })
@@ -481,14 +542,23 @@ const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
         return false
       }
     },
-    [createDraft, hydrated, update]
+    [blockReason, createDraft, update]
   )
 
   const send = useCallback(
     async (chatId: string, rawText: string): Promise<boolean> => {
       const text = rawText.trim()
       const current = viewsRef.current.get(chatId)
-      if (!current?.sideSessionId || current.running || !text) return false
+      if (!current?.sideSessionId || !text) return false
+      const blocked = blockReason(
+        { sessionId: current.parentSessionId, projectId: current.projectId },
+        'send',
+        chatId
+      )
+      if (blocked) {
+        update(chatId, (view) => (view ? { ...view, error: blocked } : view))
+        return false
+      }
       if (current.draftOnly) {
         try {
           return await start(
@@ -522,6 +592,11 @@ const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
       try {
         await window.api.sideChat.send({
           sideSessionId: current.sideSessionId,
+          expectedParentBranch: sideChatParentBranch(
+            useSessionStore
+              .getState()
+              .sessions.find((session) => session.id === current.parentSessionId)?.conversationGraph
+          ),
           ...(current.modelSelection ? { modelSelection: current.modelSelection } : {}),
           text
         })
@@ -562,7 +637,7 @@ const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
         return admitted
       }
     },
-    [start, update, viewFromSnapshot]
+    [blockReason, start, update, viewFromSnapshot]
   )
 
   const cancel = useCallback(
@@ -689,12 +764,14 @@ const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
 
   return useMemo<SideChatRuntimeController>(
     () => ({
+      persistence,
       getView: (id) => viewsRef.current.get(id),
       views,
       closingChatIds,
       hydrated,
       hydrationError,
       retryHydration,
+      blockReason,
       refreshTargets,
       createDraft,
       start,
@@ -712,6 +789,8 @@ const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
       hydrated,
       hydrationError,
       retryHydration,
+      blockReason,
+      persistence,
       refreshTargets,
       createDraft,
       send,
@@ -724,11 +803,14 @@ const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
   )
 }
 
-const SideChatProvider = ({ children }: PropsWithChildren): ReactElement => {
-  const runtime = useOwnedSideChatRuntime()
+const SideChatProvider = ({
+  children,
+  persistence = readyPersistence
+}: PropsWithChildren<{ persistence?: SideChatPersistence }>): ReactElement => {
+  const runtime = useOwnedSideChatRuntime(persistence)
   const { views, hydrated, close } = runtime
   const activeProjectId = usePreviewWorkbenchStore((state) => state.activeProjectId)
-  // Existing durable Side chat records are the authority for open tabs, including after restart.
+  // Main-process memory owns open tabs, including across renderer reloads (not app restarts).
   // Preview persistence preserves these runtime-owned tabs during subsequent snapshot refreshes.
   useEffect(() => {
     if (!hydrated) return
@@ -784,9 +866,13 @@ const SideChatProvider = ({ children }: PropsWithChildren): ReactElement => {
   return createElement(
     SideChatContext.Provider,
     { value: runtime },
-    children,
-    ...[...views.keys()].map((sessionId) =>
-      createElement(SideChatCloseConfirmation, { key: sessionId, sessionId })
+    createElement(Fragment, { key: 'provider-children' }, children),
+    createElement(
+      Fragment,
+      { key: 'close-confirmations' },
+      ...[...views.keys()].map((sessionId) =>
+        createElement(SideChatCloseConfirmation, { key: sessionId, sessionId })
+      )
     )
   )
 }
@@ -797,6 +883,8 @@ const useSideChatController = (
 ): SideChatController => {
   const { t } = useTranslation()
   const runtime = useContext(SideChatContext)
+  useSessionStore((state) => state.sessions)
+  useProjectStore((state) => state.projects)
   const views = parent
     ? [...(runtime?.views.values() ?? [])].filter(
         (view) => view.parentSessionId === parent.sessionId && view.projectId === parent.projectId
@@ -821,19 +909,15 @@ const useSideChatController = (
                 : owned.error
       }
     : undefined
-  const unavailableReason = runtime?.hydrationError
-    ? t('Could not restore Side chats: {{error}}', { error: runtime.hydrationError })
-    : runtime && !runtime.hydrated
-      ? t('Restoring Side chats…')
-      : parent && runtime?.closingChatIds.has(selectedId ?? '')
-        ? t('Closing Side chat…')
-        : undefined
+  const openDisabledReason = parent ? runtime?.blockReason(parent, 'open') : undefined
+  const unavailableReason = parent ? runtime?.blockReason(parent, 'send', sideChatId) : undefined
 
   return {
     views,
     createDraft: () => (runtime && parent ? runtime.createDraft(parent) : undefined),
     view,
     unavailableReason,
+    openDisabledReason,
     start: (text) => (runtime && parent ? runtime.start(parent, text) : Promise.resolve(false)),
     send: (text) =>
       runtime && selectedId ? runtime.send(selectedId, text) : Promise.resolve(false),
@@ -858,6 +942,10 @@ const useSideChatController = (
 
 type SideChatTransfers = {
   views: readonly SideChatView[]
+  unavailableReason: (
+    parent: { sessionId: string; projectId: string },
+    chatId?: string
+  ) => string | undefined
   refresh: () => Promise<void> | undefined
   create: (parent: { sessionId: string; projectId: string }) => string | undefined
   receive: (
@@ -868,11 +956,15 @@ type SideChatTransfers = {
 }
 const useSideChatTransfers = (): SideChatTransfers => {
   const runtime = useContext(SideChatContext)
+  useSessionStore((state) => state.sessions)
+  useProjectStore((state) => state.projects)
   return {
     views: [...(runtime?.views.values() ?? [])],
+    unavailableReason: (parent, chatId) =>
+      runtime?.blockReason(parent, chatId ? 'transfer' : 'open', chatId),
     refresh: () => runtime?.refreshTargets(),
     create: (parent: { sessionId: string; projectId: string }): string | undefined =>
-      runtime?.hydrated ? runtime.createDraft(parent) : undefined,
+      runtime?.createDraft(parent),
     receive: (
       id: string,
       transfer: { parentSessionId: string; projectId: string; annotation: Annotation }
@@ -889,7 +981,15 @@ const useSideChatTransfers = (): SideChatTransfers => {
       const annotations = view.annotations ?? []
       if (annotations.some((item) => item.id === transfer.annotation.id)) return true
       const next = [...annotations, transfer.annotation]
-      if (validateAnnotations(next, view.draft)) return false
+      if (
+        runtime.blockReason(
+          { sessionId: view.parentSessionId, projectId: view.projectId },
+          'transfer',
+          id
+        ) ||
+        validateAnnotations(next, view.draft)
+      )
+        return false
       runtime.setAnnotations(id, next)
       return true
     },

@@ -96,6 +96,22 @@ const main = async (): Promise<void> => {
       /* no durable message before save */
     }
     const result = await repository.reconcileSession('project-1', 'session-1', session)
+    for (const recovered of result.recoveredMessageArtifacts) {
+      const versionIds = recovered.artifacts.map(({ versionId, id }) => versionId ?? id)
+      const owner = session.messages.find(({ id }) => id === recovered.messageId)
+      if (owner) owner.artifactIds = versionIds
+      const graphOwner = session.conversationGraph?.messages.find(
+        ({ id }) => id === recovered.messageId
+      )
+      if (graphOwner) graphOwner.artifactIds = versionIds
+      session.artifacts = recovered.artifacts.map((artifact) => ({
+        ...artifact,
+        id: artifact.versionId ?? artifact.id,
+        kind: 'managed-file' as const,
+        createdAt: artifact.createdAt ? Date.parse(artifact.createdAt) : artifact.mtimeMs
+      }))
+    }
+    const replay = await repository.reconcileSession('project-1', 'session-1', session)
     const versions = await client.artifactVersion.findMany({
       select: { id: true, state: true, checksum: true, messageId: true, writeOperationId: true }
     })
@@ -118,7 +134,7 @@ const main = async (): Promise<void> => {
       if ((await client.artifactVersion.count()) !== 1)
         throw new Error('Crash replay created another Version.')
     }
-    process.send?.({ recovered: result, versions, replayedVersionId })
+    process.send?.({ recovered: result, replay, versions, replayedVersionId })
     await client.$disconnect()
     return
   }
@@ -185,16 +201,18 @@ const main = async (): Promise<void> => {
     { filename: 'second.txt', content: 'second crash-safe bytes' },
     { requestId: 'second' }
   )
-  session.messages[1].artifactIds = [first.id, second.id]
-  session.artifacts = [first, second].map((file) => ({
-    ...file,
-    kind: 'managed-file' as const,
-    createdAt: Date.parse(file.createdAt)
-  }))
-  session.conversationGraph!.messages.find((message) => message.id === 'message-1')!.artifactIds = [
-    first.id,
-    second.id
-  ]
+  if (phase !== 'activated-unattached') {
+    session.messages[1].artifactIds = [first.id, second.id]
+    session.artifacts = [first, second].map((file) => ({
+      ...file,
+      kind: 'managed-file' as const,
+      createdAt: Date.parse(file.createdAt)
+    }))
+    session.conversationGraph!.messages.find(({ id }) => id === 'message-1')!.artifactIds = [
+      first.id,
+      second.id
+    ]
+  }
   await writeFile(join(root, 'session.json'), JSON.stringify(session))
   const provenanceContext = {
     rootFrameId: binding.rootFrameId,
@@ -234,6 +252,7 @@ const main = async (): Promise<void> => {
       provenanceContext
     })
     await repository.activateFinalizedRun(request)
+    if (phase === 'activated-unattached') await pause()
   })
   await server.close()
   await client.$disconnect()

@@ -362,7 +362,7 @@ export class SessionPackageOperation {
   }
 
   async run<T>(
-    kind: 'export' | 'import',
+    kind: PackageOperationSnapshot['kind'],
     session: SessionPackageRequest | undefined,
     work: (signal: AbortSignal) => Promise<T>,
     importTarget?: PackageOperationSnapshot['importTarget']
@@ -401,15 +401,17 @@ export class SessionPackageOperation {
     } catch (error) {
       this.current = {
         ...this.current!,
-        state: controller.signal.aborted ? 'cancelled' : 'failed',
+        state:
+          controller.signal.aborted && !this.current?.result?.recovery ? 'cancelled' : 'failed',
         files: undefined,
         summary: undefined,
         importPreview: undefined,
-        error: controller.signal.aborted
-          ? undefined
-          : error instanceof Error
-            ? error.message
-            : String(error)
+        error:
+          controller.signal.aborted && !this.current?.result?.recovery
+            ? undefined
+            : error instanceof Error
+              ? error.message
+              : String(error)
       }
       if (controller.signal.aborted) this.diagnostic.cancel(this.diagnosticFields())
       else this.diagnostic.fail(error, this.diagnosticFields())

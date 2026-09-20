@@ -48,7 +48,6 @@ type Workflow = {
 }
 
 const mainText = readFileSync(join(process.cwd(), '.github/workflows/ai-review-single.yml'), 'utf8')
-const retiredText = readFileSync(join(process.cwd(), '.github/workflows/ai-review.yml'), 'utf8')
 const codexText = readFileSync(join(process.cwd(), '.github/workflows/ai-codex-review.yml'), 'utf8')
 const publisherText = readFileSync(
   join(process.cwd(), '.github/workflows/ai-post-review.yml'),
@@ -56,7 +55,6 @@ const publisherText = readFileSync(
 )
 const reviewDocsText = readFileSync(join(process.cwd(), '.github/action/ai-review.md'), 'utf8')
 const mainWorkflow = load(mainText) as Workflow
-const retiredWorkflow = load(retiredText) as Record<string, unknown>
 const codexWorkflow = load(codexText) as Workflow
 const publisherWorkflow = load(publisherText) as Workflow
 const fixtureRoots: string[] = []
@@ -440,16 +438,10 @@ async function runPublisher({
 }
 
 describe('single Codex workflow contract', () => {
-  it('parses all active and retired workflows as YAML', () => {
+  it('parses all review workflows as YAML', () => {
     expect(() => load(mainText)).not.toThrow()
-    expect(() => load(retiredText)).not.toThrow()
     expect(() => load(codexText)).not.toThrow()
     expect(() => load(publisherText)).not.toThrow()
-  })
-
-  it('keeps the retired dual-review workflow inert', () => {
-    expect(retiredText).toContain('name: AI PR Review (Disabled)')
-    expect(retiredWorkflow.on).toEqual({ workflow_call: null })
   })
 
   it('documents subscription setup and credential refresh limitations', () => {

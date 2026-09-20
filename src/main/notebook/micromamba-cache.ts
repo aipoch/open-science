@@ -53,7 +53,8 @@ type CacheMarker = { schema?: number; canonicalRoot?: string; userIdentity?: str
 
 type TempParentMarker = { schema?: number; kind?: string; userIdentity?: string }
 
-const WINDOWS_TEMP_PARENT = 'OpenScienceTmp'
+const WINDOWS_TEMP_PARENT = 'Open-ScienceTmp'
+const LEGACY_WINDOWS_TEMP_PARENT = 'OpenScienceTmp'
 const TEMP_PARENT_MARKER_FILE = '.open-science-temp.json'
 const TEMP_PARENT_MARKER_KIND = 'micromamba-working-cache-parent'
 
@@ -494,7 +495,8 @@ const candidatePaths = (
   canonicalRoot: string,
   leaf: string,
   env: NodeJS.ProcessEnv,
-  canonicalize: (path: string) => string
+  canonicalize: (path: string) => string,
+  tempParent = WINDOWS_TEMP_PARENT
 ): CachePathCandidate[] => {
   const runtimeVolume = win32.parse(canonicalRoot).root
   const seenTemporaryRoots = new Set([windowsKey(runtimeVolume)])
@@ -509,13 +511,13 @@ const candidatePaths = (
     })
   const profile = env.USERPROFILE ? win32.normalize(canonicalize(env.USERPROFILE)) : undefined
   const primary = {
-    path: win32.join(runtimeVolume, WINDOWS_TEMP_PARENT, leaf),
+    path: win32.join(runtimeVolume, tempParent, leaf),
     managedParent: true
   }
   return [
     primary,
     ...perUserTemps.map((perUserTemp) => ({
-      path: win32.join(perUserTemp, WINDOWS_TEMP_PARENT, leaf),
+      path: win32.join(perUserTemp, tempParent, leaf),
       profileBoundary: perUserTemp,
       managedParent: true
     })),
@@ -564,9 +566,20 @@ export const micromambaWorkingCachePaths = (
   const env = deps.env ?? process.env
   const canonicalize = deps.canonicalize ?? canonicalizeExisting
   const identity = cacheIdentity(root, env, canonicalize)
-  return candidatePaths(identity.canonicalRoot, identity.leaf, env, canonicalize).map(
-    (candidate) => candidate.path
-  )
+  return [
+    ...new Set(
+      [
+        ...candidatePaths(identity.canonicalRoot, identity.leaf, env, canonicalize),
+        ...candidatePaths(
+          identity.canonicalRoot,
+          identity.leaf,
+          env,
+          canonicalize,
+          LEGACY_WINDOWS_TEMP_PARENT
+        )
+      ].map((candidate) => candidate.path)
+    )
+  ]
 }
 
 export const micromambaWorkingCachePath = (
@@ -597,7 +610,23 @@ export const selectMicromambaCache = (
     deps.prepare ??
     ((path: string, ownership: CacheOwnership) =>
       defaultPrepare(path, ownership, hardenOwnership, verifyOwnership))
-  const candidates = candidatePaths(canonicalRoot, leaf, env, canonicalize)
+  const exists =
+    deps.exists ??
+    ((path: string) => {
+      try {
+        return lstatSync(path).isDirectory()
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
+        throw error
+      }
+    })
+  // Reuse an existing, ownership-verified cache without creating any old-brand path on new installs.
+  const candidates = [
+    ...candidatePaths(canonicalRoot, leaf, env, canonicalize, LEGACY_WINDOWS_TEMP_PARENT).filter(
+      (candidate) => candidate.path.includes(LEGACY_WINDOWS_TEMP_PARENT) && exists(candidate.path)
+    ),
+    ...candidatePaths(canonicalRoot, leaf, env, canonicalize)
+  ]
   const rejections: string[] = []
 
   for (const candidate of candidates) {
@@ -708,7 +737,11 @@ export const isTrustedMicromambaWorkingCacheForRoot = (
 
   const parent = win32.dirname(normalized)
   const parentLeaf = win32.basename(parent).toLowerCase()
-  if (parentLeaf !== WINDOWS_TEMP_PARENT.toLowerCase() && parentLeaf !== 'os-tmp')
+  if (
+    parentLeaf !== WINDOWS_TEMP_PARENT.toLowerCase() &&
+    parentLeaf !== LEGACY_WINDOWS_TEMP_PARENT.toLowerCase() &&
+    parentLeaf !== 'os-tmp'
+  )
     return reject('parent-location')
   const profile = env.USERPROFILE ? win32.normalize(canonicalize(env.USERPROFILE)) : undefined
   if (parentLeaf === 'os-tmp' && (!profile || !isInside(profile, parent)))
@@ -903,6 +936,13 @@ export const removeMicromambaCacheForRoot = (
     deps.remove ?? ((path: string): void => rmSync(path, { recursive: true, force: true }))
   const cleanupCandidates = [
     ...candidatePaths(identity.canonicalRoot, identity.leaf, env, canonicalize),
+    ...candidatePaths(
+      identity.canonicalRoot,
+      identity.leaf,
+      env,
+      canonicalize,
+      LEGACY_WINDOWS_TEMP_PARENT
+    ).filter((candidate) => candidate.path.includes(LEGACY_WINDOWS_TEMP_PARENT)),
     ...legacyCleanupCandidatePaths(
       identity.canonicalRoot,
       identity.legacyLeaf,

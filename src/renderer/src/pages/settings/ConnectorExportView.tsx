@@ -98,7 +98,7 @@ export function ConnectorExportView({ id, onDone }: ConnectorExportViewProps): R
               setSaved(false)
             }}
           >
-            {t('Open Science Connector')}
+            {t('Open-Science Connector')}
           </Button>
           <Button
             type="button"
@@ -116,7 +116,7 @@ export function ConnectorExportView({ id, onDone }: ConnectorExportViewProps): R
           <p className="text-xs text-muted-foreground">{t('Preparing preview…')}</p>
         ) : null}
 
-        {error ? <ErrorNotice role="alert" tone="amber" description={t(error)} /> : null}
+        {error ? <ErrorNotice inline role="alert" tone="amber" description={t(error)} /> : null}
 
         {definition ? (
           <div>
@@ -164,7 +164,7 @@ export function ConnectorExportView({ id, onDone }: ConnectorExportViewProps): R
                 key={`${item.code}:${item.path ?? ''}`}
                 className={`flex items-start gap-2 text-xs ${
                   item.severity === 'warning'
-                    ? 'text-amber-600 dark:text-amber-400'
+                    ? 'text-status-warning-foreground dark:text-status-warning-dark-foreground'
                     : 'text-destructive'
                 }`}
               >

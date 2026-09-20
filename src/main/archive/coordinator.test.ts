@@ -258,6 +258,36 @@ describe('ArchiveCoordinator', () => {
     }
   )
 
+  it('uses export activity independently from auxiliary activity that blocks archive', async () => {
+    const isSessionBusy = vi.fn().mockReturnValue(true)
+    const isSessionExportBusy = vi.fn().mockReturnValue(false)
+    const coordinator = new ArchiveCoordinator(
+      { get: async () => project, updateArchive: vi.fn() },
+      {
+        assertProjectArchivable: vi.fn(),
+        assertSessionAvailable: vi.fn(),
+        updateArchive: vi.fn(),
+        sessionProjectId: async () => project.id
+      },
+      {
+        isSessionBusy,
+        isSessionExportBusy,
+        isProjectBusy: () => false,
+        liveSessionProjectId: () => project.id
+      }
+    )
+
+    const release = await coordinator.reserveSessionExport(
+      project.id,
+      session.id,
+      async () => undefined
+    )
+
+    expect(isSessionExportBusy).toHaveBeenCalledTimes(2)
+    expect(isSessionBusy).not.toHaveBeenCalled()
+    release()
+  })
+
   it.each(['idle', 'busy', 'failed'] as const)(
     'fences new work during asynchronous activity checks and releases an %s result',
     async (result) => {

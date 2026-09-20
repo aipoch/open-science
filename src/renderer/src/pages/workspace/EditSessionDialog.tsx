@@ -35,6 +35,7 @@ type EditSessionDialogProps = {
   onDescriptionDraftChange: (value: string) => void
   onCancel: () => void
   onConfirmEdit: (event: React.FormEvent<HTMLFormElement>) => void
+  onCloseAutoFocus?: (event: Event) => void
 }
 
 const EditSessionDialog = ({
@@ -46,7 +47,8 @@ const EditSessionDialog = ({
   onTitleDraftChange,
   onDescriptionDraftChange,
   onCancel,
-  onConfirmEdit
+  onConfirmEdit,
+  onCloseAutoFocus
 }: EditSessionDialogProps): React.JSX.Element => {
   const { t } = useTranslation()
   const retainedTitleDraft = useRetainedDialogValue(session ? titleDraft : undefined) ?? titleDraft
@@ -68,7 +70,10 @@ const EditSessionDialog = ({
     <Dialog.Root open={Boolean(session)} onOpenChange={(open) => !open && onCancel()}>
       <Dialog.Portal>
         <Dialog.Overlay className={dialogOverlayClassName} />
-        <Dialog.Content className={dialogPanelClassName('w-[min(480px,calc(100vw-2rem))] p-0')}>
+        <Dialog.Content
+          className={dialogPanelClassName('w-[min(480px,calc(100vw-2rem))] p-0')}
+          onCloseAutoFocus={onCloseAutoFocus}
+        >
           <form
             onSubmit={(event) => {
               if (!detailsAreValid || isSaving) {

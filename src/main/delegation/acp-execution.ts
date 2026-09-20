@@ -13,6 +13,7 @@ import {
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import {
   DelegateExecutionError,
+  DelegateExecutionCleanupError,
   DelegateMessagePreAcceptanceError,
   type DelegateCapacityReservation,
   type DelegateChildTurnIdentity,
@@ -49,6 +50,9 @@ type PreparedDelegateExecution = Readonly<{
   permissionProfile?: PermissionProfileId
   capability: DelegateExecutionCapability
   artifactCurrentRunFile?: string
+  runtimeConstructionIsProcessFree?: boolean
+  releaseResources?(): Promise<void> | void
+  confirmProcessCleanup?(): Promise<void>
   disposeResources?(): Promise<void> | void
 }>
 
@@ -241,15 +245,16 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
     throw new Error('delegate execution capacity must be a positive integer')
   }
 
-  type Slot = { status: 'reserved' | 'running'; attemptId?: string }
+  type Slot = { status: 'reserved' | 'running'; attemptId?: string; unreaped?: true }
   const slots = new Map<string, Slot>()
   const activeAttempts = new Set<string>()
+  const quarantined = new Map<string, () => Promise<void>>()
   const activeRuntimeHomes = new Set<string>()
   const activeWorkspaces = new Set<string>()
 
   const releaseSlot = (slotId: string): void => {
     const slot = slots.get(slotId)
-    if (!slot) return
+    if (!slot || slot.unreaped) return
     slots.delete(slotId)
     if (slot.attemptId) activeAttempts.delete(slot.attemptId)
   }
@@ -272,12 +277,12 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
       slotIds: Object.freeze(slotIds),
       async release(slotId) {
         if (!owned.delete(slotId)) return
-        releaseSlot(slotId)
+        if (slots.get(slotId)?.status === 'reserved') releaseSlot(slotId)
       },
       async releaseAll() {
         for (const slotId of [...owned]) {
           owned.delete(slotId)
-          releaseSlot(slotId)
+          if (slots.get(slotId)?.status === 'reserved') releaseSlot(slotId)
         }
       }
     })
@@ -431,6 +436,9 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
           awaiting: true,
           requestId: request.requestId,
           title: request.title,
+          providerToolName: request.providerToolName,
+          isMcp: request.isMcp,
+          toolKind: request.toolKind,
           options: request.options.map(({ optionId, name, kind, scope }) => ({
             optionId,
             name,
@@ -453,46 +461,99 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
         await scope.capability.revoke()
       }
     }
-    const cleanup = async (): Promise<void> => {
-      let firstError: unknown
-      try {
-        await revokeWrites()
-      } catch (error) {
-        firstError = error
-      }
-      if (runtime && providerSessionId) {
+    let runtimeCreationStarted = false
+    let cleanupPromise: Promise<void> | undefined
+    const cleanup = (): Promise<void> =>
+      (cleanupPromise ??= (async () => {
+        let firstError: unknown
         try {
-          await runtime.deleteSession({ sessionId: providerSessionId })
+          await revokeWrites()
+        } catch (error) {
+          firstError = error
+        }
+        if (runtime && providerSessionId) {
+          try {
+            await runtime.deleteSession({ sessionId: providerSessionId })
+          } catch (error) {
+            firstError ??= error
+          }
+        }
+        if (runtime) {
+          try {
+            const { reaped } = await runtime.shutdownForQuit()
+            if (!reaped) slot.unreaped = true
+          } catch (error) {
+            slot.unreaped = true
+            firstError ??= error
+          }
+        }
+        if (
+          runtimeCreationStarted &&
+          !runtime &&
+          !scope?.confirmProcessCleanup &&
+          scope?.runtimeConstructionIsProcessFree !== true
+        )
+          slot.unreaped = true
+        if (scope?.confirmProcessCleanup) {
+          try {
+            await scope.confirmProcessCleanup()
+          } catch (error) {
+            slot.unreaped = true
+            firstError ??= error
+          }
+        }
+        try {
+          await scope?.releaseResources?.()
         } catch (error) {
           firstError ??= error
         }
-      }
-      if (runtime) {
-        try {
-          await runtime.shutdownForQuit()
-        } catch (error) {
-          firstError ??= error
+        listeners.clear()
+        if (slot.unreaped) {
+          quarantined.set(input.attemptId, async () => {
+            if (!scope?.confirmProcessCleanup)
+              throw new DelegateExecutionCleanupError(
+                'Process cleanup cannot be retried without ownership evidence.'
+              )
+            await scope.confirmProcessCleanup()
+            if (
+              (ownsRuntimeHome || !activeRuntimeHomes.has(scope.runtimeHome)) &&
+              (ownsWorkspace || !activeWorkspaces.has(scope.workspace.cwd))
+            )
+              await scope.disposeResources?.()
+            if (ownsRuntimeHome) activeRuntimeHomes.delete(scope.runtimeHome)
+            if (ownsWorkspace) activeWorkspaces.delete(scope.workspace.cwd)
+            delete slot.unreaped
+            releaseSlot(slotId)
+            quarantined.delete(input.attemptId)
+          })
+          // Keep the exclusion even when the durable caller releases its reservation.
+          // A second shutdown of a detached runtime cannot prove the old tree exited.
+          throw new DelegateExecutionCleanupError(
+            'Delegated process cleanup could not be confirmed; its workspace and capacity remain reserved.',
+            { cause: firstError }
+          )
         }
-      }
-      if (scope) {
-        if (ownsRuntimeHome) {
-          activeRuntimeHomes.delete(scope.runtimeHome)
-          ownsRuntimeHome = false
+        if (scope) {
+          const mayDispose =
+            (ownsRuntimeHome || !activeRuntimeHomes.has(scope.runtimeHome)) &&
+            (ownsWorkspace || !activeWorkspaces.has(scope.workspace.cwd))
+          try {
+            if (mayDispose) await scope.disposeResources?.()
+          } catch (error) {
+            firstError ??= error
+          }
+          if (ownsRuntimeHome) {
+            activeRuntimeHomes.delete(scope.runtimeHome)
+            ownsRuntimeHome = false
+          }
+          if (ownsWorkspace) {
+            activeWorkspaces.delete(scope.workspace.cwd)
+            ownsWorkspace = false
+          }
         }
-        if (ownsWorkspace) {
-          activeWorkspaces.delete(scope.workspace.cwd)
-          ownsWorkspace = false
-        }
-        try {
-          await scope.disposeResources?.()
-        } catch (error) {
-          firstError ??= error
-        }
-      }
-      listeners.clear()
-      releaseSlot(slotId)
-      if (firstError !== undefined) throw firstError
-    }
+        releaseSlot(slotId)
+        if (firstError !== undefined) throw firstError
+      })())
 
     const promptRequest = (
       text: string
@@ -540,18 +601,19 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
         activeWorkspaces.add(scope.workspace.cwd)
         ownsWorkspace = true
         if (cancelRequested) {
+          await cleanup()
+          terminalSettled = true
+          terminal.resolve({ status: 'cancelled' })
           settleAccepted(
             'provider_prompt_completed',
             new DelegateMessagePreAcceptanceError(
               'delegate execution was cancelled before provider acceptance'
             )
           )
-          await cleanup()
-          terminalSettled = true
-          terminal.resolve({ status: 'cancelled' })
           return
         }
 
+        runtimeCreationStarted = true
         runtime = options.createRuntime(scope, callbacks)
         const created = await runtime.createSession({
           cwd: scope.workspace.cwd,
@@ -561,15 +623,15 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
         })
         providerSessionId = created.sessionId
         if (cancelRequested) {
+          await cleanup()
+          terminalSettled = true
+          terminal.resolve({ status: 'cancelled' })
           settleAccepted(
             'provider_prompt_completed',
             new DelegateMessagePreAcceptanceError(
               'delegate execution was cancelled before provider acceptance'
             )
           )
-          await cleanup()
-          terminalSettled = true
-          terminal.resolve({ status: 'cancelled' })
           return
         }
 
@@ -593,7 +655,8 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
           else settleAccepted('provider_prompt_completed')
           activeMessage = undefined
           response = currentResponse.join('')
-          if (cancelRequested || outcome.stopReason === 'cancelled') break
+          if (outcome.stopReason === 'cancelled') cancelRequested = true
+          if (cancelRequested) break
           await activeTurn?.complete?.(
             response,
             currentStopEvent?.turnUsage,
@@ -651,7 +714,6 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
                 error instanceof Error ? error.message : String(error),
                 error
               )
-        settleAccepted('provider_prompt_completed', acceptanceError)
         activeMessage?.acceptance.reject(acceptanceError)
         activeMessage = undefined
         for (const pending of queuedPrompts.splice(0)) pending.acceptance.reject(error)
@@ -663,6 +725,7 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
         }
         terminalSettled = true
         terminal.reject(terminalError)
+        settleAccepted('provider_prompt_completed', acceptanceError)
       }
     })()
 
@@ -718,7 +781,19 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
     })
   }
 
-  return Object.freeze({ reserve, run })
+  return Object.freeze({
+    reserve,
+    run,
+    async recoverCleanup() {
+      const results = await Promise.allSettled(
+        [...quarantined.values()].map((recover) => recover())
+      )
+      const failures = results.flatMap((result) =>
+        result.status === 'rejected' ? [result.reason] : []
+      )
+      if (failures.length) throw new AggregateError(failures, 'Delegated resource recovery failed.')
+    }
+  })
 }
 
 export { createAcpDelegateExecution }

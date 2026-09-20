@@ -212,6 +212,7 @@ describe('Notebook filesystem policy', () => {
 
   linuxIt('keeps hidden Linux mounts read-only while restoring workspace writes', async () => {
     const privateRoot = mkdtempSync(join(tmpdir(), 'open-science-linux-mount-'))
+    const readOnlyRoot = mkdtempSync(join(tmpdir(), 'open-science-linux-input-'))
     const bin = join(privateRoot, 'bin')
     const workspace = join(privateRoot, 'workspace')
     mkdirSync(bin)
@@ -232,7 +233,7 @@ describe('Notebook filesystem policy', () => {
       inheritedFileDescriptorCount: 1,
       filesystem: {
         privateRoot,
-        readOnlyRoots: [],
+        readOnlyRoots: [readOnlyRoot],
         readWriteRoots: [workspace],
         deniedReadRoots: [],
         deniedWriteRoots: []
@@ -241,6 +242,7 @@ describe('Notebook filesystem policy', () => {
 
     try {
       const physicalRoot = realpathSync(privateRoot)
+      const physicalReadOnlyRoot = realpathSync(readOnlyRoot)
       const physicalWorkspace = realpathSync(workspace)
       const remountIndex = launch.argv.findIndex(
         (value, index) => value === '--remount-ro' && launch.argv[index + 1] === physicalRoot
@@ -251,9 +253,16 @@ describe('Notebook filesystem policy', () => {
           launch.argv[index + 1] === physicalWorkspace &&
           launch.argv[index + 2] === physicalWorkspace
       )
+      const readOnlyIndex = launch.argv.findIndex(
+        (value, index) =>
+          value === '--ro-bind' &&
+          launch.argv[index + 1] === physicalReadOnlyRoot &&
+          launch.argv[index + 2] === physicalReadOnlyRoot
+      )
 
       expect(remountIndex).toBeGreaterThan(0)
       expect(writableIndex).toBeGreaterThan(remountIndex)
+      if (process.platform === 'linux') expect(readOnlyIndex).toBeGreaterThan(0)
       expect(launch.argv).not.toContain('--preserve-fds')
       expect(launch.argv.slice(-2)).toEqual(['1', ''])
       for (const temporaryRoot of ['/tmp', '/var/tmp']) {
@@ -264,11 +273,16 @@ describe('Notebook filesystem policy', () => {
           (value, index) => value === '--remount-ro' && launch.argv[index + 1] === temporaryRoot
         )
         expect(tmpfsIndex).toBeGreaterThan(0)
+        if (process.platform === 'linux' && physicalReadOnlyRoot.startsWith(`${temporaryRoot}/`)) {
+          expect(readOnlyIndex).toBeGreaterThan(tmpfsIndex)
+          expect(temporaryRemountIndex).toBeGreaterThan(readOnlyIndex)
+        }
         expect(temporaryRemountIndex).toBeGreaterThan(writableIndex)
       }
     } finally {
       await launch.release()
       rmSync(privateRoot, { force: true, recursive: true })
+      rmSync(readOnlyRoot, { force: true, recursive: true })
     }
   })
 

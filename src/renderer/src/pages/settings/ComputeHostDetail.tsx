@@ -1,3 +1,5 @@
+import { fieldErrorClassName } from '@/components/ui/notice-chrome'
+import { InlineNotice } from '@/components/ui/inline-notice'
 import { ErrorNotice } from '@/components/error-notice'
 import {
   ChevronDown,
@@ -511,9 +513,9 @@ export function ComputeHostDetail({
 
       {/* IPC / unexpected probe error banner */}
       {probeError ? (
-        <p role="alert" className="mt-4 text-sm text-destructive">
+        <InlineNotice level="error" role="alert" className="mt-4">
           {errorText(probeError)}
-        </p>
+        </InlineNotice>
       ) : null}
 
       <SettingsSection
@@ -673,37 +675,37 @@ export function ComputeHostDetail({
         ) : null}
         {host.authentication?.mode === 'password' &&
         host.authentication.credentialStatus === 'missing' ? (
-          <p role="alert" className="mt-3 text-sm text-destructive">
+          <InlineNotice level="error" role="alert" className="mt-3">
             {t(
               'The saved credential is missing. Password authentication is blocked and does not fall back to SSH configuration.'
             )}
-          </p>
+          </InlineNotice>
         ) : null}
         {host.authentication?.mode === 'password' &&
         host.authentication.credentialStatus === 'unavailable' ? (
-          <p role="alert" className="mt-3 text-sm text-destructive">
+          <InlineNotice level="error" role="alert" className="mt-3">
             {t(
               'The encrypted credential cannot be used on this device. Password authentication is blocked and does not fall back to SSH configuration.'
             )}
-          </p>
+          </InlineNotice>
         ) : null}
         {host.authentication?.mode === 'password' &&
         passwordCapability?.available === false &&
         passwordCapability.reason === 'unsupported_platform' ? (
-          <p role="alert" className="mt-3 text-sm text-destructive">
+          <InlineNotice level="error" role="alert" className="mt-3">
             {t(
               'Password authentication is disabled because this platform cannot provide secure credential storage and constrained password delivery.'
             )}
-          </p>
+          </InlineNotice>
         ) : null}
         {host.authentication?.mode === 'password' &&
         passwordCapability?.available === false &&
         passwordCapability.reason !== 'unsupported_platform' ? (
-          <p role="alert" className="mt-3 text-sm text-destructive">
+          <InlineNotice level="error" role="alert" className="mt-3">
             {t(
               'Secure credential storage is locked or unavailable. Unlock the system credential store and retry.'
             )}
-          </p>
+          </InlineNotice>
         ) : null}
         {host.authentication?.mode !== 'password' ||
         host.authentication.credentialStatus !== 'unavailable' ||
@@ -817,9 +819,9 @@ export function ComputeHostDetail({
           </div>
         )}
         {executionModeError ? (
-          <p role="alert" className="mt-2 text-xs text-destructive">
+          <InlineNotice level="error" role="alert" className="mt-2">
             {errorText(executionModeError)}
-          </p>
+          </InlineNotice>
         ) : null}
       </SettingsSection>
 
@@ -828,7 +830,7 @@ export function ComputeHostDetail({
         className="mt-5"
         title={t('Details')}
         description={t(
-          'Free-form notes about this provider. Open Science reads and adds to them as it learns.'
+          'Free-form notes about this provider. Open-Science reads and adds to them as it learns.'
         )}
         action={
           !isEditingDetails ? (
@@ -914,7 +916,7 @@ export function ComputeHostDetail({
               </div>
             </div>
             {detailsError ? (
-              <p id="details-error" role="alert" className="text-xs text-destructive">
+              <p id="details-error" role="alert" className={fieldErrorClassName}>
                 {errorText(detailsError)}
               </p>
             ) : null}
@@ -1056,7 +1058,7 @@ export function ComputeHostDetail({
           </p>
         )}
         {scratchError ? (
-          <p id="scratch-error" role="alert" className="mt-2 text-xs text-destructive">
+          <p id="scratch-error" role="alert" className={`mt-2 ${fieldErrorClassName}`}>
             {errorText(scratchError)}
           </p>
         ) : null}
@@ -1103,7 +1105,7 @@ export function ComputeHostDetail({
               aria-describedby={concurrencyError ? 'concurrency-error' : undefined}
             />
             {concurrencyError ? (
-              <p id="concurrency-error" role="alert" className="text-xs text-destructive">
+              <p id="concurrency-error" role="alert" className={fieldErrorClassName}>
                 {errorText(concurrencyError)}
               </p>
             ) : null}

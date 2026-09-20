@@ -3640,13 +3640,28 @@ class Analyzer extends NodeVisitor {
   ): ReturnType<Analyzer['keywordArgumentRecord']>[] {
     const keywords = [...(node.keywords ?? [])]
     const args = Array.isArray(node.args) ? node.args : []
-    for (const [position, name] of Object.entries(
-      this.libraryCallEffect(node)?.callbackPositionalKeywords ?? {}
-    )) {
+    const effect = this.libraryCallEffect(node)
+    for (const [position, name] of Object.entries(effect?.callbackPositionalKeywords ?? {})) {
       const value = args[Number(position)]
       if (value) keywords.push({ type: 'keyword', arg: name, value, _fields: ['value'] })
     }
-    return keywords.map((keyword) => this.keywordArgumentRecord(keyword, trackLocal))
+    return keywords.map((keyword) => {
+      const record = this.keywordArgumentRecord(keyword, trackLocal)
+      // defaultdict calls its factory without arguments. Builtin scalar/container constructors
+      // cannot invoke user conversion methods in this position; shadowed names stay opaque.
+      if (
+        effect?.callbackPositionalKeywords?.[0] === 'default_factory' &&
+        keyword.arg === 'default_factory' &&
+        keyword.value.type === 'Name' &&
+        ['int', 'float', 'str', 'bool', 'list', 'dict', 'set', 'tuple'].includes(
+          keyword.value.id ?? ''
+        ) &&
+        !this.defined.has(keyword.value.id!) &&
+        !this.contextualKernelNames.has(keyword.value.id!)
+      )
+        return { ...record, callableReferences: [] }
+      return record
+    })
   }
 
   keywordArgumentRecord(
@@ -5022,6 +5037,8 @@ class Analyzer extends NodeVisitor {
 
   visit_Attribute(node: PyNode): void {
     if (node.ctx === 'Store' || node.ctx === 'Del') {
+      // Changing a defaultdict factory can make a later subscript invoke arbitrary code.
+      if (node.attr === 'default_factory') this.unknown.add('scoped-opaque-call')
       const name = this.visibleRootName(node)
       if (name) {
         const imported = this.importedCanonicalNames.get(name)
@@ -5635,6 +5652,7 @@ class Analyzer extends NodeVisitor {
       ) {
         this.unknown.add('external-state')
         if (
+          canonicalCallName === 'decimal.Decimal' ||
           ['random', 'numpy.random'].some((namespace) =>
             canonicalCallName.startsWith(`${namespace}.`)
           )
@@ -6308,6 +6326,25 @@ const analyzePythonTree = (
 }
 
 const pythonHasUnsupportedExternalState = (canonicalName: string, node?: PyNode): boolean => {
+  if (canonicalName === 'decimal.Decimal') {
+    const args = Array.isArray(node?.args) ? node.args : []
+    const value = args[0] ?? node?.keywords?.find((keyword) => keyword.arg === 'value')?.value
+    // Valid fixed-point string construction is exact and does not depend on precision,
+    // rounding, traps, or exponent-format settings. Other forms remain unmodeled.
+    return (
+      args.length > 1 ||
+      Boolean(node?.keywords?.some((keyword) => keyword.arg !== 'value')) ||
+      Boolean(
+        value &&
+        !(
+          value.type === 'Constant' &&
+          typeof value.value === 'string' &&
+          /^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)$/.test(value.value)
+        )
+      )
+    )
+  }
+
   const member = canonicalName.split('.').at(-1) ?? ''
   const effect = pythonLibraryMethodEffect(canonicalName.slice(0, -(member.length + 1)), member)
   // Entropy-seeding and independent Generator/Random instances remain external.
@@ -6394,6 +6431,7 @@ const pythonJoinPathParts = (
 }
 
 type PythonStaticPathContext = {
+  managedEnvironment?: Readonly<Record<string, string>>
   collections: ReadonlyMap<string, PythonStaticFileCollection>
   importedNames: ReadonlyMap<string, string>
   shadowedNames: ReadonlySet<string>
@@ -6412,6 +6450,15 @@ const pythonStaticString = (
   }
   if (node.type === 'Name' && node.id) return bindings.get(node.id)
   if (node.type === 'Subscript' && isPyNode(node.value)) {
+    const rawName = pythonDottedName(node.value)
+    const [root, ...members] = rawName?.split('.') ?? []
+    const imported = context?.importedNames.get(root ?? '')
+    const canonical = imported ? [imported, ...members].join('.') : undefined
+    if (canonical === 'os.environ') {
+      const key = evaluate(node.slice)
+      const value = key === undefined ? undefined : context?.managedEnvironment?.[key]
+      return typeof value === 'string' ? value : undefined
+    }
     const collection = pythonStaticStringCollection(
       node.value,
       bindings,
@@ -6452,6 +6499,17 @@ const pythonStaticString = (
       ? [imported ?? root, ...members].join('.')
       : undefined
   const args = Array.isArray(node.args) ? node.args : []
+  if (
+    name &&
+    ['os.getenv', 'os.environ.get'].includes(name) &&
+    imported &&
+    args.length <= 2 &&
+    !(node.keywords ?? []).length
+  ) {
+    const key = evaluate(args[0])
+    const value = key === undefined ? undefined : context?.managedEnvironment?.[key]
+    return typeof value === 'string' ? value : undefined
+  }
   if (name && ['Path', 'PurePath', 'pathlib.Path', 'pathlib.PurePath'].includes(name)) {
     if ((node.keywords ?? []).length) return undefined
     const parts = args.map(evaluate)
@@ -7005,7 +7063,11 @@ const analyzePythonFileAccessTree = (
     pythonStaticString(node, values, {
       collections,
       importedNames,
-      shadowedNames: shadowedStaticCalls
+      shadowedNames: shadowedStaticCalls,
+      managedEnvironment:
+        !pythonTaintedNamespaces.has('os') && !pythonTaintedNamespaces.has('*')
+          ? context?.managedEnvironment
+          : undefined
     })
   const inMemoryInputs = new Set<string>()
   const fileConnections = new Map<string, string>(
@@ -7084,6 +7146,8 @@ const analyzePythonFileAccessTree = (
         bindings
       )
     }
+    if (name === 'pathlib.PurePath.open' && node.func?.type === 'Attribute')
+      return resolveStaticString(node.func.value as PyNode, bindings)
     if (name === 'pandas.ExcelFile')
       return resolveStaticString(
         pythonFileCallArgument(node, { kind: 'read', position: 0, keywords: ['path_or_buffer'] }),
@@ -7245,6 +7309,11 @@ const analyzePythonFileAccessTree = (
       member
     )
     const libraryFileEffect = libraryMethodEffect?.file
+    if (
+      ['os.getenv', 'os.environ.get'].includes(canonicalName) &&
+      resolveStaticString(node, bindings) !== undefined
+    )
+      return
     // Callback containers can introduce I/O beyond the reader's explicit source.
     // Only a closed, read-only inline callback proves that no extra files are involved.
     for (const keyword of node.keywords ?? []) {
@@ -7601,6 +7670,16 @@ const analyzePythonFileAccessTree = (
       return
     }
 
+    if (canonicalName === 'pathlib.PurePath.open' && node.func?.type === 'Attribute') {
+      recordModeFileAccess(
+        node.func.value as PyNode,
+        (node.keywords ?? []).find((keyword) => keyword.arg === 'mode')?.value ??
+          (Array.isArray(node.args) ? node.args[0] : undefined),
+        'r'
+      )
+      return
+    }
+
     if (rawName === 'open' || canonicalName === 'builtins.open') {
       const args = Array.isArray(node.args) ? node.args : []
       const modeNode =
@@ -7857,6 +7936,49 @@ const analyzePythonFileAccessTree = (
       return
     }
 
+    if (canonicalName === 'json.load' || canonicalName === 'json.dump') {
+      // Named callbacks and custom codecs may perform I/O outside the explicit
+      // stream. **kwargs can hide these hooks, so it cannot establish completeness.
+      if (
+        (node.keywords ?? []).some(
+          (keyword) =>
+            keyword.arg === null ||
+            keyword.arg === undefined ||
+            ([
+              'cls',
+              'object_hook',
+              'object_pairs_hook',
+              'parse_int',
+              'parse_float',
+              'parse_constant',
+              'default'
+            ].includes(keyword.arg) &&
+              !(keyword.value.type === 'Constant' && keyword.value.value === null))
+        )
+      ) {
+        unresolvedReads = true
+        unresolvedWrites = true
+        unsupportedExternalState = true
+      }
+      const writing = canonicalName === 'json.dump'
+      const args = Array.isArray(node.args) ? node.args : []
+      const stream =
+        (node.keywords ?? []).find((keyword) => keyword.arg === 'fp')?.value ??
+        args[writing ? 1 : 0]
+      if (pythonInMemoryInput(stream, importedNames, inMemoryInputs)) return
+      const path = fileConnectionPath(stream)
+      if (path)
+        recordFileAccess(writing ? 'write' : 'read', {
+          type: 'Constant',
+          constKind: 'str',
+          value: path,
+          _fields: []
+        })
+      else if (writing) unresolvedWrites = true
+      else unresolvedReads = true
+      return
+    }
+
     if (canonicalName === 'tarfile.open') {
       const args = Array.isArray(node.args) ? node.args : []
       const fileObject = (node.keywords ?? []).find((keyword) => keyword.arg === 'fileobj')?.value
@@ -8020,7 +8142,11 @@ const analyzePythonFileAccessTree = (
       const collection = pythonStaticStringCollection(argument, bindings, collections, {
         collections,
         importedNames,
-        shadowedNames: shadowedStaticCalls
+        shadowedNames: shadowedStaticCalls,
+        managedEnvironment:
+          !pythonTaintedNamespaces.has('os') && !pythonTaintedNamespaces.has('*')
+            ? context?.managedEnvironment
+            : undefined
       })
       if (collection?.kind === 'sequence' || collection?.kind === 'rows') {
         if (effect.inputForm === 'lines' && collection.kind === 'sequence') return
@@ -8356,7 +8482,11 @@ const analyzePythonFileAccessTree = (
       const collection = pythonStaticStringCollection(valueNode, bindings, collections, {
         collections,
         importedNames,
-        shadowedNames: shadowedStaticCalls
+        shadowedNames: shadowedStaticCalls,
+        managedEnvironment:
+          !pythonTaintedNamespaces.has('os') && !pythonTaintedNamespaces.has('*')
+            ? context?.managedEnvironment
+            : undefined
       })
       const collectionRows = pythonStaticLoopRows(
         valueNode,

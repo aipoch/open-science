@@ -1,3 +1,7 @@
+import {
+  observeProviderFailure,
+  type ProviderFailureObserver
+} from './provider-failure-observation'
 import { randomUUID } from 'node:crypto'
 import type { ServerResponse } from 'node:http'
 
@@ -48,6 +52,7 @@ import {
 type JsonObject = Record<string, any>
 
 type NativeResponsesCompatibilityTarget = {
+  onProviderFailure?: ProviderFailureObserver
   baseUrl: string
   key?: string
   resolveKey?: (forceRefresh?: boolean) => Promise<string>
@@ -811,6 +816,7 @@ export class NativeResponsesCompatibilityProxy {
       return
     }
 
+    const target = this.target
     const requestId = randomUUID()
     const startedAt = Date.now()
     const upstreamAbort = new AbortController()
@@ -859,7 +865,7 @@ export class NativeResponsesCompatibilityProxy {
               ...body,
               tools: namespaceToolDeclarations(
                 reviewerScoped
-                  ? (this.target.reviewerScope?.namespacedTools ?? [])
+                  ? (target.reviewerScope?.namespacedTools ?? [])
                   : hostMessageScoped
                     ? hostMessageTools
                     : []
@@ -867,23 +873,21 @@ export class NativeResponsesCompatibilityProxy {
               tool_choice: 'auto'
             }
           : body
-      const routedBody = this.target.model
-        ? { ...scopedBody, model: this.target.model }
-        : scopedBody
+      const routedBody = target.model ? { ...scopedBody, model: target.model } : scopedBody
       const { request: flattenedRequest, aliases } = flattenNativeResponsesRequest(routedBody)
       const compatibilityRequest =
         Array.isArray(flattenedRequest.tools) &&
         flattenedRequest.tools.some((tool: unknown) => isArtifactTool(tool, aliases))
           ? promoteArtifactDeveloperInstructions(flattenedRequest)
           : flattenedRequest
-      const upstreamRequest = this.target.sanitizeRequest
-        ? this.target.sanitizeRequest(compatibilityRequest)
+      const upstreamRequest = target.sanitizeRequest
+        ? target.sanitizeRequest(compatibilityRequest)
         : compatibilityRequest
       const upstreamRequestBody = JSON.stringify(upstreamRequest)
-      const resolvedKey = this.target.resolveKey ? await this.target.resolveKey() : this.target.key
+      const resolvedKey = target.resolveKey ? await target.resolveKey() : target.key
       const headersToForward = upstreamHeaders(request, resolvedKey)
       const replayKey = providerRequestFingerprint(
-        this.target.baseUrl,
+        target.baseUrl,
         providerRequestHeadersFingerprint(headersToForward),
         upstreamRequestBody
       )
@@ -964,15 +968,16 @@ export class NativeResponsesCompatibilityProxy {
         this.options.responseHeaderTimeoutMs ?? DEFAULT_RESPONSE_HEADER_TIMEOUT_MS,
         'Native Responses upstream did not return response headers in time.'
       )
-      let upstream = await fetchProviderRequest(this.fetchImpl, responsesUrl(this.target.baseUrl), {
+      const providerRequestStartedAt = Date.now()
+      let upstream = await fetchProviderRequest(this.fetchImpl, responsesUrl(target.baseUrl), {
         method: 'POST',
         headers: headersToForward,
         body: upstreamRequestBody,
         signal: AbortSignal.any([request.signal, upstreamAbort.signal])
       })
-      if (upstream.status === 401 && this.target.resolveKey) {
-        const refreshedKey = await this.target.resolveKey(true)
-        upstream = await fetchProviderRequest(this.fetchImpl, responsesUrl(this.target.baseUrl), {
+      if (upstream.status === 401 && target.resolveKey) {
+        const refreshedKey = await target.resolveKey(true)
+        upstream = await fetchProviderRequest(this.fetchImpl, responsesUrl(target.baseUrl), {
           method: 'POST',
           headers: upstreamHeaders(request, refreshedKey),
           body: upstreamRequestBody,
@@ -993,6 +998,16 @@ export class NativeResponsesCompatibilityProxy {
         const boundedBody = await readBoundedProviderErrorBody(upstream, {
           signal: request.signal
         })
+        await observeProviderFailure(
+          target.onProviderFailure,
+          {
+            model: upstreamRequest.model,
+            endpoint: 'responses',
+            startedAt: providerRequestStartedAt
+          },
+          upstream.status,
+          boundedBody.complete ? boundedBody.body.toString('utf8') : undefined
+        )
         let rawBody = boundedBody.body
         let bodyIsReplayable = boundedBody.complete
         if (boundedBody.complete && responseType === 'json') {

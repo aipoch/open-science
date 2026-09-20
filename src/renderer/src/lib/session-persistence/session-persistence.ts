@@ -1,3 +1,8 @@
+import {
+  ensureRuntimeWriter,
+  isRuntimeWriter,
+  runtimeWriterSaveOptions
+} from '../acp/runtime-writer-client'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { shallow } from 'zustand/vanilla/shallow'
@@ -39,6 +44,7 @@ import {
 import { PENDING_UPLOAD_SESSION_ID } from '../../../../shared/uploads'
 import {
   getExternallyHydratedSessionAuthority,
+  hydrateSession,
   isArtifactFinalizationError,
   isExternallyHydratedSession,
   toPersistedSession,
@@ -50,6 +56,10 @@ import type {
   StreamingMessageContentByMessageId
 } from '../../stores/session-store'
 import { projectRendererFailure } from '../../renderer-diagnostics'
+import {
+  acknowledgeSessionConversationCommands,
+  pendingSessionConversationCommands
+} from '../../stores/session-conversation-intents'
 
 type SessionPersistenceApi = {
   list?: () => Promise<ListSessionSummariesResult>
@@ -481,11 +491,94 @@ const sessionFieldValuesEqual = (
       )
     : jsonValuesEqual(left, right)
 
+// Task completion and live renderer projection can assign different IDs to the same reply.
+// Reconcile only a new leaf with identical runtime evidence and payload. The existing graph
+// rebase retains disjoint changes (such as terminal context samples on the prompt) and rejects
+// competing edits. Only an unsaved projection adopts an existing durable message identity.
+const reconcileCompletedTaskReply = (
+  base: PersistedChatSession,
+  submitted: PersistedChatSession,
+  latest: PersistedChatSession
+): PersistedChatSession => {
+  const graph = submitted.conversationGraph
+  const authority = latest.conversationGraph
+  if (
+    !latest.taskRunCommitId ||
+    latest.status !== 'idle' ||
+    latest.activeRun ||
+    !graph ||
+    !authority
+  )
+    return submitted
+  const branchId = selectedRootBranchId(submitted)
+  if (branchId !== selectedRootBranchId(latest)) return submitted
+  const local = graph.messages.find(
+    ({ id }) => id === graph.branches.find((branch) => branch.id === branchId)?.headMessageId
+  )
+  const durable = authority.messages.find(
+    ({ id }) => id === authority.branches.find((branch) => branch.id === branchId)?.headMessageId
+  )
+  if (
+    !local ||
+    !durable ||
+    local.id === durable.id ||
+    local.role !== 'agent' ||
+    durable.role !== 'agent' ||
+    durable.status !== 'complete' ||
+    !local.eventIds.length ||
+    !local.responseToMessageId ||
+    local.responseToMessageId !== durable.responseToMessageId ||
+    base.conversationGraph?.messages.some(({ id }) => id === local.id) ||
+    !jsonValuesEqual(local.eventIds, durable.eventIds) ||
+    (submitted.activeRun && submitted.activeRun.promptMessageId !== local.responseToMessageId) ||
+    (submitted.status !== 'running' && submitted.status !== 'idle')
+  )
+    return submitted
+  const normalized = { ...local }
+  for (const key of [
+    'id',
+    'streamId',
+    'status',
+    'createdAt',
+    'updatedAt',
+    'completedAt',
+    'turnUsage',
+    'turnUsageUnavailable',
+    'modelCallUsage'
+  ] as const) {
+    Reflect.deleteProperty(normalized, key)
+    if (Object.hasOwn(durable, key)) Object.assign(normalized, { [key]: durable[key] })
+  }
+  if (!jsonValuesEqual(normalized, durable)) return submitted
+  const normalizedGraph = {
+    ...graph,
+    messages: graph.messages.map((message) => (message === local ? durable : message)),
+    branches: graph.branches.map((branch) =>
+      branch.id === branchId ? { ...branch, headMessageId: durable.id } : branch
+    )
+  }
+  const reconciledGraph = rebaseConversationGraph(
+    base.conversationGraph,
+    normalizedGraph,
+    authority
+  )
+  if (!reconciledGraph) return submitted
+  return {
+    ...submitted,
+    conversationGraph: reconciledGraph,
+    messages: resolveActiveConversationMessages(reconciledGraph).map(projectConversationMessage),
+    ...resolveActiveConversationActivities(reconciledGraph),
+    status: latest.status,
+    activeRun: latest.activeRun
+  }
+}
+
 const rebaseSessionAfterRevisionConflict = (
   base: PersistedChatSession,
   submitted: PersistedChatSession,
   latest: PersistedChatSession
 ): PersistedChatSession | undefined => {
+  submitted = reconcileCompletedTaskReply(base, submitted, latest)
   const rebased: PersistedChatSession = structuredClone(latest)
   const graphOwnsCompatibilityProjections = Boolean(
     base.conversationGraph && submitted.conversationGraph && latest.conversationGraph
@@ -559,6 +652,29 @@ const rebaseSessionAfterRevisionConflict = (
           promptMessageId: submittedRun.promptMessageId,
           startedAt: Math.min(submittedRun.startedAt, latestRun.startedAt)
         }
+      } else if (
+        key === 'status' &&
+        base.status === 'waiting-permission' &&
+        latest.status === 'running' &&
+        submitted.status === 'idle' &&
+        !submitted.activeRun &&
+        !latest.runtimeContext?.permission &&
+        base.activeRun?.promptMessageId &&
+        jsonValuesEqual(latest.activeRun, base.activeRun) &&
+        selectedRootBranchId(base) === selectedRootBranchId(submitted) &&
+        selectedRootBranchId(base) === selectedRootBranchId(latest) &&
+        base.conversationGraph?.frames.every((frame) =>
+          [submitted, latest].every((session) =>
+            session.conversationGraph?.frames.some(
+              (candidate) =>
+                candidate.id === frame.id && candidate.activeBranchId === frame.activeBranchId
+            )
+          )
+        )
+      ) {
+        // Permission clearance and renderer completion can overtake one another for the same turn.
+        // Only the proven completed turn may supersede Main's intermediate running status.
+        rebased.status = submitted.status
       } else if (key === 'contextUsage') {
         // Main does not persist live context-window snapshots. Keep the renderer value, including
         // an explicit clear, instead of resurrecting a stale durable copy.
@@ -595,6 +711,17 @@ const rebaseSessionAfterRevisionConflict = (
     if (projection.activityGroups.length > 0) rebased.activityGroups = projection.activityGroups
     else delete rebased.activityGroups
   }
+
+  // A terminal Task receipt describes the preceding prompt, not a locally started follow-up.
+  if (
+    latest.taskRunCommitId &&
+    latest.taskRunCommitId !== base.taskRunCommitId &&
+    latest.status === 'idle' &&
+    submitted.activeRun &&
+    submitted.activeRun.promptMessageId !== base.activeRun?.promptMessageId &&
+    rebased.activeRun?.promptMessageId === submitted.activeRun.promptMessageId
+  )
+    rebased.status = submitted.status
 
   rebased.revision = sessionRevision(latest)
   rebased.updatedAt = Math.max(base.updatedAt, submitted.updatedAt, latest.updatedAt) + 1
@@ -650,8 +777,32 @@ const mergeSaveSessionOptions = (
   const conflictRebaseFields = [
     ...new Set([...(previous?.conflictRebaseFields ?? []), ...(next?.conflictRebaseFields ?? [])])
   ]
-  return conflictRebaseFields.length > 0 ? { conflictRebaseFields } : undefined
+  const runtimeWriterToken =
+    next && Object.hasOwn(next, 'runtimeWriterToken')
+      ? next.runtimeWriterToken
+      : previous?.runtimeWriterToken
+  const conversationCommands = [
+    ...(previous?.conversationCommands ?? []),
+    ...(next?.conversationCommands ?? [])
+  ].filter(
+    (command, index, commands) => commands.findIndex(({ id }) => id === command.id) === index
+  )
+  return conflictRebaseFields.length > 0 || runtimeWriterToken || conversationCommands.length > 0
+    ? {
+        ...(runtimeWriterToken ? { runtimeWriterToken } : {}),
+        ...(conflictRebaseFields.length > 0 ? { conflictRebaseFields } : {}),
+        ...(conversationCommands.length > 0 ? { conversationCommands } : {})
+      }
+    : undefined
 }
+
+const withPendingConversationCommands = (
+  session: PersistedChatSession,
+  options: SaveSessionOptions | undefined
+): SaveSessionOptions | undefined =>
+  mergeSaveSessionOptions(options, {
+    conversationCommands: pendingSessionConversationCommands(session.id)
+  })
 
 const LATEST_SESSION_SAVE_INTERVAL_MS = 500
 // While a turn is streaming, intermediate flushes only bound crash loss and the terminal commit
@@ -849,6 +1000,7 @@ const createOrderedSessionPersistence = (
       ? await api.saveSession(submitted, options)
       : await api.saveSession(submitted)
     acknowledgeSession(durable)
+    acknowledgeSessionConversationCommands(durable)
     return durable
   }
 
@@ -861,7 +1013,12 @@ const createOrderedSessionPersistence = (
     const pending = pendingLatestByTarget.get(target)
     if (pending?.promise) {
       pending.task = task
-      pending.options = mergeSaveSessionOptions(pending.options, options)
+      // The latest snapshot owns its lease; explicit edits must not inherit an earlier writer's
+      // token. Rebase fields and conversation commands still accumulate across queued snapshots.
+      pending.options = mergeSaveSessionOptions(
+        { ...pending.options, runtimeWriterToken: options?.runtimeWriterToken },
+        options
+      )
       if (pending.streaming && !streaming) {
         // The turn ended: flush the terminal snapshot at the normal cadence instead of waiting
         // out the relaxed streaming interval.
@@ -926,21 +1083,32 @@ const createOrderedSessionPersistence = (
     },
     clearWriteFailure: (target) => failedWritesByTarget.delete(target),
     clearWriteFailures: () => failedWritesByTarget.clear(),
-    saveSession: (session, options) =>
-      enqueue(`session:${session.id}`, () => saveSubmittedSession(session, options)),
-    saveSessionWithRecovery: (session, options, recover) =>
-      enqueue(`session:${session.id}`, async () => {
+    saveSession: (session, options) => {
+      // Commands must be paired with the snapshot visible when the save is admitted. Reading the
+      // pending buffer after an older save waits in the queue can attach a newer Message command.
+      const submittedOptions = withPendingConversationCommands(session, options)
+      return enqueue(`session:${session.id}`, () => saveSubmittedSession(session, submittedOptions))
+    },
+    saveSessionWithRecovery: (session, options, recover) => {
+      const submittedOptions = withPendingConversationCommands(session, options)
+      return enqueue(`session:${session.id}`, async () => {
         const submitted = structuredClone(session)
         submitted.revision = Math.max(
           sessionRevision(submitted),
           acknowledgedRevisions.get(submitted.id) ?? 0
         )
         try {
-          return await saveSubmittedSession(submitted, options)
+          return await saveSubmittedSession(submitted, submittedOptions)
         } catch (error) {
-          return recover(error, submitted, saveSubmittedSession)
+          return recover(error, submitted, (retrySession, retryOptions) =>
+            saveSubmittedSession(
+              retrySession,
+              mergeSaveSessionOptions(submittedOptions, retryOptions)
+            )
+          )
         }
-      }),
+      })
+    },
     saveManifest: (request) => enqueue('manifest', () => api.saveManifest(request)),
     flush: async () => {
       // Runtime/store updates can admit new snapshots while earlier writes are in flight.
@@ -982,13 +1150,15 @@ const resetSessionPersistenceWriteFailuresForTests = (): void => {
 const saveSessionInOrder = async (
   session: PersistedChatSession,
   persistence: OrderedSessionPersistence = liveSessionPersistence,
-  api: SessionReadApi = window.api.sessions
+  api: SessionReadApi = window.api.sessions,
+  options?: SaveSessionOptions
 ): Promise<PersistedChatSession> => {
   const target = `session:${session.id}`
   try {
+    const saveOptions = withPendingConversationCommands(session, options)
     const durable = await persistence.saveSessionWithRecovery(
       session,
-      undefined,
+      saveOptions,
       async (error, submitted, retry) => {
         if (!isSessionRevisionConflictError(error)) throw error
         const base = persistence.getAcknowledgedSession(submitted.id)
@@ -1009,6 +1179,7 @@ const saveSessionInOrder = async (
         )
       }
     )
+    acknowledgeSessionConversationCommands(durable)
     unresolvedSessionRevisionConflictTargets.delete(target)
     return durable
   } catch (error) {
@@ -1016,6 +1187,14 @@ const saveSessionInOrder = async (
     throw error
   }
 }
+
+const saveSessionFieldsInOrder = (
+  session: PersistedChatSession,
+  conflictRebaseFields: readonly SessionConflictRebaseField[]
+): Promise<PersistedChatSession> =>
+  saveSessionInOrder(session, liveSessionPersistence, window.api.sessions, {
+    conflictRebaseFields: [...conflictRebaseFields]
+  })
 
 const confirmPendingDelegationPolicyAuthority = async (
   session: ChatSession
@@ -1209,6 +1388,7 @@ const retryPendingArtifactFinalization = async (
 // are isolated and never block the rest; an empty result leaves references untouched so a file still
 // readable at its pending path is never dropped.
 const reconcilePendingArtifacts = async (api: ArtifactReconcileApi): Promise<void> => {
+  if (!(await ensureRuntimeWriter())) return
   for (const session of useSessionStore.getState().sessions) {
     try {
       await reconcileSessionPendingArtifacts(
@@ -1426,9 +1606,9 @@ const observePersistencePhase = <Result>(
 }
 
 const SAFE_SESSION_LOAD_ERROR =
-  'Open Science could not read saved conversation data. Retry to continue.'
+  'Open-Science could not read saved conversation data. Retry to continue.'
 const SAFE_SESSION_WRITE_ERROR =
-  'Open Science could not save the latest conversation changes. Retry before closing the app.'
+  'Open-Science could not save the latest conversation changes. Retry before closing the app.'
 const SESSION_REVISION_CONFLICT_WRITE_ERROR =
   'This conversation changed in another window. Your local changes were not saved. Retry to reload the latest version before closing the app.'
 const SESSION_SIZE_LIMIT_WRITE_ERROR =
@@ -1511,6 +1691,8 @@ const hasStagedUploads = (session: ChatSession): boolean =>
 const withoutMainOwnedOrTransientSessionMetadata = (session: ChatSession): ChatSession => ({
   ...session,
   branchSwitchBlocked: undefined,
+  activePlanProjection: undefined,
+  interactionState: undefined,
   agentPromptInFlight: undefined,
   awaitingFirstAgentOutput: undefined,
   revision: undefined,
@@ -1631,7 +1813,16 @@ const createStoreSaver = (
             ...(options?.conflictRebaseFieldsByTarget?.get(target) ?? [])
           ])
         ].filter((field): field is 'title' | 'pinned' => field === 'title' || field === 'pinned')
-        const saveOptions = conflictRebaseFields.length > 0 ? { conflictRebaseFields } : undefined
+        // Catalog hydration changes object identity without introducing a local metadata edit.
+        if (!isForced && conflictRebaseFields.length === 0) continue
+        const conversationCommands = pendingSessionConversationCommands(session.id)
+        const saveOptions =
+          conflictRebaseFields.length > 0 || conversationCommands.length > 0
+            ? {
+                ...(conflictRebaseFields.length > 0 ? { conflictRebaseFields } : {}),
+                ...(conversationCommands.length > 0 ? { conversationCommands } : {})
+              }
+            : undefined
         tasks.push({
           target,
           failureContext: { conflictRebaseFields },
@@ -1685,6 +1876,20 @@ const createStoreSaver = (
         )
         if (authorityIsNewer) acknowledgedSessions.set(session.id, authority)
       }
+
+      // A reader flush must not write a received snapshot back to the authority. Real user edits
+      // differ from the acknowledged snapshot and still follow normal conflict checking.
+      if (
+        isForced &&
+        !isRuntimeWriter() &&
+        jsonValuesEqual(
+          toPersistedSession(session, nextStreamingMessages),
+          acknowledgedSessions.has(session.id)
+            ? toPersistedSession(hydrateSession(acknowledgedSessions.get(session.id)!))
+            : undefined
+        )
+      )
+        continue
 
       const hasUnsavedLocalTitle =
         session.unsavedTitle === true && Boolean(authority && session.title !== authority.title)
@@ -1759,9 +1964,26 @@ const createStoreSaver = (
           ])
         ]
 
-        const saveOptions = conflictRebaseFields.length > 0 ? { conflictRebaseFields } : undefined
+        const conversationCommands = pendingSessionConversationCommands(session.id)
+        const writerOptions =
+          conflictRebaseFields.length > 0 ||
+          hasUnsavedContextReset ||
+          conversationCommands.length > 0
+            ? undefined
+            : runtimeWriterSaveOptions()
+        const saveOptions =
+          conflictRebaseFields.length > 0 ||
+          writerOptions?.runtimeWriterToken ||
+          conversationCommands.length > 0
+            ? {
+                ...(conflictRebaseFields.length > 0 ? { conflictRebaseFields } : {}),
+                ...(writerOptions ?? {}),
+                ...(conversationCommands.length > 0 ? { conversationCommands } : {})
+              }
+            : undefined
         const sourceAuthority = acknowledgedSessions.get(session.id)
         let submittedAuthority = sourceAuthority
+        let rebasedBeforeSave = false
         const serializeSession = (): PersistedChatSession => {
           let persisted = toPersistedSession(session, nextStreamingMessages)
           // Explicit navigation already carries all ancestor and descendant selections. Only
@@ -1785,14 +2007,29 @@ const createStoreSaver = (
               branchContextResetRequired: sourceAuthority?.branchContextResetRequired
             }
           }
-          // A passive queued snapshot can predate a remotely created Branch. Rebase its changes
-          // before using a newer revision. Explicit navigation already selects the intended Branch.
+          // A queued snapshot can predate newer content on the same Branch too. Rebase
+          // against its original authority before borrowing the newer revision number.
           submittedAuthority = acknowledgedSessions.get(session.id)
+          if (sourceAuthority && submittedAuthority) {
+            const reconciled = reconcileCompletedTaskReply(
+              sourceAuthority,
+              persisted,
+              submittedAuthority
+            )
+            rebasedBeforeSave = reconciled !== persisted
+            persisted = reconciled
+          }
           if (
             !selectionIntent &&
             sourceAuthority &&
             submittedAuthority &&
-            selectedRootBranchId(sourceAuthority) !== selectedRootBranchId(submittedAuthority)
+            // Main applies captured user commands and preferences to its current transcript;
+            // a stale streaming projection must reach that owner rather than fail a legacy merge.
+            submittedAuthority.runtimeTranscriptOwner !== 'main' &&
+            (selectedRootBranchId(sourceAuthority) !== selectedRootBranchId(submittedAuthority) ||
+              (submittedAuthority.taskRunCommitId &&
+                submittedAuthority.taskRunCommitId !== sourceAuthority.taskRunCommitId &&
+                sessionRevision(submittedAuthority) > sessionRevision(sourceAuthority)))
           ) {
             const rebased = rebaseSessionAfterRevisionConflict(
               sourceAuthority,
@@ -1805,7 +2042,24 @@ const createStoreSaver = (
                 sessionRevision(submittedAuthority)
               )
             }
+            rebasedBeforeSave = true
             persisted = rebased
+          }
+          // Non-Task completions can also overtake an unchanged queued running snapshot.
+          if (
+            sourceAuthority &&
+            submittedAuthority &&
+            sessionRevision(submittedAuthority) > sessionRevision(sourceAuthority) &&
+            sourceAuthority.status === 'running' &&
+            submittedAuthority.status === 'idle' &&
+            persisted.status === sourceAuthority.status &&
+            sessionFieldValuesEqual('activeRun', persisted.activeRun, sourceAuthority.activeRun)
+          ) {
+            persisted = {
+              ...persisted,
+              status: submittedAuthority.status,
+              activeRun: submittedAuthority.activeRun
+            }
           }
           return persisted
         }
@@ -1824,7 +2078,9 @@ const createStoreSaver = (
             session: durableSession,
             mode:
               !keepLocalBranch &&
-              (recoveredRevisionConflict || (options?.conflictRebaseFields?.length ?? 0) > 0)
+              (rebasedBeforeSave ||
+                recoveredRevisionConflict ||
+                (options?.conflictRebaseFields?.length ?? 0) > 0)
                 ? 'replace-persisted-if-current'
                 : 'merge-upload-identities'
           })
@@ -1862,6 +2118,7 @@ const createStoreSaver = (
                 }
                 acknowledgedRevisions.set(session.id, sessionRevision(durableSession))
                 acknowledgedSessions.set(session.id, durableSession)
+                acknowledgeSessionConversationCommands(durableSession)
                 observePersistencePhase('session-apply-durable', () =>
                   applyDurableSession(durableSession, saveOptions, recoveredRevisionConflict)
                 )
@@ -1896,6 +2153,7 @@ const createStoreSaver = (
                     }
                     acknowledgedRevisions.set(session.id, sessionRevision(durableSession))
                     acknowledgedSessions.set(session.id, durableSession)
+                    acknowledgeSessionConversationCommands(durableSession)
                     observePersistencePhase('session-apply-durable', () =>
                       applyDurableSession(
                         durableSession,
@@ -2467,6 +2725,7 @@ export {
   deriveSessionCatalogRecovery,
   deleteSession,
   saveSessionInOrder,
+  saveSessionFieldsInOrder,
   setDelegationPolicyAuthority,
   toPersistedSessionForAuthorityMaterialization,
   useSessionPersistence

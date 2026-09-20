@@ -103,7 +103,7 @@ describe('SkillMentionPopup', () => {
       '[data-testid="product-command-setup-wsl"]'
     )
     expect(command?.textContent).toContain('/setup-wsl')
-    expect(command?.textContent).not.toContain('Open Science')
+    expect(command?.textContent).not.toContain('Open-Science')
     expect(options().at(-1)).toBe(command)
     expect(command?.querySelector('svg')).not.toBeNull()
     act(() => command?.click())

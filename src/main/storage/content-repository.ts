@@ -99,6 +99,13 @@ const pathAlreadyExists = (error: unknown): boolean =>
   'code' in error &&
   (error as { code?: unknown }).code === 'EEXIST'
 
+// A deterministic name keeps an interrupted removal attached to its database authority, including
+// historical storage keys. Publication-temporary recovery must never consume these receipts.
+const contentRemovalName = (id: string, storageKey: string): string =>
+  `.content-recovery-${createHash('sha256')
+    .update(JSON.stringify([id, storageKey]))
+    .digest('hex')}`
+
 const fileFingerprint = (file: Awaited<ReturnType<typeof stat>> | BigIntStats): string =>
   [file.dev, file.ino, file.size, file.mtimeMs, file.ctimeMs].join(':')
 
@@ -185,7 +192,21 @@ class ContentRepository {
         return content
       }
       const client = await this.options.getClient()
-      const existing = await client.contentBlob.findUnique({ where: { id } })
+      let existing = await client.contentBlob.findUnique({ where: { id } })
+      if (existing) {
+        const recoveryPath = join(
+          dirname(resolveContentStorageKey(this.options.storageRoot, existing.storageKey)),
+          contentRemovalName(id, existing.storageKey)
+        )
+        if (await this.lstatIfPresent(recoveryPath)) {
+          // Hold the same lifecycle lock and recheck references before resuming deletion. Never
+          // publish a replacement while an old receipt could later remove it or block recovery.
+          if (!(await this.removeUnreferenced(client, id))) {
+            throw new Error('Referenced content has an unresolved removal receipt.')
+          }
+          existing = null
+        }
+      }
       if (existing?.state === 'available') {
         const verification = await this.verifyLocked(id)
         if (verification.state === 'available') {
@@ -646,12 +667,59 @@ class ContentRepository {
       return current
     })
     if (!claimed) return false
-    await rm(resolveContentStorageKey(this.options.storageRoot, claimed.storageKey), {
-      force: true
-    })
+    const root = resolve(this.options.storageRoot)
+    const path = resolveContentStorageKey(root, claimed.storageKey)
+    const parentPath = dirname(path)
+    // lstat rejects pre-existing links; the native operation opens every directory without
+    // following links and checks the observed parent/file identities at the mutation boundary.
+    let directory = root
+    let parent: BigIntStats | undefined = await lstat(directory, { bigint: true })
+    for (const segment of ['', ...relative(root, parentPath).split(sep).filter(Boolean)]) {
+      if (segment) {
+        directory = join(directory, segment)
+        parent = await this.lstatIfPresent(directory)
+        // Project deletion may already have removed a legacy subtree, including any receipt.
+        // The root itself must exist; missing storage is not proof that content was deleted.
+        if (!parent) break
+      }
+      if (!parent.isDirectory() || parent.isSymbolicLink()) {
+        throw new Error('Unsafe content removal directory.')
+      }
+    }
+    if (parent) {
+      const recoveryName = contentRemovalName(contentId, claimed.storageKey)
+      if (await this.lstatIfPresent(join(parentPath, recoveryName))) {
+        recoverAnchoredRemoval(
+          root,
+          relative(root, parentPath),
+          recoveryName,
+          parent,
+          basename(path)
+        )
+      }
+      const file = await this.lstatIfPresent(path)
+      if (file) {
+        if (!file.isFile() || file.isSymbolicLink()) throw new Error('Unsafe content removal file.')
+        removeAnchoredFile(
+          root,
+          relative(root, parentPath),
+          basename(path),
+          parent,
+          file,
+          recoveryName
+        )
+      }
+    }
     await client.contentBlob.deleteMany({ where: { id: contentId, state: 'quarantined' } })
     this.verifiedContent.delete(contentId)
     return true
+  }
+
+  private async lstatIfPresent(path: string): Promise<BigIntStats | undefined> {
+    return lstat(path, { bigint: true }).catch((error: unknown) => {
+      if (missingFile(error)) return undefined
+      throw error
+    })
   }
 
   private async quarantine(contentId: string): Promise<void> {

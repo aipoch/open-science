@@ -30,6 +30,10 @@ export function AnnotationTransferSource({
   const availableTargets = targets.views.filter(
     (view) => view.parentSessionId === source.parentSessionId && view.projectId === source.projectId
   )
+  const newChatReason = targets.unavailableReason({
+    sessionId: source.parentSessionId,
+    projectId: source.projectId
+  })
   const [token, setToken] = useState<string>()
   const [error, setError] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
@@ -123,6 +127,16 @@ export function AnnotationTransferSource({
                         key={view.id}
                         type="button"
                         className="group flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-bg-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        disabled={Boolean(
+                          targets.unavailableReason(
+                            { sessionId: view.parentSessionId, projectId: view.projectId },
+                            view.id
+                          )
+                        )}
+                        title={targets.unavailableReason(
+                          { sessionId: view.parentSessionId, projectId: view.projectId },
+                          view.id
+                        )}
                         onClick={() => move(view.id)}
                       >
                         <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-bg-200 text-text-200">
@@ -147,12 +161,18 @@ export function AnnotationTransferSource({
                 type="button"
                 variant="outline"
                 className="w-full justify-start gap-2 rounded-lg shadow-none"
-                disabled={refreshing}
+                disabled={Boolean(newChatReason)}
+                title={newChatReason}
                 onClick={() => move()}
               >
                 <Plus className="size-4" aria-hidden="true" />
                 {t('New side chat')}
               </Button>
+              {newChatReason ? (
+                <p role="status" className="text-xs text-text-300">
+                  {newChatReason}
+                </p>
+              ) : null}
               {error ? (
                 <p role="alert" className="text-sm text-danger-000">
                   {t('Could not move this annotation. It may have changed or the target is full.')}

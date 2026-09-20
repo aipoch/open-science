@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 
-import { ProviderKindIcon } from './provider-icons'
+import { ProviderKindIcon, TypeSafeIcon } from './provider-icons'
 
 describe('ProviderKindIcon', () => {
   it('renders the bundled Apodex provider logo', () => {
@@ -42,6 +42,16 @@ describe('ProviderKindIcon', () => {
     expect(html).toContain('<svg')
     expect(html).toContain('<title>Nvidia</title>')
     expect(html).toContain('#74B71B')
+    expect(html).not.toContain('text-muted-foreground')
+  })
+})
+
+describe('TypeSafeIcon', () => {
+  it('renders the official TypeSafe mark', () => {
+    const html = renderToStaticMarkup(<TypeSafeIcon />)
+
+    expect(html).toContain('<img')
+    expect(html).toContain('%3ctitle%3eTypeSafe%20AI%3c/title%3e')
     expect(html).not.toContain('text-muted-foreground')
   })
 })

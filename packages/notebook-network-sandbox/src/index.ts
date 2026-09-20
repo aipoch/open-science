@@ -5,6 +5,7 @@ import {
   installWindows,
   setWindowsRuntimeAccess,
   getWindowsRuntimeAccess,
+  isWindowsProtectionConfigured,
   removeWindows,
   statusForPlatform,
   type SandboxDependencyCheck,
@@ -203,6 +204,8 @@ class NotebookNetworkSandbox {
           ? { inheritedFileDescriptorCount: command.inheritedFileDescriptorCount }
           : {}),
         ...(command.superviseProcessTree ? { superviseProcessTree: true } : {}),
+        windowsProtectionRequired: command.windowsProtectionRequired,
+        windowsRuntimeAccessRequired: command.windowsRuntimeAccessRequired,
         signal: controller.signal,
         filesystem: command.filesystem ?? {
           readOnlyRoots: [command.cwd],
@@ -305,6 +308,13 @@ class NotebookNetworkSandbox {
     const result = await installWindows(config)
     if (!result.cancelled && this.#initialized) await this.#backend.refreshWindowsProtection()
     return { cancelled: result.cancelled === true }
+  }
+
+  async isWindowsProtectionConfigured(): Promise<boolean> {
+    if (process.platform !== 'win32')
+      throw new Error('Windows protection is only available on Windows.')
+    if (this.#initializing) await this.#initializing
+    return isWindowsProtectionConfigured(createRuntimeConfig(this.#options))
   }
 
   async getWindowsRuntimeAccess(

@@ -10,7 +10,7 @@ import {
 import { englishNativeTranslator, type NativeTranslator } from '../../locale/main-process-messages'
 import { publishUserFile } from '../../user-file-publisher'
 
-export const CONTRIBUTION_TEMPLATE_FILENAME = 'openscience-specialist-template.zip'
+export const CONTRIBUTION_TEMPLATE_FILENAME = 'open-science-specialist-template.zip'
 
 export const resolveContributionTemplateReadmePath = (appPath: string): string =>
   join(appPath, 'resources', 'specialists', 'template', 'v1', 'README.txt').replace(

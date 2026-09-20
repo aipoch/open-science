@@ -8,6 +8,298 @@ import { inputToMessages, responsesToChatRequest, toolsToChat } from './response
 import { selectExplicitConnectorSkills } from './skill-selector-routing'
 
 describe('Responses-compatible bridge conversion', () => {
+  it.each([undefined, '', ' ', 'a,b', 'bad\nsession'])(
+    'rejects missing or ambiguous Go identity %s before forwarding',
+    async (session) => {
+      const upstream = vi.fn<typeof fetch>()
+      const bridge = new ResponsesBridge(
+        { baseUrl: 'https://opencode.ai/zen/go/v1', vendorId: 'opencode-go' },
+        upstream
+      )
+      const connection = await bridge.start()
+      try {
+        const response = await fetch(`${connection.baseUrl}/responses`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({ input: 'hello', prompt_cache_key: session, stream: false })
+        })
+        expect(response.status).toBe(400)
+        expect(upstream).not.toHaveBeenCalled()
+      } finally {
+        await bridge.close()
+      }
+    }
+  )
+
+  it('isolates Go errors by conversation and removes Go headers after a Zen target switch', async () => {
+    const captured: Headers[] = []
+    const bridge = new ResponsesBridge(
+      { baseUrl: 'https://opencode.ai/zen/go/v1', vendorId: 'opencode-go' },
+      async (_url, init) => {
+        const headers = new Headers(init?.headers)
+        captured.push(headers)
+        if (headers.get('x-opencode-session') === 'blocked-session') {
+          return Response.json({ error: { message: 'Session rejected' } }, { status: 400 })
+        }
+        return Response.json({ choices: [{ message: { content: 'ok' } }] })
+      }
+    )
+    const connection = await bridge.start()
+    const send = (session: string): Promise<Response> =>
+      fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json',
+          'session-id': session
+        },
+        body: JSON.stringify({ input: 'identical body', stream: false })
+      })
+    try {
+      expect((await send('blocked-session')).status).toBe(400)
+      expect((await send('blocked-session')).status).toBe(400)
+      expect((await send('working-session')).status).toBe(200)
+      expect(captured).toHaveLength(2)
+      bridge.setTarget({ baseUrl: 'https://opencode.ai/zen/v1', vendorId: 'opencode' })
+      expect((await send('working-session')).status).toBe(200)
+      expect(captured.at(-1)?.has('x-opencode-session')).toBe(false)
+      expect(captured.at(-1)?.has('user-agent')).toBe(false)
+    } finally {
+      await bridge.close()
+    }
+  })
+
+  it.each(['x-opencode-session', 'session-id', 'body'] as const)(
+    'preserves Go conversation routing through the Codex Chat bridge using %s',
+    async (source) => {
+      const sessions: Array<string | null> = []
+      const upstreamFetch = vi.fn<typeof fetch>(async (_url, init) => {
+        const headers = new Headers(init?.headers)
+        const session = headers.get('x-opencode-session') ?? headers.get('session-id')
+        sessions.push(session)
+        expect(headers.get('user-agent')).toBe('open-science/codex-bridge')
+        expect(headers.get('authorization')).toBe('Bearer upstream-key')
+        expect(headers.has('x-private-header')).toBe(false)
+        if (!session) {
+          return Response.json(
+            {
+              error: {
+                message:
+                  'Error from provider (Console Go): Request is missing x-opencode-session and cannot be routed efficiently.'
+              }
+            },
+            { status: 400 }
+          )
+        }
+        return Response.json({
+          id: 'chat-go',
+          choices: [{ message: { role: 'assistant', content: 'ok' } }]
+        })
+      })
+      const bridge = new ResponsesBridge(
+        {
+          baseUrl: 'https://opencode.ai/zen/go/v1',
+          vendorId: 'opencode-go',
+          model: 'probe-model',
+          key: 'upstream-key'
+        },
+        upstreamFetch
+      )
+      const connection = await bridge.start()
+      try {
+        for (const session of ['session-a', 'session-a', 'session-b']) {
+          const response = await fetch(`${connection.baseUrl}/responses`, {
+            method: 'POST',
+            headers: {
+              authorization: `Bearer ${connection.token}`,
+              'content-type': 'application/json',
+              ...(source === 'body' ? {} : { [source]: session }),
+              'user-agent': 'codex-test/1.0',
+              'x-private-header': 'must-not-forward'
+            },
+            body: JSON.stringify({
+              model: 'probe-model',
+              input: 'hello',
+              stream: false,
+              prompt_cache_key: source === 'body' ? session : 'cache-key'
+            })
+          })
+          const body = await response.json()
+          expect(response.status, JSON.stringify(body)).toBe(200)
+        }
+        expect(sessions).toEqual(['session-a', 'session-a', 'session-b'])
+      } finally {
+        await bridge.close()
+      }
+    }
+  )
+
+  it('identifies Go auxiliary skill selection requests', async () => {
+    const sessions: Array<string | null> = []
+    const bridge = new ResponsesBridge(
+      { baseUrl: 'https://opencode.ai/zen/go/v1', vendorId: 'opencode-go', model: 'probe-model' },
+      async (_url, init) => {
+        const headers = new Headers(init?.headers)
+        sessions.push(headers.get('x-opencode-session'))
+        expect(headers.get('user-agent')).toBe('open-science/skill-selector')
+        if (!headers.get('x-opencode-session')) {
+          return Response.json(
+            {
+              error: {
+                message: 'Request is missing x-opencode-session and cannot be routed efficiently.'
+              }
+            },
+            { status: 400 }
+          )
+        }
+        if (sessions.length % 2 === 1)
+          return Response.json({ error: { message: 'Use JSON instead' } }, { status: 400 })
+        return Response.json({
+          choices: [{ message: { content: '{"skill_names":["analyze-data"]}' } }]
+        })
+      }
+    )
+    try {
+      for (let invocation = 0; invocation < 2; invocation++) {
+        expect(
+          await bridge.selectSkills('Analyze these measurements', [
+            {
+              name: 'analyze-data',
+              description: 'Analyze scientific measurements',
+              path: '/skills/analyze-data/SKILL.md'
+            }
+          ])
+        ).toEqual([{ name: 'analyze-data', path: '/skills/analyze-data/SKILL.md' }])
+      }
+      expect(sessions).toHaveLength(4)
+      expect(sessions[0]).toMatch(/^open-science-selector-/)
+      expect(sessions[0]).toBe(sessions[1])
+      expect(sessions[2]).toBe(sessions[3])
+      expect(sessions[0]).not.toBe(sessions[2])
+    } finally {
+      await bridge.close()
+    }
+  })
+
+  it('attributes a delayed rejection to the request target before retargeting', async () => {
+    const originalObserver = vi.fn()
+    const nextObserver = vi.fn()
+    let complete!: (response: Response) => void
+    let accept!: () => void
+    const accepted = new Promise<void>((resolve) => {
+      accept = resolve
+    })
+    const bridge = new ResponsesBridge(
+      {
+        baseUrl: 'https://original.example/v1',
+        model: 'original-model',
+        onProviderFailure: originalObserver
+      },
+      async () => {
+        accept()
+        return new Promise((resolve) => {
+          complete = resolve
+        })
+      }
+    )
+    const connection = await bridge.start()
+    try {
+      const pending = fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ model: 'ignored', input: 'hello' })
+      })
+      await accepted
+      bridge.setTarget({
+        baseUrl: 'https://next.example/v1',
+        model: 'next-model',
+        onProviderFailure: nextObserver
+      })
+      complete(Response.json({ error: { type: 'authentication_error' } }, { status: 401 }))
+      expect((await pending).status).toBe(400)
+      expect(originalObserver).toHaveBeenCalledExactlyOnceWith({
+        category: 'auth',
+        status: 401,
+        model: 'original-model',
+        endpoint: 'openai',
+        startedAt: expect.any(Number)
+      })
+      expect(nextObserver).not.toHaveBeenCalled()
+    } finally {
+      await bridge.close()
+    }
+  })
+
+  it.each([
+    ['message', 'original'],
+    ['tool output', 'original'],
+    ['message', 'high'],
+    ['tool output', 'high']
+  ] as const)(
+    'accepts %s images with %s detail through the HTTP boundary (issue #2647)',
+    async (source, detail) => {
+      const image = {
+        type: 'input_image',
+        image_url:
+          'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=',
+        detail
+      }
+      const input =
+        source === 'message'
+          ? [{ type: 'message', role: 'user', content: [image] }]
+          : [
+              { type: 'function_call', call_id: 'image-1', name: 'view_image', arguments: '{}' },
+              { type: 'function_call_output', call_id: 'image-1', output: [image] }
+            ]
+      const upstreamFetch = vi.fn<typeof fetch>(async () =>
+        Response.json({
+          id: 'chat-image',
+          model: 'glm-5.3-flash',
+          choices: [{ message: { role: 'assistant', content: 'ok' } }]
+        })
+      )
+      const bridge = new ResponsesBridge(
+        { baseUrl: 'https://vendor.example/v1', model: 'glm-5.3-flash' },
+        upstreamFetch
+      )
+      const connection = await bridge.start()
+      try {
+        const response = await fetch(`${connection.baseUrl}/responses`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({ model: 'glm-5.3-flash', input, stream: false })
+        })
+        const body = await response.json()
+        expect(
+          response.status,
+          `${JSON.stringify(body)}; upstream calls: ${upstreamFetch.mock.calls.length}`
+        ).toBe(200)
+        expect(upstreamFetch).toHaveBeenCalledOnce()
+        const request = JSON.parse(String(upstreamFetch.mock.calls[0]![1]!.body))
+        expect(request.messages).toContainEqual(
+          expect.objectContaining({
+            role: 'user',
+            content: expect.arrayContaining([
+              { type: 'image_url', image_url: { url: image.image_url, detail: 'high' } }
+            ])
+          })
+        )
+        expect(body).toMatchObject({ output: [{ content: [{ text: 'ok' }] }] })
+      } finally {
+        await bridge.close()
+      }
+    }
+  )
+
   it('accepts a successful JSON response with a UTF-8 BOM', async () => {
     const upstreamFetch = vi.fn(
       async () =>
@@ -717,6 +1009,7 @@ describe('Responses-compatible bridge conversion', () => {
   })
 
   it('replays an identical deterministic provider error without a second upstream request', async () => {
+    const onProviderFailure = vi.fn()
     const upstreamFetch = vi.fn(async () =>
       Response.json(
         { error: { type: 'authentication_error', message: 'Incorrect API key provided' } },
@@ -724,7 +1017,12 @@ describe('Responses-compatible bridge conversion', () => {
       )
     )
     const bridge = new ResponsesBridge(
-      { baseUrl: 'https://vendor.example/v1', key: 'wrong-key', model: 'model-a' },
+      {
+        baseUrl: 'https://vendor.example/v1',
+        key: 'wrong-key',
+        model: 'model-a',
+        onProviderFailure
+      },
       upstreamFetch
     )
     const connection = await bridge.start()
@@ -752,6 +1050,13 @@ describe('Responses-compatible bridge conversion', () => {
         }
       })
       expect(upstreamFetch).toHaveBeenCalledOnce()
+      expect(onProviderFailure).toHaveBeenCalledExactlyOnceWith({
+        startedAt: expect.any(Number),
+        category: 'auth',
+        status: 401,
+        model: 'model-a',
+        endpoint: 'openai'
+      })
     } finally {
       await bridge.close()
     }

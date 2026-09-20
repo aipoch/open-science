@@ -25,7 +25,9 @@ type ConnectorImportViewProps = {
 const kb = (bytes: number): string => `${Math.round(bytes / 1024)} KB`
 
 const diagnosticClassName = (diagnostic: ConnectorTemplateDiagnostic): string =>
-  diagnostic.severity === 'warning' ? 'text-amber-600 dark:text-amber-400' : 'text-destructive'
+  diagnostic.severity === 'warning'
+    ? 'text-status-warning-foreground dark:text-status-warning-dark-foreground'
+    : 'text-destructive'
 
 const transportLabel = (
   definition: ConnectorTemplateDefinition,
@@ -109,7 +111,7 @@ export function ConnectorImportView({
           </h2>
           <p className="mt-0.5 text-[13px] leading-5 text-muted-foreground">
             {t(
-              'Import an Open Science Connector or MCP client configuration. You will review one server and enter any required credentials before it is added.'
+              'Import an Open-Science Connector or MCP client configuration. You will review one server and enter any required credentials before it is added.'
             )}
           </p>
         </div>
@@ -144,7 +146,7 @@ export function ConnectorImportView({
           </p>
         ) : null}
 
-        {error ? <ErrorNotice role="alert" tone="amber" description={error} /> : null}
+        {error ? <ErrorNotice inline role="alert" tone="amber" description={error} /> : null}
 
         {definition ? (
           <div>

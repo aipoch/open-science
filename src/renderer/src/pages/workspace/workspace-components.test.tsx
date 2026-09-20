@@ -3,6 +3,8 @@ import { resolve } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
+import { loadModuleImpactManifest } from '../../../../../scripts/ci/load-module-impact.mjs'
+
 const workspacePagePath = resolve(__dirname, 'WorkspacePage.tsx')
 const workspacePanelLayoutPath = resolve(__dirname, 'workspace-panel-layout.tsx')
 const workspaceSidebarPath = resolve(__dirname, 'WorkspaceSidebar.tsx')
@@ -82,11 +84,9 @@ describe('workspace page component boundaries', () => {
       resolve(__dirname, 'previews/PreviewToolContent.tsx'),
       'utf8'
     )
-    const moduleImpact = JSON.parse(
-      readFileSync(resolve(__dirname, '../../../../../scripts/ci/module-impact.json'), 'utf8')
-    ) as {
-      modules: { project_files_view: { ownerPaths: string[] } }
-    }
+    const moduleImpact = loadModuleImpactManifest(
+      resolve(__dirname, '../../../../../scripts/ci/module-impact.json')
+    )
 
     expect(rawLineCount(facadeSource)).toBeLessThanOrEqual(900)
     // Translation wrappers and Notebook kernel-stop confirmations add render-only lines to the

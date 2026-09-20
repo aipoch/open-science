@@ -1,13 +1,6 @@
 appId: com.aipoch.open-science
-productName: Open Science
+productName: Open-Science
 copyright: Copyright © 2026 AIPOCH
-fileAssociations:
-  - ext: science
-    name: Open Science Session package
-    description: Open Science Session package
-    mimeType: application/x-open-science-session
-    role: Viewer
-    rank: Default
 directories:
   buildResources: build
 # Apply a valid deep ad-hoc signature on macOS (no Developer ID available). Without this,
@@ -58,6 +51,7 @@ files:
   - '!node_modules/pdfjs-dist/**/*.map'
 asarUnpack:
   - resources/**
+  - node_modules/@aipoch/credential-identity-probe-native/build/Release/credential_*
   - node_modules/@aipoch/process-tree-native/build/Release/*.node
   - node_modules/@aipoch/safe-file-publisher-native/build/Release/*.node
   # sharp loads its platform N-API binding and libvips shared libraries by physical path.
@@ -101,6 +95,14 @@ extraResources:
 # Windows: an unsigned NSIS installer. SmartScreen shows a bypassable "unknown publisher" prompt.
 # The afterPack ad-hoc-sign hook is a no-op off macOS, so it is safe on this target.
 win:
+  # Windows ProgID is a persisted association identity; other platforms use a display name.
+  fileAssociations:
+    - ext: science
+      name: Open Science Session package
+      description: Open-Science Session package
+      mimeType: application/x-open-science-session
+      role: Viewer
+      rank: Default
   executableName: open-science
   icon: build/icon.ico
   artifactName: aipoch-${name}-${version}-win-${arch}.${ext}
@@ -139,6 +141,14 @@ nsis:
   license: LICENSE
   include: build/installer-license.nsh
 mac:
+  # Windows ProgID is a persisted association identity; other platforms use a display name.
+  fileAssociations:
+    - ext: science
+      name: Open-Science Session package
+      description: Open-Science Session package
+      mimeType: application/x-open-science-session
+      role: Viewer
+      rank: Default
   # Compile the Icon Composer package into the app bundle (Assets.car + an ICNS fallback for
   # pre-Tahoe macOS). This is intentionally separate from dmg.icon below: the mounted installer
   # volume still uses the legacy, explicitly-designed ICNS artwork.
@@ -150,8 +160,8 @@ mac:
   minimumSystemVersion: '12.0.0'
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
-    # Electron locates its Helper bundles using this internal name.
-    CFBundleName: Open Science
+    # Electron locates its Helper bundles using this internal name. Keep it aligned with productName.
+    CFBundleName: Open-Science
     CFBundleDisplayName: Open-Science
     NSCameraUsageDescription: Application requests access to the device's camera.
     NSMicrophoneUsageDescription: Application requests access to the device's microphone.
@@ -190,6 +200,14 @@ dmg:
   sign: true
   artifactName: aipoch-${name}-${version}-mac-${arch}.${ext}
 linux:
+  # Windows ProgID is a persisted association identity; other platforms use a display name.
+  fileAssociations:
+    - ext: science
+      name: Open-Science Session package
+      description: Open-Science Session package
+      mimeType: application/x-open-science-session
+      role: Viewer
+      rank: Default
   # Keep the installed launcher filename aligned with Electron's Linux app_id/WM_CLASS so desktop
   # environments associate urgency requests with the existing dock/taskbar entry.
   syncDesktopName: true

@@ -11,6 +11,7 @@ import {
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 
 import { SessionMessageLink } from './SessionMessageLink'
+import { PresentedAgentMarkdown } from './AgentMarkdown'
 
 describe('SessionMessageLink', () => {
   let container: HTMLDivElement
@@ -435,5 +436,54 @@ describe('SessionMessageLink', () => {
     expect(usePreviewWorkbenchStore.getState().activeItemId).toBe(
       'source:https://example.com/paper'
     )
+  })
+  it('updates a same-length source URL when rendered Markdown is replaced', async () => {
+    const content = '[Paper](https://example.com/old) summary.'
+    await act(async () =>
+      root.render(<PresentedAgentMarkdown content={content} sessionLinks isAnimating />)
+    )
+    expect(container.querySelector('a[data-session-message-link]')?.getAttribute('href')).toBe(
+      'https://example.com/old'
+    )
+    await act(async () =>
+      root.render(
+        <PresentedAgentMarkdown
+          content={content.replace('/old', '/new')}
+          sessionLinks
+          isAnimating
+        />
+      )
+    )
+    expect(container.querySelector('a[data-session-message-link]')?.getAttribute('href')).toBe(
+      'https://example.com/new'
+    )
+  })
+
+  it('keeps a loaded favicon and open source preview while following text streams', async () => {
+    const content = '[Paper](https://example.com/paper) summary'
+    await act(async () =>
+      root.render(<PresentedAgentMarkdown content={content} sessionLinks isAnimating />)
+    )
+    const link = container.querySelector<HTMLAnchorElement>('a[data-session-message-link]')!
+    const favicon = link.querySelector('img')!
+    expect(favicon).not.toBeNull()
+    await act(async () => {
+      fireEvent.load(favicon)
+      fireEvent.focus(link)
+    })
+    expect(document.querySelector('[data-source-preview-hover-card]')).not.toBeNull()
+    for (let index = 1; index <= 10; index++) {
+      await act(async () =>
+        root.render(
+          <PresentedAgentMarkdown content={content + '.'.repeat(index)} sessionLinks isAnimating />
+        )
+      )
+    }
+    expect(container.querySelector('a[data-session-message-link]')).toBe(link)
+    expect(link.querySelector('img')).toBe(favicon)
+    expect(link.querySelector('[data-session-link-favicon]')?.getAttribute('data-state')).toBe(
+      'success'
+    )
+    expect(document.querySelector('[data-source-preview-hover-card]')).not.toBeNull()
   })
 })

@@ -1,3 +1,4 @@
+import { initDataRoot } from '../../../../main/storage-root'
 // @vitest-environment jsdom
 import { act, type PropsWithChildren } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -52,6 +53,7 @@ describe('native Artifact publication and transcript preview', () => {
 
   beforeEach(async () => {
     fixture = await createProvenanceTestFixture()
+    initDataRoot(fixture.storageRoot)
     await fixture.client.project.create({ data: { id: 'project-1', name: 'Preview test' } })
     container = document.createElement('div')
     document.body.appendChild(container)

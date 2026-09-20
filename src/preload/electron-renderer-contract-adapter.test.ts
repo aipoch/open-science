@@ -31,6 +31,27 @@ const createPort = (): MockPort => ({
   getPathForFile: vi.fn<(file: unknown) => string>()
 })
 
+it('carries the inspected target and intent across the Electron storage boundary', async () => {
+  const port = createPort()
+  port.invoke.mockResolvedValue({ ok: true, result: { ok: true } })
+  const selection = {
+    pickedPath: '/picked',
+    dataRoot: '/picked/Open-Science',
+    kind: 'move',
+    identity: 'inspection'
+  }
+  const adapter = createElectronRendererContractAdapter(port)
+  await adapter.invoke('storage.migrate', selection.dataRoot, selection)
+  await adapter.invoke('storage.setDataRootAndRelaunch', selection.dataRoot, false, selection)
+  expect(port.invoke.mock.calls).toEqual([
+    ['storage:migrate', { parent: selection.dataRoot, selection }],
+    [
+      'storage:set-data-root-and-relaunch',
+      { parent: selection.dataRoot, markOnboarding: false, selection }
+    ]
+  ])
+})
+
 describe('electron renderer contract adapter', () => {
   it('delivers a committed private bookmark without leaking the command envelope', async () => {
     const port = createPort()

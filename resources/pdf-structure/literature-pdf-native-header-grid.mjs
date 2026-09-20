@@ -470,6 +470,54 @@ export function recoverNativeHeaderGrid(table, items, captions, rules) {
       }
       const header = source.filter((i) => i.rect[1] >= border && i.rect[3] <= divider)
       const values = groups.map((g) => readSourceRow(g, cuts))
+      // Matching segmented borders also delimit sparse baseline comparisons.
+      // Require two explicit cohort headings, statistic/probability columns,
+      // and complete paired counts or section statistics on every source line.
+      const heading = readSourceRow(header, cuts)
+      if (
+        cuts.length === 6 &&
+        heading &&
+        !heading[0] &&
+        heading.slice(1, 3).every((v) => /group\(n=\d+\)/i.test(v)) &&
+        /^torχ2$/i.test(heading[3]) &&
+        /^P$/i.test(heading[4])
+      ) {
+        const height = Math.max(...header.map((i) => i.height))
+        const nativeBody = source.filter(
+          (i) => i.rect[1] >= divider - height * 0.1 && i.rect[3] <= footer
+        )
+        const nativeRows = groupSourceRowsWithScripts(nativeBody, height, 0.35)
+        const nativeValues = nativeRows?.map((g) => readSourceRow(g, cuts))
+        const number = (v) => /^[<>≤≥−+-]?(?:\d|\.\d)[\d.,()%±–−+/-]*$/.test(v)
+        const paired = (v) => v && number(v[1]) && number(v[2])
+        const section = (v) => v && !v[1] && !v[2] && number(v[3]) && number(v[4])
+        if (
+          nativeRows &&
+          nativeValues.filter(paired).length >= 12 &&
+          nativeValues.filter(section).length >= 3 &&
+          nativeValues.every(
+            (v) =>
+              v &&
+              /\p{L}/u.test(v[0]) &&
+              (paired(v) || section(v)) &&
+              v.slice(1).every((x) => !x || number(x))
+          ) &&
+          hasUniqueRecordTokens(source, [header, ...nativeRows])
+        ) {
+          return {
+            rows: [
+              [cuts[0], border, cuts.at(-1), divider],
+              ...nativeRows.map((g) => {
+                const r = union(g)
+                return [cuts[0], r[1], cuts.at(-1), r[3]]
+              })
+            ],
+            columns: cuts.slice(1).map((x, n) => [cuts[n], border, x, footer]),
+            spans: [],
+            completeSpans: true
+          }
+        }
+      }
       if (
         groups.length >= 2 &&
         groups.length <= 8 &&
@@ -1254,6 +1302,65 @@ export function recoverClippedColumnHeader(table, items, rules) {
   const rows = table.structure.objects
     .filter((o) => o.label === 'table row')
     .sort((a, b) => a.rect[1] - b.rect[1])
+  // A continuation can omit the caption and the model's entire spanning header.
+  // Matching native borders establish that header independently of its wording.
+  if (columns.length >= 2 && rows.length >= 3) {
+    const first = crop[1] + rows[0].rect[1]
+    const leading = items.filter(
+      (i) =>
+        i.horizontal &&
+        i.rect[0] >= crop[0] &&
+        i.rect[2] <= crop[2] &&
+        i.rect[1] >= crop[1] &&
+        i.rect[3] < first
+    )
+    if (leading.length === 1 && /\p{L}/u.test(leading[0].text)) {
+      const item = leading[0]
+      const upper = rules.find(
+        (r) =>
+          r[1] === r[3] &&
+          r[1] <= item.rect[1] &&
+          item.rect[1] - r[1] < item.height &&
+          Math.abs(r[0] - crop[0]) < item.height &&
+          Math.abs(r[2] - crop[2]) < item.height * 2 &&
+          r[0] <= item.rect[0] &&
+          r[2] >= item.rect[2]
+      )
+      const divider =
+        upper &&
+        rules.find(
+          (r) =>
+            r[1] === r[3] &&
+            r[1] > item.rect[3] &&
+            Math.abs(r[1] - first) < item.height * 0.25 &&
+            Math.abs(r[0] - upper[0]) < 0.1 &&
+            Math.abs(r[2] - upper[2]) < 0.1
+        )
+      const lower =
+        upper &&
+        rules.find(
+          (r) =>
+            r[1] === r[3] &&
+            r[1] >= crop[1] + rows.at(-1).rect[3] &&
+            Math.abs(r[1] - crop[3]) < item.height &&
+            Math.abs(r[0] - upper[0]) < 0.1 &&
+            Math.abs(r[2] - upper[2]) < 0.1
+        )
+      if (divider && lower) {
+        const rect = [upper[0], upper[1], upper[2], divider[1]]
+        return {
+          cropRect: [
+            Math.min(crop[0], upper[0]),
+            Math.min(crop[1], upper[1]),
+            Math.max(crop[2], upper[2]),
+            Math.max(crop[3], lower[1])
+          ],
+          rect,
+          spans: [rect]
+        }
+      }
+    }
+  }
   if (columns.length < 3 || columns.length > 10 || rows.length < 3) return
   const first = crop[1] + rows[0].rect[1]
   const leading = items.filter(

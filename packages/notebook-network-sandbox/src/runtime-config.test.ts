@@ -53,14 +53,21 @@ vi.mock('../runtime/src/platform/windows-appcontainer.js', () => ({
     confirmProcessTreeTermination: async () => true
   })),
   windowsStandardLaunch: vi.fn(({ env }) => ({ argv: ['powershell.exe'], env })),
+  isWindowsProtectionConfigured: vi.fn().mockResolvedValue(true),
+  getWindowsRuntimeAccess: vi.fn().mockResolvedValue({ authorized: true, registered: true }),
   checkWindowsAppContainer: vi.fn().mockResolvedValue({ warnings: [], errors: [] }),
   readAppContainerStatus: vi.fn().mockResolvedValue({ gatewayPort: 49700 }),
   installWindowsAppContainer: vi.fn(),
+  setWindowsRuntimeAccess: vi.fn(),
   removeWindowsAppContainer: vi.fn()
 }))
 
 import {
   NotebookNetworkRuntime,
+  installWindows,
+  removeWindows,
+  setWindowsRuntimeAccess,
+  type NetworkWrapRequest,
   type NetworkRuntimeConfig
 } from '../runtime/src/notebook-runtime.js'
 import { CommandGateway } from '../runtime/src/gateway/command-gateway.js'
@@ -74,6 +81,10 @@ import { wsl2Launch } from '../runtime/src/platform/wsl2-isolation.js'
 import { readAppContainerStatus } from '../runtime/src/platform/windows-appcontainer.js'
 import {
   checkWindowsAppContainer,
+  isWindowsProtectionConfigured,
+  getWindowsRuntimeAccess,
+  installWindowsAppContainer,
+  windowsLaunch,
   windowsStandardLaunch,
   windowsSupervisedLaunch
 } from '../runtime/src/platform/windows-appcontainer.js'
@@ -568,5 +579,185 @@ describe('Notebook runtime configuration updates', () => {
 
     expect(windowsSupervisedLaunch).toHaveBeenCalledOnce()
     await expect(wrapped.confirmProcessTreeTermination?.()).resolves.toBe(true)
+  })
+})
+
+describe('R admission launch protection', () => {
+  const request = (windowsProtectionRequired: boolean): NetworkWrapRequest => ({
+    command: 'Rscript.exe loop.R',
+    executable: 'Rscript.exe',
+    args: ['loop.R'],
+    commandId: 'r-admission',
+    cwd: '/workspace',
+    env: {},
+    windowsProtectionRequired,
+    filesystem: {
+      readOnlyRoots: [],
+      readWriteRoots: ['/workspace'],
+      deniedReadRoots: [],
+      deniedWriteRoots: []
+    }
+  })
+
+  beforeEach(async () => {
+    await NotebookNetworkRuntime.reset()
+    vi.clearAllMocks()
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+    vi.mocked(checkWindowsAppContainer).mockResolvedValue({ warnings: [], errors: [] })
+    vi.mocked(readAppContainerStatus).mockResolvedValue({ gatewayPort: 49700 } as Awaited<
+      ReturnType<typeof readAppContainerStatus>
+    >)
+    vi.mocked(isWindowsProtectionConfigured).mockResolvedValue(true)
+    vi.mocked(getWindowsRuntimeAccess).mockResolvedValue({ authorized: true, registered: true })
+    await NotebookNetworkRuntime.initialize(config(['example.com']), async () => false)
+  })
+
+  it('keeps the authenticated gateway for admitted standard R despite stale protected initialization', async () => {
+    vi.mocked(isWindowsProtectionConfigured).mockResolvedValue(false)
+    await NotebookNetworkRuntime.wrap(request(false))
+    expect(windowsStandardLaunch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        executable: 'Rscript.exe',
+        gatewayPort: gateway.port,
+        gatewayCredentials: { username: 'notebook-r-admission', password: expect.any(String) }
+      })
+    )
+    expect(CommandGateway.open).toHaveBeenCalledWith(
+      expect.objectContaining({ decide: expect.any(Function) })
+    )
+    expect(CommandGateway.open).not.toHaveBeenCalledWith(
+      expect.objectContaining({ sharedPort: expect.any(Number) })
+    )
+    expect(windowsLaunch).not.toHaveBeenCalled()
+  })
+
+  it.each([false, true])(
+    'rejects a changed protection mode after admission (%s)',
+    async (required) => {
+      vi.mocked(isWindowsProtectionConfigured).mockResolvedValue(!required)
+      await expect(NotebookNetworkRuntime.wrap(request(required))).rejects.toThrow(
+        'protection changed'
+      )
+      expect(windowsStandardLaunch).not.toHaveBeenCalled()
+      expect(windowsLaunch).not.toHaveBeenCalled()
+      expect(CommandGateway.open).not.toHaveBeenCalled()
+    }
+  )
+
+  it('does not downgrade an admitted protected R launch after the network fence fails', async () => {
+    vi.mocked(checkWindowsAppContainer).mockResolvedValue({
+      warnings: [],
+      errors: ['network fence failed']
+    })
+    await expect(NotebookNetworkRuntime.wrap(request(true))).rejects.toThrow(
+      'protected mode is not ready'
+    )
+    expect(windowsStandardLaunch).not.toHaveBeenCalled()
+    expect(windowsLaunch).not.toHaveBeenCalled()
+  })
+
+  it('retains the protected launcher when protection is still ready', async () => {
+    await NotebookNetworkRuntime.wrap(request(true))
+    expect(windowsLaunch).toHaveBeenCalledOnce()
+    expect(windowsStandardLaunch).not.toHaveBeenCalled()
+  })
+
+  it.each([false, true])(
+    'rejects a revoked durable R grant (registered: %s)',
+    async (registered) => {
+      vi.mocked(getWindowsRuntimeAccess).mockResolvedValue({ authorized: false, registered })
+      await expect(
+        NotebookNetworkRuntime.wrap({
+          ...request(true),
+          windowsRuntimeAccessRequired: true
+        })
+      ).rejects.toThrow('R runtime access changed')
+      expect(windowsLaunch).not.toHaveBeenCalled()
+      expect(windowsStandardLaunch).not.toHaveBeenCalled()
+    }
+  )
+
+  it('preserves protected admission proven by OS access without a durable grant', async () => {
+    vi.mocked(getWindowsRuntimeAccess).mockResolvedValue({ authorized: false, registered: false })
+    await NotebookNetworkRuntime.wrap({ ...request(true), windowsRuntimeAccessRequired: false })
+    expect(windowsLaunch).toHaveBeenCalledOnce()
+    expect(windowsStandardLaunch).not.toHaveBeenCalled()
+  })
+
+  it('rejects setup starting while a standard R gateway is opening', async () => {
+    vi.mocked(isWindowsProtectionConfigured).mockResolvedValue(false)
+    vi.mocked(CommandGateway.open).mockImplementationOnce(async () => {
+      await installWindows(config(['example.com']))
+      return gateway as unknown as Awaited<ReturnType<typeof CommandGateway.open>>
+    })
+    await expect(NotebookNetworkRuntime.wrap(request(false))).rejects.toThrow('protection changed')
+    expect(windowsStandardLaunch).not.toHaveBeenCalled()
+    expect(gateway.close).toHaveBeenCalled()
+  })
+
+  it.each(['install', 'remove', 'authorize', 'revoke'] as const)(
+    'rejects %s after wrapping but before the R process is spawned',
+    async (operation) => {
+      vi.mocked(isWindowsProtectionConfigured).mockResolvedValue(false)
+      const wrapped = await NotebookNetworkRuntime.wrap(request(false))
+      if (operation === 'install') await installWindows(config(['example.com']))
+      else if (operation === 'remove') await removeWindows(config(['example.com']))
+      else
+        await setWindowsRuntimeAccess(
+          config(['example.com']),
+          'Rscript.exe',
+          operation === 'authorize'
+        )
+      expect(() => wrapped.beginSpawn?.()).toThrow('protection changed')
+    }
+  )
+
+  it('rejects R preparation while a settings mutation is pending', async () => {
+    let finish!: (value: { cancelled: boolean }) => void
+    vi.mocked(installWindowsAppContainer).mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve
+      })
+    )
+    const pending = installWindows(config(['example.com']))
+    try {
+      await expect(NotebookNetworkRuntime.wrap(request(false))).rejects.toThrow(
+        'protection changed'
+      )
+      expect(windowsStandardLaunch).not.toHaveBeenCalled()
+    } finally {
+      finish({ cancelled: true })
+      await pending
+    }
+  })
+
+  it('invalidates a prepared launch even if the intervening setup fails', async () => {
+    vi.mocked(isWindowsProtectionConfigured).mockResolvedValue(false)
+    const wrapped = await NotebookNetworkRuntime.wrap(request(false))
+    vi.mocked(installWindowsAppContainer).mockRejectedValueOnce(new Error('setup failed'))
+    await expect(installWindows(config(['example.com']))).rejects.toThrow('setup failed')
+    expect(() => wrapped.beginSpawn?.()).toThrow('protection changed')
+  })
+
+  it('rejects a cancelled admission immediately before spawn', async () => {
+    vi.mocked(isWindowsProtectionConfigured).mockResolvedValue(false)
+    const controller = new AbortController()
+    const wrapped = await NotebookNetworkRuntime.wrap({
+      ...request(false),
+      signal: controller.signal
+    })
+    controller.abort(new Error('R cancelled'))
+    expect(() => wrapped.beginSpawn?.()).toThrow('R cancelled')
+  })
+
+  it('rejects pending ownership operations before a standard R launch', async () => {
+    vi.mocked(isWindowsProtectionConfigured).mockResolvedValue(false)
+    vi.mocked(getWindowsRuntimeAccess).mockRejectedValueOnce(
+      new Error('pending protected-mode operation')
+    )
+    await expect(NotebookNetworkRuntime.wrap(request(false))).rejects.toThrow(
+      'pending protected-mode operation'
+    )
+    expect(windowsStandardLaunch).not.toHaveBeenCalled()
   })
 })

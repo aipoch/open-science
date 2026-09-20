@@ -111,6 +111,7 @@ const useWorkspaceRuntimeSaveAsSkillOwner = ({
         const contextReset = prepared.replay().contextReset
         if (
           contextReset &&
+          !prepared.runtimeSegmentOpened &&
           !useSessionStore.getState().openContextResetRuntimeSegment(session.id)
         ) {
           throw new Error('Save as skill Runtime Segment could not be created.')

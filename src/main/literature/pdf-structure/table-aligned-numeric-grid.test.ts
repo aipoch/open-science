@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { readPdfFixture } from './read-fixture'
 
 const { refineTable } = await import(
   pathToFileURL(resolve('resources/pdf-structure/literature-pdf-table-refine.mjs')).href
@@ -147,6 +148,41 @@ it('keeps a mean/SD heading clear of the P-value column and excludes only an ext
     expect.objectContaining({ row: 1, column: 1, colSpan: 4, text: '(Mean ± SD)' })
   )
   expect(result.unassigned).toEqual([])
+})
+
+it('excludes a continuation footer with a subpixel model-row overlap while preserving body text', () => {
+  const f = readPdfFixture(
+    resolve(
+      'src/main/literature/pdf-structure/fixtures/continuation-footer-overlapping-model-row.jsonl'
+    )
+  )
+  const result = refineTable(f.table, f.items)
+  expect(result.unassigned).toEqual([])
+  expect(result.issues).toEqual([])
+  expect(result.grid).toEqual([
+    [
+      'Emotional attentiona',
+      '27.93',
+      '6.07',
+      '27.87',
+      '5.92',
+      '27.68',
+      '6.57',
+      '24.68',
+      '2.46',
+      'Group',
+      '8.06†',
+      '0.04'
+    ],
+    ['', '', '', '', '', '', '', '', '', 'Phase*Group', '7.17†', '0.04']
+  ])
+  const marker = f.items.find((i: { text: string }) => i.text === '(continued on next page)')
+  // The same literal inside a data row must remain observable, not be discarded.
+  marker.rect[1] -= 10
+  marker.rect[3] -= 10
+  marker.baseline -= 10
+  const body = refineTable(f.table, f.items)
+  expect([...body.grid.flat(), ...body.unassigned].join(' ')).toContain(marker.text)
 })
 
 it('keeps independent group headings separate above a full-width header rule', () => {

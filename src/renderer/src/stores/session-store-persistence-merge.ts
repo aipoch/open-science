@@ -97,6 +97,17 @@ const mergeConversationGraphByIdentity = (
 ): NonNullable<PersistedChatSession['conversationGraph']> => {
   const incomingWinsConflicts = options.incomingWinsConflicts ?? false
   const incomingOwnsFrameConflicts = options.incomingOwnsFrameConflicts ?? incomingWinsConflicts
+  const retainedMessageReferences = new Set([
+    ...current.activities
+      .filter((activity) => !incoming.activities.some(({ id }) => id === activity.id))
+      .map(({ promptMessageId }) => promptMessageId),
+    ...current.activityGroups
+      .filter((group) => !incoming.activityGroups.some(({ id }) => id === group.id))
+      .map(({ promptMessageId }) => promptMessageId),
+    ...current.frames
+      .filter((frame) => !incoming.frames.some(({ id }) => id === frame.id))
+      .map(({ originMessageId }) => originMessageId)
+  ])
   const newerUpdatedAt = <Item extends { updatedAt: number }>(left: Item, right: Item): boolean =>
     right.updatedAt > left.updatedAt
   const merge = <Item extends { id: string }>(
@@ -111,7 +122,7 @@ const mergeConversationGraphByIdentity = (
       (currentItem, incomingItem) =>
         preferIncoming(currentItem, incomingItem) ? incomingItem : currentItem
     )
-  return reconcileActivityGroupMembership({
+  const merged = reconcileActivityGroupMembership({
     ...structuredClone(current),
     frames: mergeCollectionByIdentity(
       current.frames,
@@ -132,22 +143,45 @@ const mergeConversationGraphByIdentity = (
       // A later save can contain an earlier streaming snapshot. Keep the descendant head
       // when both snapshots describe the same chain; timestamps do not measure progress.
       if (left.headMessageId !== right.headMessageId) {
+        const incomingPath = new Set(
+          resolveMessageBranchPath(incoming, right.id).map(({ id }) => id)
+        )
+        // Keeping an origin/prompt node alone is insufficient: it must remain on a Branch path.
+        if (
+          resolveMessageBranchPath(current, left.id).some(
+            ({ id }) => retainedMessageReferences.has(id) && !incomingPath.has(id)
+          )
+        )
+          return false
+        // Local-only child Branches must still fork/revise a Message on their parent path.
+        // A sibling completion is replaceable only while nothing depends on the old path.
+        if (
+          current.branches.some(
+            (branch) =>
+              branch.parentBranchId === left.id &&
+              !incoming.branches.some(({ id }) => id === branch.id) &&
+              [branch.forkMessageId, branch.supersededMessageId].some(
+                (id) => id !== undefined && !incomingPath.has(id)
+              )
+          )
+        )
+          return false
         if (
           !right.headMessageId ||
           resolveMessageBranchPath(current, left.id).some(({ id }) => id === right.headMessageId)
         )
           return false
-        if (
-          !left.headMessageId ||
-          resolveMessageBranchPath(incoming, right.id).some(({ id }) => id === left.headMessageId)
-        )
-          return true
+        if (!left.headMessageId || incomingPath.has(left.headMessageId)) return true
       }
       const isCurrentRootBranch =
         left.agentFrameId === current.rootFrameId &&
         left.id === current.frames.find(({ id }) => id === current.rootFrameId)?.activeBranchId
+      // A newer durable Session can replace a Task completion with the renderer's
+      // completion at the same Branch timestamp. Its authority breaks that tie;
+      // descendant heads above and later local Branch edits still win.
       return isCurrentRootBranch
-        ? newerUpdatedAt(left, right)
+        ? newerUpdatedAt(left, right) ||
+            (incomingWinsConflicts && right.updatedAt === left.updatedAt)
         : incomingWinsConflicts || newerUpdatedAt(left, right)
     }),
     messages: merge(
@@ -173,6 +207,17 @@ const mergeConversationGraphByIdentity = (
         (right.endedAt ?? right.startedAt) > (left.endedAt ?? left.startedAt)
     )
   })
+  // Conflicting heads can replace a sibling completion. Keep every Branch path,
+  // but do not carry an unreachable completion into the next local graph edit.
+  const reachableMessageIds = new Set(
+    merged.branches.flatMap((branch) =>
+      resolveMessageBranchPath(merged, branch.id).map(({ id }) => id)
+    )
+  )
+  return {
+    ...merged,
+    messages: merged.messages.filter(({ id }) => reachableMessageIds.has(id))
+  }
 }
 
 const mergeDelegatedWorkByIdentity = (
@@ -413,7 +458,7 @@ export const mergeRuntimeConversationAuthority = (
       : {})
 })
 
-const planProjectionMatchesRuntimePlan = (
+const planProjectionIdentityMatchesRuntimePlan = (
   projection: ActivePlanProjection | undefined,
   plan: NonNullable<SessionRuntimeContext['plan']> | undefined
 ): projection is ActivePlanProjection =>
@@ -425,8 +470,7 @@ const planProjectionMatchesRuntimePlan = (
     projection.artifactChecksum === plan.artifactChecksum &&
     projection.originatingPromptMessageId === plan.originatingPromptMessageId &&
     projection.materializedAt === plan.materializedAt &&
-    projection.approval === plan.approval &&
-    JSON.stringify(projection.stepStatuses) === JSON.stringify(plan.stepStatuses)
+    projection.approval === plan.approval
   )
 
 export const retainRuntimePlanProjection = (
@@ -440,7 +484,10 @@ export const retainRuntimePlanProjection = (
   const incomingRevision = incoming.runtimeContext?.revision
   if (!projection || incomingRevision === undefined) return undefined
   if (projection.revision > incomingRevision) return projection
-  if (!planProjectionMatchesRuntimePlan(projection, incomingPlan)) return undefined
+  // Runtime progress snapshots intentionally change stepStatuses. The full projection is
+  // maintained by the activity stream; a durable echo for the same Plan must not clear it
+  // merely because that echo contains a newer progress map.
+  if (!planProjectionIdentityMatchesRuntimePlan(projection, incomingPlan)) return undefined
   return projection.revision === incomingRevision
     ? projection
     : { ...projection, revision: incomingRevision }

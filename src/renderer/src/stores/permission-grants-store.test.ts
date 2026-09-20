@@ -462,4 +462,60 @@ describe('permission grants store', () => {
       restoreDefaultsState: 'error'
     })
   })
+  it.each(['missing', 'rejected'])(
+    'keeps an in-flight restore visible when a pending renewal is %s',
+    async (result) => {
+      usePermissionGrantsStore.setState({
+        undo: { token: 'undo-1', expiresAt: Date.now() + 8000, messageKey: 'Revoked permission' },
+        isRestoring: true
+      })
+      setPermissionApi({
+        extendUndo:
+          result === 'missing'
+            ? vi.fn().mockResolvedValue(undefined)
+            : vi.fn().mockRejectedValue(new Error('consumed'))
+      })
+      await usePermissionGrantsStore.getState().extendUndo('undo-1')
+      expect(usePermissionGrantsStore.getState().undo?.token).toBe('undo-1')
+      expect(usePermissionGrantsStore.getState().isRestoring).toBe(true)
+    }
+  )
+  it.each(['missing', 'rejected', 'completed'])(
+    'ignores a stale %s renewal after restore creates a retryable Undo',
+    async (result) => {
+      let finishRenewal!: () => void
+      const pendingReceipt = new Promise<
+        Awaited<ReturnType<Window['api']['permissions']['extendUndo']>>
+      >((resolve, reject) => {
+        finishRenewal = () => {
+          if (result === 'rejected') reject(new Error('consumed'))
+          else
+            resolve(
+              result === 'missing'
+                ? undefined
+                : {
+                    undoToken: 'undo-1',
+                    expiresAt: Date.now() + 16_000,
+                    revokedCount: 1
+                  }
+            )
+        }
+      })
+      setPermissionApi({
+        extendUndo: vi.fn().mockReturnValue(pendingReceipt),
+        restore: vi.fn().mockRejectedValue(new Error('temporary restore failure'))
+      })
+      usePermissionGrantsStore.setState({
+        undo: { token: 'undo-1', expiresAt: Date.now() + 8000, messageKey: 'Revoked permission' }
+      })
+      const renewal = usePermissionGrantsStore.getState().extendUndo('undo-1')
+      await usePermissionGrantsStore.getState().restore('undo-1')
+      const retry = usePermissionGrantsStore.getState().undo!
+      expect(retry.retry).toBe(true)
+      finishRenewal()
+      // Returning the current expiry also prevents the caller from dismissing the retry notice.
+      await expect(renewal).resolves.toBe(retry.expiresAt)
+      expect(usePermissionGrantsStore.getState().undo).toBe(retry)
+    }
+  )
 })

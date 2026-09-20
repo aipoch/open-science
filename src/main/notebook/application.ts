@@ -24,6 +24,7 @@ type NotebookApplicationDeps = Pick<
   | 'onBackgroundRunAdmitted'
   | 'onBackgroundRunObserved'
   | 'dependencyAnalyzer'
+  | 'getGrantedLocalRoots'
 > &
   ProjectIdScope & {
     events: ApplicationEventPublisher

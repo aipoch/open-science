@@ -6,7 +6,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { SessionPackageService } from './service'
 import { withPackageTransfer } from './transfer'
 import { packageInventoryEntrySchema } from '../../shared/session-package'
-import { executionEvidenceSchema } from './execution-evidence'
+import { executionEvidenceSchema, readExecutionEvidence } from './execution-evidence'
 import * as storageUsage from '../storage/usage'
 
 const directories: string[] = []
@@ -182,4 +182,20 @@ it('rejects duplicate archive entries', async () => {
     }
   })
   await expect(service.inspect(archive)).rejects.toThrow('unsafe, duplicate or oversized entry')
+})
+
+it('normalizes only a valid legacy Notebook evidence owner', () => {
+  const legacy = {
+    schemaVersion: 1,
+    evidenceId: 'notebook-file-evidence-run-1',
+    runId: 'run-1',
+    relations: []
+  }
+  expect(readExecutionEvidence(legacy)).toMatchObject({
+    activityId: 'run-1',
+    activityKind: 'notebook-run'
+  })
+  expect(() => readExecutionEvidence({ ...legacy, evidenceId: 'unrelated' })).toThrow()
+  expect(() => readExecutionEvidence({ ...legacy, activityKind: 'compute-job' })).toThrow()
+  expect(() => readExecutionEvidence(null)).toThrow()
 })

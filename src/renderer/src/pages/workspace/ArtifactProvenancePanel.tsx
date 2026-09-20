@@ -1,3 +1,4 @@
+import { InlineNotice } from '@/components/ui/inline-notice'
 import { useSessionStore } from '@/stores/session-store'
 import { usePackageOperationStore, sessionExportLocked } from '../../stores/package-operation-store'
 import { Tabs } from 'radix-ui'
@@ -56,6 +57,7 @@ import type {
   DescribeArtifactEnvironmentLockRequest
 } from '../../../../shared/artifact-reproducibility'
 import type {
+  NotebookEnvironmentLockDiagnostic,
   NotebookEnvironmentLockPartialReason,
   NotebookInputFileSummary,
   NotebookOutput,
@@ -80,7 +82,10 @@ import {
   resolveArtifactVersionDescriptor
 } from './preview-file-item'
 import { NotebookInputDataStrip } from './NotebookInputDataStrip'
-import { ArtifactReproducibilityPanel } from './ArtifactReproducibilityPanel'
+import {
+  ArtifactReproducibilityPanel,
+  EnvironmentLockDiagnostics
+} from './ArtifactReproducibilityPanel'
 import { NotebookCodeBlock } from './notebook-code'
 import { NotebookDialogCell } from './SessionNotebookDialog'
 import { WorkspaceActivityGroup } from './WorkspaceActivityGroup'
@@ -149,6 +154,7 @@ type CapturedEnvironmentLock = {
   kernelKind: 'python' | 'r'
   environmentName?: string
   partialReasons?: NotebookEnvironmentLockPartialReason[]
+  diagnostics?: NotebookEnvironmentLockDiagnostic[]
 }
 
 const packageManagerLabel = (manager: ArtifactEnvironmentLockPackageManager): string => {
@@ -212,21 +218,33 @@ const capturedEnvironmentLocksForRuns = (
       continue
     }
     const previous = locks.get(lock.lockChecksum)
-    if (previous?.state === 'partial' && lock.state === 'partial') {
+    if (previous) {
+      // The checksum identifies lock contents, not coverage of each run's observed environment.
+      // A complete capture in another run cannot fill a relevant run's evidence gap.
+      if (lock.state === 'partial') previous.state = 'partial'
       previous.partialReasons = [
         ...new Set([...(previous.partialReasons ?? []), ...(lock.partialReasons ?? [])])
       ]
+      previous.diagnostics = [...(previous.diagnostics ?? []), ...(lock.diagnostics ?? [])].filter(
+        (diagnostic, index, diagnostics) =>
+          diagnostics.findIndex(
+            (candidate) =>
+              candidate.reason === diagnostic.reason &&
+              candidate.packageName === diagnostic.packageName &&
+              candidate.observedVersion === diagnostic.observedVersion &&
+              candidate.lockedVersion === diagnostic.lockedVersion
+          ) === index
+      )
       continue
     }
-    if (!previous || (previous.state === 'partial' && lock.state === 'available')) {
-      locks.set(lock.lockChecksum, {
-        lockChecksum: lock.lockChecksum,
-        state: lock.state,
-        kernelKind: run.kernelKind,
-        ...(run.environmentName ? { environmentName: run.environmentName } : {}),
-        ...(lock.partialReasons ? { partialReasons: [...lock.partialReasons] } : {})
-      })
-    }
+    locks.set(lock.lockChecksum, {
+      lockChecksum: lock.lockChecksum,
+      state: lock.state,
+      kernelKind: run.kernelKind,
+      ...(run.environmentName ? { environmentName: run.environmentName } : {}),
+      ...(lock.partialReasons ? { partialReasons: [...lock.partialReasons] } : {}),
+      ...(lock.diagnostics ? { diagnostics: [...lock.diagnostics] } : {})
+    })
   }
   return [...locks.values()]
 }
@@ -1499,7 +1517,7 @@ const ArtifactProvenancePanel = ({
   const editSummary = isUserEdit ? (
     <div className="space-y-1.5 text-xs text-text-300">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <span>{t('Edited in Open Science')}</span>
+        <span>{t('Edited in Open-Science')}</span>
         {basedOnVersionId && basedOnVersionNumber !== undefined ? (
           <button
             type="button"
@@ -1842,11 +1860,11 @@ const ArtifactProvenancePanel = ({
             {generatedCode?.sourceTruncated ||
             (codeReconstructionState?.state === 'ready' &&
               codeReconstructionState.sourceTruncated) ? (
-              <p className="border-b border-warning-100/50 bg-warning-100/10 px-4 py-2 text-xs text-text-200">
+              <InlineNotice className="m-2">
                 {t(
                   'The immutable Execution Log was bounded; the reconstruction may include a provenance-gap comment.'
                 )}
-              </p>
+              </InlineNotice>
             ) : null}
             {codeReconstructionResult?.status === 'generating' ? (
               <div
@@ -1933,7 +1951,7 @@ const ArtifactProvenancePanel = ({
           executionRuns.length > 0 ? (
             <div>
               {executionTruncation ? (
-                <p className="border-b border-warning-100/50 bg-warning-100/10 px-4 py-2 text-xs text-text-200">
+                <InlineNotice className="m-2">
                   {t(
                     'Execution evidence was bounded for storage: omitted {{runs}} earlier runs, {{outputs}} outputs, and {{inputs}} inputs.',
                     {
@@ -1942,7 +1960,7 @@ const ArtifactProvenancePanel = ({
                       inputs: executionTruncation.omittedInputCount
                     }
                   )}
-                </p>
+                </InlineNotice>
               ) : null}
               <div className={tabActionBarClassName}>
                 <Button
@@ -1950,20 +1968,23 @@ const ArtifactProvenancePanel = ({
                   size="sm"
                   disabled={executionKernels.length === 0 || exportingNotebook}
                   onClick={() => void downloadExecutionNotebook()}
+                  aria-busy={Boolean(exportingNotebook)}
                 >
-                  {exportingNotebook ? (
-                    <LoaderCircle
-                      className="animate-spin motion-reduce:animate-none"
-                      aria-hidden="true"
-                    />
-                  ) : (
-                    <Download aria-hidden="true" />
-                  )}
-                  {exportingNotebook
-                    ? t('Preparing…')
-                    : executionKernels.length > 1
-                      ? t('Download notebooks')
-                      : t('Download notebook')}
+                  <span key={String(exportingNotebook)} className="button-feedback">
+                    {exportingNotebook ? (
+                      <LoaderCircle
+                        className="animate-spin motion-reduce:animate-none"
+                        aria-hidden="true"
+                      />
+                    ) : (
+                      <Download aria-hidden="true" />
+                    )}
+                    {exportingNotebook
+                      ? t('Preparing…')
+                      : executionKernels.length > 1
+                        ? t('Download notebooks')
+                        : t('Download notebook')}
+                  </span>
                 </Button>
               </div>
               {notebookExportError ? (
@@ -1982,7 +2003,13 @@ const ArtifactProvenancePanel = ({
                         </p>
                       ) : null
                     )}
-                    <NotebookDialogCell run={run} index={index} />
+                    {/* This projection omits capture status; keep saved run identity while
+                        leaving environment completeness to the Environment tab. */}
+                    <NotebookDialogCell
+                      run={run}
+                      index={index}
+                      showEnvironmentCaptureWarning={false}
+                    />
                   </div>
                 ))}
               </div>
@@ -2028,7 +2055,7 @@ const ArtifactProvenancePanel = ({
               <p>
                 {provenance.messages.reason === 'message-snapshot-unsupported'
                   ? t(
-                      'This message snapshot was created by a newer version of Open Science. Update the app to view it.'
+                      'This message snapshot was created by a newer version of Open-Science. Update the app to view it.'
                     )
                   : t(
                       'The immutable message snapshot is not available for this version ({{reason}}).',
@@ -2114,6 +2141,9 @@ const ArtifactProvenancePanel = ({
                               {partialEnvironmentLockSummary(lock.partialReasons, t)}
                             </p>
                           ) : null}
+                          {lock.state === 'partial' && lock.diagnostics?.length ? (
+                            <EnvironmentLockDiagnostics diagnostics={lock.diagnostics} />
+                          ) : null}
                         </div>
                         <div className="flex min-w-0 flex-wrap items-center gap-2">
                           {window.api?.artifacts.exportEnvironmentLock ? (
@@ -2128,16 +2158,19 @@ const ArtifactProvenancePanel = ({
                               }
                               aria-label={t('Download {{name}}', { name: lockName })}
                               onClick={() => void downloadEnvironmentLock(lock)}
+                              aria-busy={Boolean(exporting)}
                             >
-                              {exporting ? (
-                                <LoaderCircle
-                                  className="animate-spin motion-reduce:animate-none"
-                                  aria-hidden="true"
-                                />
-                              ) : (
-                                <Download aria-hidden="true" />
-                              )}
-                              {exporting ? t('Preparing…') : t('Download bundle')}
+                              <span key={String(exporting)} className="button-feedback">
+                                {exporting ? (
+                                  <LoaderCircle
+                                    className="animate-spin motion-reduce:animate-none"
+                                    aria-hidden="true"
+                                  />
+                                ) : (
+                                  <Download aria-hidden="true" />
+                                )}
+                                {exporting ? t('Preparing…') : t('Download bundle')}
+                              </span>
                             </Button>
                           ) : null}
                           {lock.state === 'available' &&
@@ -2155,16 +2188,19 @@ const ArtifactProvenancePanel = ({
                                 exportingSession
                               }
                               onClick={() => void createEnvironmentFromLock(lockRequest(lock))}
+                              aria-busy={Boolean(creating)}
                             >
-                              {creating ? (
-                                <LoaderCircle
-                                  className="animate-spin motion-reduce:animate-none"
-                                  aria-hidden="true"
-                                />
-                              ) : (
-                                <PackagePlus aria-hidden="true" />
-                              )}
-                              {creating ? t('Creating…') : t('Reuse environment')}
+                              <span key={String(creating)} className="button-feedback">
+                                {creating ? (
+                                  <LoaderCircle
+                                    className="animate-spin motion-reduce:animate-none"
+                                    aria-hidden="true"
+                                  />
+                                ) : (
+                                  <PackagePlus aria-hidden="true" />
+                                )}
+                                {creating ? t('Creating…') : t('Reuse environment')}
+                              </span>
                             </Button>
                           ) : null}
                         </div>
@@ -2206,7 +2242,7 @@ const ArtifactProvenancePanel = ({
                             </p>
                             <p>
                               {t(
-                                'Downloads include Open Science metadata and tool-native lock files.'
+                                'Downloads include Open-Science metadata and tool-native lock files.'
                               )}
                             </p>
                           </div>
@@ -2230,17 +2266,14 @@ const ArtifactProvenancePanel = ({
               <>
                 <ExecutionContextDetails value={environment.execution_context} />
                 {captureProblems.length > 0 ? (
-                  <div
-                    role="status"
-                    className="rounded-md border border-status-warning-foreground/20 bg-status-warning-surface/40 px-3 py-2 text-xs text-status-warning-foreground dark:border-status-warning-dark-foreground/20 dark:bg-status-warning-dark-surface/40 dark:text-status-warning-dark-foreground"
-                  >
+                  <InlineNotice role="status" className="text-xs">
                     <p className="font-medium">{t('Partial capture details')}</p>
                     <ul className="mt-1 list-disc space-y-1 pl-4">
                       {captureProblems.map((warning) => (
                         <li key={warning}>{environmentWarningLabel(warning, t)}</li>
                       ))}
                     </ul>
-                  </div>
+                  </InlineNotice>
                 ) : null}
                 <details className="border-b border-border-300/60 pb-3 text-xs">
                   <summary className="w-fit cursor-pointer rounded-sm font-medium text-text-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">

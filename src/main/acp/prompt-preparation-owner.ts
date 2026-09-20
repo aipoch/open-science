@@ -1,3 +1,4 @@
+import type { ClassifySkills, ClassificationUsage } from '../../shared/classification'
 import type { ContentBlock } from '@agentclientprotocol/sdk'
 import { readFile } from 'node:fs/promises'
 
@@ -8,7 +9,12 @@ import type { NotebookPromptInput } from '../../shared/notebook'
 import { resolveFileTextBudget } from '../../shared/history-preamble'
 import type { NotebookHandoffContext } from '../notebook/runtime-service'
 import type { ResolvedAgentBackend, SkillSelectorUsageObservation } from '../agent-framework'
-import { createLogger, errorLogFields } from '../logger'
+import {
+  createLogger,
+  diagnosticErrorFields,
+  errorLogFields,
+  runWithDiagnosticCorrelation
+} from '../logger'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 import type {
   ContextUsageTracker,
@@ -54,6 +60,10 @@ type AcpPromptPreparationOwnerOptions = Readonly<{
     | 'usage'
     | 'refreshUsage'
   >
+  classifySkills?: ClassifySkills
+  recordClassificationUsage?: (
+    input: ClassificationUsage & { projectId: string; sessionId: string; frameworkId: string }
+  ) => Promise<unknown>
   selectBridgeSkills: SelectBridgeSkills
   authorizeReferencedUploads?: (
     projectId: string,
@@ -85,6 +95,7 @@ type AcpPromptPreparationInput = Readonly<{
   sessionSetupPromptPrefix?: string
   projectId: string
   fallbackPromptMessageId?: string
+  classificationEnabled?: boolean
   bridgeSkillsAvailable: boolean
   skillImportEnabled: boolean
   skillImportTurnToken: string
@@ -239,6 +250,79 @@ class AcpPromptPreparationOwner {
           ...(Number.isSafeInteger(contextUsedTokens) ? { contextUsedTokens } : {})
         })
       }
+      let classifierAttempted = false
+      const selectSkills: SelectBridgeSkills = async (text, catalog, signal, observeUsage) => {
+        if (input.signal.aborted || !input.isCurrent()) return []
+        // Classification is an optional optimization layer. An absent result means
+        // that no usable decision was available (for example, no service, an error,
+        // a timeout, or an ambiguous response), so keep the existing selector as the
+        // source of truth for that turn.
+        if (
+          input.classificationEnabled &&
+          !classifierAttempted &&
+          (!input.role || input.role === 'primary') &&
+          this.options.classifySkills
+        ) {
+          classifierAttempted = true
+          return runWithDiagnosticCorrelation(async () => {
+            const context = {
+              projectId: input.projectId,
+              sessionId: input.request.sessionId,
+              frameworkId: input.backend.framework.id
+            }
+            log.info('classification selection started', {
+              ...context,
+              catalogCount: catalog.length
+            })
+            const usage: ClassificationUsage[] = []
+            let classified
+            try {
+              classified = await this.options.classifySkills!({
+                text,
+                catalog,
+                signal: input.signal,
+                observeUsage: (entry) => usage.push(entry)
+              })
+            } catch (error) {
+              log.warn('classification selection unavailable', {
+                ...context,
+                ...diagnosticErrorFields(error)
+              })
+            }
+            for (const entry of usage) {
+              await this.options
+                .recordClassificationUsage?.({ ...entry, ...context })
+                .catch((error) => {
+                  log.warn('classification usage recording failed', {
+                    ...context,
+                    eventId: entry.eventId,
+                    ...diagnosticErrorFields(error)
+                  })
+                })
+            }
+            if (input.signal.aborted || !input.isCurrent()) {
+              log.info('classification selection discarded', {
+                ...context,
+                reason: input.signal.aborted ? 'cancelled' : 'stale-turn'
+              })
+              return []
+            }
+            if (classified !== undefined) {
+              log.info('classification selection applied', {
+                ...context,
+                selectedCount: classified.length
+              })
+              return classified
+            }
+            log.info('classification selection fallback', {
+              ...context,
+              reason: 'unavailable-decision'
+            })
+            return this.options.selectBridgeSkills(text, catalog, signal, observeUsage)
+          })
+        }
+        return this.options.selectBridgeSkills(text, catalog, signal, observeUsage)
+      }
       const skillPreparation = await input.turnSkill.prepareProvider({
         frameworkId: input.backend.framework.id,
         selectionText: [input.request.text, computeExecutionTargetReminder]
@@ -248,8 +332,7 @@ class AcpPromptPreparationOwner {
         codex: {
           home: input.backend.adapter.codexHome,
           bridgeSkillsAvailable: input.bridgeSkillsAvailable,
-          selectSkills: async (text, catalog, signal, observeUsage) =>
-            (await this.options.selectBridgeSkills(text, catalog, signal, observeUsage)) ?? [],
+          selectSkills,
           signal: input.signal,
           observeUsage: observeSelectorUsage
         },
@@ -258,9 +341,7 @@ class AcpPromptPreparationOwner {
               codebuddy: {
                 root: codeBuddySkillRuntimeRoot(input.backend.session.options),
                 selectorAvailable: input.bridgeSkillsAvailable,
-                selectSkills: async (text, catalog, signal, observeUsage) =>
-                  (await this.options.selectBridgeSkills(text, catalog, signal, observeUsage)) ??
-                  [],
+                selectSkills,
                 signal: input.signal,
                 observeUsage: observeSelectorUsage
               }

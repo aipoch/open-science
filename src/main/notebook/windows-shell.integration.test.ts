@@ -254,6 +254,8 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
       const root = await mkdtemp(join(tmpdir(), 'shell-owned-descendant-'))
       const pidPath = join(root, 'descendant.pid')
       const code = `
+// Model cold startup beyond the old 500ms budget before the descendant exists.
+Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 750);
 const child = require('node:child_process').spawn(process.execPath,
   ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' });
 require('node:fs').writeFileSync(${JSON.stringify(pidPath)}, String(child.pid));
@@ -265,7 +267,7 @@ ${ending === 'exit' ? '' : 'setInterval(() => {}, 1000);'}
       const controller = new AbortController()
       const execution = adapter.execute({
         ...shellRequest(root),
-        timeoutMs: ending === 'timeout' ? 500 : POWERSHELL_PROCESS_TIMEOUT_MS,
+        timeoutMs: POWERSHELL_PROCESS_TIMEOUT_MS,
         signal: controller.signal
       })
       try {
@@ -282,7 +284,8 @@ ${ending === 'exit' ? '' : 'setInterval(() => {}, 1000);'}
         expect(result.errorCode).toBeUndefined()
         expect(result.ownedTreeReaped).not.toBe(false)
         if (ending === 'exit') expect(result.exitCode).toBe(0)
-        if (ending === 'timeout') expect(result.stderr).toContain('timed out after 500ms')
+        if (ending === 'timeout')
+          expect(result.stderr).toContain(`timed out after ${POWERSHELL_PROCESS_TIMEOUT_MS}ms`)
         if (ending === 'cancel') expect(result.cancelled).toBe(true)
         expect(registry.hasReceipts()).toBe(false)
         await expect(new ShellProcessOwnershipRegistry(root).recover()).resolves.toBeUndefined()

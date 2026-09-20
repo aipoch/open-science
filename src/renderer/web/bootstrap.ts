@@ -32,7 +32,7 @@ import { installWebRendererContracts } from './api-installer'
 import { i18next, initI18n, prepareI18nLocale } from '@/i18n'
 import { applyHtmlLang, resolveInitialLocale } from '@/lib/locale-preference'
 import { applyTheme, resolveInitialTheme } from '@/lib/theme'
-import openScienceLogoSvg from '../../main/remote-access/openscience-logo.svg?raw'
+import openScienceLogoSvg from '../../main/remote-access/open-science-logo.svg?raw'
 
 // Apply the saved theme before the (async) web API install and the app import below, so the page
 // doesn't paint in light mode and then flip to dark. The Electron renderer does the same at the top
@@ -48,7 +48,7 @@ document.documentElement.setAttribute(WEB_EVENT_SURFACE_ATTRIBUTE, 'true')
 
 const authorizationExpiredMessage = (): string =>
   t(
-    'Access authorization has expired. Reopen the Web link from Open Science on the host computer, or return to the remote access entry page to pair again.'
+    'Access authorization has expired. Reopen the Web link from Open-Science on the host computer, or return to the remote access entry page to pair again.'
   )
 
 class AuthorizationExpiredError extends Error {}
@@ -167,7 +167,7 @@ const fetchBootstrap = async (): Promise<unknown> => {
           throw responseError(
             response,
             await response.text(),
-            `Open Science returned HTTP ${response.status}.`
+            `Open-Science returned HTTP ${response.status}.`
           )
         }
         return await response.json()
@@ -179,7 +179,7 @@ const fetchBootstrap = async (): Promise<unknown> => {
   }
   throw lastError instanceof Error
     ? lastError
-    : new Error('Unable to initialize Open Science Remote.')
+    : new Error('Unable to initialize Open-Science Remote.')
 }
 
 const showConnectionFailure = (error: unknown): void => {
@@ -271,7 +271,7 @@ const invoke = async (channel: string, args: unknown[]): Promise<unknown> => {
   } catch {
     if (!response.ok) throw responseError(response, body, `RPC ${channel} failed`)
     throw new Error(
-      'Open Science returned an invalid response. Try reconnecting to the remote computer.'
+      'Open-Science returned an invalid response. Try reconnecting to the remote computer.'
     )
   }
   if (!payload.ok) {
@@ -474,7 +474,7 @@ const installWebApi = async (): Promise<EventCursor> => {
   const parsedBootstrap = webRpcBootstrapSchema.safeParse(await fetchBootstrap())
   if (!parsedBootstrap.success) {
     throw new Error(
-      `Incompatible Open Science Web RPC protocol. Expected version ${WEB_RPC_PROTOCOL_VERSION}.`
+      `Incompatible Open-Science Web RPC protocol. Expected version ${WEB_RPC_PROTOCOL_VERSION}.`
     )
   }
   const bootstrap = parsedBootstrap.data

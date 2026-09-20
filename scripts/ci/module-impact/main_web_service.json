@@ -1,0 +1,75 @@
+{
+  "ownerPaths": [
+    "src/main/web-service/application-event-projections.test.ts",
+    "src/main/web-service/application-event-projections.ts",
+    "src/main/web-service/artifact-download.integration.test.ts",
+    "src/main/web-service/auth.test.ts",
+    "src/main/web-service/auth.ts",
+    "src/main/web-service/controller.test.ts",
+    "src/main/web-service/http-server.test.ts",
+    "src/main/web-service/http-server.ts",
+    "src/main/web-service/index.test.ts",
+    "src/main/web-service/index.ts",
+    "src/main/web-service/internal-web-event-stream.test.ts",
+    "src/main/web-service/internal-web-event-stream.ts",
+    "src/main/web-service/options.ts",
+    "src/main/web-service/public-task-event-stream.test.ts",
+    "src/main/web-service/public-task-event-stream.ts",
+    "src/main/web-service/state-file.test.ts",
+    "src/main/web-service/state-file.ts",
+    "src/main/web-service/task-api.test.ts",
+    "src/main/web-service/task-api.ts"
+  ],
+  "interfacePaths": [
+    "src/main/web-service/application-event-projections.ts",
+    "src/main/web-service/auth.ts",
+    "src/main/web-service/http-server.ts",
+    "src/main/web-service/index.ts",
+    "src/main/web-service/options.ts",
+    "src/main/web-service/state-file.ts",
+    "src/main/web-service/task-api.ts"
+  ],
+  "consumerModules": [],
+  "testFiles": {
+    "owner": [
+      "src/main/web-service/application-event-projections.test.ts",
+      "src/main/web-service/artifact-download.integration.test.ts",
+      "src/main/web-service/auth.test.ts",
+      "src/main/web-service/controller.test.ts",
+      "src/main/web-service/http-server.test.ts",
+      "src/main/web-service/index.test.ts",
+      "src/main/web-service/internal-web-event-stream.test.ts",
+      "src/main/web-service/public-task-event-stream.test.ts",
+      "src/main/web-service/state-file.test.ts",
+      "src/main/web-service/task-api.test.ts"
+    ],
+    "contract": [
+      "src/preload/index.test.ts",
+      "src/renderer/web/api-installer.test.ts",
+      "src/shared/renderer-contract-catalog.test.ts"
+    ],
+    "consumer": [
+      "cli/config-root.test.ts",
+      "src/main/acp/runtime.test.ts",
+      "src/main/application-command-client.test.ts",
+      "src/main/application-command-composition.test.ts",
+      "src/main/application-command-electron-adapter.test.ts",
+      "src/main/application-event-flow.test.ts",
+      "src/main/host-application-commands.test.ts",
+      "src/main/index-fatal-errors.test.ts",
+      "src/main/index-startup-failure.test.ts",
+      "src/main/literature/scale-regressions.test.ts",
+      "src/main/remote-access/ipc.test.ts",
+      "src/main/remote-access/pairing.test.ts",
+      "src/main/remote-access/service.test.ts",
+      "src/main/runtime-electron-wiring.test.ts",
+      "src/main/second-instance-router.test.ts",
+      "src/main/session-package/file-open.test.ts",
+      "src/main/settings/bootstrap.integration.test.ts",
+      "src/shared/renderer-surface-inventory.test.ts",
+      "src/shared/renderer-surface-matrix.test.ts"
+    ]
+  },
+  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
+  "fallbackCapability": "main_runtime"
+}

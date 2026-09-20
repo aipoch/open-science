@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act } from 'react'
+import { fireEvent } from '@testing-library/react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -317,6 +318,27 @@ describe('NotificationLiveToast', () => {
     expect(openCenter).toHaveBeenCalledTimes(1)
     expect(container.querySelector('[data-testid="notification-live-toast"]')).toBeNull()
     window.removeEventListener('open-science:open-notification-center', openCenter)
+  })
+
+  it('does not carry a dismissed toast hover pause into the next arrival', async () => {
+    vi.useFakeTimers()
+    await act(async () => root.render(<NotificationLiveToast />))
+    await act(async () => {
+      useNotificationInboxStore.setState({ latestSequence: 2, items: [item(2), item(1)] })
+    })
+    const toast = container.querySelector<HTMLElement>('[data-testid="notification-live-toast"]')!
+    act(() => fireEvent.pointerEnter(toast))
+    act(() => vi.advanceTimersByTime(6000))
+    expect(container.querySelector('[data-testid="notification-live-toast"]')).not.toBeNull()
+    act(() => toast.querySelector<HTMLButtonElement>('button[aria-label]')!.click())
+    expect(container.querySelector('[data-testid="notification-live-toast"]')).toBeNull()
+
+    await act(async () => {
+      useNotificationInboxStore.setState({ latestSequence: 3, items: [item(3), item(2), item(1)] })
+    })
+    expect(container.querySelector('[data-testid="notification-live-toast"]')).not.toBeNull()
+    act(() => vi.advanceTimersByTime(6000))
+    expect(container.querySelector('[data-testid="notification-live-toast"]')).toBeNull()
   })
 
   it('auto-dismisses without marking the inbox message read', async () => {

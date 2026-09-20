@@ -131,6 +131,7 @@ export const projectActivePlan = (
         ]
       : session.planHistoryProjections
   const interactionState = inferSessionInteractionState(session)
+  // A Plan projection is read from Main. Displaying it is not new conversation activity.
   const planWaiting = projection.lifecycle === 'awaiting_approval'
   const interactionStatus = interactionState.permission
     ? 'waiting-permission'
@@ -164,8 +165,7 @@ export const projectActivePlan = (
                 ? session.activeRun
                   ? 'running'
                   : 'idle'
-                : session.status)),
-    updatedAt: Date.now()
+                : session.status))
   }
 }
 

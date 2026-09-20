@@ -21,6 +21,51 @@ describe('settings record codec', () => {
     ])
   })
 
+  it('sanitizes and deduplicates multiple missing-model targets without retaining foreign fields', () => {
+    const base = {
+      id: 'p1',
+      type: 'custom',
+      name: 'Gateway',
+      model: 'model-a',
+      baseUrl: 'https://gateway.example'
+    }
+    const target = { model: 'model-a', endpoint: 'openai' }
+    const result = sanitizeProvider({
+      ...base,
+      lastValidationFailure: {
+        at: 10,
+        category: 'model-not-found',
+        target,
+        targets: [
+          target,
+          { model: 'model-b', endpoint: 'responses', key: 'synthetic-secret' },
+          null,
+          {},
+          target
+        ]
+      }
+    })
+    expect(result?.lastValidationFailure).toEqual({
+      at: 10,
+      category: 'model-not-found',
+      target,
+      targets: [target, { model: 'model-b', endpoint: 'responses' }]
+    })
+    expect(JSON.stringify(result)).not.toContain('synthetic-secret')
+    expect(
+      sanitizeProvider({
+        ...base,
+        lastValidationFailure: { at: 10, category: 'auth', targets: [target] }
+      })?.lastValidationFailure
+    ).toEqual({ at: 10, category: 'auth' })
+    expect(
+      sanitizeProvider({
+        ...base,
+        lastValidationFailure: { at: 10, category: 'model-not-found', targets: [target] }
+      })?.lastValidationFailure
+    ).toEqual({ at: 10, category: 'model-not-found' })
+  })
+
   it('rebuilds provider records from known fields without exposing plaintext credentials', () => {
     expect(
       sanitizeProvider({

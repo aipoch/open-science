@@ -61,11 +61,13 @@ const getErrorMessage = (error: unknown): string =>
 const NotebookDialogCell = ({
   run,
   index,
-  showInputData = false
+  showInputData = false,
+  showEnvironmentCaptureWarning = true
 }: {
   run: NotebookRunRecord
   index: number
   showInputData?: boolean
+  showEnvironmentCaptureWarning?: boolean
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const isProblem = isProblemRunStatus(run.status)
@@ -114,7 +116,10 @@ const NotebookDialogCell = ({
         highlightLine={errorLine}
       />
       <NotebookRunOutputs run={run} />
-      <NotebookRunEvidence run={run} />
+      <NotebookRunEvidence
+        run={run}
+        showEnvironmentCaptureWarning={showEnvironmentCaptureWarning}
+      />
     </div>
   )
 }
@@ -577,15 +582,18 @@ const SessionNotebookContent = ({
                       aria-label={t('Download separate notebooks by kernel ({{count}})', {
                         count: exportAllCount
                       })}
+                      aria-busy={Boolean(exportingAll)}
                     >
-                      {exportingAll ? (
-                        <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
-                      ) : (
-                        <Download className="size-3.5" aria-hidden="true" />
-                      )}
-                      {exportingAll
-                        ? t('Exporting…')
-                        : t('All ({{count}})', { count: exportAllCount })}
+                      <span key={String(exportingAll)} className="button-feedback">
+                        {exportingAll ? (
+                          <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
+                        ) : (
+                          <Download className="size-3.5" aria-hidden="true" />
+                        )}
+                        {exportingAll
+                          ? t('Exporting…')
+                          : t('All ({{count}})', { count: exportAllCount })}
+                      </span>
                     </button>
                   </span>
                 </TooltipTrigger>
@@ -613,13 +621,16 @@ const SessionNotebookContent = ({
                         ? t('Download {{kernel}} as .ipynb', { kernel: resolvedDataKernel })
                         : t('Download as .ipynb')
                     }
+                    aria-busy={Boolean(exporting)}
                   >
-                    {exporting ? (
-                      <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
-                    ) : (
-                      <Download className="size-3.5" aria-hidden="true" />
-                    )}
-                    {exporting ? t('Exporting…') : t('.ipynb')}
+                    <span key={String(exporting)} className="button-feedback">
+                      {exporting ? (
+                        <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
+                      ) : (
+                        <Download className="size-3.5" aria-hidden="true" />
+                      )}
+                      {exporting ? t('Exporting…') : t('.ipynb')}
+                    </span>
                   </button>
                 </span>
               </TooltipTrigger>

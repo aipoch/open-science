@@ -1,3 +1,4 @@
+import type { ArtifactProducerInputScope } from '../managed-file-versions/service'
 import type { FileReference } from '../../shared/artifacts'
 import type { ArtifactPreviewResult, ReadArtifactPreviewRequest } from '../../shared/artifacts'
 import {
@@ -20,6 +21,11 @@ type RegisterNotebookTurnInputsRequest = {
   materializeOnly?: boolean
 }
 
+type PreparedNotebookTurnInputs = {
+  inputs: readonly NotebookPromptInput[]
+  commit: () => void
+}
+
 type GetNotebookTurnInputsRequest = Pick<
   RegisterNotebookTurnInputsRequest,
   'projectId' | 'appSessionId' | 'promptMessageId'
@@ -34,6 +40,7 @@ type ResolveNotebookInputPreviewRequest = {
 
 type OpenNotebookInputRunRequest = GetNotebookTurnInputsRequest & {
   artifactVersionInputs?: readonly string[]
+  producerScope?: ArtifactProducerInputScope
 }
 
 type ResolveNotebookInputRunRequest = Pick<
@@ -116,10 +123,23 @@ class NotebookInputRunLease {
 
 class NotebookInputRegistry {
   private readonly turns = new Map<string, RegisteredTurn>()
+  private readonly sessionGenerations = new Map<string, symbol>()
 
   constructor(private readonly options: NotebookInputRegistryOptions) {}
 
   async registerTurn(request: RegisterNotebookTurnInputsRequest): Promise<NotebookPromptInput[]> {
+    const prepared = await this.prepareTurn(request)
+    if (!request.materializeOnly) prepared.commit()
+    return [...prepared.inputs]
+  }
+
+  // Finish storage work before provider submission; acceptance only publishes the prepared record.
+  async prepareTurn(
+    request: RegisterNotebookTurnInputsRequest
+  ): Promise<PreparedNotebookTurnInputs> {
+    const sessionId = request.appSessionId
+    const generation = this.sessionGenerations.get(sessionId) ?? Symbol(sessionId)
+    this.sessionGenerations.set(sessionId, generation)
     const inputs: NotebookRunInputFile[] = []
     for (const upload of request.uploads) {
       if (!upload.versionId) {
@@ -175,8 +195,22 @@ class NotebookInputRegistry {
         })
       )
     )
-    if (!request.materializeOnly) this.turns.set(key, { fingerprint, inputs: deduplicated })
-    return promptInputs
+    let committed = false
+    return {
+      inputs: promptInputs,
+      commit: () => {
+        if (committed) return
+        if (this.sessionGenerations.get(sessionId) !== generation) {
+          throw new Error('Notebook input Session was cleared before registration committed.')
+        }
+        const current = this.turns.get(key)
+        if (current && current.fingerprint !== fingerprint) {
+          throw new Error('Notebook turn inputs conflict with an existing immutable registration.')
+        }
+        this.turns.set(key, { fingerprint, inputs: deduplicated })
+        committed = true
+      }
+    }
   }
 
   getTurnInputs(request: GetNotebookTurnInputsRequest): NotebookRunInputFile[] {
@@ -184,18 +218,23 @@ class NotebookInputRegistry {
   }
 
   async openRun(request: OpenNotebookInputRunRequest): Promise<NotebookInputRunLease> {
+    if (request.producerScope && request.producerScope.appSessionId !== request.appSessionId)
+      throw new Error('Notebook producer input is unavailable in this Session.')
     const registered = this.turns.get(turnKey(request))?.inputs ?? []
+    const producerInputs = new Set<string>()
     const workflowArtifacts = await Promise.all(
       [...new Set(request.artifactVersionInputs ?? [])].map(async (inputFileVersionId) => {
         const identity = await this.options.resolveArtifactVersionIdentity?.(
           request.projectId,
           inputFileVersionId
         )
+        if (!identity && request.producerScope) producerInputs.add(inputFileVersionId)
         return this.resolveVersion({
           projectId: request.projectId,
           sourceKind: 'artifact-version',
           inputFileVersionId,
-          expectedSourceFileId: identity?.sourceFileId
+          expectedSourceFileId: identity?.sourceFileId,
+          producerScope: !identity ? request.producerScope : undefined
         })
       })
     )
@@ -208,7 +247,8 @@ class NotebookInputRegistry {
       requested.map(async (input) => {
         const validation = await this.options.inputAuthority.validateVersion(
           request.projectId,
-          input
+          input,
+          producerInputs.has(input.inputFileVersionId) ? request.producerScope : undefined
         )
         if (validation.state !== 'available') {
           throw new Error(
@@ -219,11 +259,18 @@ class NotebookInputRegistry {
       })
     )
     return new NotebookInputRunLease(inputs, (input) =>
-      this.options.inputAuthority.stageContent(input, request.appSessionId)
+      this.options.inputAuthority.stageContent(
+        input,
+        request.appSessionId,
+        input.sourceKind === 'artifact-version' && producerInputs.has(input.inputFileVersionId)
+          ? request.producerScope
+          : undefined
+      )
     )
   }
 
   clearSession(appSessionId: string): void {
+    this.sessionGenerations.delete(appSessionId)
     for (const key of this.turns.keys()) {
       const parsed = JSON.parse(key) as [string, string, string]
       if (parsed[1] === appSessionId) this.turns.delete(key)
@@ -296,6 +343,7 @@ export type {
   NotebookInputPreviewTarget,
   NotebookInputRegistryOptions,
   OpenNotebookInputRunRequest,
+  PreparedNotebookTurnInputs,
   RegisterNotebookTurnInputsRequest,
   ResolveNotebookInputRunRequest,
   ResolveNotebookInputPreviewRequest

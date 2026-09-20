@@ -113,6 +113,10 @@ class HeadlessTaskApi {
         save: async (session) => {
           return this.invoke('sessions:save-session', session) as Promise<PersistedChatSession>
         },
+        bindSession: (request) =>
+          this.invoke('sessions:bind-task-session', request) as Promise<PersistedChatSession>,
+        admitTurn: (request) =>
+          this.invoke('sessions:admit-task-turn', request) as Promise<PersistedChatSession>,
         stageCompletion: (request) =>
           this.invoke('sessions:stage-task-completion', request) as Promise<PersistedChatSession>,
         settleCompletion: (request) =>

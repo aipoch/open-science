@@ -1,6 +1,6 @@
 import { ErrorNotice } from '@/components/error-notice'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
-/* Hallmark · component: citation style manager · genre: modern-minimal · theme: existing Open Science tokens · enrichment: none */
+/* Hallmark · component: citation style manager · genre: modern-minimal · theme: existing Open-Science tokens · enrichment: none */
 import { ArrowLeft, BookOpenText, FileText, LoaderCircle, Trash2, Upload } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -243,7 +243,7 @@ const CitationStylesView = ({
       case 'csl-dependent-style':
         return t('Dependent CSL styles are not supported yet. Import an independent style.')
       case 'csl-missing-sections':
-        return t('Open Science requires CSL styles with both citation and bibliography sections.')
+        return t('Open-Science requires CSL styles with both citation and bibliography sections.')
       case 'csl-undefined-macro':
         if (error instanceof ApplicationCommandError && error.parameters) {
           return t('The CSL style references an undefined macro: {{macro}}', {
@@ -327,7 +327,7 @@ const CitationStylesView = ({
                 <p className="truncate text-sm font-medium">{style.title}</p>
                 <p className="mt-0.5 truncate text-xs text-muted-foreground">
                   {style.source === 'built-in'
-                    ? t('Included with Open Science')
+                    ? t('Included with Open-Science')
                     : t('Imported CSL')}
                   {style.rights ? ` · ${style.rights}` : ''}
                 </p>
@@ -419,15 +419,18 @@ const CitationStylesView = ({
             aria-label={t('Delete {{style}}', { style: style.title })}
             title={t('Delete')}
             onClick={() => void deleteStyle(style.id)}
+            aria-busy={Boolean(deletingId === style.id)}
           >
-            {deletingId === style.id ? (
-              <LoaderCircle
-                className="size-4 animate-spin motion-reduce:animate-none"
-                aria-hidden="true"
-              />
-            ) : (
-              <Trash2 className="size-4" aria-hidden="true" />
-            )}
+            <span key={String(deletingId === style.id)} className="button-feedback">
+              {deletingId === style.id ? (
+                <LoaderCircle
+                  className="size-4 animate-spin motion-reduce:animate-none"
+                  aria-hidden="true"
+                />
+              ) : (
+                <Trash2 className="size-4" aria-hidden="true" />
+              )}
+            </span>
           </Button>
         ) : null}
       </li>
@@ -465,22 +468,35 @@ const CitationStylesView = ({
                 if (file) void importStyle(file)
               }}
             />
-            <Button type="button" disabled={mutating} onClick={() => inputRef.current?.click()}>
-              {importing ? (
-                <LoaderCircle
-                  className="size-4 animate-spin motion-reduce:animate-none"
-                  aria-hidden="true"
-                />
-              ) : (
-                <Upload className="size-4" aria-hidden="true" />
-              )}
-              {importing ? t('Importing…') : t('Import CSL')}
+            <Button
+              type="button"
+              disabled={mutating}
+              onClick={() => inputRef.current?.click()}
+              aria-busy={Boolean(importing)}
+            >
+              <span key={String(importing)} className="button-feedback">
+                {importing ? (
+                  <LoaderCircle
+                    className="size-4 animate-spin motion-reduce:animate-none"
+                    aria-hidden="true"
+                  />
+                ) : (
+                  <Upload className="size-4" aria-hidden="true" />
+                )}
+                {importing ? t('Importing…') : t('Import CSL')}
+              </span>
             </Button>
           </div>
         </div>
 
         {error ? (
-          <ErrorNotice role="alert" tone="amber" className="mt-5" description={errorMessage()} />
+          <ErrorNotice
+            inline
+            role="alert"
+            tone="amber"
+            className="mt-5"
+            description={errorMessage()}
+          />
         ) : null}
 
         {loading && styles === undefined ? (

@@ -74,6 +74,45 @@ const condaInventory = (...names: string[]): string =>
   )
 
 describe('captureNotebookEnvironmentLock', () => {
+  it.each(['array', 'envelope'] as const)(
+    'captures a restorable lock from the micromamba %s inventory format',
+    async (format) => {
+      const packages = JSON.parse(condaInventory('numpy'))
+      const result = await captureNotebookEnvironmentLock(
+        {
+          language: 'python',
+          environmentName: 'default-python',
+          runtimeSource: 'managed',
+          condaPrefix: '/runtime/envs/default-python'
+        },
+        manifest(),
+        {
+          micromamba: '/runtime/micromamba',
+          execute: async () =>
+            JSON.stringify(format === 'array' ? packages : { log_history: [], packages })
+        }
+      )
+      expect(result).toMatchObject({
+        state: 'captured',
+        captureStatus: 'complete',
+        lock: { components: [{ packages: ['numpy'], resolution: 'locked' }] }
+      })
+    }
+  )
+
+  it.each([
+    {},
+    { packages: [] },
+    { packages: null },
+    { packages: {} },
+    { packages: [{ name: 'numpy', version: '2.3.2' }] },
+    {
+      packages: [{ name: 'numpy', url: 'file:///tmp/numpy.conda', md5: 'a'.repeat(32) }]
+    }
+  ])('rejects an empty or nonrestorable micromamba envelope: %j', (inventory) => {
+    expect(() => parseCondaPackageNames(JSON.stringify(inventory))).toThrow()
+  })
+
   it.each(['python', 'r'] as const)(
     'does not require a rejected auxiliary %s lock unless native packages are needed',
     async (language) => {
@@ -2363,5 +2402,70 @@ describe('decodeNotebookEnvironmentLock', () => {
     expect(decodeNotebookEnvironmentLock(JSON.stringify(forgedUv))).toEqual({
       status: 'corrupt'
     })
+  })
+})
+
+describe('conflicting installed Conda package metadata', () => {
+  it('keeps the reported sine-plot environment partial when distribution metadata disagrees with Conda', async () => {
+    // Minimized from the saved run: importlib observes two distributions per name,
+    // while micromamba list exposes one Conda record per name.
+    const packages = [
+      ['fonttools', '4.63.0', '4.65.0', '4.63.0'],
+      ['kiwisolver', '1.5.1', '1.5.0', '1.5.0'],
+      ['numpy', '2.5.3', '2.5.1', '2.5.3'],
+      ['packaging', '26.3', '26.2', '26.3'],
+      ['pip', '26.2.1', '26.1.2', '26.1.2'],
+      ['setuptools', '83.0.0', '84.0.0', '83.0.0']
+    ] as const
+    const root = await mkdtemp(join(tmpdir(), 'conflicting-conda-metadata-'))
+    try {
+      const result = await captureNotebookEnvironmentLock(
+        {
+          language: 'python',
+          environmentName: 'default-python',
+          runtimeSource: 'managed',
+          condaPrefix: root
+        },
+        manifest({
+          packages: packages.flatMap(([name, first, second]) =>
+            [first, second].map((version) => ({
+              name,
+              version,
+              versionStatus: 'known' as const,
+              ecosystem: 'python' as const,
+              loadedState: 'loaded' as const,
+              evidenceSources: [
+                'python-importlib-metadata' as const,
+                'python-kernel-modules' as const
+              ]
+            }))
+          )
+        }),
+        {
+          micromamba: 'micromamba',
+          execute: async () =>
+            JSON.stringify(
+              packages.map(([name, , , version], index) => ({
+                name,
+                version,
+                url: `https://conda.example/${name}-${version}-0.conda`,
+                md5: String(index + 1).repeat(32)
+              }))
+            )
+        }
+      )
+      expect(result).toMatchObject({
+        state: 'captured',
+        captureStatus: 'partial',
+        partialReasons: ['non-conda-package-detected'],
+        diagnostics: packages.map(([packageName, observedVersion]) => ({
+          reason: 'package-lock-missing',
+          packageName,
+          observedVersion
+        }))
+      })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 })

@@ -476,6 +476,9 @@ export class AgentBackendResolver {
           ? { providerContinuityToken: responsesBridge.continuityToken }
           : {}),
         executablePath,
+        ...(framework.id === 'opencode'
+          ? { opencodeConfigFiles: modelConfig.configFiles?.map((file) => ({ ...file })) }
+          : {}),
         env: {
           ...(modelConfig.env ?? {}),
           ...(opencodeUsagePassword ? { OPENCODE_SERVER_PASSWORD: opencodeUsagePassword } : {}),

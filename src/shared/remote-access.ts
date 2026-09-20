@@ -78,6 +78,10 @@ export type RevokeRemoteBrowserRequest = {
   browserId: string
 }
 
+export type RevokeRemoteBrowsersRequest = {
+  browserIds: string[]
+}
+
 export type SetRemoteAccessModeRequest = {
   mode: RemoteAccessMode
 }
@@ -102,6 +106,9 @@ export const remotePairingRequestIdSchema: z.ZodType<RemotePairingRequestId> = z
   .strict()
 export const revokeRemoteBrowserRequestSchema: z.ZodType<RevokeRemoteBrowserRequest> = z
   .object({ browserId: z.string().min(1) })
+  .strict()
+export const revokeRemoteBrowsersRequestSchema: z.ZodType<RevokeRemoteBrowsersRequest> = z
+  .object({ browserIds: z.array(z.string().min(1)).min(1) })
   .strict()
 export const setRemoteAccessModeRequestSchema: z.ZodType<SetRemoteAccessModeRequest> = z
   .object({ mode: remoteAccessModeSchema })
@@ -198,6 +205,10 @@ export const remoteAccessApplicationCommandContracts = Object.freeze({
   ),
   revokeBrowser: defineApplicationCommandContract(
     validationCodec(z.tuple([revokeRemoteBrowserRequestSchema])),
+    remoteAccessSnapshotResult
+  ),
+  revokeBrowsers: defineApplicationCommandContract(
+    validationCodec(z.tuple([revokeRemoteBrowsersRequestSchema])),
     remoteAccessSnapshotResult
   ),
   setMode: defineApplicationCommandContract(

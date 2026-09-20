@@ -161,6 +161,175 @@ describe('AcpSessionInteractionOwner', () => {
     expect(owner.current('session-1')).toBe(scope)
   })
 
+  it('rejects an unconfirmed cancellation at its deadline and releases checkpoints', async () => {
+    let fire!: () => void
+    const owner = new AcpSessionInteractionOwner({
+      setTimer: (callback) => {
+        fire = callback
+        return 1 as never
+      },
+      clearTimer: () => undefined
+    })
+    const scope = owner.claim({ sessionId: 'session-1', kind: 'prompt' })
+    const onAccepted = vi.fn()
+    const onTimeout = vi.fn()
+    const outcome = owner
+      .cancelPrompt({
+        sessionId: 'session-1',
+        notify: () => new Promise(() => {}),
+        onAccepted,
+        onTimeout
+      })
+      .catch((error) => error)
+    const checkpoint = owner.cancellationCheckpoint(scope)
+    fire()
+    expect(await outcome).toMatchObject({ message: expect.stringContaining('not confirmed') })
+    await expect(checkpoint).resolves.toBe('active')
+    expect(onAccepted).not.toHaveBeenCalled()
+    expect(onTimeout).toHaveBeenCalledOnce()
+  })
+
+  it('shares a pending cancellation and settles it when its interaction is released', async () => {
+    const owner = new AcpSessionInteractionOwner()
+    const scope = owner.claim({ sessionId: 'session-1', kind: 'prompt' })
+    const late = createDeferred<void>()
+    const notify = vi.fn(() => late.promise)
+    const onAccepted = vi.fn()
+    const request = { sessionId: 'session-1', notify, onAccepted, onTimeout: vi.fn() }
+    const first = owner.cancelPrompt(request).catch((error) => error)
+    const second = owner.cancelPrompt(request).catch((error) => error)
+    expect(notify).toHaveBeenCalledOnce()
+    owner.supersede(scope)
+    const replacement = owner.claim({ sessionId: 'session-1', kind: 'prompt' })
+    expect(await first).toMatchObject({ message: expect.stringContaining('not confirmed') })
+    expect(await second).toMatchObject({ message: expect.stringContaining('not confirmed') })
+    await expect(owner.cancellationCheckpoint(replacement)).resolves.toBe('active')
+    late.resolve()
+    await Promise.resolve()
+    expect(onAccepted).not.toHaveBeenCalled()
+    expect(replacement.signal.aborted).toBe(false)
+    owner.release(replacement)
+  })
+
+  it.each(['resolve', 'reject'] as const)(
+    'ignores a late notify %s after timeout while a replacement cancellation is pending',
+    async (outcome) => {
+      const timers: Array<() => void> = []
+      const owner = new AcpSessionInteractionOwner({
+        setTimer: (callback) => {
+          timers.push(callback)
+          return timers.length as never
+        },
+        clearTimer: () => undefined
+      })
+      const first = owner.claim({ sessionId: 'session-1', kind: 'prompt' })
+      let resolve!: () => void
+      let reject!: (error: Error) => void
+      const notification = new Promise<void>((yes, no) => {
+        resolve = yes
+        reject = no
+      })
+      const accepted = vi.fn()
+      const timedOut = vi.fn()
+      const old = owner
+        .cancelPrompt({
+          sessionId: 'session-1',
+          notify: () => notification,
+          onAccepted: accepted,
+          onTimeout: timedOut
+        })
+        .catch((error) => error)
+      timers[0]()
+      expect(await old).toBeInstanceOf(Error)
+      owner.release(first)
+      const replacement = owner.claim({ sessionId: 'session-1', kind: 'prompt' })
+      const nextNotify = createDeferred<void>()
+      const nextAccepted = vi.fn()
+      const next = owner.cancelPrompt({
+        sessionId: 'session-1',
+        notify: () => nextNotify.promise,
+        onAccepted: nextAccepted,
+        onTimeout: vi.fn()
+      })
+      if (outcome === 'resolve') resolve()
+      else reject(new Error('late write failure'))
+      await Promise.resolve()
+      timers[0]()
+      expect(accepted).not.toHaveBeenCalled()
+      expect(nextAccepted).not.toHaveBeenCalled()
+      expect(timedOut).toHaveBeenCalledOnce()
+      nextNotify.resolve()
+      await next
+      await expect(owner.cancellationCheckpoint(replacement)).resolves.toBe('cancelled')
+      expect(nextAccepted).toHaveBeenCalledOnce()
+      owner.release(replacement)
+    }
+  )
+
+  it('settles a detached cancellation when a new generation starts cancellation', async () => {
+    const owner = new AcpSessionInteractionOwner()
+    const oldAccepted = vi.fn()
+    const old = owner
+      .cancelPrompt({
+        sessionId: 'session-1',
+        notify: () => new Promise(() => {}),
+        onAccepted: oldAccepted,
+        onTimeout: vi.fn()
+      })
+      .catch((error) => error)
+    const scope = owner.claim({ sessionId: 'session-1', kind: 'prompt' })
+    await owner.cancelPrompt({
+      sessionId: 'session-1',
+      notify: async () => undefined,
+      onAccepted: vi.fn(),
+      onTimeout: vi.fn()
+    })
+    expect(await old).toBeInstanceOf(Error)
+    expect(oldAccepted).not.toHaveBeenCalled()
+    owner.release(scope)
+  }, 1000)
+
+  it.each(['stop', 'cancelled'] as const)(
+    'accepts observed %s termination before a cancellation write returns',
+    async (kind) => {
+      const owner = new AcpSessionInteractionOwner()
+      const scope = owner.claim({ sessionId: 'session-1', kind: 'prompt' })
+      const onAccepted = vi.fn()
+      const cancellation = owner.cancelPrompt({
+        sessionId: 'session-1',
+        notify: () => new Promise(() => {}),
+        onAccepted,
+        onTimeout: vi.fn()
+      })
+      const outcome = cancellation.then(
+        () => 'confirmed',
+        (error) => error
+      )
+      expect(owner.captureTerminal(scope, kind)).toBe(true)
+      owner.settle(scope, {})
+      owner.release(scope)
+      const replacement = owner.claim({ sessionId: 'session-1', kind: 'prompt' })
+      await expect(outcome).resolves.toBe('confirmed')
+      expect(onAccepted).not.toHaveBeenCalled()
+      expect(replacement.signal.aborted).toBe(false)
+      owner.release(replacement)
+    }
+  )
+
+  it('settles detached cancellation writes when all interactions are superseded', async () => {
+    const owner = new AcpSessionInteractionOwner()
+    const outcome = owner
+      .cancelPrompt({
+        sessionId: 'session-1',
+        notify: () => new Promise(() => {}),
+        onAccepted: vi.fn(),
+        onTimeout: vi.fn()
+      })
+      .catch((error) => error)
+    owner.supersedeAll()
+    expect(await outcome).toBeInstanceOf(Error)
+  }, 1000)
+
   it('cancels a prompt reservation that is still in preflight', async () => {
     const owner = new AcpSessionInteractionOwner()
     const scope = owner.reservePrompt({ sessionId: 'session-1', kind: 'prompt' })

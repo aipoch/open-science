@@ -1,3 +1,4 @@
+import { initDataRoot } from '../storage-root'
 import { lstat, mkdir, mkdtemp, readFile, rename, rm, truncate, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -334,6 +335,7 @@ describe('Session projection', () => {
 
   it('lets a session save and cancellation recovery wait for an active database transaction', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'session-transaction-admission-'))
+    initDataRoot(storageRoot)
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     await client.project.create({ data: { id: 'project-1', name: 'Project' } })
@@ -375,6 +377,7 @@ describe('Session projection', () => {
 
   it('saves sessions while cancellation recovery polls the shared database', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'session-recovery-contention-'))
+    initDataRoot(storageRoot)
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     await client.project.create({ data: { id: 'project-1', name: 'Project' } })
@@ -393,6 +396,7 @@ describe('Session projection', () => {
 
   it('allocates a global number and serves summaries and usage without Session JSON', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-projection-'))
+    initDataRoot(storageRoot)
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     await client.project.create({
@@ -457,6 +461,7 @@ describe('Session projection', () => {
 
   it('keeps direct auxiliary usage across rebuilds, aggregates it, and removes it on deletion', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-auxiliary-usage-'))
+    initDataRoot(storageRoot)
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     await client.project.create({
@@ -521,6 +526,7 @@ describe('Session projection', () => {
 
   it('does not replace Session authority when an invalid projection integer rejects the save', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-save-validation-'))
+    initDataRoot(storageRoot)
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     await client.project.create({
@@ -546,6 +552,7 @@ describe('Session projection', () => {
 
   it('assigns a Session number without copying large conversation graphs twice', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-prepared-write-'))
+    initDataRoot(storageRoot)
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     await client.project.create({ data: { id: 'project-1', name: 'Project' } })
@@ -618,6 +625,7 @@ describe('Session projection', () => {
 
   it('rejects an oversized first save before reserving projection metadata', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-size-admission-'))
+    initDataRoot(storageRoot)
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     await client.project.create({
@@ -636,6 +644,7 @@ describe('Session projection', () => {
 
   it('accounts for an assigned Session number before reserving projection metadata', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-number-size-admission-'))
+    initDataRoot(storageRoot)
     const candidate = session('number-boundary')
     const authorityPath = join(storageRoot, 'sessions', 'project-1', 'number-boundary.json')
     await new SessionRepository(storageRoot).saveSession(candidate)
@@ -660,6 +669,7 @@ describe('Session projection', () => {
 
   it('rejects oversized existing authority before marking its projection pending', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-existing-size-admission-'))
+    initDataRoot(storageRoot)
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     await client.project.create({
@@ -682,6 +692,7 @@ describe('Session projection', () => {
 
   it('validates the incremented Session revision before writing authority', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-revision-validation-'))
+    initDataRoot(storageRoot)
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     await client.project.create({ data: { id: 'project-1', name: 'Project' } })
@@ -706,6 +717,7 @@ describe('Session projection', () => {
 
   it('rejects a zero context-window size before replacing Session authority', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-context-window-validation-'))
+    initDataRoot(storageRoot)
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     await client.project.create({ data: { id: 'project-1', name: 'Project' } })
@@ -733,6 +745,7 @@ describe('Session projection', () => {
 
   it('rejects whitespace projection identifiers before replacing Session authority', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-text-validation-'))
+    initDataRoot(storageRoot)
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     await client.project.create({ data: { id: 'project-1', name: 'Project' } })
@@ -760,6 +773,7 @@ describe('Session projection', () => {
 
   it('rejects invalid Session statuses before replacing authority', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-status-validation-'))
+    initDataRoot(storageRoot)
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     await client.project.create({ data: { id: 'project-1', name: 'Project' } })
@@ -787,6 +801,7 @@ describe('Session projection', () => {
 
   it('rejects an invalid Session save while projection publication is suspended', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-suspended-validation-'))
+    initDataRoot(storageRoot)
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     await client.project.create({ data: { id: 'project-1', name: 'Project' } })
@@ -826,6 +841,7 @@ describe('Session projection', () => {
 
   it('keeps a deleted metadata tombstone, excludes its facts, and never reuses its number', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-number-sequence-'))
+    initDataRoot(storageRoot)
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     await client.project.create({
@@ -884,6 +900,7 @@ describe('Session projection', () => {
 
   it('refuses to tombstone a Session through another Project identity', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-delete-ownership-'))
+    initDataRoot(storageRoot)
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     await client.project.createMany({
@@ -925,6 +942,7 @@ describe('Session projection', () => {
 
   it('retains Project metadata and Session Usage when the whole Project is deleted', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-project-usage-history-'))
+    initDataRoot(storageRoot)
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     await client.project.create({
@@ -962,6 +980,7 @@ describe('Session projection', () => {
 
   it('reconciles pending Usage from a committed Project tombstone before removing it', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-project-pending-history-'))
+    initDataRoot(storageRoot)
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     await client.project.create({
@@ -996,6 +1015,7 @@ describe('Session projection', () => {
 
   it('serializes pending replay ahead of a concurrent newer Session save', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-pending-race-'))
+    initDataRoot(storageRoot)
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     await client.project.create({ data: { id: 'project-1', name: 'Project' } })
@@ -1033,6 +1053,7 @@ describe('Session projection', () => {
 
   it('allows retry of a first save after recovery of a failed JSON publication', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-first-save-recovery-'))
+    initDataRoot(storageRoot)
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     await client.project.create({ data: { id: 'project-1', name: 'Project' } })
@@ -1078,6 +1099,7 @@ describe('Session projection', () => {
     'recovers JSON authority after projection commit failure (existing Session: %s)',
     async (existing) => {
       storageRoot = await mkdtemp(join(tmpdir(), 'open-science-save-commit-recovery-'))
+      initDataRoot(storageRoot)
       client = createProjectDbClient(storageRoot)
       await migrateApplicationDatabase(client)
       await client.project.create({ data: { id: 'project-1', name: 'Project' } })
@@ -1090,7 +1112,15 @@ describe('Session projection', () => {
       vi.spyOn(projection, 'commitSave').mockRejectedValueOnce(failure)
       await expect(
         repository.saveSession({ ...saved, title: 'Durable new title' }, saved.revision ?? 0)
-      ).rejects.toBe(failure)
+      ).rejects.toMatchObject({
+        name: 'SessionProjectionAfterCommitError',
+        committedSession: {
+          id: saved.id,
+          title: 'Durable new title',
+          revision: (saved.revision ?? 0) + 1
+        },
+        cause: failure
+      })
       await expect(projection.pending()).resolves.toEqual([
         { projectId: 'project-1', sessionId: 'session-1', operation: 'save' }
       ])
@@ -1123,6 +1153,7 @@ describe('Session projection', () => {
     'preserves the correct retry authority after rename failure ($existing, $publication)',
     async ({ existing, publication }) => {
       storageRoot = await mkdtemp(join(tmpdir(), 'open-science-save-rename-recovery-'))
+      initDataRoot(storageRoot)
       client = createProjectDbClient(storageRoot)
       await migrateApplicationDatabase(client)
       await client.project.create({ data: { id: 'project-1', name: 'Project' } })
@@ -1184,6 +1215,7 @@ describe('Session projection', () => {
     'preserves a failed first-save draft with live-owner temporary evidence during %s',
     async (recovery) => {
       storageRoot = await mkdtemp(join(tmpdir(), 'open-science-live-temp-replay-'))
+      initDataRoot(storageRoot)
       client = createProjectDbClient(storageRoot)
       await migrateApplicationDatabase(client)
       await client.project.create({ data: { id: 'project-1', name: 'Project' } })
@@ -1232,6 +1264,7 @@ describe('Session projection', () => {
 
   it('recovers retained temporary authority after its actual writer process exits', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-exited-temp-writer-'))
+    initDataRoot(storageRoot)
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     await client.project.create({ data: { id: 'project-1', name: 'Project' } })
@@ -1279,6 +1312,7 @@ describe('Session projection', () => {
 
   it('does not restore explicitly deleted JSON from an exited writer temporary file', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-deleted-temp-writer-'))
+    initDataRoot(storageRoot)
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     await client.project.create({ data: { id: 'project-1', name: 'Project' } })
@@ -1315,6 +1349,7 @@ describe('Session projection', () => {
 
   it('recovers an eligible orphan temporary file before replaying its pending save', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-orphan-temp-replay-'))
+    initDataRoot(storageRoot)
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     await client.project.create({ data: { id: 'project-1', name: 'Project' } })
@@ -1344,6 +1379,7 @@ describe('Session projection', () => {
 
   it('retains both errors and pending evidence when allocation compensation fails', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-save-compensation-failure-'))
+    initDataRoot(storageRoot)
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     await client.project.create({ data: { id: 'project-1', name: 'Project' } })
@@ -1382,6 +1418,7 @@ describe('Session projection', () => {
 
   it('preserves auxiliary usage recorded before a failed first publication', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-save-auxiliary-usage-'))
+    initDataRoot(storageRoot)
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     await client.project.create({ data: { id: 'project-1', name: 'Project' } })
@@ -1428,6 +1465,7 @@ describe('Session projection', () => {
 
   it('does not discard a committed deletion with a stale allocation receipt', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-save-receipt-delete-'))
+    initDataRoot(storageRoot)
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     await client.project.create({ data: { id: 'project-1', name: 'Project' } })
@@ -1445,6 +1483,7 @@ describe('Session projection', () => {
 
   it('does not cascade-delete published facts through an old allocation receipt', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-save-receipt-facts-'))
+    initDataRoot(storageRoot)
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     await client.project.create({ data: { id: 'project-1', name: 'Project' } })
@@ -1464,6 +1503,7 @@ describe('Session projection', () => {
 
   it('resumes an individually deleted Session after a crash before JSON removal', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-delete-intent-'))
+    initDataRoot(storageRoot)
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     await client.project.create({ data: { id: 'project-1', name: 'Project' } })
@@ -1490,6 +1530,7 @@ describe('Session projection', () => {
 
   it('backfills historical JSON numbers by creation time before normal autoincrement', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-backfill-'))
+    initDataRoot(storageRoot)
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     await client.project.create({ data: { id: 'project-1', name: 'Project' } })
@@ -1517,6 +1558,7 @@ describe('Session projection', () => {
 
   it('scans historical Session authority once while building the projection', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-single-scan-backfill-'))
+    initDataRoot(storageRoot)
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     await client.project.create({ data: { id: 'project-1', name: 'Project' } })
@@ -1535,6 +1577,7 @@ describe('Session projection', () => {
 
   it('scans Session authority once when startup recovery is required', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-single-scan-recovery-'))
+    initDataRoot(storageRoot)
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     await client.project.create({ data: { id: 'project-1', name: 'Project' } })
@@ -1553,6 +1596,7 @@ describe('Session projection', () => {
 
   it('reports oversized authority when the ready projection needs no startup recovery', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-ready-size-limit-'))
+    initDataRoot(storageRoot)
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     await client.project.create({ data: { id: 'project-1', name: 'Project' } })
@@ -1589,6 +1633,7 @@ describe('Session projection', () => {
 
   it('removes a stale ready projection after oversized authority is moved out', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-size-recovery-'))
+    initDataRoot(storageRoot)
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     await client.project.create({ data: { id: 'project-1', name: 'Project' } })
@@ -1619,6 +1664,7 @@ describe('Session projection', () => {
 
   it('reports an oversized recovery temp behind a ready projection', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-ready-temp-size-limit-'))
+    initDataRoot(storageRoot)
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     await client.project.create({ data: { id: 'project-1', name: 'Project' } })
@@ -1655,6 +1701,7 @@ describe('Session projection', () => {
 
   it('does not reuse retained tombstone numbers during a projection-version rebuild', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-reversion-'))
+    initDataRoot(storageRoot)
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     await client.project.create({ data: { id: 'project-1', name: 'Project' } })
@@ -1682,6 +1729,7 @@ describe('Session projection', () => {
 
   it('rejects an invalid backfill before clearing the existing projection', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-rebuild-validation-'))
+    initDataRoot(storageRoot)
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     await client.project.create({ data: { id: 'project-1', name: 'Project' } })
@@ -1710,6 +1758,7 @@ describe('Session projection', () => {
 
   it('derives degraded summaries from read-only authority instead of stale SQLite rows', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-degraded-'))
+    initDataRoot(storageRoot)
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     await client.project.create({ data: { id: 'project-1', name: 'Project' } })
@@ -1732,6 +1781,7 @@ describe('Session projection', () => {
 
   it('publishes a fresh authority scan when a Session save overlaps initial backfill', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-backfill-race-'))
+    initDataRoot(storageRoot)
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     await client.project.create({ data: { id: 'project-1', name: 'Project' } })
@@ -1775,6 +1825,7 @@ describe('Session projection', () => {
 
   it('includes a Session save that finishes while projection publication waits for its barrier', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-backfill-barrier-race-'))
+    initDataRoot(storageRoot)
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     await client.project.create({ data: { id: 'project-1', name: 'Project' } })
@@ -1828,6 +1879,7 @@ describe('Session projection', () => {
 
   it('does not restore a missing Session deleted while projection publication is suspended', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-backfill-missing-delete-'))
+    initDataRoot(storageRoot)
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     await client.project.create({ data: { id: 'project-1', name: 'Project' } })

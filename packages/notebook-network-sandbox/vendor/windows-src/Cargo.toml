@@ -3,7 +3,7 @@ name = "notebook-appcontainer-host"
 version = "0.0.1"
 edition = "2024"
 publish = false
-description = "Open Science Windows Notebook AppContainer host"
+description = "Open-Science Windows Notebook AppContainer host"
 
 [[bin]]
 name = "notebook-appcontainer-host"

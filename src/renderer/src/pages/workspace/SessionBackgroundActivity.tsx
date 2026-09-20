@@ -187,6 +187,7 @@ const SessionBackgroundActivityLedger = ({
         </span>
         {isActive && cancellationErrors.has(run.runId) ? (
           <ErrorNotice
+            inline
             className="col-span-full"
             role="alert"
             tone="amber"
@@ -279,6 +280,7 @@ const SessionBackgroundActivityLedger = ({
         </span>
         {isActive && cancellationErrors.has(job.job_id) ? (
           <ErrorNotice
+            inline
             className="col-span-full"
             role="alert"
             tone="amber"

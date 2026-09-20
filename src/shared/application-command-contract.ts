@@ -6,6 +6,7 @@ export const APPLICATION_COMMAND_ERROR_CODES = [
   'session-details-conflict',
   'session-size-limit',
   'session-revision-conflict',
+  'SESSION_RUNTIME_WRITER_LOST',
   'csl-file-too-large',
   'csl-invalid-xml',
   'csl-unsupported-doctype',

@@ -1,3 +1,4 @@
+import { initDataRoot } from '../storage-root'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
@@ -52,6 +53,7 @@ afterEach(async () => {
 describe('persisted Claude handoff replay', () => {
   it.each([false, true])('resolves current context with hydrated ownership %s', async (hydrate) => {
     const root = await mkdtemp(join(tmpdir(), 'claude-replay-owner-'))
+    initDataRoot(root)
     roots.push(root)
     const repository = new SessionRepository(root)
     await repository.saveSession(session('current'))
@@ -77,6 +79,7 @@ describe('persisted Claude handoff replay', () => {
 
   it('refuses replay after another Project claims the same Session identity', async () => {
     const root = await mkdtemp(join(tmpdir(), 'claude-replay-duplicate-'))
+    initDataRoot(root)
     roots.push(root)
     const repository = new SessionRepository(root)
     await repository.saveSession(session('current'))
@@ -101,6 +104,7 @@ describe('persisted Claude handoff replay', () => {
 
   it('reconfigures with fresh task context while unrelated Session reads are blocked', async () => {
     const root = await mkdtemp(join(tmpdir(), 'claude-replay-'))
+    initDataRoot(root)
     roots.push(root)
     let hold = false
     let release!: () => void

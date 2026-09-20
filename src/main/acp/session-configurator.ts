@@ -21,7 +21,11 @@ type ConfigurationContext = Readonly<{
   connection: ClientConnection
 }>
 type StartupConfiguration = ConfigurationContext &
-  Readonly<{ session: ActiveSession; permissionProfile: PermissionProfileId }>
+  Readonly<{
+    session: ActiveSession
+    permissionProfile: PermissionProfileId
+    cancellationSignal?: AbortSignal
+  }>
 type LiveEffortSession = Readonly<{
   session: ActiveSession
   configOptions: readonly SessionConfigOption[] | null | undefined
@@ -132,6 +136,7 @@ export class AcpSessionConfigurator {
     input: StartupConfiguration,
     forcePermissionMode = false
   ): Promise<SessionPermissionProfileState> {
+    input.cancellationSignal?.throwIfAborted()
     const application = input.backend.framework.mapPermissionProfile(
       input.permissionProfile,
       input.session.modes
@@ -141,10 +146,15 @@ export class AcpSessionConfigurator {
       (forcePermissionMode || application.modeId !== input.session.modes?.currentModeId)
     ) {
       this.deps.assertCurrentConnection(input.connection)
-      await input.connection.agent.request(acp.methods.agent.session.setMode, {
-        sessionId: input.session.sessionId,
-        modeId: application.modeId
-      })
+      await input.connection.agent.request(
+        acp.methods.agent.session.setMode,
+        {
+          sessionId: input.session.sessionId,
+          modeId: application.modeId
+        },
+        ...(input.cancellationSignal ? [{ cancellationSignal: input.cancellationSignal }] : [])
+      )
+      input.cancellationSignal?.throwIfAborted()
     }
     log.info('permission profile applied', this.deps.diagnosticContext(input.backend))
     return application.state

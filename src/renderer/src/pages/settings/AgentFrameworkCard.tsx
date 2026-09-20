@@ -1,3 +1,4 @@
+import { InlineNotice } from '@/components/ui/inline-notice'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -257,7 +258,7 @@ const AgentFrameworkCard = ({
                 // A detected-but-broken runtime (preflight failed) is not "not installed".
                 <Badge
                   variant="outline"
-                  className="border-amber-500/40 text-amber-600 dark:text-amber-400"
+                  className="border-status-warning-foreground/30 dark:border-status-warning-dark-foreground/30 text-status-warning-foreground dark:text-status-warning-dark-foreground"
                 >
                   {t('Needs repair')}
                 </Badge>
@@ -380,9 +381,9 @@ const AgentFrameworkCard = ({
             ) : null}
 
             {installError ? (
-              <p className="text-xs text-destructive" role="alert">
+              <InlineNotice level="error" role="alert">
                 {installError}
-              </p>
+              </InlineNotice>
             ) : null}
 
             {installLogs.length > 0 ? (

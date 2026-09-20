@@ -30,6 +30,8 @@ import { SettingsSearchInput } from './SettingsSearchInput'
 import { SkillMarketplaceBatchControls, type MarketplaceBatchMode } from './SkillMarketplaceBatch'
 import {
   filterSkillMarketplace,
+  skillMarketplaceAttribution,
+  skillMarketplaceSourceOwner,
   skillMarketplaceCategories,
   skillMarketplaceRepository,
   SKILL_MARKETPLACE_PAGE_SIZE,
@@ -1097,7 +1099,11 @@ export function SkillMarketplace({
                               name: selected.authors.map((a) => a.name).join(', ')
                             })}
                           </span>
-                        ) : null}
+                        ) : (
+                          <span>
+                            {t('Upstream source')}: {skillMarketplaceSourceOwner(selected)}
+                          </span>
+                        )}
                         <span>
                           {t('Version')}: {selected.version}
                         </span>
@@ -1428,9 +1434,9 @@ export function SkillMarketplace({
                           </span>
                           <span
                             className="min-w-0 truncate text-muted-foreground"
-                            title={item.authors?.map((a) => a.name).join(', ')}
+                            title={skillMarketplaceAttribution(item)}
                           >
-                            {item.authors?.map((a) => a.name).join(', ')}
+                            {skillMarketplaceAttribution(item)}
                           </span>
                           {item.evaluation ? (
                             <Tooltip>

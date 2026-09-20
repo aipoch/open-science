@@ -13,6 +13,16 @@ const paths = (
 ): string[] => RENDERER_CONTRACT_CATALOG.filter(predicate).map(({ publicPath }) => publicPath)
 
 describe('renderer contract catalog', () => {
+  it('installs bulk browser revocation on every renderer with caller authorization in the owner', () => {
+    expect(
+      RENDERER_CONTRACT_CATALOG.find(
+        ({ publicPath }) => publicPath === 'remoteAccess.revokeBrowsers'
+      )
+    ).toMatchObject({
+      surfaceInstallation: { electron: 'preload', localWeb: 'web-rpc', remoteWeb: 'web-rpc' }
+    })
+    expect(WEB_INVOKE_CHANNELS['remoteAccess.revokeBrowsers']).toBe('remote-access:revoke-browsers')
+  })
   it('registers all four local model methods across the intended surfaces', () => {
     const group = RENDERER_CONTRACT_GROUPS.find(({ capability }) => capability === 'local-models')
     expect(group?.contracts.map(({ publicPath }) => publicPath).sort()).toEqual([
@@ -476,6 +486,7 @@ describe('renderer contract catalog', () => {
       'bookmarks.list',
       'bookmarks.resolvePdfSource',
       'bookmarks.updateNote',
+      'lifecycle.claimRuntimeWriter',
       'literature.citationStyles',
       'literature.completeMetadata',
       'literature.exportRecord',
@@ -516,6 +527,7 @@ describe('renderer contract catalog', () => {
       'sessions.editDetails',
       'sessions.exportPackage',
       'sessions.filterPdfContextCandidates',
+      'sessions.fork',
       'sessions.importPackage',
       'sessions.linkPdfContext',
       'sessions.packageOperation',
@@ -541,6 +553,7 @@ describe('renderer contract catalog', () => {
       'bookmarks:list',
       'bookmarks:resolve-pdf-source',
       'bookmarks:update-note',
+      'lifecycle:claim-runtime-writer',
       'literature:citation-styles',
       'literature:complete-metadata',
       'literature:export-record',
@@ -581,6 +594,7 @@ describe('renderer contract catalog', () => {
       'sessions:edit-details',
       'sessions:export-package',
       'sessions:filter-pdf-context-candidates',
+      'sessions:fork',
       'sessions:import-package',
       'sessions:link-pdf-context',
       'sessions:package-operation',

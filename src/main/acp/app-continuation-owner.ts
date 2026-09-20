@@ -8,6 +8,7 @@ type AcpAppContinuation = Readonly<{
   request: AcpPromptRequest
   condition: 'always' | 'provider-cancelled'
   beforeSend?: () => Promise<AcpPromptRequest | undefined>
+  onUnaccepted?: () => Promise<void>
 }>
 
 // Owns app-authored continuations parked between a durable interaction response and the next

@@ -67,7 +67,8 @@ it('uses the original license with informational NSIS copy and a normal Next but
     await readFile(join(root, 'LICENSE'), 'utf8')
   )
   const include = await readFile(join(root, config.nsis!.include!), 'utf8')
-  expect(include).toContain('!include "${BUILD_RESOURCES_DIR}/installer.nsh"')
+  expect(include).toContain('!include "${BUILD_RESOURCES_DIR}\\installer.nsh"')
+  expect(include).not.toContain('!include "${BUILD_RESOURCES_DIR}/installer.nsh"')
   expect(include).toContain('!macro customWelcomePage')
   expect(include).toContain('!define MUI_LICENSEPAGE_BUTTON "$(^NextBtn)"')
   for (const setting of [

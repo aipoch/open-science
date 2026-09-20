@@ -73,7 +73,8 @@ describe('pull request change classification', () => {
         mode: 'selective',
         roots: expect.any(Array),
         lanes: expect.any(Array),
-        bundles: expect.arrayContaining(['policy', 'static', 'unit', 'macos_e2e'])
+        bundles: expect.arrayContaining(['policy', 'static', 'unit', 'macos_e2e']),
+        macosGroups: ['journeys', 'presentation', 'regressions', 'delegation']
       })
       expect(JSON.parse(outputs.plan)).not.toHaveProperty('reasonChains')
       expect(readFileSync(summary, 'utf8')).toContain(
@@ -255,7 +256,12 @@ describe('pull request change classification', () => {
     expect(plan.mode).toBe('selective')
     expect(plan.roots).toContain('notebook_runtime')
     expect(plan.roots).not.toContain('main_runtime')
-    expect(plan.lanes).toEqual(['policy', 'typecheck_node'])
+    expect(plan.lanes).toEqual([
+      'policy',
+      'typecheck_node',
+      'e2e_regressions_macos',
+      'e2e_delegation_macos'
+    ])
   })
 
   it('keeps risk overlays additive after a specific owner replaces a fallback', () => {
@@ -378,8 +384,12 @@ describe('pull request change classification', () => {
     ['PowerShell', 'src/main/notebook/micromamba-cache-powershell.test.ts'],
     ['path handling', 'src/main/acp/workspace-path.ts'],
     ['ACL behavior', 'src/main/notebook/micromamba-cache-acl.integration.test.ts'],
+    ['Windows wheel recovery', 'src/main/notebook/pip-wheel-evidence.ts'],
+    ['Windows wheel regression', 'src/main/notebook/pip-wheel-evidence.test.ts'],
+    ['Windows install evidence', 'src/main/notebook/pip-install-evidence.test.ts'],
     ['storage', 'src/main/storage/ipc.ts'],
     ['session persistence', 'src/main/session-persistence/ipc.ts'],
+    ['delegated process ownership', 'src/main/delegation/process-ownership.ts'],
     ['notebook shell process', 'src/main/notebook/shell-process.ts'],
     ['file save', 'src/main/file-save.ts'],
     ['specialist repository', 'src/main/specialist/repository.ts'],
@@ -513,7 +523,9 @@ describe('pull request change classification', () => {
       'typecheck_web',
       'interface_contracts',
       'unit_macos',
-      'build'
+      'build',
+      'e2e_regressions_macos',
+      'e2e_delegation_macos'
     ])
     expect(plan.bundles).toEqual(['policy', 'static', 'unit', 'macos_e2e'])
   })
@@ -562,6 +574,38 @@ describe('pull request change classification', () => {
     expect(plan.mode).toBe('selective')
     expect(plan.lanes).toEqual(['policy', 'docs'])
     expect(plan.bundles).toEqual(['policy', 'static'])
+  })
+
+  it('runs the PR workflow contract without selecting desktop or full suites', () => {
+    const plan = classifyChanges([
+      { path: 'scripts/ci/pr-gate-workflow.test.ts', status: 'modified' }
+    ])
+    expect(plan.mode).toBe('selective')
+    expect(plan.bundles).toEqual(['policy', 'static', 'unit'])
+    expect(plan.roots).toEqual(['ci_workflow_contract_test'])
+  })
+
+  it.each(['deleted', 'renamed', 'type-changed'] as const)(
+    'retains the conservative fallback for a %s workflow contract',
+    (status) => {
+      const plan = classifyChanges([{ path: 'scripts/ci/pr-gate-workflow.test.ts', status }])
+      expect(plan.mode).toBe('full')
+    }
+  )
+
+  it.each([
+    '.github/workflows/pr-gate.yml',
+    'scripts/ci/classify-pr-changes.mjs',
+    'scripts/ci/module-impact.json',
+    'scripts/ci/module-impact/sample.json',
+    'scripts/ci/load-module-impact.mjs'
+  ])('does not let a workflow test hide the changed CI input %s', (path) => {
+    const plan = classifyChanges([
+      { path: 'scripts/ci/pr-gate-workflow.test.ts', status: 'modified' },
+      { path, status: 'modified' }
+    ])
+    expect(plan.mode).toBe('full')
+    expect(plan.roots).toContain('global_gate_input')
   })
 
   it.each([

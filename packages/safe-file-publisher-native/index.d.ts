@@ -30,5 +30,6 @@ export function recoverAnchoredRemoval(
   relativeParentPath: string,
   quarantineName: string,
   parentDev: bigint,
-  parentIno: bigint
+  parentIno: bigint,
+  contentFilename?: string
 ): void

@@ -1,5 +1,10 @@
 // @ts-expect-error The published ESM entry uses a sibling index.d.ts.
 import { OpenScienceClient } from '../../../packages/open-science/index.mjs'
+import { createHash } from 'node:crypto'
+import { RemoteSessionPairingManager } from '../remote-access/pairing'
+import { RemoteAccessRepository } from '../remote-access/repository'
+import { requirePairingManager } from '../remote-access/ipc'
+import { remoteAccessApplicationCommandContracts } from '../../shared/remote-access'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { request as httpRequest, IncomingMessage, ServerResponse } from 'node:http'
 import { connect } from 'node:net'
@@ -132,7 +137,7 @@ const startBudgetTestServer = async (
       authorizeWebSocket: async () => undefined
     },
     bootstrap: {
-      appName: 'Open Science',
+      appName: 'Open-Science',
       appVersion: '0.0.0',
       configRoot: '/fake/root',
       platform: 'test',
@@ -196,6 +201,103 @@ afterEach(async () => {
 })
 
 describe('startWebHttpServer', () => {
+  it.each([0, 1, 2])(
+    'finishes one remote revocation request even when its caller is batch item %s',
+    async (callerIndex) => {
+      const root = await mkdtemp(join(tmpdir(), 'open-science-web-revoke-'))
+      roots.push(root)
+      await writeFile(join(root, 'index.html'), '<!doctype html>')
+      const repository = new RemoteAccessRepository(root)
+      const now = Date.now()
+      const browserIds = ['first', 'second', 'third']
+      await repository.save({
+        version: 5,
+        mode: 'remoteit-public',
+        trustedBrowsers: browserIds.map((id) => ({
+          id,
+          browser: 'Chrome',
+          platform: 'macOS',
+          tokenHash: createHash('sha256').update(`${id}-secret`).digest('hex'),
+          createdAt: now,
+          lastSeenAt: now,
+          expiresAt: now + 60_000
+        }))
+      })
+      const manager = await RemoteSessionPairingManager.create({
+        repository,
+        now: () => now,
+        isEnabled: () => true,
+        isAllowedRemoteHost: (hostname) => hostname === 'home.example.ts.net',
+        onChanged: vi.fn()
+      })
+      const save = vi.spyOn(repository, 'save')
+      const channel = 'remote-access:revoke-browsers'
+      const invoke = vi.fn(async (_channel: string, caller: CallerContext, args: unknown[]) => {
+        requirePairingManager(caller)
+        const [payload] = remoteAccessApplicationCommandContracts.revokeBrowsers.args.parse(args)
+        await manager.revokeBrowsers(payload.browserIds)
+        return { trustedBrowsers: manager.trustedViews() }
+      })
+      const server = await startTestWebHttpServer({
+        host: '127.0.0.1',
+        port: 0,
+        token: 'local-token',
+        staticRoot: root,
+        rpc: { channels: () => [channel], invoke },
+        externalAccess: manager.webAccess,
+        bootstrap: {
+          appName: 'Open-Science',
+          appVersion: '0.0.0',
+          configRoot: root,
+          platform: 'test',
+          versions: { electron: '1', chrome: '1', node: '1' }
+        }
+      })
+      servers.push(server)
+      try {
+        const callerId = browserIds[callerIndex]
+        const headers = {
+          host: 'home.example.ts.net',
+          origin: 'https://home.example.ts.net',
+          cookie: `open_science_remote_session=${callerId}.${callerId}-secret`,
+          'content-type': 'application/json',
+          'x-open-science-client': 'batch-caller'
+        }
+        const revoke = (): Promise<number | undefined> =>
+          new Promise((resolve, reject) => {
+            const request = httpRequest(
+              {
+                host: '127.0.0.1',
+                port: server.port,
+                path: `/rpc/${encodeURIComponent(channel)}`,
+                method: 'POST',
+                headers
+              },
+              (response) => {
+                response.resume()
+                response.on('end', () => resolve(response.statusCode))
+              }
+            )
+            request.on('error', reject)
+            request.end(
+              JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [{ browserIds }] })
+            )
+          })
+        const status = await revoke()
+        // Self-revocation must still withhold the response from an expired authorization.
+        expect(status).toBe(401)
+        expect(invoke).toHaveBeenCalledOnce()
+        expect(save).toHaveBeenCalledOnce()
+        expect(manager.trustedViews()).toEqual([])
+        expect((await repository.load()).trustedBrowsers).toEqual([])
+        expect(await revoke()).toBe(401)
+        expect(invoke).toHaveBeenCalledOnce()
+      } finally {
+        manager.dispose()
+      }
+    }
+  )
+
   it('tracks only interactive internal Web event clients as approval-capable', async () => {
     const permissionApprovalPresence = new PermissionApprovalPresence()
     const server = await startTestWebHttpServer({
@@ -206,7 +308,7 @@ describe('startWebHttpServer', () => {
       permissionApprovalPresence,
       rpc: { channels: () => [], invoke: vi.fn() },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -247,7 +349,7 @@ describe('startWebHttpServer', () => {
         })
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -297,7 +399,7 @@ describe('startWebHttpServer', () => {
         })
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -336,7 +438,7 @@ describe('startWebHttpServer', () => {
         })
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -394,7 +496,7 @@ describe('startWebHttpServer', () => {
         })
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -446,7 +548,7 @@ describe('startWebHttpServer', () => {
         getRun: vi.fn()
       } as never,
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -756,7 +858,7 @@ describe('startWebHttpServer', () => {
         dispose: vi.fn()
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -811,7 +913,7 @@ describe('startWebHttpServer', () => {
         }
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -960,7 +1062,7 @@ describe('startWebHttpServer', () => {
       staticRoot: '/unused',
       rpc: { channels: () => ['projects:list'], invoke },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -1031,7 +1133,7 @@ describe('startWebHttpServer', () => {
         releaseArtifact: vi.fn()
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -1105,7 +1207,7 @@ describe('startWebHttpServer', () => {
         remoteWeb: { commandNames: () => [], rejectedCommandNames: () => [], invoke: vi.fn() }
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -1165,7 +1267,7 @@ describe('startWebHttpServer', () => {
             : undefined
       } as never,
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -1186,7 +1288,7 @@ describe('startWebHttpServer', () => {
     const bootstrap = await fetch(`${base}/api/bootstrap`, { headers: { cookie } })
     expect(Number(bootstrap.headers.get('content-length'))).toBeGreaterThan(0)
     expect(await bootstrap.json()).toMatchObject({
-      appName: 'Open Science',
+      appName: 'Open-Science',
       configRoot: '/fake/root',
       rpcProtocolVersion: WEB_RPC_PROTOCOL_VERSION,
       rpcCapabilities: WEB_RPC_CAPABILITIES,
@@ -1395,7 +1497,7 @@ describe('startWebHttpServer', () => {
         dispose: vi.fn()
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -1476,7 +1578,7 @@ describe('startWebHttpServer', () => {
         dispose: vi.fn()
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -1538,7 +1640,7 @@ describe('startWebHttpServer', () => {
         dispose: vi.fn()
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -1683,7 +1785,7 @@ describe('startWebHttpServer', () => {
         authorizeWebSocket: async (request) => authorizationFor(request)
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -1819,7 +1921,7 @@ describe('startWebHttpServer', () => {
         authorizeWebSocket: async (request) => authorizationFor(request)
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -1907,7 +2009,7 @@ describe('startWebHttpServer', () => {
             : undefined
       } as never,
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -2003,7 +2105,7 @@ describe('startWebHttpServer', () => {
         dispose: vi.fn()
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -2067,7 +2169,7 @@ describe('startWebHttpServer', () => {
       staticRoot: '/unused',
       rpc: { channels: () => [], invoke: vi.fn() },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -2100,7 +2202,7 @@ describe('startWebHttpServer', () => {
       staticRoot: '/unused',
       rpc: { channels: () => [], invoke: vi.fn() },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -2137,7 +2239,7 @@ describe('startWebHttpServer', () => {
         invoke: vi.fn().mockResolvedValue('x'.repeat(16 * 1024 * 1024))
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -2180,7 +2282,7 @@ describe('startWebHttpServer', () => {
       staticRoot: '/unused',
       rpc,
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -2247,7 +2349,7 @@ describe('startWebHttpServer', () => {
         remoteWeb: { commandNames: () => [], rejectedCommandNames: () => [], invoke: vi.fn() }
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -2311,7 +2413,7 @@ describe('startWebHttpServer', () => {
         authorizeWebSocket: vi.fn().mockResolvedValue(undefined)
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -2348,7 +2450,7 @@ describe('startWebHttpServer', () => {
       staticRoot: '/unused',
       rpc: { channels: () => ['projects:list'], invoke },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -2399,7 +2501,7 @@ describe('startWebHttpServer', () => {
       staticRoot: '/unused',
       rpc: { channels: () => [], invoke: vi.fn() },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -2442,7 +2544,7 @@ describe('startWebHttpServer', () => {
         })
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -2500,7 +2602,7 @@ describe('startWebHttpServer', () => {
           remoteWeb: { commandNames: () => [], rejectedCommandNames: () => [], invoke: vi.fn() }
         },
         bootstrap: {
-          appName: 'Open Science',
+          appName: 'Open-Science',
           appVersion: '0.0.0',
           configRoot: '/fake/root',
           platform: 'test',
@@ -2568,7 +2670,7 @@ describe('startWebHttpServer', () => {
         remoteWeb: { commandNames: () => [], rejectedCommandNames: () => [], invoke: vi.fn() }
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -2626,7 +2728,7 @@ describe('startWebHttpServer', () => {
         remoteWeb: { commandNames: () => [], rejectedCommandNames: () => [], invoke: vi.fn() }
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -2691,7 +2793,7 @@ describe('startWebHttpServer', () => {
         })
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -2781,7 +2883,7 @@ describe('startWebHttpServer', () => {
         authorizeWebSocket: vi.fn().mockResolvedValue(undefined)
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -2868,7 +2970,7 @@ describe('startWebHttpServer', () => {
         })
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -2972,7 +3074,7 @@ describe('startWebHttpServer', () => {
           authorizeWebSocket: async () => undefined
         },
         bootstrap: {
-          appName: 'Open Science',
+          appName: 'Open-Science',
           appVersion: '0.0.0',
           configRoot: '/fake/root',
           platform: 'test',
@@ -3030,7 +3132,7 @@ describe('startWebHttpServer', () => {
         authorizeWebSocket: async () => undefined
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -3088,7 +3190,7 @@ describe('startWebHttpServer', () => {
         })
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -3326,7 +3428,7 @@ describe('startWebHttpServer', () => {
         })
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -3415,7 +3517,7 @@ describe('startWebHttpServer', () => {
         })
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -3487,7 +3589,7 @@ describe('startWebHttpServer', () => {
         )
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -3542,7 +3644,7 @@ describe('startWebHttpServer', () => {
         })
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -3580,7 +3682,7 @@ describe('startWebHttpServer', () => {
       },
       onShutdownRequest,
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -3623,7 +3725,7 @@ describe('startWebHttpServer', () => {
       },
       onShutdownRequest,
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -3682,7 +3784,7 @@ describe('startWebHttpServer', () => {
       },
       onShutdownRequest,
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -3742,7 +3844,7 @@ describe('startWebHttpServer', () => {
           releaseArtifact: vi.fn()
         },
         bootstrap: {
-          appName: 'Open Science',
+          appName: 'Open-Science',
           appVersion: '0.0.0',
           configRoot: '/fake/root',
           platform: 'test',
@@ -3855,7 +3957,7 @@ describe('startWebHttpServer', () => {
         })
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -3914,7 +4016,7 @@ describe('startWebHttpServer', () => {
         authorizeWebSocket: vi.fn().mockResolvedValue(undefined)
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -3982,7 +4084,7 @@ describe('startWebHttpServer', () => {
         getRun
       } as never,
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -4142,7 +4244,7 @@ describe('startWebHttpServer', () => {
       },
       tasks,
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -4556,7 +4658,7 @@ describe('startWebHttpServer', () => {
       },
       tasks,
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -4625,7 +4727,7 @@ describe('startWebHttpServer', () => {
       },
       tasks,
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -4686,7 +4788,7 @@ describe('Web preview reconnect owner contract', () => {
         remoteWeb: { ...dispatcher, rejectedCommandNames: () => [] }
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: staticRoot,
         platform: 'test',
@@ -4781,7 +4883,7 @@ describe('Connector Task HTTP routes', () => {
       tasks,
       rpc: { channels: () => [], invoke: vi.fn() },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: 'test',
         configRoot: '/fake/root',
         platform: 'test',
@@ -4855,7 +4957,7 @@ describe('Agent runtime Task HTTP routes', () => {
       tasks,
       rpc: { channels: () => [], invoke: vi.fn() },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: 'test',
         configRoot: '/fake/root',
         platform: 'test',

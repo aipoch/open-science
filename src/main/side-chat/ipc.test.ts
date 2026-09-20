@@ -20,41 +20,45 @@ describe('Side chat IPC', () => {
     expect(handlers.get('side-chat:list')?.(undefined, undefined as never)).toBe(snapshot)
   })
 
-  it('loads a main-owned bounded history snapshot before starting', async () => {
-    const runtime = {
-      start: vi.fn(async (request) => ({ sideSessionId: 'side-1', ...request })),
-      send: vi.fn(),
-      cancel: vi.fn(),
-      close: vi.fn(),
-      closeActiveForParent: vi.fn(),
-      closeForParent: vi.fn()
-    }
-    const dependencies = {
-      loadParentSession: vi.fn(async () => ({
-        messages: [
-          { role: 'user', content: 'Plot cosine.', status: 'complete' },
-          { role: 'assistant', content: 'Done.', status: 'complete' }
-        ]
-      })),
-      hasLiveParentSession: vi.fn(() => false),
-      withParentAvailable: vi.fn(async (_sessionId, operation) => operation())
-    }
-    registerSideChatIpcHandlers(runtime as never, dependencies as never)
+  it.each([undefined, { kind: 'all' }, { kind: 'before-message', messageId: 'user-1' }] as const)(
+    'loads durable main history without a live parent runtime with pending replay %j',
+    async (pendingHistoryReplay) => {
+      const runtime = {
+        start: vi.fn(async (request) => ({ sideSessionId: 'side-1', ...request })),
+        send: vi.fn(),
+        cancel: vi.fn(),
+        close: vi.fn(),
+        closeActiveForParent: vi.fn(),
+        closeForParent: vi.fn()
+      }
+      const dependencies = {
+        loadParentSession: vi.fn(async () => ({
+          pendingHistoryReplay,
+          messages: [
+            { role: 'user', content: 'Plot cosine.', status: 'complete' },
+            { role: 'assistant', content: 'Done.', status: 'complete' }
+          ]
+        })),
+        hasLiveParentSession: vi.fn(() => false),
+        withParentAvailable: vi.fn(async (_sessionId, operation) => operation())
+      }
+      registerSideChatIpcHandlers(runtime as never, dependencies as never)
 
-    await handlers.get('side-chat:start')?.(undefined, {
-      parentSessionId: 'main-1',
-      projectId: 'project-1',
-      text: 'What context do you have?'
-    } as never)
+      await handlers.get('side-chat:start')?.(undefined, {
+        parentSessionId: 'main-1',
+        projectId: 'project-1',
+        text: 'What context do you have?'
+      } as never)
 
-    expect(runtime.start).toHaveBeenCalledWith({
-      sideSessionId: expect.stringMatching(/^side-chat-/),
-      parentSessionId: 'main-1',
-      projectId: 'project-1',
-      text: 'What context do you have?',
-      historyPreamble: expect.stringContaining('Plot cosine.')
-    })
-  })
+      expect(runtime.start).toHaveBeenCalledWith({
+        sideSessionId: expect.stringMatching(/^side-chat-/),
+        parentSessionId: 'main-1',
+        projectId: 'project-1',
+        text: 'What context do you have?',
+        historyPreamble: expect.stringContaining('Plot cosine.')
+      })
+    }
+  )
 
   it.each([undefined, { providerId: 'chosen-provider', model: 'chosen-model' }])(
     'inherits the parent model unless the conversation supplies its own selection: %j',
@@ -181,7 +185,7 @@ describe('Side chat IPC', () => {
     expect(runtime.send).not.toHaveBeenCalled()
   })
 
-  it('holds parent availability until restored follow-up admission completes', async () => {
+  it('releases parent availability after dispatch without waiting for the Side Chat turn', async () => {
     let finishSend!: () => void
     const send = new Promise<void>((resolve) => {
       finishSend = resolve
@@ -211,11 +215,10 @@ describe('Side chat IPC', () => {
     } as never) as Promise<void>
     await vi.waitFor(() => expect(runtime.send).toHaveBeenCalledOnce())
     expect(withParentAvailable).toHaveBeenCalledWith('main-1', expect.any(Function))
-    expect(gateReleased).toBe(false)
+    await vi.waitFor(() => expect(gateReleased).toBe(true))
 
     finishSend()
     await followUp
-    expect(gateReleased).toBe(true)
   })
 
   it('does not start a temporary runtime when the panel closes during parent preflight', async () => {
@@ -365,3 +368,56 @@ it('uses the selected Main branch when refreshing a follow-up snapshot', async (
   expect(prompt).toContain('SELECTED_BRANCH_RESULT')
   expect(prompt).not.toContain('INACTIVE_BRANCH_RESULT')
 })
+
+it.each(['start', 'send'] as const)(
+  'rejects a stale branch snapshot before Side chat %s dispatch',
+  async (operation) => {
+    const runtime = {
+      start: vi.fn(),
+      send: vi.fn(),
+      parentFor: () => ({ parentSessionId: 'main', projectId: 'project' })
+    }
+    const { createLinearConversationGraph } = await import('../../shared/conversation-graph')
+    const { sideChatParentBranch } = await import('../../shared/side-chat')
+    const parent = {
+      id: 'main',
+      projectId: 'project',
+      messages: [],
+      conversationGraph: createLinearConversationGraph({
+        sessionId: 'main',
+        messages: [],
+        createdAt: 1,
+        updatedAt: 1
+      })
+    }
+    const savedBranch = sideChatParentBranch(parent.conversationGraph)!
+    registerSideChatIpcHandlers(
+      runtime as never,
+      {
+        loadParentSession: async () => parent,
+        hasLiveParentSession: () => true,
+        withParentAvailable: async (_id: string, run: () => Promise<unknown>) => run()
+      } as never
+    )
+    const request = {
+      sideSessionId: 'side-test',
+      parentSessionId: 'main',
+      projectId: 'project',
+      text: 'Discuss',
+      expectedParentBranch: { ...savedBranch, branchId: 'unsaved-branch' }
+    }
+    await expect(
+      handlers.get(`side-chat:${operation}`)!(undefined, request as never)
+    ).rejects.toThrow('branch has not been saved')
+    expect(runtime.start).not.toHaveBeenCalled()
+    expect(runtime.send).not.toHaveBeenCalled()
+    request.expectedParentBranch = { ...savedBranch, frameId: 'unsaved-frame' }
+    await expect(
+      handlers.get(`side-chat:${operation}`)!(undefined, request as never)
+    ).rejects.toThrow('branch has not been saved')
+    expect(runtime[operation]).not.toHaveBeenCalled()
+    request.expectedParentBranch = savedBranch
+    await handlers.get(`side-chat:${operation}`)!(undefined, request as never)
+    expect(runtime[operation]).toHaveBeenCalledOnce()
+  }
+)

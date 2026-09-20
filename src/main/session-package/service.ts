@@ -1,4 +1,11 @@
 import {
+  DEFAULT_PERMISSION_PROFILE,
+  type PermissionProfileId
+} from '../../shared/permission-profiles'
+import { copySessionBookmarks, readSessionBookmarkTargets } from '../bookmarks/repository'
+import { encodeDataPath, decodeDataPath } from '../storage/data-path'
+import type { BookmarkTarget } from '../../shared/bookmarks'
+import {
   capturePackageLiterature,
   sessionLiteratureReferences,
   validatePackageLiteratureSession
@@ -33,10 +40,11 @@ import {
   stat,
   writeFile
 } from 'node:fs/promises'
-import { join } from 'node:path'
+import { sep, join } from 'node:path'
 import { sha256 } from '../artifacts/provenance-canonical'
 import { resolveStorageKey } from '../artifacts/provenance-storage'
 import {
+  type PackageRecords,
   captureNativeRecords,
   mapPackageReferences,
   nativeStorageKeys,
@@ -98,6 +106,8 @@ import { executionEvidenceKeys } from './execution-evidence'
 import { assertPackageCapacity } from './capacity'
 import { ensureWorkingFileEvidenceProject } from '../notebook/working-file-observer'
 import { SessionPackageDeletion } from './deletion'
+import { createManagedSessionWorkspaceCapability } from '../acp/managed-session-workspace'
+import { createForkSession, nextForkTitle, ForkRecoveryRequiredError } from './fork-session'
 
 const importJournalSchema = sessionPackageRequestSchema
   .extend({
@@ -106,7 +116,14 @@ const importJournalSchema = sessionPackageRequestSchema
       .array(
         z
           .object({
-            scope: z.enum(['artifacts', 'uploads', 'notebooks', 'execution-file-evidence']),
+            scope: z.enum([
+              'artifacts',
+              'uploads',
+              'notebooks',
+              'execution-file-evidence',
+              'notebook-file-evidence',
+              'file-evidence'
+            ]),
             sessionId: sessionPackageRequestSchema.shape.sessionId
           })
           .strict()
@@ -117,14 +134,16 @@ const importJournalSchema = sessionPackageRequestSchema
 type ImportJournal = z.infer<typeof importJournalSchema>
 
 const PACKAGE_README =
-  '# Open Science Session package\n\nOpen Science can inspect and import this archive as read-only research history. Import does not execute code or restore account credentials. Checksums verify bytes, not scientific claims or the identity of the sender.\n'
+  '# Open-Science Session package\n\nOpen-Science can inspect and import this archive as read-only research history. Import does not execute code or restore account credentials. Checksums verify bytes, not scientific claims or the identity of the sender.\n'
 
 type PackageOptions = {
   storageRoot: string
   configRoot?: string
+  getDefaultPermissionProfile?: () => Promise<PermissionProfileId>
   getClient: () => Promise<PrismaClient>
   isSessionActive?: (projectId: string, sessionId: string) => boolean
   inspectPackage?: typeof inspectSessionPackage
+  onSessionPublished?: (identity: SessionPackageRequest) => Promise<void>
 }
 
 type PackageExportOptions = {
@@ -138,8 +157,15 @@ type PackageExportOptions = {
   onProgress?: (progress: PackageProgress) => void
 }
 
-// Strip only known runtime metadata. A similarly named key inside research evidence must be
-// inspected and rejected when sensitive, never silently removed from the evidence.
+type PackageSnapshotOptions = PackageExportOptions & {
+  // Local-copy consumer: no archive, picker, or sharing-policy boundary.
+  consumeSnapshot?: (directory: string) => Promise<void>
+}
+
+// Strip only known private or auxiliary runtime metadata. Delivered Side Chat relays already live
+// in the main conversation graph and remain exportable; the auxiliary transcripts and queue do not.
+// A similarly named key inside research evidence must still be inspected and rejected when
+// sensitive, never silently removed from the evidence.
 const withoutPrivateAuthority = (session: PersistedChatSession): PersistedChatSession => ({
   ...session,
   providerSessionId: undefined,
@@ -148,16 +174,64 @@ const withoutPrivateAuthority = (session: PersistedChatSession): PersistedChatSe
     ? {
         ...session.runtimeContext,
         permission: undefined,
-        sideChat: session.runtimeContext.sideChat
-          ? {
-              ...session.runtimeContext.sideChat,
-              providerSessionId: undefined,
-              providerContinuityToken: undefined
-            }
-          : undefined
+        sideChat: undefined,
+        sideChats: undefined,
+        sideChatRelays: undefined
       }
     : undefined
 })
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const requiresPrivateAuthorityRemoval = (envelope: unknown): boolean => {
+  if (!isRecord(envelope)) return false
+  const hasEnvelopeField = Object.hasOwn(envelope, 'version') || Object.hasOwn(envelope, 'session')
+  const session = hasEnvelopeField ? envelope.session : envelope
+  if (!isRecord(session)) return false
+  if (
+    Object.hasOwn(session, 'providerSessionId') ||
+    Object.hasOwn(session, 'providerContinuityToken')
+  )
+    return true
+  const runtimeContext = session.runtimeContext
+  return (
+    isRecord(runtimeContext) &&
+    ['permission', 'sideChat', 'sideChats', 'sideChatRelays'].some((key) =>
+      Object.hasOwn(runtimeContext, key)
+    )
+  )
+}
+
+const exportRelevantSession = (session: PersistedChatSession): PersistedChatSession => {
+  // The persistence export reservation admits only Side Chat projection writes. Those fields are
+  // excluded above, but their save still advances Session/runtime revisions and the active branch's
+  // derived timestamp; normalize that bookkeeping while keeping exported research state strict.
+  const shared = withoutPrivateAuthority(session)
+  const hasRuntimeState =
+    shared.runtimeContext &&
+    Object.entries(shared.runtimeContext).some(
+      ([key, value]) => key !== 'version' && key !== 'revision' && value !== undefined
+    )
+  return {
+    ...shared,
+    revision: undefined,
+    updatedAt: 0,
+    runtimeContext:
+      hasRuntimeState && shared.runtimeContext
+        ? { ...shared.runtimeContext, revision: 0 }
+        : undefined,
+    conversationGraph: shared.conversationGraph
+      ? {
+          ...shared.conversationGraph,
+          branches: shared.conversationGraph.branches.map((branch) => ({
+            ...branch,
+            updatedAt: 0
+          }))
+        }
+      : undefined
+  }
+}
 
 // Recognizers stop export; they never silently rewrite research text. File preview is still
 // necessary: arbitrary binary research data cannot be certified free of private information.
@@ -228,7 +302,7 @@ export class SessionPackageService {
   }
 
   async prepareSessionDeletion(session: PersistedChatSession): Promise<void> {
-    if (!session.packageOrigin) return
+    if (!session.packageOrigin && !session.forkOrigin) return
     let origin: Awaited<ReturnType<SessionPackageService['readOrigin']>>
     let receipt: SessionPackageReceipt
     try {
@@ -240,7 +314,7 @@ export class SessionPackageService {
             'artifacts',
             session.projectId,
             session.id,
-            '.session-package',
+            session.forkOrigin ? '.session-fork' : '.session-package',
             'receipt.json'
           )
         )
@@ -338,7 +412,7 @@ export class SessionPackageService {
   private async exportNow(
     rawRequest: SessionPackageRequest,
     path: string,
-    options: PackageExportOptions
+    options: PackageSnapshotOptions
   ): Promise<SessionPackagePreview> {
     const request = sessionPackageRequestSchema.parse(rawRequest)
     const sessions = new SessionRepository(this.configRoot)
@@ -364,10 +438,28 @@ export class SessionPackageService {
       const manifest = await validatePackageDirectory(source, this.signal)
       if (manifest.source.projectId !== origin.sourceManifest.source.projectId)
         throw new Error('Session package source identity mismatch.')
-      await assertShareable(manifest, this.signal)
-      await assertShareable(await readPackageJson(join(source, 'session.json')), this.signal)
+      if (!options.consumeSnapshot) await assertShareable(manifest, this.signal)
+      const sourceSessionEnvelope = await readPackageJson(join(source, 'session.json'))
+      const sourceSession = await readSession(source)
+      const forwardedSession = withoutPrivateAuthority(
+        options.consumeSnapshot
+          ? (mapPackageReferences(
+              encodeSessionDataPaths(session, this.options.storageRoot),
+              Object.fromEntries(
+                Object.entries(origin.identities).map(([oldId, localId]) => [localId, oldId])
+              )
+            ) as PersistedChatSession)
+          : sourceSession
+      )
+      if (!options.consumeSnapshot) await assertShareable(forwardedSession, this.signal)
+      // Inspect the raw envelope so malformed legacy Side Chat data dropped by the Session
+      // sanitizer cannot bypass the rewrite and be copied into the forwarded package.
+      const forwardedSessionJson =
+        options.consumeSnapshot || requiresPrivateAuthorityRemoval(sourceSessionEnvelope)
+          ? JSON.stringify({ version: 2, session: forwardedSession })
+          : undefined
       const records = parseNativeRecords(await readPackageJson(join(source, 'records.json')))
-      await assertShareable(records, this.signal)
+      if (!options.consumeSnapshot) await assertShareable(records, this.signal)
       const alreadyExcluded = validateExcludedFiles(records, manifest.excludedFiles)
       const notebooks = await Promise.all(
         manifest.inventory
@@ -420,15 +512,30 @@ export class SessionPackageService {
           excluded.add(copy.storageKey)
         }
       }
-      const forwarded = {
+      const forwarded: SessionPackageManifest = {
         ...manifest,
-        inventory: manifest.inventory.filter(
-          (entry) => !entry.storageKey || !excluded.has(entry.storageKey)
-        ),
+        inventory: manifest.inventory
+          .filter((entry) => !entry.storageKey || !excluded.has(entry.storageKey))
+          .map((entry) =>
+            entry.path === 'session.json' && forwardedSessionJson
+              ? {
+                  ...entry,
+                  sizeBytes: Buffer.byteLength(forwardedSessionJson),
+                  checksum: sha256(forwardedSessionJson)
+                }
+              : entry
+          ),
         excludedFiles: [...manifest.excludedFiles, ...additional]
       }
       assertNoExcludedContentCopies(records, forwarded.excludedFiles, forwarded.inventory)
-      const staging = await mkdtemp(join(tmpdir(), 'open-science-package-forward-'))
+      // Fork transfers this snapshot into its publication journal with rename. Keep both
+      // sides on the data volume, which may differ from the operating system temp volume.
+      const staging = await mkdtemp(
+        join(
+          options.consumeSnapshot ? this.options.storageRoot : tmpdir(),
+          'open-science-package-forward-'
+        )
+      )
       return withPackageCleanup(
         async () => {
           await assertPackageCapacity(
@@ -438,7 +545,12 @@ export class SessionPackageService {
           await mkdir(join(staging, 'objects'))
           for (const entry of forwarded.inventory) {
             this.signal.throwIfAborted()
-            await assertShareableFile(join(source, entry.path), this.signal)
+            if (entry.path === 'session.json' && forwardedSessionJson) {
+              await writeFile(join(staging, entry.path), forwardedSessionJson)
+              continue
+            }
+            if (!options.consumeSnapshot)
+              await assertShareableFile(join(source, entry.path), this.signal)
             await copyFileWithinBudget(
               join(source, entry.path),
               join(staging, entry.path),
@@ -457,11 +569,14 @@ export class SessionPackageService {
           options.onProgress?.({ phase: 'validating' })
           await validatePackageDirectory(staging, this.signal)
           await validatePackageRecords(staging, forwarded, records, this.signal)
-          options.onProgress?.({ phase: 'compressing' })
-          await publishUserFile(path, (temporary) =>
-            writePackageArchive(staging, temporary, this.signal)
-          )
-          return preview(forwarded, await readSession(source))
+          if (options.consumeSnapshot) await options.consumeSnapshot(staging)
+          else {
+            options.onProgress?.({ phase: 'compressing' })
+            await publishUserFile(path, (temporary) =>
+              writePackageArchive(staging, temporary, this.signal)
+            )
+          }
+          return preview(forwarded, forwardedSession)
         },
         () => rm(staging, { recursive: true, force: true })
       )
@@ -474,12 +589,31 @@ export class SessionPackageService {
     assertSettled()
     const client = await this.options.getClient()
     const project = await client.project.findUniqueOrThrow({ where: { id: request.projectId } })
-    const notebookKeys = await notebookStorageKeys(this.options.storageRoot, request)
+    const readNotebookKeys = async (): Promise<string[]> => {
+      const keys = await notebookStorageKeys(this.options.storageRoot, request)
+      // Published forks own this recovery marker. It is not Notebook evidence and must
+      // never replace the fresh destination's marker on refork or export/import.
+      const ownerKey = `notebooks/${request.projectId}/${request.sessionId}/.session-package-owner`
+      return session.forkOrigin ? keys.filter((key) => key !== ownerKey) : keys
+    }
+    const notebookKeys = await readNotebookKeys()
     const notebooks = await readPackageNotebooks(this.options.storageRoot, notebookKeys)
+    const bookmarkTargets = options.consumeSnapshot
+      ? await readSessionBookmarkTargets(client, request)
+      : []
+    const bookmarkLiteratureIds = bookmarkTargets.flatMap(({ source }) =>
+      source.kind === 'literature-attachment-version' ? [source.versionId] : []
+    )
+    const bookmarkVersionIds = bookmarkTargets.flatMap(({ source }) =>
+      'versionId' in source && source.versionId && source.kind !== 'literature-attachment-version'
+        ? [source.versionId]
+        : []
+    )
     const literatureIds = sessionLiteratureReferences(session).versionIds
     const versionIds = [
       ...new Set([
         ...sessionFileVersionIds(session).filter((id) => !literatureIds.has(id)),
+        ...bookmarkVersionIds,
         ...notebooks.flatMap((document) =>
           document.runs.flatMap((run) =>
             (run.inputFiles ?? []).map((input) => input.inputFileVersionId)
@@ -488,9 +622,20 @@ export class SessionPackageService {
       ])
     ]
     const records = await captureNativeRecords(client, request, versionIds)
-    const literatureSources = await capturePackageLiterature(client, session, records)
+    const retainedOrigin = session.forkOrigin ? await this.readOrigin(request) : undefined
+    if (retainedOrigin?.literature)
+      records.literature = mapPackageReferences(
+        retainedOrigin.literature,
+        retainedOrigin.identities
+      ) as NonNullable<PackageRecords['literature']>
+    const literatureSources = await capturePackageLiterature(
+      client,
+      session,
+      records,
+      bookmarkLiteratureIds
+    )
     const sourceKey = (key: string): string => literatureSources.get(key) ?? key
-    const history = await capturePackageHistory(this.configRoot, this.options.getClient, request)
+    const history = await this.captureHistory(session)
     records.history = history
     records.reproducibility = await capturePackageReproducibility(
       this.options.storageRoot,
@@ -498,7 +643,17 @@ export class SessionPackageService {
       request,
       this.signal
     )
-    const inheritedExclusions = packageReproducibilityExclusions(records)
+    const inheritedExclusions = [
+      ...new Map(
+        [
+          ...packageReproducibilityExclusions(records),
+          ...(retainedOrigin?.sourceManifest.excludedFiles.map((file) => ({
+            ...file,
+            storageKey: remapStorageKey(file.storageKey, retainedOrigin.identities)
+          })) ?? [])
+        ].map((file) => [file.storageKey, file])
+      ).values()
+    ]
     const selectable = selectablePackageFiles(records, notebooks)
     const executionKeys = await executionEvidenceKeys(
       this.options.storageRoot,
@@ -550,17 +705,26 @@ export class SessionPackageService {
       )),
       ...inheritedExclusions.map((file) => file.storageKey)
     ])
-    const excludedFiles = [...selectable, ...inheritedExclusions]
+    const excludedFiles = [
+      ...new Map(
+        [...selectable, ...inheritedExclusions].map((file) => [file.storageKey, file])
+      ).values()
+    ]
       .filter((file) => excludedKeys.has(file.storageKey))
       .map(({ storageKey, filename, sizeBytes }) => ({ storageKey, filename, sizeBytes }))
     if (excludedKeys.size !== excludedFiles.length)
       throw new Error('Invalid package content selection.')
     validateExcludedFiles(records, excludedFiles)
-    await assertShareable(sharedSession, this.signal)
-    const directory = await mkdtemp(join(tmpdir(), 'open-science-package-export-'))
+    if (!options.consumeSnapshot) await assertShareable(sharedSession, this.signal)
+    const directory = await mkdtemp(
+      join(
+        options.consumeSnapshot ? this.options.storageRoot : tmpdir(),
+        'open-science-package-export-'
+      )
+    )
     return withPackageCleanup(
       async () => {
-        await assertShareable(records, this.signal)
+        if (!options.consumeSnapshot) await assertShareable(records, this.signal)
         let totalBytes = metadataBytes
         const storageKeys = [
           ...new Set([
@@ -639,7 +803,8 @@ export class SessionPackageService {
           if (copied.sizeBytes !== metadata.size)
             throw new Error('The Session changed during export. Try again.')
           assertNoExcludedContentCopies(records, excludedFiles, [copied])
-          await assertShareableFile(join(directory, objectPath), this.signal)
+          if (!options.consumeSnapshot)
+            await assertShareableFile(join(directory, objectPath), this.signal)
           inventory.push({
             path: objectPath,
             kind: notebookKeys.includes(storageKey) ? 'notebook' : 'file',
@@ -695,10 +860,7 @@ export class SessionPackageService {
         options.onProgress?.({ phase: 'validating' })
         await validatePackageRecords(directory, manifest, records, this.signal)
         assertSettled()
-        if (
-          JSON.stringify(await notebookStorageKeys(this.options.storageRoot, request)) !==
-          JSON.stringify(notebookKeys)
-        )
+        if (JSON.stringify(await readNotebookKeys()) !== JSON.stringify(notebookKeys))
           throw new Error('The Session changed during export. Try again.')
         for (const entry of inventory) {
           if (!entry.storageKey) continue
@@ -717,18 +879,20 @@ export class SessionPackageService {
           request.sessionId
         )
         const currentRecords = await captureNativeRecords(client, request, versionIds)
+        if (retainedOrigin?.literature)
+          currentRecords.literature = mapPackageReferences(
+            retainedOrigin.literature,
+            retainedOrigin.identities
+          ) as NonNullable<PackageRecords['literature']>
         const currentLiteratureSources = await capturePackageLiterature(
           client,
           session,
-          currentRecords
+          currentRecords,
+          bookmarkLiteratureIds
         )
         if (!isDeepStrictEqual(currentLiteratureSources, literatureSources))
           throw new Error('The Session changed during export. Try again.')
-        currentRecords.history = await capturePackageHistory(
-          this.configRoot,
-          this.options.getClient,
-          request
-        )
+        currentRecords.history = await this.captureHistory(session)
         currentRecords.reproducibility = await capturePackageReproducibility(
           this.options.storageRoot,
           currentRecords,
@@ -737,18 +901,76 @@ export class SessionPackageService {
         )
         if (
           current.status !== 'found' ||
-          !isDeepStrictEqual(current.session, session) ||
+          !isDeepStrictEqual(
+            exportRelevantSession(current.session),
+            exportRelevantSession(session)
+          ) ||
           !isDeepStrictEqual(currentRecords, records)
         )
           throw new Error('The Session changed during export. Try again.')
-        options.onProgress?.({ phase: 'compressing' })
-        await publishUserFile(path, (temporaryPath) =>
-          writePackageArchive(directory, temporaryPath, this.signal)
-        )
+        if (options.consumeSnapshot) await options.consumeSnapshot(directory)
+        else {
+          options.onProgress?.({ phase: 'compressing' })
+          await publishUserFile(path, (temporaryPath) =>
+            writePackageArchive(directory, temporaryPath, this.signal)
+          )
+        }
         return preview(manifest, session)
       },
       () => rm(directory, { recursive: true, force: true })
     )
+  }
+
+  private async captureHistory(session: PersistedChatSession): Promise<PackageHistory> {
+    const current = await capturePackageHistory(this.configRoot, this.options.getClient, {
+      projectId: session.projectId,
+      sessionId: session.id
+    })
+    if (!session.packageOrigin && !session.forkOrigin) return current
+    const origin = await this.readOrigin({ projectId: session.projectId, sessionId: session.id })
+    const inherited = mapPackageReferences(origin.history, origin.identities) as
+      PackageHistory | undefined
+    return {
+      taskRuns: [...(inherited?.taskRuns ?? []), ...current.taskRuns],
+      computeJobs: [...(inherited?.computeJobs ?? []), ...current.computeJobs]
+    }
+  }
+
+  fork(
+    request: SessionPackageRequest,
+    signal?: AbortSignal,
+    onProgress?: (progress: PackageProgress) => void
+  ): Promise<SessionPackageRequest> {
+    const safe = sessionPackageRequestSchema.parse(request)
+    return this.serialize(async () => {
+      await this.assertImportProject(safe.projectId)
+      await this.assertExportIdle(safe)
+      const source = await new SessionRepository(this.configRoot).loadSession(
+        safe.projectId,
+        safe.sessionId
+      )
+      if (!source) throw new Error('Session not found or unreadable.')
+      if (
+        source.runtimeContext?.permission?.state === 'pending' ||
+        source.runtimeContext?.plan?.approval === 'pending'
+      )
+        throw new Error('Wait for pending approvals before forking this Session.')
+      let result: SessionPackageRequest | undefined
+      await this.exportNow(safe, '', {
+        onProgress,
+        consumeSnapshot: async (directory) => {
+          result = await this.importNow(
+            directory,
+            onProgress,
+            undefined,
+            { projectId: safe.projectId },
+            source
+          )
+        }
+      })
+      if (!result) throw new Error('Fork did not publish a Session.')
+      return result
+    }, signal)
   }
 
   inspect(path: string, signal?: AbortSignal): Promise<SessionPackagePreview> {
@@ -778,12 +1000,14 @@ export class SessionPackageService {
     path: string,
     onProgress: ((progress: PackageProgress) => void) | undefined,
     confirm: ((preview: SessionPackagePreview, signal: AbortSignal) => Promise<void>) | undefined,
-    target: SessionPackageImportRequest
+    target: SessionPackageImportRequest,
+    forkSource?: PersistedChatSession
   ): Promise<{ projectId: string; sessionId: string }> {
     if (target.projectId) await this.assertImportProject(target.projectId)
     const operationId = randomUUID()
     const projectId = target.projectId ?? `import-${operationId}`
-    const sessionId = `import-${randomUUID()}`
+    // Only read-only imports use the import identity convention consumed by the lazy catalog.
+    const sessionId = forkSource ? randomUUID() : `import-${randomUUID()}`
     const operationRoot = join(this.options.storageRoot, 'session-package-imports', operationId)
     const configOperationRoot = join(this.configRoot, 'session-package-imports', operationId)
     const sourceRoot = join(operationRoot, 'source')
@@ -818,12 +1042,17 @@ export class SessionPackageService {
     let journal: ImportJournal | undefined
     try {
       await writeFile(join(operationRoot, '.session-package-owner'), operationId, { flag: 'wx' })
-      const inspected = await (this.options.inspectPackage ?? inspectSessionPackage)(
-        path,
-        sourceRoot,
-        this.signal
-      )
-      if (confirm) await this.waitForUser(() => confirm(inspected, this.signal))
+      if (forkSource) {
+        await rename(path, sourceRoot)
+        await validatePackageDirectory(sourceRoot, this.signal)
+      } else {
+        const inspected = await (this.options.inspectPackage ?? inspectSessionPackage)(
+          path,
+          sourceRoot,
+          this.signal
+        )
+        if (confirm) await this.waitForUser(() => confirm(inspected, this.signal))
+      }
       this.signal.throwIfAborted()
       onProgress?.({ phase: 'importing' })
       // Keep the confirmation boundary small. Only after approval materialize the already
@@ -876,7 +1105,7 @@ export class SessionPackageService {
           native.checksums
         ) as PersistedChatSession
       )
-      const session: PersistedChatSession = {
+      let session: PersistedChatSession = {
         ...mappedSession,
         id: sessionId,
         projectId,
@@ -907,6 +1136,7 @@ export class SessionPackageService {
         taskRunCommitId: undefined,
         resumeRecovery: undefined,
         pendingHistoryReplay: undefined,
+        forkOrigin: undefined,
         packageOrigin: {
           importId: operationId,
           sourceProjectId: sourceSession.projectId,
@@ -916,6 +1146,22 @@ export class SessionPackageService {
           excludedFiles: manifest.excludedFiles
         }
       }
+      if (forkSource) {
+        const client = await this.options.getClient()
+        const siblings = await client.session.findMany({
+          where: { projectId },
+          select: { title: true }
+        })
+        session = createForkSession(
+          session,
+          forkSource,
+          (await this.options.getDefaultPermissionProfile?.()) ?? DEFAULT_PERMISSION_PROFILE,
+          nextForkTitle(
+            forkSource.title,
+            siblings.map((sibling) => sibling.title)
+          )
+        )
+      }
       validatePackageLiteratureSession(native.records, session)
       const sessionStage = join(configOperationRoot, 'session-stage')
       const evidenceDirectory = join(
@@ -923,8 +1169,14 @@ export class SessionPackageService {
         'artifacts',
         projectId,
         sessionId,
-        '.session-package'
+        forkSource ? '.session-fork' : '.session-package'
       )
+      // Only retained upstream scopes keep a read-only marker. The new owner is writable.
+      if (forkSource)
+        await rm(join(destinationRoot, 'artifacts', projectId, sessionId, '.session-package'), {
+          recursive: true,
+          force: true
+        })
       await mkdir(evidenceDirectory, { recursive: true })
       const files: SessionPackageReceipt['files'] = []
       const nativeInventory: SessionPackageManifest['inventory'] = []
@@ -969,21 +1221,25 @@ export class SessionPackageService {
       await rename(sourceRoot, join(evidenceDirectory, 'source'))
       await writeDurableJsonFile(
         join(evidenceDirectory, 'receipt.json'),
-        JSON.stringify({
-          schemaVersion: 1,
-          ...session.packageOrigin,
-          projectId,
-          sessionId,
-          identities: native.identities,
-          files
-        })
+        JSON.stringify(
+          sessionPackageReceiptSchema.parse({
+            schemaVersion: 1,
+            ...(session.packageOrigin ?? session.forkOrigin),
+            projectId,
+            sessionId,
+            identities: native.identities,
+            files
+          })
+        )
       )
       const directories: ImportJournal['directories'] = []
       for (const scope of [
         'artifacts',
         'uploads',
         'notebooks',
-        'execution-file-evidence'
+        'execution-file-evidence',
+        'notebook-file-evidence',
+        'file-evidence'
       ] as const) {
         const staged = join(destinationRoot, scope, projectId)
         if (!(await lstat(staged).catch(() => undefined))) continue
@@ -1027,6 +1283,17 @@ export class SessionPackageService {
         await this.syncTree(directory)
         await defaultFileDurability.syncDirectory(join(root, entry.scope))
       }
+      const bookmarkIdentities = { ...native.identities }
+      if (forkSource?.packageOrigin) {
+        const origin = await this.readOrigin({
+          projectId: forkSource.projectId,
+          sessionId: forkSource.id
+        })
+        for (const [originalId, localId] of Object.entries(origin.identities)) {
+          if (native.identities[originalId])
+            bookmarkIdentities[localId] = native.identities[originalId]
+        }
+      }
       const client = await this.options.getClient()
       const publishRecords = prepareNativePublication(native.records)
       this.signal.throwIfAborted()
@@ -1042,6 +1309,34 @@ export class SessionPackageService {
             }
           })
         await publishRecords(transaction)
+        if (forkSource)
+          await copySessionBookmarks(
+            transaction,
+            { projectId: forkSource.projectId, sessionId: forkSource.id },
+            { projectId, sessionId },
+            (target) => {
+              const source =
+                'path' in target.source
+                  ? {
+                      ...target.source,
+                      path: encodeDataPath(target.source.path, this.options.storageRoot)
+                    }
+                  : target.source
+              const mapped = mapPackageReferences(
+                source,
+                bookmarkIdentities,
+                '',
+                native.checksums
+              ) as BookmarkTarget['source']
+              return {
+                ...target,
+                source:
+                  'path' in mapped
+                    ? { ...mapped, path: decodeDataPath(mapped.path, this.options.storageRoot) }
+                    : mapped
+              } as BookmarkTarget
+            }
+          )
         // An empty conversation needs the same commit witness as one carrying files.
         await transaction.fileOriginSession.upsert({
           where: { projectId_sessionId: { projectId, sessionId } },
@@ -1054,12 +1349,21 @@ export class SessionPackageService {
       // A lost driver acknowledgement is not a failed import when SQLite proves the commit.
       // If that witness cannot be read, leave the journal and every payload for startup recovery.
       if (published === undefined) {
-        const client = await this.options.getClient()
-        published = Boolean(
-          await client.fileOriginSession.findUnique({
-            where: { projectId_sessionId: { projectId, sessionId } }
-          })
-        )
+        try {
+          const client = await this.options.getClient()
+          published = Boolean(
+            await client.fileOriginSession.findUnique({
+              where: { projectId_sessionId: { projectId, sessionId } }
+            })
+          )
+        } catch (witnessError) {
+          if (forkSource)
+            throw new ForkRecoveryRequiredError(
+              { projectId, sessionId, operationId, outcome: 'unconfirmed' },
+              witnessError
+            )
+          throw witnessError
+        }
       }
       if (published === false) {
         // Preserve validation/cancellation/transaction failure while exposing retryable cleanup.
@@ -1076,7 +1380,16 @@ export class SessionPackageService {
       }
     }
     // Publication failures retain the journal; after publication retry only staging removal.
-    await this.finishPublishedImport(configOperationRoot, operationId)
+    try {
+      await this.finishPublishedImport(configOperationRoot, operationId)
+    } catch (error) {
+      if (forkSource)
+        throw new ForkRecoveryRequiredError(
+          { projectId, sessionId, operationId, outcome: 'committed' },
+          error
+        )
+      throw error
+    }
     return withPackageCleanup(async () => ({ projectId, sessionId }), cleanupStaging)
   }
 
@@ -1172,16 +1485,18 @@ export class SessionPackageService {
     identities: Record<string, string>
     files: SessionPackageReceipt['files']
     history?: PackageHistory
+    literature?: import('./literature').PackageLiterature
     originSessionIds: string[]
   }> {
     const safe = sessionPackageRequestSchema.parse(request)
-    const directory = join(
-      this.options.storageRoot,
-      'artifacts',
-      safe.projectId,
-      safe.sessionId,
-      '.session-package'
+    const root = join(this.options.storageRoot, 'artifacts', safe.projectId, safe.sessionId)
+    const forkReceipt = await lstat(join(root, '.session-fork')).catch(
+      (error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') return undefined
+        throw error
+      }
     )
+    const directory = join(root, forkReceipt ? '.session-fork' : '.session-package')
     const receipt = sessionPackageReceiptSchema.parse(
       await readPackageJson(join(directory, 'receipt.json'))
     )
@@ -1210,6 +1525,7 @@ export class SessionPackageService {
       identities: receipt.identities,
       files: receipt.files,
       history: records.history,
+      literature: records.literature,
       originSessionIds: records.tables.FileOriginSession.map(
         (row) => receipt.identities[String(row.sessionId)]
       )
@@ -1279,22 +1595,46 @@ export class SessionPackageService {
     if (current.status === 'unreadable')
       throw new Error('Import publication Session cannot be read safely.')
     if (current.status === 'found') {
-      if (current.session.packageOrigin?.importId !== operation)
+      if ((current.session.packageOrigin ?? current.session.forkOrigin)?.importId !== operation)
         throw new Error('Import publication Session identity mismatch.')
       // Resume with live authority, preserving later preferences and completing any interrupted
       // JSON-to-SQLite projection through the repository that owns that publication.
       await repository.saveSession(current.session)
+      await this.options.onSessionPublished?.(identity)
       return
     }
-    const session = await new SessionRepository(join(operationRoot, 'session-stage')).loadSession(
+    let session = await new SessionRepository(join(operationRoot, 'session-stage')).loadSession(
       identity.projectId,
       identity.sessionId
     )
-    if (!session || session.packageOrigin?.importId !== operation)
+    if (!session || (session.packageOrigin ?? session.forkOrigin)?.importId !== operation)
       throw new Error('Import publication Session is missing or invalid.')
+    // A failed workspace ownership commit may have released the staged directory. Recovery
+    // allocates a fresh workspace instead of publishing the now-missing provisional path.
+    const missingForkWorkspace =
+      session.forkOrigin &&
+      session.cwd.startsWith(join(this.options.storageRoot, 'workspaces') + sep)
+        ? !(await stat(session.cwd).catch((error: NodeJS.ErrnoException) => {
+            if (error.code === 'ENOENT') return undefined
+            throw error
+          }))
+        : false
+    if (session.forkOrigin && (!session.cwd || missingForkWorkspace)) {
+      const workspace = await createManagedSessionWorkspaceCapability({
+        resolveRoot: () => this.options.storageRoot
+      }).acquire({ projectId: session.projectId })
+      try {
+        session = { ...session, cwd: workspace.cwd }
+        await new SessionRepository(join(operationRoot, 'session-stage')).saveSession(session)
+        await workspace.commit(session.id)
+      } finally {
+        await workspace.release()
+      }
+    }
     // Live Session authority appears only after native records commit. Recovery repeats the
     // same repository publication; it never republishes records or replaces another Session.
     await repository.saveSession(session)
+    await this.options.onSessionPublished?.(identity)
     // Keep the directory claims after publication. Startup package deletion requires these exact
     // import identities before it can retire any native scope, including retained upstream scopes.
   }

@@ -1,0 +1,54 @@
+{
+  "ownerPaths": [
+    "packages/open-science/CLI.md",
+    "packages/open-science/LICENSE",
+    "packages/open-science/README.md",
+    "packages/open-science/cli.mjs",
+    "packages/open-science/cli.test.ts",
+    "packages/open-science/client-discovery.test.ts",
+    "packages/open-science/client.test.ts",
+    "packages/open-science/codex-login.mjs",
+    "packages/open-science/codex-login.test.ts",
+    "packages/open-science/config-root.mjs",
+    "packages/open-science/connector-types.test.ts",
+    "packages/open-science/connector.test.ts",
+    "packages/open-science/index.d.ts",
+    "packages/open-science/index.mjs",
+    "packages/open-science/locate-app.mjs",
+    "packages/open-science/package.json",
+    "packages/open-science/rollback-to-0.7.3.mjs",
+    "packages/open-science/rollback-to-0.7.3.test.ts"
+  ],
+  "interfacePaths": [
+    "packages/open-science/cli.mjs",
+    "packages/open-science/codex-login.mjs",
+    "packages/open-science/config-root.mjs",
+    "packages/open-science/index.d.ts",
+    "packages/open-science/index.mjs",
+    "packages/open-science/locate-app.mjs"
+  ],
+  "consumerModules": [],
+  "testFiles": {
+    "owner": [
+      "packages/open-science/cli.test.ts",
+      "packages/open-science/client-discovery.test.ts",
+      "packages/open-science/client.test.ts",
+      "packages/open-science/codex-login.test.ts",
+      "packages/open-science/connector-types.test.ts",
+      "packages/open-science/connector.test.ts",
+      "packages/open-science/rollback-to-0.7.3.test.ts"
+    ],
+    "contract": [],
+    "consumer": [
+      "cli/config-root.test.ts",
+      "cli/index.test.ts",
+      "cli/lifecycle.test.ts",
+      "cli/locate-app.test.ts",
+      "src/main/settings/bootstrap.integration.test.ts",
+      "src/main/web-service/artifact-download.integration.test.ts",
+      "src/main/web-service/http-server.test.ts"
+    ]
+  },
+  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
+  "fallbackCapability": "cli_sdk"
+}

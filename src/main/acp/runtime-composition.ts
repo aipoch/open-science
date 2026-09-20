@@ -9,7 +9,7 @@ import { app } from 'electron'
 
 import type { AcpPermissionRequest, AcpRuntimeEvent, AcpStateUpdate } from '../../shared/acp'
 import type { ShellRuntimeBinding } from '../../shared/notebook'
-import { DEFAULT_ARTIFACT_PROJECT_ID } from '../../shared/artifacts'
+import { DEFAULT_ARTIFACT_PROJECT_ID, type ArtifactFile } from '../../shared/artifacts'
 import { resolveActiveConversationMessages } from '../../shared/conversation-graph'
 import { CODEX_SUBSCRIPTION_PROVIDER_ID } from '../../shared/settings'
 import type { PersistedChatSession } from '../../shared/session-persistence'
@@ -77,6 +77,7 @@ import { AcpRuntime, type AcpRuntimeCallbacks, type AcpRuntimeOptions } from './
 import { composeAcpRuntimeBaseOwners } from './runtime-base-composition'
 import { AcpRuntimeCoordinator } from './runtime-coordinator'
 import { composeAcpRuntimeSessionOwners } from './runtime-session-composition'
+import { RuntimeSessionOwner } from '../session-persistence/runtime-session-owner'
 
 const log = createLogger('acp')
 const MAX_LITERATURE_CANDIDATE_FILE_BYTES = 2 * 1024 * 1024
@@ -173,6 +174,10 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
   afterSessionDelete?: (sessionId: string, retained: boolean) => void
   specialistService?: SpecialistService
   sessionPersistenceCoordinator?: SessionRuntimeContextCommands & SessionMutation & SessionCatalog
+  finalizeRuntimeArtifacts?: (request: {
+    claimId: string
+    messageId: string
+  }) => Promise<ArtifactFile[]>
   literatureReader?: Pick<LiteratureDocumentReader, 'readCurrent' | 'searchAttachment'>
   pdfElementReader?: PdfElementTools
   literatureAttachments?: Pick<LiteratureAttachmentAuthority, 'resolveVersion'>
@@ -184,14 +189,19 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
   delegatedWork?: RootDelegatedWorkControl
   fixedBackend?: ResolvedAgentBackend
   runtimeCallbacks?: AcpRuntimeCallbacks
+  preparedSkills?: Awaited<
+    ReturnType<NonNullable<AcpSettingsCapabilities['prepareDelegatedSkills']>>
+  >
   delegatedNotebookConnection?: NotebookRpcConnection
   delegatedArtifactCurrentRunFile?: string
   spawnAgent?: () => ChildProcessWithoutNullStreams
+  hasPendingCredentialRequest?: AcpRuntimeOptions['hasPendingCredentialRequest']
   sideChatRelays?: AcpRuntimeOptions['sideChatRelays']
   imageInputCompatibility?: AcpRuntimeOptions['imageInputCompatibility']
   resolveComputeExecutionTargetIds?: AcpRuntimeOptions['resolveComputeExecutionTargetIds']
   memory?: AcpRuntimeOptions['memory']
   auxiliaryUsage?: AcpRuntimeOptions['auxiliaryUsage']
+  classifySkills?: AcpRuntimeOptions['classifySkills']
 }
 
 const isLiteratureItemInScope = (
@@ -250,6 +260,7 @@ const createAcpRuntime = ({
   afterSessionDelete,
   specialistService,
   sessionPersistenceCoordinator,
+  finalizeRuntimeArtifacts,
   literatureReader,
   pdfElementReader,
   literatureAttachments,
@@ -258,13 +269,16 @@ const createAcpRuntime = ({
   delegatedWork,
   fixedBackend,
   runtimeCallbacks,
+  preparedSkills,
   delegatedNotebookConnection,
   delegatedArtifactCurrentRunFile,
   spawnAgent,
   sideChatRelays,
+  hasPendingCredentialRequest,
   imageInputCompatibility,
   resolveComputeExecutionTargetIds,
   memory,
+  classifySkills,
   auxiliaryUsage
 }: AcpRuntimeCompositionOptions): AcpRuntimeCoordinator => {
   const literatureReferenceResolver = new LiteratureReferenceResolver(netFetchStandard)
@@ -286,6 +300,19 @@ const createAcpRuntime = ({
     () => getProjectDbClient(resolveConfigRoot()),
     configRoot
   )
+  const runtimeSessionOwner =
+    !delegatedNotebookConnection && sessionPersistenceCoordinator && finalizeRuntimeArtifacts
+      ? new RuntimeSessionOwner({
+          loadSession: (scope) =>
+            sessionPersistenceCoordinator.loadSessionForContinuation(
+              scope.projectId,
+              scope.sessionId
+            ),
+          mutateSession: (scope, mutate) =>
+            sessionPersistenceCoordinator.mutateRuntimeSession(scope, mutate),
+          finalizeArtifacts: finalizeRuntimeArtifacts
+        })
+      : undefined
   const eventBroadcast = createAcpRuntimeEventBroadcastCoalescer({
     publish: (events) => broadcastToRenderers('acp:event', events)
   })
@@ -342,6 +369,10 @@ const createAcpRuntime = ({
   }
   const callbacks: AcpRuntimeCallbacks = {
     ...clientCallbacks,
+    onEvent: (event) => {
+      runtimeSessionOwner?.accept(event)
+      clientCallbacks.onEvent?.(event)
+    },
     onPromptStarted: (sessionId, turnToken, promptAttemptId) => {
       codexTransportFallbackLog.begin(
         sessionId,
@@ -370,8 +401,21 @@ const createAcpRuntime = ({
       const runtimeOptions: AcpRuntimeOptions = {
         appVersion: app.getVersion(),
         auxiliaryUsage,
+        classifySkills: delegatedNotebookConnection ? undefined : classifySkills,
+        ...(runtimeSessionOwner ? { runtimeSessions: runtimeSessionOwner } : {}),
         // Packaged macOS apps often start with cwd at "/" or the app bundle; use home instead.
         defaultCwd,
+        ...(delegatedNotebookConnection && fixedBackend?.framework.id === 'opencode'
+          ? {
+              additionalProtectedReadRoots: [
+                fixedBackend.env.XDG_CONFIG_HOME,
+                fixedBackend.env.XDG_DATA_HOME,
+                fixedBackend.env.XDG_CACHE_HOME,
+                fixedBackend.env.XDG_STATE_HOME,
+                fixedBackend.env.OPENCODE_TEST_HOME
+              ].filter((path): path is string => Boolean(path))
+            }
+          : {}),
         resolveBackend: async (context) =>
           fixedBackend ??
           (target
@@ -646,12 +690,18 @@ const createAcpRuntime = ({
             }
           : {}),
         skills: {
+          preparedSkillIds: preparedSkills?.skillIds,
           needForceLoad: (ids) => settingsService.skillsNeedingForceLoad(ids),
           namesForIds: (ids) => settingsService.skillNudgeNamesForIds(ids),
-          descriptorsForIds: (ids, codexHome) =>
-            settingsService.codexSkillDescriptorsForIds(ids, codexHome),
-          catalogForCodexHome: (codexHome) => settingsService.codexSkillCatalog(codexHome),
-          catalogForCodeBuddyRoot: (root) => settingsService.codeBuddySkillCatalog(root)
+          descriptorsForIds: async (ids, codexHome) => {
+            if (!preparedSkills) return settingsService.codexSkillDescriptorsForIds(ids, codexHome)
+            const names = new Set(await settingsService.skillNudgeNamesForIds(ids))
+            return preparedSkills.catalog.filter((entry) => names.has(entry.name))
+          },
+          catalogForCodexHome: async (codexHome) =>
+            preparedSkills?.catalog ?? settingsService.codexSkillCatalog(codexHome),
+          catalogForCodeBuddyRoot: async (root) =>
+            preparedSkills?.catalog ?? settingsService.codeBuddySkillCatalog(root)
         },
         ...(!delegatedNotebookConnection || delegatedArtifactCurrentRunFile
           ? {
@@ -713,6 +763,8 @@ const createAcpRuntime = ({
                   notebookRpcServer.setArtifactTurnBinding(sessionId, binding),
                 clearArtifactTurnBinding: (sessionId, ownerExecutionId) =>
                   notebookRpcServer.clearArtifactTurnBinding(sessionId, ownerExecutionId),
+                prepareTurnInputs: (request) =>
+                  notebookRpcServer.prepareNotebookTurnInputs(request),
                 registerTurnInputs: (request) =>
                   notebookRpcServer.registerNotebookTurnInputs(request),
                 peekHandoffContext: peekNotebookHandoffContext
@@ -771,8 +823,8 @@ const createAcpRuntime = ({
           ? {
               plan: {
                 mcpEntryPath,
-                getRpcConnection: ({ sessionId, projectId }) =>
-                  notebookRpcServer.issuePlanConnection(sessionId, projectId),
+                getRpcConnection: ({ sessionId, projectId, replaceExisting }) =>
+                  notebookRpcServer.issuePlanConnection(sessionId, projectId, { replaceExisting }),
                 registerSessionAlias: (aliasSessionId, sessionId) =>
                   notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId),
                 sessions: sessionPersistenceCoordinator,
@@ -822,6 +874,7 @@ const createAcpRuntime = ({
           : {}),
         callbacks: runtimeCallbacks,
         sideChatRelays,
+        hasPendingCredentialRequest,
         ...(!delegatedNotebookConnection && memory ? { memory } : {}),
         permissionGrantStore,
         permissionGrantRegistry,

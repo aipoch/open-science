@@ -35,7 +35,7 @@ const createRequestLifecycle = ({ defaultTimeoutMs, signal, timeoutMs }) => {
   const resolvedTimeoutMs = resolveRequestTimeout(defaultTimeoutMs, timeoutMs)
   const timeoutController = new AbortController()
   const timeoutError = new OpenScienceApiError(
-    `Open Science request timed out after ${resolvedTimeoutMs} milliseconds.`,
+    `Open-Science request timed out after ${resolvedTimeoutMs} milliseconds.`,
     { code: 'timeout' }
   )
   const timeout = setTimeout(() => timeoutController.abort(timeoutError), resolvedTimeoutMs)
@@ -145,8 +145,8 @@ export class OpenScienceClient {
     sleep = defaultSleep,
     requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS
   }) {
-    if (!baseUrl) throw new Error('Open Science baseUrl is required.')
-    if (!token) throw new Error('Open Science token is required.')
+    if (!baseUrl) throw new Error('Open-Science baseUrl is required.')
+    if (!token) throw new Error('Open-Science token is required.')
     if (!fetchImpl) throw new Error('A Fetch implementation is required.')
     resolveRequestTimeout(requestTimeoutMs)
     this.baseUrl = baseUrl.replace(/\/$/, '')
@@ -169,7 +169,7 @@ export class OpenScienceClient {
           signal
         })
         if (!response.ok) {
-          throw new OpenScienceApiError('Open Science is not running.', {
+          throw new OpenScienceApiError('Open-Science is not running.', {
             code: 'daemon_unavailable',
             status: response.status
           })
@@ -474,7 +474,7 @@ export class OpenScienceClient {
       if (!readySettled) {
         settleReady(
           error ??
-            new OpenScienceApiError('Open Science event stream closed before it was ready.', {
+            new OpenScienceApiError('Open-Science event stream closed before it was ready.', {
               code: 'event_stream_failed'
             })
         )
@@ -495,7 +495,7 @@ export class OpenScienceClient {
       idleTimer = setTimeout(
         () =>
           fail(
-            `Open Science event stream timed out after ${idleTimeoutMs} milliseconds.`,
+            `Open-Science event stream timed out after ${idleTimeoutMs} milliseconds.`,
             'timeout'
           ),
         idleTimeoutMs
@@ -504,7 +504,7 @@ export class OpenScienceClient {
     const enqueue = (event) => {
       if (queue.length >= MAX_BUFFERED_EVENTS) {
         fail(
-          'Open Science event stream exceeded its buffered event limit.',
+          'Open-Science event stream exceeded its buffered event limit.',
           'event_stream_overflow'
         )
         return
@@ -544,7 +544,7 @@ export class OpenScienceClient {
           parsed = JSON.parse(String(event.data))
         } catch {
           fail(
-            'Open Science event stream returned an invalid message.',
+            'Open-Science event stream returned an invalid message.',
             'event_stream_invalid_message'
           )
           return
@@ -557,7 +557,7 @@ export class OpenScienceClient {
             !Number.isSafeInteger(parsed.data?.latestSequence)
           ) {
             fail(
-              'Open Science event stream returned an invalid message.',
+              'Open-Science event stream returned an invalid message.',
               'event_stream_invalid_message'
             )
             return
@@ -573,7 +573,7 @@ export class OpenScienceClient {
             !Number.isSafeInteger(parsed.data?.latestSequence)
           ) {
             fail(
-              'Open Science event stream returned an invalid message.',
+              'Open-Science event stream returned an invalid message.',
               'event_stream_invalid_message'
             )
             return
@@ -598,7 +598,7 @@ export class OpenScienceClient {
       current.addEventListener('error', () => {
         if (finished || socket !== current) return
         if (!readySettled) {
-          fail('Open Science event stream failed.', 'event_stream_failed')
+          fail('Open-Science event stream failed.', 'event_stream_failed')
         } else {
           current.close()
         }
@@ -608,7 +608,7 @@ export class OpenScienceClient {
         if (!connectionOpened && !readySettled) {
           finish({
             error: new OpenScienceApiError(
-              'Open Science event stream closed before it was ready.',
+              'Open-Science event stream closed before it was ready.',
               { code: 'event_stream_failed' }
             ),
             discardQueue: true
@@ -623,8 +623,8 @@ export class OpenScienceClient {
           finish({
             error: new OpenScienceApiError(
               event.code === 1008
-                ? 'Open Science event stream access was revoked.'
-                : 'Open Science event stream closed permanently.',
+                ? 'Open-Science event stream access was revoked.'
+                : 'Open-Science event stream closed permanently.',
               { code: 'event_stream_failed' }
             ),
             discardQueue: true
@@ -697,7 +697,7 @@ export class OpenScienceClient {
       error = undefined
     }
     throw new OpenScienceApiError(
-      error?.message ?? `Open Science request failed (${response.status}).`,
+      error?.message ?? `Open-Science request failed (${response.status}).`,
       {
         code: error?.code,
         status: response.status
@@ -742,7 +742,7 @@ export const connectToOpenScience = async ({
   if (!client) {
     if (lastError) throw lastError
     throw new OpenScienceApiError(
-      'Open Science is not running. Start it with "open-science start".',
+      'Open-Science is not running. Start it with "open-science start".',
       {
         code: 'daemon_unavailable'
       }

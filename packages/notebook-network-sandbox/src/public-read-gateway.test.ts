@@ -158,7 +158,7 @@ describe('inspected CONNECT over real sockets (injected public address via local
       {
         method: 'GET',
         url: '/echo?synthetic=marker',
-        headers: { host: 'data.example', 'user-agent': 'OpenScience/1.0', connection: 'close' }
+        headers: { host: 'data.example', 'user-agent': 'Open-Science/1.0', connection: 'close' }
       }
     ])
     expect(blocked).not.toHaveBeenCalled()

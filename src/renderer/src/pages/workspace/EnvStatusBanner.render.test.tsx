@@ -190,15 +190,15 @@ describe('EnvStatusBanner', () => {
     )
     const banner = container.querySelector('[data-testid="env-status-banner"]') as HTMLElement
     expect(banner).not.toBeNull()
-    // Dialog chrome (matches dialog-chrome.ts): rounded card, card surface, dialog shadow.
-    expect(banner.className).toContain('rounded-xl')
+    // Shared notice chrome: rounded card, card surface, floating shadow.
+    expect(banner.className).toContain('rounded-2xl')
     expect(banner.className).toContain('bg-card')
     expect(banner.className).toContain('shadow-dialog')
     // The reason is bounded (max-h) and scrollable (overflow-y-auto) rather than line-clamped, so the
     // banner cannot fill the screen yet the full excerpt remains reachable — no line-clamp truncation.
-    const reason = banner.querySelector('.overflow-y-auto') as HTMLElement
+    const reason = banner.querySelector('p') as HTMLElement
     expect(reason).not.toBeNull()
-    expect(reason.className).toMatch(/max-h-/)
+    expect(reason.closest('section')?.className).toContain('[&_p]:max-h-28')
     expect(reason.className).not.toContain('line-clamp')
     expect(reason.textContent).toContain('micromamba failed (exit 1)')
     // The full reason text is rendered (not truncated in the DOM), so scrolling exposes all of it.

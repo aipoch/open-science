@@ -4,9 +4,9 @@ name: Notarize macOS (dry-run)
 #
 # Builds + SIGNS the current ref's mac app (mac only, verify suite skipped for speed), submits it to
 # Apple's notary service, staples the ticket, and re-emits the stapled dmg/zip as run artifacts you
-# can download from the run. It touches NO GitHub Release — unlike notarize-mac.yml's own
-# workflow_dispatch path, which clobbers stapled assets back onto an existing release. Use this to
-# confirm the current build passes notarization before cutting a real release.
+# can download from the run. It touches NO GitHub Release (notarize-mac.yml's workflow_dispatch
+# entry is a retired backfill path that only fails fast). Use this to confirm the current build
+# passes notarization before cutting a real release.
 #
 # It reuses the exact release-path jobs (build.yml -> notarize-mac.yml's workflow_call entry) minus
 # the publish step, so a green run means `stapler validate` passed (notarization actually succeeded).
@@ -15,12 +15,10 @@ name: Notarize macOS (dry-run)
 on:
   workflow_dispatch:
 
-# Must grant contents: write because the reusable notarize-mac.yml declares it at the workflow level
-# (for its dispatch-only clobber-to-release path) — a called workflow cannot request more permission
-# than its caller grants, so a narrower scope here fails the run at startup. This dry-run's call path
-# never writes to a Release; the grant only satisfies the reusable workflow's declared permissions.
+# Both reusable workflows (build.yml, notarize-mac.yml) declare contents: read, and this dry-run never
+# writes to a Release, so the caller grants no more than that.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   # Signed mac-only build (no verify, no publish). Uploads macos-arm64 / macos-x64 run artifacts.
@@ -31,9 +29,8 @@ jobs:
       skip_verify: true
     secrets: inherit
 
-  # Notarize + staple those artifacts and re-emit the stapled versions (the workflow_call path's
-  # normal behavior — the destructive --clobber-to-release step is dispatch-only, so nothing is
-  # published here). Deliberately no publish job follows.
+  # Notarize + staple those artifacts and re-emit the stapled versions as run artifacts; nothing is
+  # published here. Deliberately no publish job follows.
   notarize:
     needs: build
     uses: ./.github/workflows/notarize-mac.yml

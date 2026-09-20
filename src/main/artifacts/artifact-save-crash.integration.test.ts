@@ -9,7 +9,13 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 type ChildResult = {
   phase?: string
   replayedVersionId?: string
-  recovered: { recoveredMessageArtifacts: unknown[] }
+  recovered: {
+    recoveredMessageArtifacts: Array<{
+      messageId: string
+      artifacts: Array<{ versionId?: string }>
+    }>
+  }
+  replay: { recoveredMessageArtifacts: unknown[] }
   versions: Array<{ id: string; state: string; messageId: string }>
 }
 
@@ -58,7 +64,15 @@ const start = (
 }
 
 describe('Artifact save durability across process termination', () => {
-  it.each(['copying', 'before-version', 'staging', 'committed', 'prepared', 'partial-publication'])(
+  it.each([
+    'copying',
+    'before-version',
+    'staging',
+    'committed',
+    'prepared',
+    'partial-publication',
+    'activated-unattached'
+  ])(
     'recovers %s with a newly started process and database connection',
     async (phase) => {
       const root = join(testRoot, phase)
@@ -111,6 +125,18 @@ describe('Artifact save durability across process termination', () => {
           expect(
             await readFile(join(root, 'artifacts/project-1/session-1/message-1/second.txt'), 'utf8')
           ).toBe('second crash-safe bytes')
+          if (phase === 'activated-unattached') {
+            expect(result.recovered.recoveredMessageArtifacts).toHaveLength(1)
+            expect(result.recovered.recoveredMessageArtifacts[0].messageId).toBe('message-1')
+            expect(
+              new Set(
+                result.recovered.recoveredMessageArtifacts[0].artifacts.map(
+                  ({ versionId }) => versionId
+                )
+              )
+            ).toEqual(new Set(result.versions.map(({ id }) => id)))
+            expect(result.replay.recoveredMessageArtifacts).toEqual([])
+          }
         }
       } finally {
         if (recovery.child.exitCode === null) {

@@ -32,6 +32,8 @@ type CommitSideChatRelaysCommand = Readonly<{
   projectId: string
   sessionId: string
   relayIds: readonly string[]
+  // Accepted in-memory advisories; omitted only by legacy persistence callers.
+  relays?: readonly PersistedSideChatRelay[]
   promptMessageId: string
 }>
 
@@ -59,7 +61,7 @@ type SideChatStateRepository = Readonly<{
 
 type SessionSideChatPersistenceOwnerOptions = Readonly<{
   repository: SideChatStateRepository
-  assertMutable(projectId: string, sessionId: string): void
+  assertMutable(projectId: string, sessionId: string, projectionOnly: boolean): void
   recordSession(session: PersistedChatSession): void
   notifySessionUpdated(session: PersistedChatSession): void
 }>
@@ -107,7 +109,7 @@ class SessionSideChatPersistenceOwner {
   }
 
   async saveProjection(command: SaveSideChatProjectionCommand): Promise<PersistedSideChat> {
-    const session = await this.loadMutable(command.projectId, command.sessionId)
+    const session = await this.loadMutable(command.projectId, command.sessionId, true)
     const current = session.runtimeContext ?? emptyRuntimeContext()
     const chats = [...getPersistedSideChats(current)]
     const index = chats.findIndex((chat) => chat.id === command.sideChat.id)
@@ -156,24 +158,58 @@ class SessionSideChatPersistenceOwner {
     const current = session.runtimeContext ?? emptyRuntimeContext()
     const relayIds = new Set(command.relayIds)
     const queuedRelays = current.sideChatRelays ?? []
-    const relays = queuedRelays.filter((relay) => relayIds.has(relay.id))
+    const relays = command.relays ?? queuedRelays.filter((relay) => relayIds.has(relay.id))
+    if (
+      new Set(relays.map((relay) => relay.id)).size !== relays.length ||
+      relays.some((relay) => !relayIds.has(relay.id))
+    ) {
+      throw new Error('Side chat relay identities do not match the accepted batch.')
+    }
     if (relays.length !== relayIds.size) {
       throw new Error('One or more Side chat relays are no longer queued.')
     }
     if (relays.length === 0) return []
 
     const timestamp = Math.max(session.updatedAt + 1, Date.now())
-    const messages = relays.map((relay, index): PersistedChatMessage => ({
-      id: `message-${randomUUID()}`,
-      role: 'user',
-      content: relay.text,
-      status: 'complete',
-      eventIds: [],
-      responseToMessageId: command.promptMessageId,
-      relayedFrom: { kind: 'side-chat', direction: 'to-main' },
-      createdAt: timestamp + index,
-      updatedAt: timestamp + index
-    }))
+    // Stable message identities make an accepted batch retry safe when the authority write
+    // committed but projection publication or notification failed afterwards.
+    const existingMessages = new Map(
+      [...(session.conversationGraph?.messages ?? []), ...session.messages].map((message) => [
+        message.id,
+        message
+      ])
+    )
+    const messages = relays.map((relay, index): PersistedChatMessage => {
+      const id = command.relays ? `message-${relay.id}` : `message-${randomUUID()}`
+      const existing = existingMessages.get(id)
+      if (existing) {
+        if (
+          existing.relayedFrom?.kind !== 'side-chat' ||
+          existing.content !== relay.text ||
+          existing.responseToMessageId !== command.promptMessageId
+        ) {
+          throw new Error('Side chat delivery identity conflicts with an existing message.')
+        }
+        return existing
+      }
+      return {
+        id,
+        role: 'user',
+        content: relay.text,
+        status: 'complete',
+        eventIds: [],
+        responseToMessageId: command.promptMessageId,
+        relayedFrom: { kind: 'side-chat', direction: 'to-main' },
+        createdAt: timestamp + index,
+        updatedAt: timestamp + index
+      }
+    })
+    const newMessages = messages.filter((message) => !existingMessages.has(message.id))
+    if (newMessages.length === 0) {
+      this.options.recordSession(session)
+      this.options.notifySessionUpdated(session)
+      return messages
+    }
     const remainingRelays = queuedRelays.filter((relay) => !relayIds.has(relay.id))
     const candidateInput: {
       version: 1
@@ -192,7 +228,7 @@ class SessionSideChatPersistenceOwner {
     const durable = materializeSessionConversationGraph({
       ...session,
       runtimeContext: candidate,
-      messages: [...session.messages, ...messages],
+      messages: [...session.messages, ...newMessages],
       updatedAt: timestamp + messages.length - 1
     })
     const persisted = await saveSessionWithRevision(this.options.repository, durable)
@@ -220,8 +256,12 @@ class SessionSideChatPersistenceOwner {
     return true
   }
 
-  private async loadMutable(projectId: string, sessionId: string): Promise<PersistedChatSession> {
-    this.options.assertMutable(projectId, sessionId)
+  private async loadMutable(
+    projectId: string,
+    sessionId: string,
+    projectionOnly = false
+  ): Promise<PersistedChatSession> {
+    this.options.assertMutable(projectId, sessionId, projectionOnly)
     const loaded = await loadSessionMutationAuthority(this.options.repository, projectId, sessionId)
     if (loaded.status === 'unreadable') {
       throw new Error('Cannot mutate Side chat because its parent Session JSON is unreadable.')

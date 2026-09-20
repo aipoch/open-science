@@ -1,3 +1,8 @@
+import { RuntimeSessionOwner } from '../../../../main/session-persistence/runtime-session-owner'
+import { applySessionConversationCommands } from '../../../../shared/session-conversation-command'
+import type { RuntimeSessionScope } from '../../../../shared/runtime-session-projection'
+import type { SaveSessionOptions } from '../../../../shared/session-persistence'
+import { resetSessionConversationIntentsForTests } from '../../stores/session-conversation-intents'
 import type { ArtifactReference } from '../../../../shared/artifacts'
 import { SessionPdfContextOwner } from '../../../../main/session-persistence/pdf-context-owner'
 import { inspectPdfPageCount } from '../../../../main/uploads/attachment-media'
@@ -15,7 +20,8 @@ import type {
 import {
   createSessionFile,
   normalizeSessionFile,
-  SessionSizeLimitError
+  SessionSizeLimitError,
+  SessionRevisionConflictError
 } from '../../../../shared/session-persistence'
 import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/run-error-classification'
 import { IMAGE_ANNOTATION_SOURCE_UNAVAILABLE_MESSAGE } from '../../pages/workspace/annotations/image-annotation-source-validation'
@@ -2383,6 +2389,56 @@ describe('workspace agent message sending', () => {
     vi.restoreAllMocks()
   })
 
+  it.each<AgentFrameworkId>(['claude-code', 'opencode', 'codex', 'codebuddy'])(
+    'does not append duplicate prompts when retrying a send blocked by a revision conflict (%s)',
+    async (agentFrameworkId) => {
+      useSessionStore.getState().hydrateSessions([
+        {
+          id: 'transport-session-1',
+          projectId: 'project-1',
+          cwd: '/workspace/project',
+          title: 'Conversation',
+          revision: 117,
+          status: 'idle',
+          agentFrameworkId,
+          messages: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ])
+      const runtime = {
+        state: createSnapshot(['transport-session-1']),
+        createSession: vi.fn(),
+        resumeSession: vi.fn(),
+        resetSessionContext: vi.fn(),
+        sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+      }
+      const input = {
+        sessionId: 'transport-session-1',
+        text: 'Reproduce the selected paper',
+        cwd: '/workspace/project',
+        projectId: 'project-1',
+        agentFrameworkId
+      }
+      const lifecycle = {
+        flushPersistence: vi.fn().mockRejectedValue(new SessionRevisionConflictError(117, 119))
+      }
+
+      await expect(sendWorkspaceMessage(runtime, input, lifecycle)).resolves.toBeUndefined()
+      expect(useSessionStore.getState().sessions[0].error).toContain(
+        'Session revision conflict: expected 117, actual 119'
+      )
+      const firstAttempt = useSessionStore.getState().sessions[0].messages.map(({ id }) => id)
+      await expect(sendWorkspaceMessage(runtime, input, lifecycle)).resolves.toBeUndefined()
+
+      expect(firstAttempt).toEqual([])
+      expect(runtime.sendPrompt).not.toHaveBeenCalled()
+      expect(useSessionStore.getState().sessions[0].messages.map(({ id }) => id)).toEqual(
+        firstAttempt
+      )
+    }
+  )
+
   it('drains ordinary user Message persistence before provider dispatch', async () => {
     useSessionStore.setState({
       ...createInitialSessionState(),
@@ -2400,7 +2456,12 @@ describe('workspace agent message sending', () => {
         } as ChatSession
       ]
     })
+    const preflight = createDeferred<void>()
     const persistence = createDeferred<void>()
+    const flushPersistence = vi
+      .fn()
+      .mockImplementationOnce(() => preflight.promise)
+      .mockImplementationOnce(() => persistence.promise)
     const runtime = {
       state: createSnapshot(['transport-session-1']),
       createSession: vi.fn(),
@@ -2418,8 +2479,13 @@ describe('workspace agent message sending', () => {
         projectId: 'project-1',
         agentFrameworkId: 'opencode'
       },
-      { flushPersistence: () => persistence.promise }
+      { flushPersistence }
     )
+
+    await vi.waitFor(() => expect(flushPersistence).toHaveBeenCalledOnce())
+    expect(useSessionStore.getState().sessions[0].messages).toEqual([])
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    preflight.resolve()
 
     await vi.waitFor(() =>
       expect(useSessionStore.getState().sessions[0]?.messages).toEqual([
@@ -2428,6 +2494,7 @@ describe('workspace agent message sending', () => {
     )
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
 
+    expect(flushPersistence).toHaveBeenCalledTimes(2)
     persistence.resolve()
     await expect(sending).resolves.toEqual(
       expect.objectContaining({ sessionId: 'transport-session-1' })
@@ -2818,6 +2885,46 @@ describe('workspace agent message sending', () => {
     }
   )
 
+  it('announces the real message before waiting for persistence or dispatching the prompt', async () => {
+    const runtime = {
+      state: createSnapshot(['transport-session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+    }
+    let release!: () => void
+    const persistence = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let flushCount = 0
+    const flushPersistence = vi.fn(() => {
+      flushCount += 1
+      return flushCount === 1 ? Promise.resolve() : persistence
+    })
+    const onMessageAppended = vi.fn(({ sessionId, messageId }) => {
+      const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId)
+      expect(session?.messages.find((m) => m.id === messageId)?.content).toBe('mobile send')
+    })
+    const send = sendWorkspaceMessage(
+      runtime,
+      {
+        sessionId: 'transport-session-1',
+        text: 'mobile send',
+        cwd: '/workspace/project',
+        projectId: 'project-1',
+        onMessageAppended
+      },
+      { flushPersistence }
+    )
+    await vi.waitFor(() => expect(onMessageAppended).toHaveBeenCalledOnce())
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    release()
+    const result = await send
+    expect(result).toEqual(onMessageAppended.mock.calls[0][0])
+    expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+  })
+
   it('forwards and durably stores Plan first for an existing Session', async () => {
     const runtime = {
       state: createSnapshot(['transport-session-1']),
@@ -2843,6 +2950,71 @@ describe('workspace agent message sending', () => {
       turnIntent: 'plan-first'
     })
   })
+
+  it.each(['existing', 'branched'])(
+    'provides history fallback for a %s bound Specialist without explicit Skill chips',
+    async (scenario) => {
+      useSessionStore.setState({
+        sessions: [
+          {
+            id: 'transport-session-1',
+            projectId: 'project-1',
+            cwd: '/workspace/project',
+            title: 'Research',
+            status: 'idle',
+            specialistId: 'research-specialist',
+            createdAt: 1,
+            updatedAt: 1,
+            messages: [
+              {
+                id: 'prior-user',
+                role: 'user',
+                content: 'Prior research question',
+                status: 'complete',
+                eventIds: [],
+                createdAt: 1,
+                updatedAt: 1
+              },
+              {
+                id: 'prior-agent',
+                role: 'agent',
+                content: 'Prior research answer',
+                status: 'complete',
+                eventIds: [],
+                createdAt: 2,
+                updatedAt: 2
+              }
+            ]
+          }
+        ]
+      })
+      const runtime = {
+        state: createSnapshot(['transport-session-1']),
+        createSession: vi
+          .fn()
+          .mockResolvedValue({ sessionId: 'branched-session', cwd: '/workspace/project' }),
+        resumeSession: vi.fn(),
+        resetSessionContext: vi.fn(),
+        sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+      }
+      await sendWorkspaceMessage(runtime, {
+        ...(scenario === 'branched'
+          ? { branchSourceSessionId: 'transport-session-1', specialistId: 'research-specialist' }
+          : { sessionId: 'transport-session-1' }),
+        text: 'Continue the research',
+        cwd: '/workspace/project',
+        projectId: 'project-1'
+      })
+      await flushRuntimeTasks()
+      await vi.waitFor(() => expect(runtime.sendPrompt).toHaveBeenCalledOnce())
+      expect(runtime.sendPrompt.mock.calls[0]?.[8]).toMatchObject({
+        historyPreamble: expect.stringContaining('Prior research question')
+      })
+      expect(runtime.sendPrompt.mock.calls[0]?.[8]?.historyPreamble).not.toContain(
+        'Continue the research'
+      )
+    }
+  )
 
   it('sends annotation-only context while preserving structured Message data', async () => {
     const sendPrompt = vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
@@ -3710,6 +3882,74 @@ describe('workspace agent message sending', () => {
     ).toBe(false)
   })
 
+  it.each([true, false, undefined])(
+    'preserves initial auto-review %s through pending Session binding and returns the bound identity',
+    async (autoReviewEnabled) => {
+      const created = createDeferred<{ sessionId: string; cwd: string }>()
+      const runtime = {
+        state: createSnapshot([]),
+        createSession: vi.fn(() => created.promise),
+        resumeSession: vi.fn(),
+        resetSessionContext: vi.fn(),
+        sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['review-session']))
+      }
+      const sending = sendWorkspaceMessage(
+        runtime,
+        {
+          text: 'Review this',
+          cwd: '/workspace/project',
+          projectId: 'project-1',
+          autoReviewEnabled
+        },
+        { awaitPendingPreparation: true }
+      )
+      await vi.waitFor(() => expect(runtime.createSession).toHaveBeenCalledOnce())
+      const pending = useSessionStore.getState().sessions[0]
+      expect(pending.isPending).toBe(true)
+      expect(pending.autoReviewEnabled === true).toBe(autoReviewEnabled === true)
+      created.resolve({ sessionId: 'review-session', cwd: '/workspace/project' })
+      const result = await sending
+      expect(result).toEqual({
+        sessionId: 'review-session',
+        messageId: pending.activeRun!.promptMessageId
+      })
+      expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+      const bound = useSessionStore.getState().sessions.find(({ id }) => id === result!.sessionId)!
+      expect(bound.isPending).toBe(false)
+      expect(bound.autoReviewEnabled === true).toBe(autoReviewEnabled === true)
+      expect(toPersistedSession(bound).autoReviewEnabled).toBe(autoReviewEnabled === true)
+    }
+  )
+
+  it('keeps an auto-review change made while a new Session is being prepared', async () => {
+    const created = createDeferred<{ sessionId: string; cwd: string }>()
+    const runtime = {
+      state: createSnapshot([]),
+      createSession: vi.fn(() => created.promise),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['review-session']))
+    }
+    const sending = sendWorkspaceMessage(
+      runtime,
+      {
+        text: 'Review this',
+        cwd: '/workspace/project',
+        projectId: 'project-1',
+        autoReviewEnabled: true
+      },
+      { awaitPendingPreparation: true }
+    )
+    await vi.waitFor(() => expect(runtime.createSession).toHaveBeenCalledOnce())
+    useSessionStore
+      .getState()
+      .setAutoReviewEnabled(useSessionStore.getState().sessions[0].id, false)
+    created.resolve({ sessionId: 'review-session', cwd: '/workspace/project' })
+    const result = await sending
+    expect(result?.sessionId).toBe('review-session')
+    expect(useSessionStore.getState().sessions[0].autoReviewEnabled).toBe(false)
+  })
+
   it.each(['new', 'existing', 'new-partial', 'existing-partial'] as const)(
     'LR-05 blocks an unavailable selected literature version (%s)',
     async (kind) => {
@@ -4279,6 +4519,11 @@ describe('workspace agent message sending', () => {
       projectId: 'project-1'
     })
     useSessionStore.getState().finishRun('transport-session-1')
+    const previousRuntimeSegmentCount =
+      useSessionStore.getState().sessions[0]?.conversationGraph?.runtimeSegments.length ?? 0
+    const previousRuntimeSegmentId = useSessionStore
+      .getState()
+      .sessions[0]?.conversationGraph?.runtimeSegments.at(-1)?.id
     useSessionStore.setState((state) => ({
       sessions: state.sessions.map((session) => ({
         ...session,
@@ -4296,6 +4541,11 @@ describe('workspace agent message sending', () => {
       contextReset: true
     })
     const sendPrompt = vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+    const persistedGraphs: NonNullable<PersistedChatSession['conversationGraph']>[] = []
+    const flushPersistence = vi.fn(async () => {
+      const graph = useSessionStore.getState().sessions[0]?.conversationGraph
+      if (graph) persistedGraphs.push(structuredClone(graph))
+    })
     const runtime = {
       state: createSnapshot(['transport-session-1']),
       createSession: vi.fn(),
@@ -4304,12 +4554,16 @@ describe('workspace agent message sending', () => {
       sendPrompt
     }
 
-    await sendWorkspaceMessage(runtime, {
-      sessionId: 'transport-session-1',
-      text: 'Continue selected branch',
-      cwd: '/workspace/project',
-      projectId: 'project-1'
-    })
+    await sendWorkspaceMessage(
+      runtime,
+      {
+        sessionId: 'transport-session-1',
+        text: 'Continue selected branch',
+        cwd: '/workspace/project',
+        projectId: 'project-1'
+      },
+      { flushPersistence }
+    )
 
     expect(shutdown).toHaveBeenCalledWith({
       sessionId: 'transport-session-1',
@@ -4337,6 +4591,29 @@ describe('workspace agent message sending', () => {
       true,
       undefined,
       true
+    )
+    const promptContext = sendPrompt.mock.calls[0]?.[9]
+    const resetSession = useSessionStore.getState().sessions[0]
+    expect(promptContext?.runtimeSegmentId).not.toBe(previousRuntimeSegmentId)
+    expect(resetSession.conversationGraph?.runtimeSegments).toHaveLength(
+      previousRuntimeSegmentCount + 1
+    )
+    expect(
+      resetSession.conversationGraph?.runtimeSegments.some(
+        (segment) => segment.id === promptContext?.runtimeSegmentId
+      )
+    ).toBe(true)
+    expect(
+      persistedGraphs
+        .at(-1)
+        ?.messages.some(
+          (message) =>
+            message.id === promptContext?.promptMessageId &&
+            message.runtimeSegmentId === promptContext?.runtimeSegmentId
+        )
+    ).toBe(true)
+    expect(flushPersistence.mock.invocationCallOrder[0]).toBeLessThan(
+      sendPrompt.mock.invocationCallOrder[0]
     )
     expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBeUndefined()
   })
@@ -4552,7 +4829,6 @@ describe('workspace agent message sending', () => {
       agentBackendId: 'claude-code:anthropic'
     })
     useSessionStore.getState().finishRun('transport-session-1')
-
     const sendPrompt = vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
     const runtime = {
       state: createSnapshot(),
@@ -4602,6 +4878,12 @@ describe('workspace agent message sending', () => {
     expect(drainRuntimeEvents).toHaveBeenCalledOnce()
     expect(drainRuntimeEvents).toHaveBeenCalledWith('transport-session-1')
     expect(sendPrompt.mock.calls[0]?.[5]).toContain('Accepted final answer')
+    const updatedGraph = useSessionStore.getState().sessions[0]?.conversationGraph
+    const drainedRuntimeSegmentId = updatedGraph?.messages.find(
+      (message) => message.content === 'Accepted final answer'
+    )?.runtimeSegmentId
+    expect(drainedRuntimeSegmentId).toEqual(expect.any(String))
+    expect(sendPrompt.mock.calls[0]?.[9]?.runtimeSegmentId).not.toBe(drainedRuntimeSegmentId)
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       status: 'running',
       activeRun: { promptMessageId: expect.any(String) }
@@ -5360,7 +5642,7 @@ describe('workspace agent message sending', () => {
       { awaitPendingPreparation: true }
     )
 
-    expect(sent).toBeDefined()
+    expect(sent?.sessionId).toBe('branched-runtime-session')
     expect(saveSession).toHaveBeenCalledOnce()
     expect(saveSession.mock.calls[0]?.[0]).toMatchObject({ delegationPolicy: 'allow' })
     expect(setDelegationPolicy).toHaveBeenCalledWith(
@@ -10390,6 +10672,73 @@ describe('recovering from a request-size overflow', () => {
       turnIntent: 'save-as-skill'
     })
   })
+
+  it.each([true, false])(
+    'persists the Main-owned overflow retry before dispatch (native=%s)',
+    async (native) => {
+      seedOverflowedConversation()
+      resetSessionConversationIntentsForTests()
+      useSessionStore.setState((state) => ({
+        sessions: state.sessions.map((session) => ({
+          ...session,
+          runtimeTranscriptOwner: 'main' as const
+        }))
+      }))
+      let durable = toPersistedSession(useSessionStore.getState().sessions[0])
+      const originalSegmentIds = durable.conversationGraph!.runtimeSegments.map(({ id }) => id)
+      const gate = createDeferred<void>()
+      const saveSession = vi.fn(
+        async (_submitted: PersistedChatSession, options?: SaveSessionOptions) => {
+          await gate.promise
+          durable = applySessionConversationCommands(durable, options?.conversationCommands ?? [])
+          return structuredClone(durable)
+        }
+      )
+      vi.stubGlobal('window', { api: { sessions: { saveSession } } })
+      const owner = new RuntimeSessionOwner({
+        loadSession: async () => structuredClone(durable),
+        mutateSession: async (_scope, mutate) => (durable = mutate(durable)),
+        finalizeArtifacts: async () => []
+      })
+      let admitted = false
+      const runtime = {
+        state: {
+          ...createSnapshot(['session-1']),
+          ...(native ? { nativeContextCompactionSessionIds: ['session-1'] } : {})
+        },
+        createSession: vi.fn(),
+        resumeSession: vi.fn(),
+        resetSessionContext: vi.fn().mockResolvedValue({ sessionId: 'session-1' }),
+        compactSession: vi.fn().mockResolvedValue(createSnapshot(['session-1'])),
+        sendPrompt: vi.fn(async (...args: unknown[]) => {
+          const provenance = args[9] as RuntimeSessionScope
+          await owner.begin({
+            ...provenance,
+            sessionId: 'session-1',
+            projectId: durable.projectId,
+            executionId: 'retry'
+          })
+          admitted = true
+          return createSnapshot(['session-1'])
+        })
+      }
+      const pending = recoverContextOverflowWorkspaceSession(runtime, 'session-1')
+      try {
+        await vi.waitFor(() => expect(saveSession).toHaveBeenCalledOnce())
+        expect(runtime.sendPrompt).not.toHaveBeenCalled()
+      } finally {
+        gate.resolve()
+      }
+      expect(await pending).toBe(true)
+      await vi.waitFor(() => expect(admitted).toBe(true))
+      expect(durable.conversationGraph!.runtimeSegments.map(({ id }) => id)).toEqual(
+        originalSegmentIds
+      )
+      expect((runtime.sendPrompt.mock.calls[0][9] as RuntimeSessionScope).runtimeSegmentId).toBe(
+        originalSegmentIds.at(-1)
+      )
+    }
+  )
 
   it('uses native framework compaction and retries without replaying app-owned history', async () => {
     seedOverflowedConversation()

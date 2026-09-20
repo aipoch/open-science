@@ -1,11 +1,13 @@
+import { initDataRoot } from '../storage-root'
 import { createUploadVersionReference } from '../../shared/uploads'
 import { join, sep } from 'node:path'
 import { dirname } from 'node:path'
 import { mkdir, readFile, readdir, realpath, stat, symlink, writeFile } from 'node:fs/promises'
 import { writeFileSync } from 'node:fs'
 import { c as createTar, x as extractTar } from 'tar'
-import { fileChecksum } from './archive'
+import { fileChecksum, packageEntry } from './archive'
 import { ProjectRepository } from '../projects/repository'
+import { migrateApplicationDatabase } from '../projects/prisma-client'
 import { afterEach, expect, it, vi } from 'vitest'
 import {
   createArtifactVersionRequest,
@@ -18,6 +20,7 @@ import { createFrameNotebookLane } from '../notebook/lane-identity'
 import { sha256 } from '../artifacts/provenance-canonical'
 import { createPngBytes } from '../artifacts/artifact-test-fixtures'
 import { SessionRepository } from '../session-persistence/repository'
+import { SessionProjectionAfterCommitError } from '../session-persistence/save-session'
 import { NotebookRuntimeService } from '../notebook/runtime-service'
 import {
   startWorkingFileObservation,
@@ -54,6 +57,7 @@ const fixtures: Awaited<ReturnType<typeof createProvenanceTestFixture>>[] = []
 
 it('resolves a copying file name once across progress chunks', async () => {
   const source = await createProvenanceTestFixture()
+  initDataRoot(source.storageRoot)
   fixtures.push(source)
   await source.client.project.create({ data: { id: 'project-1', name: 'Progress' } })
   await new SessionRepository(source.storageRoot).saveSession({
@@ -105,7 +109,9 @@ it('resolves a copying file name once across progress chunks', async () => {
 
 it('imports a compact package with required duplicate evidence and forwards the same safe selection', async () => {
   const source = await createProvenanceTestFixture()
+  initDataRoot(source.storageRoot)
   const target = await createProvenanceTestFixture()
+  initDataRoot(target.storageRoot)
   fixtures.push(source, target)
   await source.client.project.create({ data: { id: 'project-1', name: 'Compact research' } })
   await new SessionRepository(source.storageRoot).saveSession({
@@ -180,6 +186,7 @@ it('imports a compact package with required duplicate evidence and forwards the 
 
 it('reports oversized retained Artifact content as unavailable through the provenance reader', async () => {
   const source = await createProvenanceTestFixture()
+  initDataRoot(source.storageRoot)
   fixtures.push(source)
   await source.client.project.create({ data: { id: 'project-1', name: 'Research' } })
   await source.stagePng('original')
@@ -203,7 +210,9 @@ it('reports oversized retained Artifact content as unavailable through the prove
 
 it('leaves the application database available while a slow import copies files', async () => {
   const source = await createProvenanceTestFixture()
+  initDataRoot(source.storageRoot)
   const target = await createProvenanceTestFixture()
+  initDataRoot(target.storageRoot)
   fixtures.push(source, target)
   await source.client.project.create({ data: { id: 'source', name: 'Source' } })
   await target.client.project.create({ data: { id: 'target', name: 'Target' } })
@@ -282,6 +291,7 @@ it('leaves the application database available while a slow import copies files',
 
 it('validates Artifact payloads without allocating a whole-file buffer', async () => {
   const source = await createProvenanceTestFixture()
+  initDataRoot(source.storageRoot)
   fixtures.push(source)
   await source.client.project.create({ data: { id: 'project-1', name: 'Research' } })
   await new SessionRepository(source.storageRoot).saveSession({
@@ -322,7 +332,9 @@ it.each(['commit', 'rollback'] as const)(
   'publishes a large review with bounded database round trips (%s)',
   async (outcome) => {
     const source = await createProvenanceTestFixture()
+    initDataRoot(source.storageRoot)
     const target = await createProvenanceTestFixture()
+    initDataRoot(target.storageRoot)
     fixtures.push(source, target)
     await source.client.project.create({ data: { id: 'source', name: 'Source' } })
     await new SessionRepository(source.storageRoot).saveSession({
@@ -408,7 +420,9 @@ it.each(['commit', 'rollback'] as const)(
 
 it('clears copying counters while finalizing an import', async () => {
   const source = await createProvenanceTestFixture()
+  initDataRoot(source.storageRoot)
   const target = await createProvenanceTestFixture()
+  initDataRoot(target.storageRoot)
   fixtures.push(source, target)
   await source.client.project.create({ data: { id: 'source', name: 'Source' } })
   await new SessionRepository(source.storageRoot).saveSession({
@@ -450,7 +464,9 @@ it.each(['success', 'rollback', 'late-ack', 'publication-retry', 'ownership-coll
   'imports into an existing project without changing its research (%s)',
   async (outcome) => {
     const source = await createProvenanceTestFixture()
+    initDataRoot(source.storageRoot)
     const target = await createProvenanceTestFixture()
+    initDataRoot(target.storageRoot)
     fixtures.push(source, target)
     await source.client.project.create({ data: { id: 'source', name: 'Source' } })
     await target.client.project.create({ data: { id: 'target', name: 'Keep project' } })
@@ -589,7 +605,9 @@ it.each([1, 12, 'unavailable'] as const)(
   'uses stage-level capacity queries for %s files and retains the normal transfer when queries are unavailable',
   async (count) => {
     const source = await createProvenanceTestFixture()
+    initDataRoot(source.storageRoot)
     const target = await createProvenanceTestFixture()
+    initDataRoot(target.storageRoot)
     fixtures.push(source, target)
     await source.client.project.create({ data: { id: 'project-1', name: 'Capacity' } })
     await new SessionRepository(source.storageRoot).saveSession({
@@ -641,7 +659,9 @@ it.each(['export', 'validation', 'compression', 'import', 'config'] as const)(
   'rejects insufficient %s capacity before publishing and checks fresh space after user input',
   async (boundary) => {
     const source = await createProvenanceTestFixture()
+    initDataRoot(source.storageRoot)
     const target = await createProvenanceTestFixture()
+    initDataRoot(target.storageRoot)
     fixtures.push(source, target)
     await source.client.project.create({ data: { id: 'project-1', name: 'Capacity' } })
     await new SessionRepository(source.storageRoot).saveSession({
@@ -726,6 +746,7 @@ it.each(['parent', 'operation', 'existing', 'cleanup', 'cleanup-recovery'] as co
   'cleans the config stage when the separate data %s directory cannot be allocated',
   async (boundary) => {
     const target = await createProvenanceTestFixture()
+    initDataRoot(target.storageRoot)
     fixtures.push(target)
     const cleanupFails = boundary.startsWith('cleanup')
     const configRoot = join(target.storageRoot, 'config')
@@ -795,7 +816,9 @@ it.each(['direct', 'forward'] as const)(
   'exports selected content through %s while retaining explicit omitted Artifact metadata across import and restart',
   async (path) => {
     const source = await createProvenanceTestFixture()
+    initDataRoot(source.storageRoot)
     const target = await createProvenanceTestFixture()
+    initDataRoot(target.storageRoot)
     fixtures.push(source, target)
     await source.client.project.create({ data: { id: 'project-1', name: 'Selected research' } })
     await new SessionRepository(source.storageRoot).saveSession({
@@ -913,7 +936,9 @@ it.each(['direct', 'forward'] as const)(
       )?.packageOrigin?.excludedFiles
     ).toEqual(expect.arrayContaining([expect.objectContaining({ filename: 'plot.png' })]))
   },
-  60_000
+  // Multiple real archive imports each migrate a validation database; hosted Windows I/O
+  // exceeded 60 seconds even with one worker. Keep this bound local to these round trips.
+  process.platform === 'win32' ? 120_000 : 60_000
 )
 afterEach(async () => {
   vi.restoreAllMocks()
@@ -922,7 +947,9 @@ afterEach(async () => {
 
 it('reopens finalized provenance messages against the imported graph and keeps source hashes intact', async () => {
   const source = await createProvenanceTestFixture()
+  initDataRoot(source.storageRoot)
   const target = await createProvenanceTestFixture()
+  initDataRoot(target.storageRoot)
   fixtures.push(source, target)
   await source.client.project.create({ data: { id: 'project-1', name: 'Research' } })
   const session = await new SessionRepository(source.storageRoot).saveSession({
@@ -1090,7 +1117,9 @@ it('reopens finalized provenance messages against the imported graph and keeps s
 
 it('keeps terminal Task and Compute results as evidence without installing jobs or recovery authority', async () => {
   const source = await createProvenanceTestFixture()
+  initDataRoot(source.storageRoot)
   const target = await createProvenanceTestFixture()
+  initDataRoot(target.storageRoot)
   fixtures.push(source, target)
   await source.client.project.create({ data: { id: 'project-1', name: 'Research' } })
   await new SessionRepository(source.storageRoot).saveSession({
@@ -1148,12 +1177,20 @@ it('keeps terminal Task and Compute results as evidence without installing jobs 
     taskRuns: [{ status: 'completed', output: 'Task result' }],
     computeJobs: [{ status: 'success', stdout: '42' }]
   })
+  const fork = await importer.fork(imported)
+  expect((await importer.readOrigin(fork)).history).toEqual(origin.history)
+  const refork = await importer.fork(fork)
+  expect((await importer.readOrigin(refork)).history).toMatchObject({
+    taskRuns: [{ status: 'completed', output: 'Task result' }],
+    computeJobs: [{ status: 'success', stdout: '42' }]
+  })
   await expect(new FileTaskRunJournal(target.storageRoot).load()).resolves.toEqual([])
   await expect(target.client.computeJob.count()).resolves.toBe(0)
 })
 
 it('does not remove an unclaimed directory when recovering an interrupted import', async () => {
   const target = await createProvenanceTestFixture()
+  initDataRoot(target.storageRoot)
   fixtures.push(target)
   const operation = '12345678-1234-4123-8123-123456789012'
   await mkdir(join(target.storageRoot, 'session-package-imports', operation), { recursive: true })
@@ -1169,7 +1206,9 @@ it('does not remove an unclaimed directory when recovering an interrupted import
 
 it('rejects a linked Notebook root without including files outside the selected Session', async () => {
   const source = await createProvenanceTestFixture()
+  initDataRoot(source.storageRoot)
   const outside = await createProvenanceTestFixture()
+  initDataRoot(outside.storageRoot)
   fixtures.push(source, outside)
   await source.client.project.create({ data: { id: 'project-1', name: 'Research' } })
   await new SessionRepository(source.storageRoot).saveSession({
@@ -1203,6 +1242,7 @@ it('rejects a linked Notebook root without including files outside the selected 
 
 it('blocks recognized credentials in Notebook files instead of silently exporting or rewriting them', async () => {
   const source = await createProvenanceTestFixture()
+  initDataRoot(source.storageRoot)
   fixtures.push(source)
   await source.client.project.create({ data: { id: 'project-1', name: 'Research' } })
   await new SessionRepository(source.storageRoot).saveSession({
@@ -1234,6 +1274,7 @@ it('blocks recognized credentials in Notebook files instead of silently exportin
 
 it('rejects a Notebook file changed during export without replacing the destination', async () => {
   const source = await createProvenanceTestFixture()
+  initDataRoot(source.storageRoot)
   fixtures.push(source)
   await source.client.project.create({ data: { id: 'project-1', name: 'Research' } })
   await new SessionRepository(source.storageRoot).saveSession({
@@ -1273,8 +1314,73 @@ it('rejects a Notebook file changed during export without replacing the destinat
   await expect(readFile(archive, 'utf8')).resolves.toBe('Previous export')
 })
 
+it('allows excluded Side Chat projection updates while exporting the parent Session', async () => {
+  const source = await createProvenanceTestFixture()
+  fixtures.push(source)
+  await source.client.project.create({ data: { id: 'project-1', name: 'Research' } })
+  const sessions = new SessionRepository(source.storageRoot)
+  await sessions.saveSession({
+    id: 'session-1',
+    projectId: 'project-1',
+    title: 'Stable parent research',
+    cwd: '',
+    status: 'idle',
+    messages: [],
+    createdAt: 1,
+    updatedAt: 2
+  })
+  const archive = join(source.storageRoot, 'side-chat-update.science')
+  const service = new SessionPackageService({
+    storageRoot: source.storageRoot,
+    getClient: async () => source.client
+  })
+
+  await expect(
+    service.exportTo({ projectId: 'project-1', sessionId: 'session-1' }, archive, {
+      selectFiles: async () => {
+        const current = await sessions.loadSession('project-1', 'session-1')
+        if (!current) throw new Error('Session fixture is missing')
+        await sessions.saveSession({
+          ...current,
+          runtimeContext: {
+            version: 1,
+            revision: 1,
+            sideChat: {
+              version: 1,
+              id: 'side-chat-1',
+              lifecycle: 'open',
+              frameworkId: 'codex',
+              historyPreamble: 'Auxiliary context',
+              entries: [
+                {
+                  id: 'assistant-1',
+                  kind: 'message',
+                  role: 'assistant',
+                  text: 'New auxiliary output'
+                }
+              ],
+              createdAt: 1,
+              updatedAt: 3
+            }
+          },
+          updatedAt: 3
+        })
+        return []
+      }
+    })
+  ).resolves.toBeDefined()
+  const expanded = join(source.storageRoot, 'side-chat-update-expanded')
+  await mkdir(expanded)
+  await extractTar({ file: archive, cwd: expanded })
+  const envelope = JSON.parse(await readFile(join(expanded, 'session.json'), 'utf8')) as {
+    session: { runtimeContext?: Record<string, unknown> }
+  }
+  expect(envelope.session.runtimeContext?.sideChat).toBeUndefined()
+})
+
 it('aborts active export and queued work when its lifecycle owner closes', async () => {
   const source = await createProvenanceTestFixture()
+  initDataRoot(source.storageRoot)
   fixtures.push(source)
   await source.client.project.create({ data: { id: 'project-1', name: 'Research' } })
   await new SessionRepository(source.storageRoot).saveSession({
@@ -1309,7 +1415,9 @@ it.each(['readable', 'unavailable'] as const)(
   'reconciles a lost database acknowledgement with a %s commit witness',
   async (witness) => {
     const source = await createProvenanceTestFixture()
+    initDataRoot(source.storageRoot)
     const target = await createProvenanceTestFixture()
+    initDataRoot(target.storageRoot)
     fixtures.push(source, target)
     await source.client.project.create({ data: { id: 'project-1', name: 'Research' } })
     await new SessionRepository(source.storageRoot).saveSession({
@@ -1367,7 +1475,9 @@ it.each(['organized', 'deleted', 'projection-pending'] as const)(
   'preserves an already-published Session during staging recovery (%s)',
   async (state) => {
     const source = await createProvenanceTestFixture()
+    initDataRoot(source.storageRoot)
     const target = await createProvenanceTestFixture()
+    initDataRoot(target.storageRoot)
     fixtures.push(source, target)
     await source.client.project.create({ data: { id: 'source', name: 'Source' } })
     await target.client.project.create({ data: { id: 'target', name: 'Target' } })
@@ -1411,11 +1521,27 @@ it.each(['organized', 'deleted', 'projection-pending'] as const)(
         return remove(path, ...args)
       })
     }
-    await expect(
-      new SessionPackageService(options).importFrom(archive, undefined, undefined, undefined, {
-        projectId: 'target'
+    const importPromise = new SessionPackageService(options).importFrom(
+      archive,
+      undefined,
+      undefined,
+      undefined,
+      { projectId: 'target' }
+    )
+    if (state === 'projection-pending') {
+      const error = await importPromise.catch((cause: unknown) => cause)
+      expect(error).toBeInstanceOf(SessionProjectionAfterCommitError)
+      expect(error).toMatchObject({
+        committedSession: {
+          projectId: 'target',
+          title: 'Original title',
+          packageOrigin: expect.any(Object)
+        },
+        cause: expect.objectContaining({ message: failure })
       })
-    ).rejects.toThrow(failure)
+    } else {
+      await expect(importPromise).rejects.toThrow(failure)
+    }
     const repository = new SessionRepository(
       configRoot,
       {},
@@ -1444,9 +1570,11 @@ it.each(['organized', 'deleted', 'projection-pending'] as const)(
   }
 )
 
-it('transfers every conversation branch across separate config and data roots and reopens it offline', async () => {
+it('transfers conversation branches and delivered Side Chat relays without auxiliary Side Chats', async () => {
   const source = await createProvenanceTestFixture()
+  initDataRoot(source.storageRoot)
   const target = await createProvenanceTestFixture()
+  initDataRoot(target.storageRoot)
   fixtures.push(source, target)
   await source.client.project.create({ data: { id: 'project-1', name: 'Research' } })
   const sourceConfigRoot = join(source.storageRoot, 'config')
@@ -1475,6 +1603,17 @@ it('transfers every conversation branch across separate config and data roots an
           eventIds: [],
           createdAt: 2,
           updatedAt: 2
+        },
+        {
+          id: 'relay-to-main',
+          role: 'user',
+          content: 'Use a black line in the main analysis.',
+          status: 'complete',
+          eventIds: [],
+          responseToMessageId: 'question',
+          relayedFrom: { kind: 'side-chat', direction: 'to-main' },
+          createdAt: 3,
+          updatedAt: 3
         }
       ]
     }),
@@ -1511,7 +1650,19 @@ it('transfers every conversation branch across separate config and data roots an
         ],
         createdAt: 1,
         updatedAt: 2
-      }
+      },
+      sideChats: [
+        {
+          version: 1,
+          id: 'side-chat-2',
+          lifecycle: 'open',
+          frameworkId: 'claude-code',
+          historyPreamble: 'More private Side Chat context',
+          entries: [],
+          createdAt: 2,
+          updatedAt: 3
+        }
+      ]
     },
     permissionProfile: 'full',
     createdAt: 1,
@@ -1530,10 +1681,83 @@ it('transfers every conversation branch across separate config and data roots an
   const archive = join(source.storageRoot, 'research.science')
   await exporter.exportTo({ projectId: 'project-1', sessionId: 'session-1' }, archive)
   const preview = await importer.inspect(archive)
-  expect(preview).toMatchObject({ title: 'Sample comparison', branchCount: 2, messageCount: 2 })
+  expect(preview).toMatchObject({ title: 'Sample comparison', branchCount: 2, messageCount: 3 })
   const imported = await importer.importFrom(archive)
   expect(imported.projectId).not.toBe('project-1')
   expect(imported.sessionId).not.toBe('session-1')
+  const retainedSource = join(
+    target.storageRoot,
+    'artifacts',
+    imported.projectId,
+    imported.sessionId,
+    '.session-package',
+    'source'
+  )
+  const retainedSessionPath = join(retainedSource, 'session.json')
+  const retainedEnvelope = JSON.parse(await readFile(retainedSessionPath, 'utf8')) as {
+    version: number
+    session: { runtimeContext?: Record<string, unknown> }
+  }
+  retainedEnvelope.session.runtimeContext = {
+    ...(retainedEnvelope.session.runtimeContext ?? { version: 1, revision: 1 }),
+    sideChat: {
+      version: 1,
+      id: '../malformed-legacy-side-chat',
+      lifecycle: 'open',
+      frameworkId: 'claude-code',
+      historyPreamble: 'Legacy retained Side Chat',
+      providerSessionId: 'private-legacy-provider',
+      entries: [
+        {
+          id: 'private-entry',
+          kind: 'message',
+          role: 'assistant',
+          text: 'Private malformed legacy transcript'
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 2
+    }
+  }
+  // Retained packages can use the historical bare Session format. Keep the malformed Side Chat in
+  // those raw bytes to prove forwarding checks before the Session sanitizer drops it.
+  await writeFile(retainedSessionPath, JSON.stringify(retainedEnvelope.session))
+  const retainedManifestPath = join(retainedSource, 'manifest.json')
+  const retainedManifest = JSON.parse(await readFile(retainedManifestPath, 'utf8')) as {
+    inventory: Array<{ path: string; kind: 'session' | 'records' | 'readme' | 'file' | 'notebook' }>
+  }
+  const retainedSessionEntry = retainedManifest.inventory.find(
+    (entry) => entry.path === 'session.json'
+  )
+  if (!retainedSessionEntry) throw new Error('Retained package Session entry is missing')
+  Object.assign(retainedSessionEntry, await packageEntry(retainedSource, 'session.json', 'session'))
+  await writeFile(retainedManifestPath, JSON.stringify(retainedManifest))
+  const retainedReceiptPath = join(dirname(retainedSource), 'receipt.json')
+  const retainedReceipt = JSON.parse(await readFile(retainedReceiptPath, 'utf8')) as {
+    manifestChecksum: string
+  }
+  retainedReceipt.manifestChecksum = await fileChecksum(retainedManifestPath)
+  await writeFile(retainedReceiptPath, JSON.stringify(retainedReceipt))
+  const forwarded = join(target.storageRoot, 'forwarded.science')
+  await importer.exportTo(imported, forwarded)
+  const forwardedRoot = join(target.storageRoot, 'forwarded-package')
+  await mkdir(forwardedRoot)
+  await extractTar({ file: forwarded, cwd: forwardedRoot })
+  const forwardedEnvelope = JSON.parse(
+    await readFile(join(forwardedRoot, 'session.json'), 'utf8')
+  ) as {
+    session: {
+      runtimeContext?: Record<string, unknown>
+      conversationGraph?: { messages: Array<Record<string, unknown>> }
+    }
+  }
+  expect(forwardedEnvelope.session.runtimeContext?.sideChat).toBeUndefined()
+  expect(forwardedEnvelope.session.conversationGraph?.messages).toContainEqual(
+    expect.objectContaining({
+      content: 'Use a black line in the main analysis.',
+      relayedFrom: { kind: 'side-chat', direction: 'to-main' }
+    })
+  )
   await target.client.$disconnect()
   const reopened = await new SessionRepository(targetConfigRoot).loadSession(
     imported.projectId,
@@ -1545,16 +1769,23 @@ it('transfers every conversation branch across separate config and data roots an
   )
   expect(reopened?.conversationGraph?.messages.map((message) => message.content)).toEqual([
     'Compare the samples',
-    'The original result'
+    'The original result',
+    'Use a black line in the main analysis.'
   ])
   expect(reopened?.providerSessionId).toBeUndefined()
-  expect(reopened?.runtimeContext?.sideChat).toMatchObject({
-    historyPreamble: 'Research context',
-    entries: [{ text: 'An alternative explanation' }]
+  expect(reopened?.runtimeContext?.sideChat).toBeUndefined()
+  expect(reopened?.runtimeContext?.sideChats).toBeUndefined()
+  expect(origin.identities['side-chat-1']).toBeUndefined()
+  expect(origin.identities['side-chat-2']).toBeUndefined()
+  expect(
+    reopened?.conversationGraph?.messages.find(
+      (message) => message.id === origin.identities['relay-to-main']
+    )
+  ).toMatchObject({
+    content: 'Use a black line in the main analysis.',
+    responseToMessageId: origin.identities.question,
+    relayedFrom: { kind: 'side-chat', direction: 'to-main' }
   })
-  expect(reopened?.runtimeContext?.sideChat?.providerSessionId).toBeUndefined()
-  expect(reopened?.runtimeContext?.sideChat?.id).toBe(origin.identities['side-chat-1'])
-  expect(origin.identities['side-chat-1']).not.toBe('side-chat-1')
   expect(reopened?.status).toBe('idle')
   expect(reopened?.packageOrigin?.sourceSessionId).toBe('session-1')
   if (!reopened) throw new Error('Imported Session was not readable')
@@ -1574,8 +1805,14 @@ it('transfers every conversation branch across separate config and data roots an
   )
   expect(restored?.messages.map((message) => message.content)).toEqual([
     'Compare the samples',
-    'The original result'
+    'The original result',
+    'Use a black line in the main analysis.'
   ])
+  expect(
+    restored?.messages.find(
+      (message) => message.content === 'Use a black line in the main analysis.'
+    )
+  ).toMatchObject({ relayedFrom: { kind: 'side-chat', direction: 'to-main' } })
   expect(restored?.packageOrigin).toEqual(reopened.packageOrigin)
   await expect(
     new SessionRepository(targetConfigRoot).saveSession({
@@ -1601,7 +1838,9 @@ it('transfers every conversation branch across separate config and data roots an
 
 it('rejects self-consistent archive hashes when the embedded evidence contradicts its version', async () => {
   const source = await createProvenanceTestFixture()
+  initDataRoot(source.storageRoot)
   const target = await createProvenanceTestFixture()
+  initDataRoot(target.storageRoot)
   fixtures.push(source, target)
   await source.client.project.create({ data: { id: 'project-1', name: 'Research' } })
   await new SessionRepository(source.storageRoot).saveSession({
@@ -1661,7 +1900,9 @@ it.each(['root', 'frame'] as const)(
   'keeps exact cross-Session input bytes and %s Notebook execution evidence after import',
   async (laneKind) => {
     const source = await createProvenanceTestFixture()
+    initDataRoot(source.storageRoot)
     const target = await createProvenanceTestFixture()
+    initDataRoot(target.storageRoot)
     fixtures.push(source, target)
     await source.client.project.create({ data: { id: 'project-1', name: 'Research' } })
     await new SessionRepository(source.storageRoot).saveSession({
@@ -2092,6 +2333,72 @@ it.each(['root', 'frame'] as const)(
       notebook.execute({ ...request, code: 'print(1)', source: 'user', language: 'python' })
     ).rejects.toThrow('read-only')
     expect(executorFactory).not.toHaveBeenCalled()
+    // Fork uses the same complete evidence copier, but publishes writable ownership. Verify
+    // Notebook history, upstream Upload inputs and derived execution evidence survive together.
+    const forked = await importer.fork(imported)
+    const forkHistory = await importer.readOrigin(forked)
+    // Upstream inputs retain evidence ownership; the child may read but cannot rewrite them.
+    await expect(
+      files.inspect({
+        projectId: forked.projectId,
+        source: 'upload',
+        fileId: forkHistory.identities['upload-1']
+      })
+    ).resolves.toMatchObject({ canEdit: false })
+    const forkedRuns = await target.notebookRepository.readSessionRuns(
+      forked.projectId,
+      forked.sessionId
+    )
+    expect(forkedRuns.map((run) => run.script)).toEqual(['draw_plot()', 'read_input()'])
+    expect(forkedRuns[0].runId).not.toBe(importedRun.runId)
+    const forkedEvidence = forkedRuns[0].fileEvidence!
+    const forkedEvidenceText = await readFile(
+      join(target.storageRoot, forkedEvidence.storageKey!),
+      'utf8'
+    )
+    expect(sha256(forkedEvidenceText)).toBe(forkedEvidence.checksum)
+    await expect(
+      files.adoptLegacyArtifact({
+        projectId: forked.projectId,
+        sessionId: forked.sessionId,
+        sourceFileId: 'fork-new-artifact',
+        logicalFilename: 'continued.txt',
+        content: Buffer.from('new evidence')
+      })
+    ).resolves.toBeDefined()
+    const continuedNotebook = new NotebookRuntimeService({
+      projectId: forked.projectId,
+      configRoot: target.storageRoot,
+      dataRoot: target.storageRoot,
+      repository: target.notebookRepository,
+      executorFactory: () => ({
+        execute: async (request) => ({
+          status: 'completed',
+          stdout: 'continued',
+          stderr: '',
+          traceback: '',
+          cwdAfter: request.cwd,
+          outputs: []
+        }),
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+    try {
+      const execution = await continuedNotebook.execute({
+        projectId: forked.projectId,
+        sessionId: forked.sessionId,
+        workspaceCwd: target.storageRoot,
+        code: 'print("continued")',
+        source: 'user',
+        language: 'python'
+      })
+      expect(execution).toMatchObject({ status: 'completed' })
+      expect(
+        (await target.notebookRepository.readSessionRuns(forked.projectId, forked.sessionId)).length
+      ).toBeGreaterThan(forkedRuns.length)
+    } finally {
+      await continuedNotebook.shutdownAll()
+    }
     await expect(
       deleteWorkingFileEvidenceProject(target.storageRoot, imported.projectId)
     ).resolves.toBeUndefined()
@@ -2102,6 +2409,7 @@ it.each(['checksum', 'sidecar'] as const)(
   'rejects a Review-only Session with a corrupt %s before deriving evidence',
   async (corruption) => {
     const source = await createProvenanceTestFixture()
+    initDataRoot(source.storageRoot)
     fixtures.push(source)
     await source.client.project.create({ data: { id: 'project-1', name: 'Research' } })
     await new SessionRepository(source.storageRoot).saveSession({
@@ -2151,7 +2459,9 @@ it.each(['checksum', 'sidecar'] as const)(
 
 it('preserves a completed Review and its findings without restarting the Review', async () => {
   const source = await createProvenanceTestFixture()
+  initDataRoot(source.storageRoot)
   const target = await createProvenanceTestFixture()
+  initDataRoot(target.storageRoot)
   fixtures.push(source, target)
   await source.client.project.create({ data: { id: 'project-1', name: 'Research' } })
   await new SessionRepository(source.storageRoot).saveSession({
@@ -2227,7 +2537,9 @@ it('preserves a completed Review and its findings without restarting the Review'
 
 it('imports both immutable Artifact Versions and keeps original evidence distinct from local identities', async () => {
   const source = await createProvenanceTestFixture()
+  initDataRoot(source.storageRoot)
   const target = await createProvenanceTestFixture()
+  initDataRoot(target.storageRoot)
   fixtures.push(source, target)
   await source.client.project.create({ data: { id: 'project-1', name: 'Research' } })
   await new SessionRepository(source.storageRoot).saveSession({
@@ -2278,13 +2590,24 @@ it('imports both immutable Artifact Versions and keeps original evidence distinc
     descriptor: { versionId }
   })
   expect(history.sourceManifest.source.sessionId).toBe('session-1')
+  // An interrupted turn's committed bytes remain pending evidence after copying. Import must
+  // not publish them as the active head and poison the next application's startup audit.
+  await expect(
+    target.client.artifactLineage.findUnique({ where: { id: artifactId } })
+  ).resolves.toMatchObject({ currentVersionId: null })
+  const copiedVersions = await target.client.artifactVersion.findMany({ where: { artifactId } })
+  expect(copiedVersions).toHaveLength(2)
+  expect(copiedVersions.every((version) => version.state === 'pending')).toBe(true)
+  await expect(migrateApplicationDatabase(target.client)).resolves.toBeDefined()
 })
 
 it.each(['pdf-context', 'pdf-annotation', 'text-annotation', 'image-annotation'] as const)(
   'includes a foreign immutable file referenced only by %s',
   async (kind) => {
     const source = await createProvenanceTestFixture()
+    initDataRoot(source.storageRoot)
     const target = await createProvenanceTestFixture()
+    initDataRoot(target.storageRoot)
     fixtures.push(source, target)
     await source.client.project.create({ data: { id: 'project-1', name: 'References' } })
     const content = Buffer.from('%PDF-1.4\nfixture evidence\n%%EOF')
@@ -2443,11 +2766,33 @@ it.each(['pdf-context', 'pdf-annotation', 'text-annotation', 'image-annotation']
     if (kind === 'pdf-context')
       expect(session?.messages[0].pdfContext?.bindings[0].sourceVersionId).toBe(version.id)
     else expect(session?.messages[0].annotations).toHaveLength(1)
+    const fork = await importer.fork(imported)
+    const forkOrigin = await importer.readOrigin(fork)
+    const forkSession = (await new SessionRepository(target.storageRoot).loadSession(
+      fork.projectId,
+      fork.sessionId
+    ))!
+    const forkVersion = await target.client.uploadVersion.findUniqueOrThrow({
+      where: { id: forkOrigin.identities['version-1'] }
+    })
+    expect(await readFile(join(target.storageRoot, forkVersion.contentStorageKey))).toEqual(content)
+    if (kind === 'pdf-context') {
+      const binding = forkSession.messages[0].pdfContext!.bindings[0]
+      expect(binding.sourceVersionId).toBe(forkVersion.id)
+      expect(binding.bindingId).not.toBe(session!.messages[0].pdfContext!.bindings[0].bindingId)
+    } else {
+      const annotation = forkSession.messages[0].annotations![0]
+      expect(annotation.id).not.toBe(session!.messages[0].annotations![0].id)
+      if (annotation.source.kind === 'project-file')
+        expect(annotation.source.path).toContain(forkVersion.id)
+      else expect(annotation.source).toMatchObject({ versionId: forkVersion.id })
+    }
   }
 )
 
-it('refuses an idle Session with queued runtime delivery rather than importing runnable history', async () => {
+it('drops an undelivered Side Chat relay instead of blocking Session export', async () => {
   const source = await createProvenanceTestFixture()
+  initDataRoot(source.storageRoot)
   fixtures.push(source)
   await source.client.project.create({ data: { id: 'project-1', name: 'Research' } })
   await new SessionRepository(source.storageRoot).saveSession({
@@ -2471,17 +2816,24 @@ it('refuses an idle Session with queued runtime delivery rather than importing r
     storageRoot: source.storageRoot,
     getClient: async () => source.client
   })
+  const archive = join(source.storageRoot, 'queued.science')
   await expect(
-    service.exportTo(
-      { projectId: 'project-1', sessionId: 'session-1' },
-      join(source.storageRoot, 'queued.science')
-    )
-  ).rejects.toThrow('finish')
+    service.exportTo({ projectId: 'project-1', sessionId: 'session-1' }, archive)
+  ).resolves.toBeDefined()
+  const expanded = join(source.storageRoot, 'queued-expanded')
+  await mkdir(expanded)
+  await extractTar({ file: archive, cwd: expanded })
+  const envelope = JSON.parse(await readFile(join(expanded, 'session.json'), 'utf8')) as {
+    session: { runtimeContext?: { sideChatRelays?: unknown[] } }
+  }
+  expect(envelope.session.runtimeContext?.sideChatRelays).toBeUndefined()
 })
 
 it('blocks recognized sensitive content when forwarding an externally created package', async () => {
   const source = await createProvenanceTestFixture()
+  initDataRoot(source.storageRoot)
   const target = await createProvenanceTestFixture()
+  initDataRoot(target.storageRoot)
   fixtures.push(source, target)
   await source.client.project.create({ data: { id: 'project-1', name: 'Research' } })
   await new SessionRepository(source.storageRoot).saveSession({
@@ -2531,6 +2883,7 @@ it('blocks recognized sensitive content when forwarding an externally created pa
 
 it('includes retained Notebook bytes in the content-selection summary even without optional files', async () => {
   const source = await createProvenanceTestFixture()
+  initDataRoot(source.storageRoot)
   fixtures.push(source)
   await source.client.project.create({ data: { id: 'project-1', name: 'Workspace evidence' } })
   await new SessionRepository(source.storageRoot).saveSession({
@@ -2571,7 +2924,9 @@ it.each(['accept', 'reject', 'cancel'] as const)(
   'owns the reviewed import staging through %s',
   async (decision) => {
     const source = await createProvenanceTestFixture()
+    initDataRoot(source.storageRoot)
     const target = await createProvenanceTestFixture()
+    initDataRoot(target.storageRoot)
     fixtures.push(source, target)
     await source.client.project.create({ data: { id: 'project-1', name: 'Reviewed import' } })
     await new SessionRepository(source.storageRoot).saveSession({
@@ -2625,6 +2980,7 @@ it.each(['accept', 'reject', 'cancel'] as const)(
 
 it('does not spend processing time while the user chooses export content', async () => {
   const source = await createProvenanceTestFixture()
+  initDataRoot(source.storageRoot)
   fixtures.push(source)
   await source.client.project.create({ data: { id: 'project-1', name: 'Patient selection' } })
   await new SessionRepository(source.storageRoot).saveSession({
@@ -2680,6 +3036,7 @@ it('does not spend processing time while the user chooses export content', async
 
 it('still aborts processing after the budget expires while copying', async () => {
   const source = await createProvenanceTestFixture()
+  initDataRoot(source.storageRoot)
   fixtures.push(source)
   await source.client.project.create({ data: { id: 'project-1', name: 'Bounded processing' } })
   await new SessionRepository(source.storageRoot).saveSession({
@@ -2740,7 +3097,9 @@ it.each(
       getArtifactReproducibilityOutput
     } = await import('../artifacts/artifact-reproducibility-receipts')
     const source = await createProvenanceTestFixture()
+    initDataRoot(source.storageRoot)
     const target = await createProvenanceTestFixture()
+    initDataRoot(target.storageRoot)
     fixtures.push(source, target)
     await source.client.project.create({ data: { id: 'project-1', name: 'Probe' } })
     await new SessionRepository(source.storageRoot).saveSession({
@@ -2980,6 +3339,7 @@ it.each(
         reusedArchive
       )
       const reuseTarget = await createProvenanceTestFixture()
+      initDataRoot(reuseTarget.storageRoot)
       fixtures.push(reuseTarget)
       const reuseService = new SessionPackageService({
         storageRoot: reuseTarget.storageRoot,
@@ -3002,6 +3362,7 @@ it.each(
       )
     } else if (scenario === 'rollback') {
       const rollbackTarget = await createProvenanceTestFixture()
+      initDataRoot(rollbackTarget.storageRoot)
       fixtures.push(rollbackTarget)
       const rollbackService = new SessionPackageService({
         storageRoot: rollbackTarget.storageRoot,
@@ -3047,13 +3408,16 @@ it.each(
       )
     ).toBe(lock)
   },
-  60_000
+  // Multiple real archive imports each migrate a validation database; hosted Windows I/O
+  // exceeded 60 seconds even with one worker. Keep this bound local to these round trips.
+  process.platform === 'win32' ? 120_000 : 60_000
 )
 
 it('retains a later Version lock when an earlier owner cannot supply the same checksum', async () => {
   const { ArtifactReproducibilityReceiptStore } =
     await import('../artifacts/artifact-reproducibility-receipts')
   const fixture = await createProvenanceTestFixture()
+  initDataRoot(fixture.storageRoot)
   fixtures.push(fixture)
   await fixture.client.project.create({ data: { id: 'project-1', name: 'Lock ownership' } })
   await new SessionRepository(fixture.storageRoot).saveSession({
@@ -3165,7 +3529,9 @@ it('retains a later Version lock when an earlier owner cannot supply the same ch
 
 it('creates a named destination only after validation and final confirmation', async () => {
   const source = await createProvenanceTestFixture()
+  initDataRoot(source.storageRoot)
   const destination = await createProvenanceTestFixture()
+  initDataRoot(destination.storageRoot)
   fixtures.push(source, destination)
   await source.client.project.create({ data: { id: 'source', name: 'Original project' } })
   await new SessionRepository(source.storageRoot).saveSession({
@@ -3211,6 +3577,7 @@ it('creates a named destination only after validation and final confirmation', a
 
 it('compares large Session metadata without allocating serialized comparison copies', async () => {
   const source = await createProvenanceTestFixture()
+  initDataRoot(source.storageRoot)
   fixtures.push(source)
   await source.client.project.create({ data: { id: 'project-1', name: 'Metadata' } })
   const request = { projectId: 'project-1', sessionId: 'session-1' }
@@ -3269,6 +3636,7 @@ it.each(['inactive branch', 'task history'] as const)(
   'rejects changed %s metadata before replacing an export',
   async (changed) => {
     const source = await createProvenanceTestFixture()
+    initDataRoot(source.storageRoot)
     fixtures.push(source)
     await source.client.project.create({ data: { id: 'project-1', name: 'Metadata' } })
     const request = { projectId: 'project-1', sessionId: 'session-1' }
@@ -3357,7 +3725,9 @@ it.each([false, true])(
   'uses a temporary validation database only for native rows (Artifact: %s)',
   async (withArtifact) => {
     const source = await createProvenanceTestFixture()
+    initDataRoot(source.storageRoot)
     const target = await createProvenanceTestFixture()
+    initDataRoot(target.storageRoot)
     fixtures.push(source, target)
     await source.client.project.create({ data: { id: 'project-1', name: 'Research' } })
     await new SessionRepository(source.storageRoot).saveSession({

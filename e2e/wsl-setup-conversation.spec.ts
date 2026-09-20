@@ -43,7 +43,7 @@ test.describe('WSL setup conversation', () => {
     const composer = page.getByRole('textbox', { name: 'Ask anything' })
     await composer.fill('/setup-wsl')
     await page.getByTestId('product-command-setup-wsl').click()
-    await expect(composer).toContainText('Set up or repair WSL2 Bash in Open Science.')
+    await expect(composer).toContainText('Set up or repair WSL2 Bash in Open-Science.')
     const previewText = await composer.innerText()
     expect(previewText).not.toContain('setupSessionToken')
     await sendPrompt(
@@ -67,7 +67,7 @@ test.describe('WSL setup conversation', () => {
     )
 
     page = await app.restart()
-    await openProjectSession(page, projectName, 'Set up or repair WSL2 Bash in Open Science.')
+    await openProjectSession(page, projectName, 'Set up or repair WSL2 Bash in Open-Science.')
     await sendPrompt(
       page,
       'Verify WSL setup diagnostic tools.',

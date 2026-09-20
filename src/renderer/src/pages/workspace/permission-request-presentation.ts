@@ -349,6 +349,7 @@ const humanizeMcpName = (name: string | undefined): string | undefined => {
         .filter(Boolean)
         .map((word) => `${word.charAt(0).toUpperCase()}${word.slice(1)}`)
         .join(' ')
+        .replace(/^Open ?Science\b/iu, 'Open-Science')
     )
     .filter(Boolean)
 
@@ -473,6 +474,28 @@ const describePermissionRequest = (request: AcpPermissionRequest): PermissionPre
   }
 
   if (isNetworkTool(request)) {
+    if (
+      request.providerToolName === 'WebSearch' &&
+      request.options.some(({ scope }) => scope === 'session')
+    ) {
+      return {
+        actionTitle: 'Allow web search?',
+        categoryLabel: 'Search the web',
+        description:
+          'Conversation approval allows text searches on the web for this conversation and its subagents.'
+      }
+    }
+    if (
+      request.providerToolName === 'WebFetch' &&
+      request.options.some(({ scope }) => scope === 'session')
+    ) {
+      return {
+        actionTitle: 'Allow web reading?',
+        categoryLabel: 'Read web pages',
+        description:
+          'Conversation approval allows web reading across websites for this conversation and its subagents.'
+      }
+    }
     return {
       actionTitle: 'Access network resource?',
       categoryLabel: 'Network access',

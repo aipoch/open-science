@@ -614,7 +614,11 @@ const GrantFolderAccessDialogContent = ({
           ) : null}
           {grantFailed ? (
             <div data-testid="grant-access-error">
-              <ErrorNotice role="alert" description={t('Directory could not be accessed.')} />
+              <ErrorNotice
+                inline
+                role="alert"
+                description={t('Directory could not be accessed.')}
+              />
             </div>
           ) : null}
           <div className="flex items-center gap-2.5">

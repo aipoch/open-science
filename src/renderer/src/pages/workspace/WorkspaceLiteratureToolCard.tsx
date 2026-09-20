@@ -1,5 +1,14 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
-import { BookOpenText, FileText, Inbox, Search, TriangleAlert } from 'lucide-react'
+import {
+  ArrowRight,
+  BookOpenText,
+  Clock3,
+  FileText,
+  Inbox,
+  Link2,
+  Search,
+  TriangleAlert
+} from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -27,29 +36,36 @@ const WorkspaceLiteratureToolCard = ({
         : summary.action === 'format'
           ? FileText
           : BookOpenText
-  const title = summary.pdfElements
-    ? t('PDF figures and tables')
-    : summary.action === 'save'
-      ? t('Save')
-      : summary.action === 'search'
-        ? t('Search')
-        : summary.action === 'format'
-          ? t('Format')
-          : t('Read')
-  const subtitle = isLibrary
-    ? summary.action === 'format'
-      ? [summary.styleId?.toUpperCase(), summary.locale].filter(Boolean).join(' · ') ||
-        t('Citation')
-      : summary.action === 'save'
-        ? t('Literature library')
-        : summary.libraryScope === 'project'
-          ? t('This project')
-          : summary.libraryScope === 'collection'
-            ? t('Collections')
-            : summary.libraryScope === 'items'
-              ? t('Selected references')
-              : t('All references')
-    : t('Linked PDFs')
+  const title =
+    summary.action === 'save' && !canOpenInbox && summary.existingItemIds?.length
+      ? t('Already in library')
+      : summary.pdfElements
+        ? t('PDF figures and tables')
+        : summary.action === 'save'
+          ? t('Save')
+          : summary.action === 'search'
+            ? t('Search')
+            : summary.action === 'format'
+              ? t('Format')
+              : t('Read')
+  const subtitle = canOpenInbox
+    ? summary.pdfDownloaded
+      ? t('PDF downloaded to Inbox')
+      : t('Saved to Inbox')
+    : isLibrary
+      ? summary.action === 'format'
+        ? [summary.styleId?.toUpperCase(), summary.locale].filter(Boolean).join(' · ') ||
+          t('Citation')
+        : summary.action === 'save'
+          ? t('Literature library')
+          : summary.libraryScope === 'project'
+            ? t('This project')
+            : summary.libraryScope === 'collection'
+              ? t('Collections')
+              : summary.libraryScope === 'items'
+                ? t('Selected references')
+                : t('All references')
+      : t('Linked PDFs')
   const pageLabel =
     summary.pageStart && summary.pageEnd
       ? summary.pageStart === summary.pageEnd
@@ -81,36 +97,62 @@ const WorkspaceLiteratureToolCard = ({
 
   const content = (
     <>
-      <div className="flex min-w-0 flex-wrap items-center gap-2">
-        <span className="inline-flex size-7 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-          <Icon className="size-3.5" aria-hidden="true" />
+      <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-4">
+        <span className="inline-flex size-11 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+          <Icon className="size-5" aria-hidden="true" />
         </span>
         <div className="min-w-0 flex-1 basis-28">
-          <div className="text-[13px] font-medium text-text-000">{title}</div>
-          <div className="truncate text-[11px] text-text-300">{subtitle}</div>
+          <div className="text-sm font-semibold text-text-000">{title}</div>
+          <div className="mt-0.5 text-xs text-text-300">{subtitle}</div>
         </div>
-        <div className="flex max-w-full shrink-0 flex-wrap justify-end gap-1">
+        <div className="flex max-w-full shrink-0 flex-wrap items-center gap-3">
+          {canOpenInbox ? (
+            <>
+              <span className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1.5 text-xs font-medium tabular-nums text-primary">
+                <Clock3 className="size-3.5 shrink-0" aria-hidden="true" />
+                {t('Pending review: {{total}}', { total: summary.savedCount })}
+              </span>
+              <Button
+                size="default"
+                className="gap-2 px-3.5"
+                title={t('Review in Inbox to add to your library.')}
+                onClick={() => useNavigationStore.getState().openLibrary('user')}
+              >
+                {t('Open Inbox')}
+                <ArrowRight className="size-4" aria-hidden="true" />
+              </Button>
+            </>
+          ) : null}
           {isLibrary && summary.action === 'search' && searchRangeLabel ? (
-            <span className="rounded-md bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-primary">
+            <span className="rounded-full bg-primary/10 px-3 py-1.5 text-xs font-medium tabular-nums text-primary">
               {searchRangeLabel}
             </span>
           ) : null}
-          {isLibrary && summary.action === 'save' && summary.savedCount !== undefined ? (
-            <span className="text-[11px] tabular-nums text-text-200">
-              {t('Pending review: {{total}}', { total: summary.savedCount })}
-            </span>
-          ) : null}
           {summary.existingItemIds && summary.existingItemIds.length > 0 ? (
-            <span className="text-[11px] tabular-nums text-text-200">
+            <span className="rounded-full bg-primary/10 px-3 py-1.5 text-xs font-medium tabular-nums text-primary">
               {t('Already in library: {{total}}', { total: summary.existingItemIds.length })}
             </span>
+          ) : null}
+          {summary.action === 'save' && summary.existingItemIds?.length === 1 && !canOpenInbox ? (
+            <Button
+              size="default"
+              className="gap-2 px-3.5"
+              onClick={() =>
+                useNavigationStore
+                  .getState()
+                  .openLiteratureItem(summary.existingItemIds![0], 'user')
+              }
+            >
+              {t('Open reference')}
+              <ArrowRight className="size-4" aria-hidden="true" />
+            </Button>
           ) : null}
           {isLibrary &&
           (summary.action === 'format' ||
             summary.action === 'read' ||
             (isApproval && summary.action === 'save')) &&
           summary.itemCount !== undefined ? (
-            <span className="rounded-md bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-primary">
+            <span className="rounded-full bg-primary/10 px-3 py-1.5 text-xs font-medium tabular-nums text-primary">
               {t('{{count}} references', {
                 count: summary.itemCount,
                 defaultValue_one: '{{count}} reference'
@@ -161,7 +203,7 @@ const WorkspaceLiteratureToolCard = ({
           {summary.pdfElements.imageIncluded ? <p>{t('Image delivered')}</p> : null}
           {summary.pdfElements.incomplete ? (
             <ErrorNotice
-              className="border-0 bg-transparent p-0"
+              inline
               icon={TriangleAlert}
               tone="amber"
               description={t(
@@ -228,6 +270,7 @@ const WorkspaceLiteratureToolCard = ({
           ) : null}
           {summary.failedInputIndex !== undefined || summary.cancelled ? (
             <ErrorNotice
+              inline
               icon={TriangleAlert}
               tone="amber"
               description={
@@ -239,17 +282,9 @@ const WorkspaceLiteratureToolCard = ({
               }
             />
           ) : null}
-          {canOpenInbox || summary.existingItemIds?.length ? (
+          {summary.existingItemIds?.length &&
+          (canOpenInbox || summary.existingItemIds.length > 1) ? (
             <div className="flex flex-wrap gap-2">
-              {canOpenInbox ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => useNavigationStore.getState().openLibrary('user')}
-                >
-                  {t('Open Inbox')}
-                </Button>
-              ) : null}
               {summary.existingItemIds?.map((id, index) => (
                 <Button
                   key={id}
@@ -280,24 +315,21 @@ const WorkspaceLiteratureToolCard = ({
         <div className="text-[11px] text-text-300">{t('More results are available')}</div>
       ) : null}
 
-      {summary.documentNames.length > 0 ? (
-        <div className="flex min-w-0 items-center gap-2 text-[11px] text-text-300">
+      {summary.documentNames.length > 0 || summary.itemTitles?.length ? (
+        <div className="flex min-w-0 items-center gap-2 border-t border-border-200 pt-3.5 text-xs text-text-300">
+          <Link2 className="size-3.5 shrink-0" aria-hidden="true" />
           <span className="shrink-0">{t('Sources')}</span>
           <span aria-hidden="true">·</span>
           <span className="min-w-0 truncate text-text-100">
-            {summary.documentNames.map((name, index) => (
-              <span key={name}>
-                {index > 0 ? ' · ' : null}
-                <ExtensionPreservingFileName name={name} />
-              </span>
-            ))}
+            {summary.documentNames.length > 0
+              ? summary.documentNames.map((name, index) => (
+                  <span key={name}>
+                    {index > 0 ? ' · ' : null}
+                    <ExtensionPreservingFileName name={name} />
+                  </span>
+                ))
+              : summary.itemTitles?.join(' · ')}
           </span>
-        </div>
-      ) : summary.itemTitles && summary.itemTitles.length > 0 ? (
-        <div className="flex min-w-0 items-center gap-2 text-[11px] text-text-300">
-          <span className="shrink-0">{t('Sources')}</span>
-          <span aria-hidden="true">·</span>
-          <span className="min-w-0 truncate text-text-100">{summary.itemTitles.join(' · ')}</span>
         </div>
       ) : summary.documentCount > 0 ? (
         <div className="text-[11px] tabular-nums text-text-300">
@@ -324,7 +356,7 @@ const WorkspaceLiteratureToolCard = ({
   )
 
   const className =
-    'flex min-w-0 flex-col gap-2.5 rounded-lg border border-border-200 bg-bg-000 p-3 text-left'
+    'flex min-w-0 flex-col gap-4 rounded-xl border border-border-200 bg-bg-000 p-4 text-left shadow-sm'
 
   return (
     <section

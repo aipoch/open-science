@@ -9,7 +9,12 @@ import { Button } from '@/components/ui/button'
 import {
   dialogCloseButtonClassName,
   dialogOverlayClassName,
-  dialogPanelClassName
+  dialogPanelClassName,
+  dialogHeaderClassName,
+  dialogTitleClassName,
+  dialogBodyClassName,
+  dialogDescriptionClassName,
+  dialogFooterClassName
 } from '@/components/ui/dialog-chrome'
 import { cn } from '@/lib/utils'
 
@@ -142,7 +147,8 @@ const LinkSafetyModal = ({
             closeModal()
           }}
         >
-          <div>
+          <div className={dialogHeaderClassName}>
+            <h2 className={dialogTitleClassName}>{t('Open external link?')}</h2>
             <Button
               type="button"
               variant="ghost"
@@ -155,19 +161,23 @@ const LinkSafetyModal = ({
             </Button>
           </div>
 
-          <div className="sd-link-safety-body">
-            <p className="sd-link-safety-description">
+          <div className={cn(dialogBodyClassName, 'min-h-0 overflow-y-auto')}>
+            <p className={dialogDescriptionClassName}>
               {description ?? t('You are about to visit an external website.')}
             </p>
 
             <div
-              className={url.length > 100 ? 'sd-link-safety-url max-scroll' : 'sd-link-safety-url'}
+              className={cn(
+                'mt-3 break-words rounded-lg border border-border bg-muted p-3 font-mono text-xs leading-5 [overflow-wrap:anywhere]',
+                url.length > 100 && 'max-h-32 overflow-y-auto'
+              )}
             >
               {url}
             </div>
-
-            <div className="sd-link-safety-actions">
-              <button type="button" onClick={() => void copyLink()}>
+          </div>
+          <div className={dialogFooterClassName}>
+            <Button type="button" variant="outline" onClick={() => void copyLink()}>
+              <span key={String(copied && isOpen)} className="button-feedback">
                 {copied && isOpen ? (
                   <>
                     <Check className="size-3.5" aria-hidden />
@@ -179,19 +189,18 @@ const LinkSafetyModal = ({
                     {t('Copy link')}
                   </>
                 )}
-              </button>
-              <button
-                type="button"
-                className="sd-link-safety-primary"
-                onClick={() => {
-                  onConfirm()
-                  closeModal()
-                }}
-              >
-                <ExternalLink className="size-3.5" aria-hidden />
-                {confirmLabel ?? t('Open link')}
-              </button>
-            </div>
+              </span>
+            </Button>
+            <Button
+              type="button"
+              onClick={() => {
+                onConfirm()
+                closeModal()
+              }}
+            >
+              <ExternalLink className="size-3.5" aria-hidden />
+              {confirmLabel ?? t('Open link')}
+            </Button>
           </div>
         </div>
       </FocusScope>

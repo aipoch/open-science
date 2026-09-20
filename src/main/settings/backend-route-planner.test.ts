@@ -325,12 +325,14 @@ describe('BackendRoutePlanner provider candidates', () => {
       targets: [
         {
           id: JSON.stringify(['provider-a', 'model-a']),
+          runtimeTarget: targetA,
           baseUrl: 'https://provider-a.example',
           key: 'plain-provider-key',
           model: 'model-a'
         },
         {
           id: JSON.stringify(['provider-b', 'model-b']),
+          runtimeTarget: targetB,
           baseUrl: 'https://provider-b.example/anthropic',
           key: 'plain-provider-key',
           model: 'model-b',
@@ -384,6 +386,7 @@ describe('BackendRoutePlanner provider candidates', () => {
       targets: [
         {
           id: JSON.stringify([provider.id, provider.model]),
+          runtimeTarget: target,
           baseUrl,
           key: 'plain-provider-key',
           model: provider.model
@@ -423,6 +426,7 @@ describe('BackendRoutePlanner provider candidates', () => {
       targets: [
         {
           id: JSON.stringify([provider.id, provider.model]),
+          runtimeTarget: target,
           baseUrl: 'https://api.apodex.ai',
           key: 'plain-provider-key',
           model: 'apodex-1.1',

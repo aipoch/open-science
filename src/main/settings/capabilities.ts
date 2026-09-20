@@ -30,6 +30,8 @@ export type SettingsPreferencesSnapshot = {
 export type SetDataRootOptions = Readonly<{
   completeOnboarding?: boolean
   previousDataRoot?: string
+  // Main-only guard, rerun at the atomic settings publication boundary.
+  validateTarget?: () => void
 }>
 
 export interface SettingsPreferences {

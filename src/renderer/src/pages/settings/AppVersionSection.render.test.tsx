@@ -21,7 +21,7 @@ beforeEach(() => {
 
   useUpdateStore.setState({
     appInfo: {
-      name: 'Open Science',
+      name: 'Open-Science',
       version: '0.2.0',
       copyright: '© 2026 AIPOCH. All rights reserved.'
     },
@@ -51,7 +51,7 @@ describe('AppVersionSection', () => {
       root.render(<AppVersionSection />)
     })
 
-    expect(container.textContent).toContain('Open Science')
+    expect(container.textContent).toContain('Open-Science')
     expect(container.textContent).toContain('v0.2.0')
     expect(container.textContent).toContain('© 2026 AIPOCH')
   })
@@ -163,6 +163,23 @@ describe('AppVersionSection', () => {
 
     expect(useThemeStore.getState().preference).toBe('system')
     expect(container.querySelector('img')?.getAttribute('src')).toBe('logo-dark.png')
+  })
+
+  it('keeps the full update error available and routes retry to the existing owner', () => {
+    const check = vi.fn(async () => {})
+    useUpdateStore.setState({
+      status: { state: 'error', current: '0.2.0', error: 'net::ERR_NAME_NOT_RESOLVED' },
+      check
+    })
+    act(() => root.render(<AppVersionSection />))
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+      'net::ERR_NAME_NOT_RESOLVED'
+    )
+    const button = Array.from(container.querySelectorAll('button')).find((element) =>
+      /check now/i.test(element.textContent ?? '')
+    )!
+    act(() => button.click())
+    expect(check).toHaveBeenCalledOnce()
   })
 
   it('shows an update action when a new version is available', () => {
