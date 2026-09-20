@@ -81,6 +81,8 @@ describe('first table action while its runtime is loading', () => {
     expect(document.querySelector('[data-sd-table-format-menu]')).toBeNull()
     expect(document.activeElement).toBe(trigger)
     fixture.resolve()
+    // Finish the real cold import before checking its effect or replacing browser globals.
+    await vi.dynamicImportSettled()
     if (action === 'copy') {
       await vi.waitFor(() => expect(fixture.writeText).toHaveBeenCalledExactlyOnceWith(expected))
       expect(fixture.saveBlobFile).not.toHaveBeenCalled()
