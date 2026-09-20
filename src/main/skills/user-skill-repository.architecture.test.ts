@@ -893,7 +893,9 @@ describe('User Skill repository architecture', () => {
           'src/main/process-tree.windows.integration.test.ts',
           'src/main/delegation/frame-workspace.test.ts',
           'src/main/acp/agent-process.test.ts',
-          'src/main/settings/classification-settings.test.ts'
+          'src/main/settings/classification-settings.test.ts',
+          'src/main/connectors/descriptors/genomes-blast.test.ts',
+          'src/main/connectors/descriptors/genomes.test.ts'
         ]
       },
       capabilityOverlays: ['windows_sensitive', 'e2e_regressions', 'e2e_delegation'],
