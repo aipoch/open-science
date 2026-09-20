@@ -78,10 +78,10 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
     id: 'genomes',
     displayName: 'Genomes',
     description:
-      'Genome annotation, taxon and assembly identity, sequence aliases, variants, homology, sequence and browser tracks — NCBI Datasets, Ensembl REST and the UCSC Genome Browser.',
+      'Genome annotation, taxon and assembly identity, sequence aliases, variants, homology, sequence, similarity search and browser tracks — NCBI Datasets/BLAST, Ensembl REST and the UCSC Genome Browser.',
     useWhen:
-      'Use when you need to resolve species or taxon names, validate a versioned NCBI genome assembly and sequence aliases, retrieve Ensembl gene/transcript annotation, cross-references, VEP variant consequences, orthologues/paralogues, sequence, or region overlaps — or UCSC Genome Browser tracks, track data, conservation scores, TFBS clusters and chromosome sizes.',
-    sources: ['NCBI Datasets', 'Ensembl', 'UCSC'],
+      'Use when you need to resolve species or taxon names, validate a versioned NCBI genome assembly and sequence aliases, identify an unknown nucleotide or protein sequence with an asynchronous NCBI BLAST search, retrieve Ensembl gene/transcript annotation, cross-references, VEP variant consequences, orthologues/paralogues, sequence, or region overlaps — or UCSC Genome Browser tracks, track data, conservation scores, TFBS clusters and chromosome sizes.',
+    sources: ['NCBI Datasets', 'NCBI BLAST', 'Ensembl', 'UCSC'],
     termsUrl: 'https://www.ensembl.org/info/about/legal/disclaimer.html',
     requiresNcbi: false
   },
