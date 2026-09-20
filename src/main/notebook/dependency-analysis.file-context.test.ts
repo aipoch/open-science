@@ -316,6 +316,37 @@ describe('file context after mutable path collections', () => {
     })
   })
 
+  it('does not leak helper-local possible aliases into caller analysis', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [
+        { name: 'paths', values: ['old.txt'] },
+        { name: 'alias', values: ['alias.txt'] }
+      ],
+      staticCollectionAliases: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source:
+            'def read_inputs():\n    if enabled:\n        alias = paths\n    return open("input.csv")',
+          exports: ['read_inputs']
+        }
+      ]
+    }
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'python',
+        'value = read_inputs()\nalias.append("new.txt")\nfor path in paths:\n    open(path, "w").close()',
+        context
+      )
+    ).toMatchObject({
+      reads: ['input.csv'],
+      writes: ['old.txt'],
+      writeState: 'complete',
+      externalState: 'complete'
+    })
+  })
+
   it.each([
     'class Loader:\n    source = open("class.csv")',
     'def decorate(fn):\n    open("decorator.csv")\n    return fn\n@decorate\ndef registered():\n    pass',

@@ -7380,6 +7380,7 @@ const analyzePythonFileAccessTree = (
     const inMemoryInputsSnapshot = new Set(inMemoryInputs)
     const fileConnectionsSnapshot = new Map(fileConnections)
     const archiveNamesSnapshot = new Set(archiveNames)
+    const possibleAliasesSnapshot = [...possibleAliases]
     const importedNamesSnapshot = new Map(importedNames)
     const scientificObjectTypesSnapshot = new Map(scientificObjectTypes)
     const shadowedStaticCallsSnapshot = new Set(shadowedStaticCalls)
@@ -7406,6 +7407,7 @@ const analyzePythonFileAccessTree = (
       for (const value of inMemoryInputsSnapshot) inMemoryInputs.add(value)
       archiveNames.clear()
       for (const value of archiveNamesSnapshot) archiveNames.add(value)
+      possibleAliases.splice(0, possibleAliases.length, ...possibleAliasesSnapshot)
       shadowedStaticCalls.clear()
       for (const value of shadowedStaticCallsSnapshot) shadowedStaticCalls.add(value)
       shadowedHelperNames.clear()
